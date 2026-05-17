@@ -1,4 +1,3 @@
-```
 movie.(
     info.(type = 'countries' & val in ('Germany', 'German', 'USA', 'American'))
   & keyword in ('murder', 'murder-in-title', 'blood', 'violence')
@@ -11,4 +10,3 @@ movie.(
        type = 'production companies'
     ).name
 )
-```

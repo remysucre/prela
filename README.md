@@ -32,6 +32,7 @@ CREATE TABLE movie_info (
 
 There is an abstract `Movie` type instead of the integer ID `movie_id`,
  and we're explicit that `info` returns the `Info` of a `Movie`.
+This makes is clear that `info` is a foreign key relationship between `Info` and `Movie`.
 The "struct" `Info` is in fact shorthand for declaring 3 relations:
  `val: Info -> String, type: Info -> InfoType, note: Info -> String`.
 This allows us to "access fields" with simple relational composition (introduced formally soon):
