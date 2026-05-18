@@ -1,6 +1,5 @@
 movie.(
-    title = 'Shrek 2'
-  & production_year >= 2000 & production_year <= 2010
+    production_year >= 2000 & production_year <= 2010
   & info.(type = 'release dates' & (info like 'Japan:%200%' | info like 'USA:%200%'))
   & keyword = 'computer-animation'
   & company.country = '[us]'
@@ -12,5 +11,5 @@ movie.(
       & person.( gender = 'f' & name like '%An%' & info.type = 'trivia' & aka)
       : character!, person!
     )
-  , title
+  , title = 'Shrek 2'
 )
