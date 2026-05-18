@@ -97,3 +97,27 @@ movie.(
     ).name
 )
 ```
+
+## Related work
+
+Prela sits in a small family of navigational query languages over typed schemas:
+
+- **DAPLEX** (Shipman, 1981) and **FQL** — functional data model: entities are first-class
+  and relations are multi-valued functions between them. Closest in spirit to Prela's
+  struct sugar + dotted composition.
+- **CQL** (Categorical Query Language, Spivak/Wisnesky) — ER schemas as categories;
+  queries compose functorially.
+- **XPath / XQuery** — `book/author/name` reads like `book.author.name`; inline predicates
+  `[year > 2008]` mirror Prela's filtering. Multi-valued by default.
+- **jq** — `.author.name` for JSON; same navigational ergonomics but stream + callback
+  (`select(...)`, `any(.)`) rather than algebraic operators. Predicate composition is
+  `and`/`or` over booleans, not `&`/`|` over relations.
+- **SPARQL** — fundamentally binary (RDF triples); same data model, pattern-matching
+  surface rather than algebraic composition.
+- **Cypher** (Neo4j) — `MATCH (a)-[r]->(b)` graph patterns; ER worldview, pattern-shaped.
+- **Tarski's calculus of relations** and **allegory theory** — algebraic foundations for
+  `.`, `&`, `|`, transpose.
+
+The distinctive bet: stay strictly binary, drop the SQL `JOIN`/`FROM`/`SELECT` skeleton,
+and lean on a small algebraic operator set so navigation reads like a path language while
+remaining closed under composition — XPath/DAPLEX ergonomics on a Tarski/Codd foundation.
