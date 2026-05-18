@@ -14,7 +14,8 @@ Movie : {
   data            : Data,
   company         : Company,
   cast            : Cast,           // used by 29a
-  complete_cast   : CompleteCast    // used by 29a
+  complete_cast   : CompleteCast,   // used by 29a
+  link            : MovieLink       // used by 11a
 }
 
 // Shared by movie_info (Movie.info) and person_info (Person.info) — same shape.
@@ -80,3 +81,13 @@ CompleteCast : {
 }
 
 CompCastType : { kind : String }
+
+// --- used by 11a ---
+
+// movie_link row: a typed link from this movie to another. `linked_movie_id` is
+// not used by 11a so omitted; declare when a future query needs the other end.
+MovieLink : {
+  type : LinkType
+}
+
+LinkType : { link : String }       // link_type.link

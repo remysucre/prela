@@ -47,6 +47,12 @@ If they are both unary, then same as intersection.
 
 Intersection `&`: `r: x -> y & s: x -> z` is the intersections of their keys, i.e. a set over `x`.
 
+Set difference `\`: `r \ s` is `r` with keys not in `s`'s domain. Same precedence as `&`,
+ left-associative. Prela has no NULLs or 3VL — fully normalized binary relations mean a
+ missing value is simply absent, so SQL's `IS NULL` is expressed as `\ r`. E.g. inside
+ `company.(...)`, `& type = 'production companies' \ note` reads "matching companies that
+ have no note".
+
 Select `:`: same as sequential composition, but requiring lhs to be unary (domain reistriction).
 
 Disjunction `|`: `r | s` is the union of compatible relations. Used between
