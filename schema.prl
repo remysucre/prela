@@ -1,0 +1,82 @@
+// Schema accumulated from worked queries. Only relations/types actually used
+// by some .prl file in this repo appear here.
+
+// SQL `title` is renamed to Movie: title.id is what every other table joins
+// against as movie_id, so Movie is the natural identity.
+movie: Movie
+
+Movie : {
+  title           : String,
+  production_year : Int,
+  kind            : Kind,
+  info            : Info,
+  keyword         : Keyword,
+  data            : Data,
+  company         : Company,
+  cast            : Cast,           // used by 29a
+  complete_cast   : CompleteCast    // used by 29a
+}
+
+// Shared by movie_info (Movie.info) and person_info (Person.info) — same shape.
+Info : {
+  info : String,
+  type : InfoType,
+  note : String
+}
+
+Keyword : { keyword : String }
+
+Kind : { kind : String }
+
+// SQL movie_info_idx; renamed `data` to distinguish from `info`.
+Data : {
+  data : String,
+  type : InfoType
+}
+
+// movie_companies + company_name + company_type, flattened onto Company.
+// `name` is from company_name; `note` from movie_companies; `country` from
+// company_name.country_code; `type` from company_type.
+Company : {
+  name    : String,
+  note    : String,
+  country : String,
+  type    : CompanyType
+}
+
+InfoType    : { info : String }
+CompanyType : { kind : String }
+
+// --- used by 29a ---
+
+// cast_info, the Person <-> Movie association. Reached from both sides:
+//   cast: Movie  -> Cast   (via Movie struct)
+//   cast: Person -> Cast   (via Person struct)
+Cast : {
+  person    : Person,
+  character : Character,
+  role      : Role,
+  note      : String
+}
+
+Character : { name : String }    // char_name
+Role      : { role : String }    // role_type
+
+Person : {
+  name   : String,
+  gender : String,
+  info   : Info,                  // person_info
+  aka    : AkaName
+}
+
+AkaName : { name : String }      // aka_name
+
+// complete_cast row: per-movie record of cast/crew completion status.
+// subject is the kind being graded ('cast' or 'crew'); status is the grade
+// ('complete', 'complete+verified', etc). Both FKs land on comp_cast_type.
+CompleteCast : {
+  subject : CompCastType,
+  status  : CompCastType
+}
+
+CompCastType : { kind : String }

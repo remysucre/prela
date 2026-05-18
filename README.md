@@ -12,9 +12,9 @@ movie: Movie
 info: Movie -> Info
 
 Info : {
-  val : String,
+  info : String,
   type : InfoType,
-  note : String  
+  note : String
 }
 ```
 
@@ -30,11 +30,13 @@ CREATE TABLE movie_info (
 );
 ```
 
+`movie: Movie` declares the name `movie` as an (abstract) unary relation
+ representing the universe of all `Movie` entities.
 There is an abstract `Movie` type instead of the integer ID `movie_id`,
  and we're explicit that `info` returns the `Info` of a `Movie`.
 This makes is clear that `info` is a foreign key relationship between `Info` and `Movie`.
 The "struct" `Info` is in fact shorthand for declaring 3 relations:
- `val: Info -> String, type: Info -> InfoType, note: Info -> String`.
+ `info: Info -> String, type: Info -> InfoType, note: Info -> String`.
 This allows us to "access fields" with simple relational composition (introduced formally soon):
  `movie.info.note`.
 
@@ -47,7 +49,8 @@ Intersection `&`: `r: x -> y & s: x -> z` is the intersections of their keys, i.
 
 Select `:`: same as sequential composition, but requiring lhs to be unary (domain reistriction).
 
-Where `|`: `s | r = r : s`
+Disjunction `|`: `r | s` is the union of compatible relations. Used between
+ predicates it reads as OR, e.g. `info like 'Japan:%200%' | info like 'USA:%200%'`.
 
 Predicates are applied to the range of each relation:
  `r < 3` with `r: x -> y` filters `r` by `y < 3`.
@@ -55,31 +58,41 @@ Predicates are applied to the range of each relation:
 Because the fundamental data model of Prela is over unary/binary relations,
  creating "tuples" requires a bit more machinery.
 
-Parallel composition `,`: `r: x -> y, s: x -> z` returns `t: x -> w` where `w` is a fresh entity
- that represents tuples over `y, z`, and creates new relations `r: w -> y`, `s: w -> z`
- such that `(r, s).r` is the same as `r` but with domain restricted to those shared with `s`,
- and similarly `(r, s).s` is the same as `s` with domain restricted to those shared with `r`.
-Parallel composition works over multiple arguments, e.g. `(r, s, t)`
- with `r: x -> y, s: x -> z, t: x -> w` returns `x -> u`
- and creates `r: u -> y` s.t. `(r, s, t).r` is `r` with restricted domain,
- and similar for `s, t`. 
+Parallel composition `,`: strictly binary. `r: x -> y, s: x -> z` returns `t: x -> (y, z)`,
+ a 2-tuple per `x`. Tuple members are accessed positionally: `t.0` is `r` with domain
+ restricted to those shared with `s`, and `t.1` is `s` similarly restricted.
+For more than two components, nest by association: `a, b, c` parses as `(a, b), c` and
+ lands as `x -> ((y_a, y_b), y_c)`. Access: `.0.0`, `.0.1`, `.1`.
 
-Return `!`: `r! = r.val`
+Per-`x` semantics: the cross product of tuple sets from each side. If `r` yields multiple
+ `y` values and `s` yields multiple `z` values for the same `x`, every combination is emitted.
+
+Return `!`: `r!` is `r.<primary>`, where `<primary>` is the type's primary field. The
+ primary defaults to the first field of the struct and may have any name; by convention
+ it shares the type's name (lowercased) for single-field lookups (e.g. `Keyword.keyword`,
+ `Kind.kind`), while multi-field types pick a semantic name (e.g. `Movie.title`).
+
+`!` elision: when the surrounding context makes the target type unambiguous
+ (e.g. a predicate `keyword in ('murder', ...)` against a `Keyword`, or
+ `type = 'countries'` against an `InfoType`), the trailing `!` may be omitted
+ and `.<primary>` is inserted implicitly.
 
 Aggregation `min, max, sum, ...`: `agg(r)` where `r: x -> y` groups by `x` and aggregates over `y`.
 
-Here's JOB q22c:
+Here's JOB q22a:
 
 ```
 movie.(
-    info.(type = 'countries' & val in ('Germany', 'German', 'USA', 'American'))
+    info.(type = 'countries' & info in ('Germany', 'German', 'USA', 'American'))
   & keyword in ('murder', 'murder-in-title', 'blood', 'violence')
-  : title.(production_year > 2008 & kind in ('movie', 'episode'))!
-  , data.(val < '8.5' & type = 'rating')!
+  & production_year > 2008
+  & kind in ('movie', 'episode')
+  : title
+  , data.(data < '7.0' & type = 'rating')!
   , company.(
        note not like '%(USA)%' &
        note like '%(200%)%' &
-       country != '[us]' & 
+       country != '[us]' &
        type = 'production companies'
     ).name
 )
