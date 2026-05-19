@@ -1,0 +1,302 @@
+#LyX 2.5 created this file. For more info see https://www.lyx.org/
+\lyxformat 643
+\begin_document
+\begin_header
+\save_transient_properties true
+\origin unavailable
+\textclass acmart
+\begin_preamble
+% For algorithm2e
+\renewcommand{\algorithmcfname}{ALGORITHM}
+\SetAlFnt{\small}
+\SetAlCapFnt{\small}
+\SetAlCapNameFnt{\small}
+\SetAlCapHSkip{0pt}
+\IncMargin{-\parindent}
+\end_preamble
+\options format=acmsmall, review=false, screen=true
+\use_default_options true
+\begin_modules
+InStar
+algorithm2e
+\end_modules
+\maintain_unincluded_children no
+\begin_local_layout
+Format 60
+PackageOptions algorithm2e ruled
+\end_local_layout
+\language english
+\language_package auto
+\inputencoding auto-legacy
+\fontencoding auto
+\font_roman "default" "default"
+\font_sans "default" "default"
+\font_typewriter "default" "default"
+\font_math "auto" "auto"
+\font_default_family default
+\use_non_tex_fonts false
+\font_sc false
+\font_roman_osf false
+\font_sans_osf false
+\font_typewriter_osf false
+\font_sf_scale 100 100
+\font_tt_scale 100 100
+\use_microtype false
+\use_dash_ligatures true
+\graphics default
+\default_output_format default
+\output_sync 0
+\bibtex_command default
+\index_command default
+\paperfontsize default
+\spacing single
+\use_hyperref false
+\papersize default
+\use_geometry true
+\use_package amsmath 1
+\use_package amssymb 1
+\use_package cancel 0
+\use_package esint 0
+\use_package mathdots 0
+\use_package mathtools 0
+\use_package mhchem 0
+\use_package stackrel 0
+\use_package stmaryrd 0
+\use_package undertilde 0
+\cite_engine natbib
+\cite_engine_type numerical
+\biblio_style plainnat
+\use_bibtopic false
+\use_indices false
+\paperorientation portrait
+\suppress_date false
+\justification default
+\crossref_package refstyle
+\use_formatted_ref 0
+\use_minted 0
+\use_lineno 0
+\backgroundcolor none
+\fontcolor none
+\notefontcolor lightgray
+\boxbgcolor red
+\table_border_color default
+\table_odd_row_color default
+\table_even_row_color default
+\table_alt_row_colors_start 1
+\index Index
+\shortcut idx
+\color #008000
+\end_index
+\secnumdepth 2
+\tocdepth 2
+\paragraph_separation indent
+\paragraph_indentation default
+\is_math_indent 0
+\math_numbering_side default
+\quotes_style english
+\dynamic_quotes 0
+\papercolumns 1
+\papersides 1
+\paperpagestyle default
+\tablestyle default
+\tracking_changes false
+\output_changes false
+\change_bars false
+\postpone_fragile_content false
+\html_math_output 0
+\html_css_as_file 0
+\html_be_strict false
+\docbook_table_output 0
+\docbook_mathml_prefix 1
+\docbook_mathml_version 0
+\end_header
+
+\begin_body
+
+\begin_layout Title
+Prela:
+ A Purely Algebraic Relational Query Language
+\end_layout
+
+\begin_layout Standard
+Codd's Relational Algebra is the theoretical foundation underlying all modern relational databases.
+ Yet,
+ this formalism is not an algebra in the mathematical sense:
+ operators must be annotated with context-dependent parameters like join predicates,
+ projection columns,
+ and group-by attributes to fully specify semantics.
+ These annotations lead to verbose queries,
+ and complicate system implementation.
+ For example,
+ query 29a from the Join Order Benchmark spans over a hundred lines when expressed in the Pandas dataframe library,
+ as shown in Figure TODO in the appendix.
+ The original SQL query takes up 66 lines,
+ and one would need some scratch paper to figure out how the 17 input tables join with each other.
+ On the other hand,
+ the query engine must carefully track such annoations throughout the entire query lifecycle including parsing,
+ optimization,
+ compilation and execution,
+ resulting in complex system design and can lead to subtle bugs TODO CITE.
+ 
+\end_layout
+
+\begin_layout Standard
+In this paper,
+ we introduce Prela,
+ a new query language based on Tarski's Relational Algebra CITE – a purely algebraic formalism for relations predating Codd's by three decades.
+ By insisting on purity,
+ Prela leads to delightfully concise yet readable queries.
+ Figure TODO shows the complete Prela query for JOB 29a whose intent is clear at a glance:
+ we're looking for movies satisfying the conditions in lines TODO,
+ then returning its title (which must be 
+\begin_inset Quotes eld
+\end_inset
+
+Shrek 2
+\begin_inset Quotes erd
+\end_inset
+
+) as well as cast members satisfying further conditions.
+ For system builders,
+ the purely algebraic nature of Prela admits 
+\emph on
+direct embedding
+\emph default
+ in a host programming language.
+ This means Prela can be implemented as a 
+\emph on
+library
+\emph default
+ with regular functions and types instead of a 
+\emph on
+domain-specific language
+\emph default
+ requiring bespoke infrastructure like parsers,
+ type checkers,
+ and runtimes.
+ Direct embedding leads to simple implementation,
+ and allows Prela to inherit powerful language infrastructure developed for the host language.
+ Indeed,
+ the query in Figure TODO is executable Julia code,
+ where variables like 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+production_year
+\end_layout
+
+\end_inset
+
+,
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+info
+\end_layout
+
+\end_inset
+
+ are regular Julia variables of type 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Relation
+\end_layout
+
+\end_inset
+
+,
+ and constructs like 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+&
+\end_layout
+
+\end_inset
+
+,
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+,
+\end_layout
+
+\end_inset
+
+ are implemented as regular functions.
+ While our Julia implementation relies on powerful language features including multiple dispatch and operator overloading,
+ Prela can also be instantiated in other host languages without such features,
+ at the cost of moderately more verbose queries.
+ Figure TODO in the appendix shows our example query in a Rust implementation of Prela.
+ Yet another benefit of the algebraic approach is that Prela gives the programmer fine-grained control over query execution,
+ in contrast to the declarative nature of SQL.
+ In principle,
+ declarative language design is motivated by the focus on expressing high-level intent as opposed to low-level mechanics.
+ However,
+ the decoupling of the query and its execution poses an obstacle when the programmer needs to finetune query performance,
+ as they must resort to awkward query plan hints or special operators like 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+CROSS JOIN
+\end_layout
+
+\end_inset
+
+.
+ In contrast,
+ a Prela query 
+\emph on
+is
+\emph default
+ a query plan,
+ as it is built up with relations and relational operators.
+ The programmer can finetune all (logical) aspects of query planning including join ordering,
+ materialization,
+ and operator pushdown/pullup by directly rewriting the query.
+ In our experiments,
+ an AI agent is able to optimize all 113 JOB queries in Prela to perform competitively with DuckDB.
+ 
+\end_layout
+
+\end_body
+\end_document
