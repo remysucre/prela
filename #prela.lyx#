@@ -295,6 +295,366 @@ is
  and operator pushdown/pullup by directly rewriting the query.
  In our experiments,
  an AI agent is able to optimize all 113 JOB queries in Prela to perform competitively with DuckDB.
+ On the other hand,
+ the programmer may also choose to write the query in the most natural way,
+ and pass it to a query optimizer that applies simple algebraic rewritings to improve performance.
+ 
+\end_layout
+
+\begin_layout Standard
+In the rest of this paper,
+ TODO summarize.
+ 
+\end_layout
+
+\begin_layout Section
+Data Model and Related Work
+\end_layout
+
+\begin_layout Standard
+The design of a query language is closely guided by its choice of data model.
+ While we defer a formal treatment of Prela's data model to Section TODO,
+ this Section provides a high-level discussion in the context of several related design points.
+ 
+\end_layout
+
+\begin_layout Standard
+As Prela is built upon the formal foundation of Tarski's Relational Algebra where the fundamental data type is the 
+\emph on
+binary
+\emph default
+ relation,
+ our data model can be understood as an instantiation of the Entity/Relational model.
+ Consider again the query 29a,
+ which can be understood as operating over 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie
+\end_layout
+
+\end_inset
+
+ entities (of entity 
+\lang english
+type 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Movie
+\end_layout
+
+\end_inset
+
+),
+ while we use the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.
+\end_layout
+
+\end_inset
+
+ syntax to access various attributes of the entity.
+ In our experience this is a helpful mental model when programming in Prela.
+ This syntax also connects Prela to object-oriented and document data,
+ for which SQL infamously struggles to model due to impedance mismatch.
+ Users of document/nested query languages like XPath or the more recent jq may find Prela's syntax familiar.
+ This is not a coincidence,
+ as Tarski's Relational Algebra has also been used to analyze nested data models.
+ Unlike these langauges,
+ Prela is not constrained to a single nested data schema or to the nested data model.
+ In our example query,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+cast
+\end_layout
+
+\end_inset
+
+ appears to be a nested attribute under 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie
+\end_layout
+
+\end_inset
+
+,
+ but the programmer is free to define a 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+stars_in
+\end_layout
+
+\end_inset
+
+ relation over 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Cast
+\end_layout
+
+\end_inset
+
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Movie
+\end_layout
+
+\end_inset
+
+ then query 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+cast.stars_in
+\end_layout
+
+\end_inset
+
+.
+ This is because 
+\end_layout
+
+\begin_layout Standard
+Nevertheless,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.
+\end_layout
+
+\end_inset
+
+ is in fact the 
+\emph on
+relational composition operator
+\emph default
+ (defined in TODO) under the hood,
+ and requires no syntactic extension to the host language to implement.
+ Tarski's Relational Algebra has also been applied to formalize various graph query languages TODO CITE,
+ where binary relation naturally model edge sets.
+ While graph query languages aim to support a wide range of multi-hop,
+ recursive queries over large networks,
+ the current focus of Prela is non-recursive queries over tabular data.
+ 
+\end_layout
+
+\begin_layout Standard
+The original motivation of Prela was to address issues in practical instantiations of Codd's relational model.
+ At SQL's 50th anniversary,
+ the language co-creator Don Chamerlin questioned two design decisions:
+ the need for nulls to represent missing data,
+ and the allowance of duplicated data (
+\emph on
+a la
+\emph default
+ bag semantics).
+ In the programming languages community,
+ nulls were considered a 
+\begin_inset Quotes eld
+\end_inset
+
+billion-dollar mistake
+\begin_inset Quotes erd
+\end_inset
+
+ by its creator Tony Hoare,
+ and many modern languages have adopted features like option types to rid of nulls.
+ Yet,
+ nulls prevail in every SQL database today.
+ Similarly,
+ bag semantics was offered as a convinience for database users and system builders,
+ yet continues to frustrate both groups.
+ To remove the reliance on nulls and bag semantics,
+ Prela follows the approach of the Rel programming language and operate over fully normalized data:
+ a wide relation over many columns is 
+\begin_inset Quotes eld
+\end_inset
+
+shredded
+\begin_inset Quotes erd
+\end_inset
+
+ into multiple 
+\begin_inset Quotes eld
+\end_inset
+
+skinny
+\begin_inset Quotes erd
+\end_inset
+
+ relations,
+ each over two columns,
+ a primary key column (think 
+\begin_inset Quotes eld
+\end_inset
+
+row number
+\begin_inset Quotes erd
+\end_inset
+
+ of the original table) and data column.
+ For example,
+ the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie
+\end_layout
+
+\end_inset
+
+ table (originally named 
+\begin_inset Quotes eld
+\end_inset
+
+title
+\begin_inset Quotes erd
+\end_inset
+
+) from JOB over attributes 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+id
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+title
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+production_year
+\end_layout
+
+\end_inset
+
+,
+ ...
+ ,
+ is represented with a 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+title
+\end_layout
+
+\end_inset
+
+ table mapping each 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+id
+\end_layout
+
+\end_inset
+
+ to the title text,
+ a 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+production_year
+\end_layout
+
+\end_inset
+
+ table mapping each 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+id
+\end_layout
+
+\end_inset
+
+ to the production year,
+ etc.,
+ one per non-primary key attribute of the original table.
+ In each shredded relation,
+ the primary key constraint on the first column rules out the possibility of duplicates,
+ and a missing value is naturally represented by the absence of an entry in the corresponding 
+\begin_inset Quotes eld
+\end_inset
+
+shred
+\begin_inset Quotes erd
+\end_inset
+
+.
+ There is theoretical evidence that giving up nulls does not compromise expressiveness,
+ and the normalization approach has proven to be practical by large scale deployments of Rel.
+ The key distinction between Prela and Rel goes back to the algebraic foundation of Prela – while Rel is a declarative language based on Datalog,
+ Prela is imperative and therefore 
+\begin_inset Quotes eld
+\end_inset
+
+closer to the metal
+\begin_inset Quotes erd
+\end_inset
+
+,
+ while remaining readable as demonstrated by the examples.
  
 \end_layout
 
