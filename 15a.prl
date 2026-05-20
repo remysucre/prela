@@ -1,0 +1,8 @@
+movie.(
+    production_year > 2000
+  & company.(country = '[us]' & note like '%(200%)%' & note like '%(worldwide)%')
+  & keyword
+  & aka
+  : info.(type = 'release dates' & info like 'USA:% 200%' & note like '%internet%')
+  , title
+)

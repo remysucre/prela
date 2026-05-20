@@ -15,7 +15,8 @@ Movie : {
   company         : Company,
   cast            : Cast,           // used by 29a
   complete_cast   : CompleteCast,   // used by 29a
-  link            : MovieLink       // used by 11a
+  link            : MovieLink,      // used by 11a
+  aka             : AkaTitle        // used by 15a
 }
 
 // Shared by movie_info (Movie.info) and person_info (Person.info) — same shape.
@@ -84,10 +85,18 @@ CompCastType : { kind : String }
 
 // --- used by 11a ---
 
-// movie_link row: a typed link from this movie to another. `linked_movie_id` is
-// not used by 11a so omitted; declare when a future query needs the other end.
+// movie_link row: a typed link from this movie to another.
+//   type   : the kind of link (link_type)
+//   linked : the other movie at the far end (movie_link.linked_movie_id)
 MovieLink : {
-  type : LinkType
+  type   : LinkType,
+  linked : Movie
 }
 
 LinkType : { link : String }       // link_type.link
+
+// --- used by 15a ---
+
+// aka_title row: an alternate title for this movie. 15a only checks existence
+// (no predicate, no output), but `title` is declared as the natural primary.
+AkaTitle : { title : String }
