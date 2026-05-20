@@ -1,0 +1,7 @@
+movie.(
+    keyword = 'character-name-in-title'
+  & company.country = '[us]'
+  & episode_nr < 100
+  : cast.person.aka
+  , title
+)

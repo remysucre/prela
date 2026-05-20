@@ -1,0 +1,10 @@
+movie.(
+    data.type = 'bottom 10 rank'
+  & production_year >= 2005 & production_year <= 2010
+  : company.(
+        type = 'production companies'
+      & note not like '%(as Metro-Goldwyn-Mayer Pictures)%'
+    ).note
+  , title
+  , production_year
+)

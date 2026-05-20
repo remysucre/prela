@@ -1,0 +1,16 @@
+movie.(
+    company.(
+        country = '[jp]'
+      & note like '%(Japan)%'
+      & note not like '%(USA)%'
+      & (note like '%(2006)%' | note like '%(2007)%')
+    )
+  & production_year >= 2006 & production_year <= 2007
+  & (title like 'One Piece%' | title like 'Dragon Ball Z%')
+  : cast.(
+        note = '(voice: English version)'
+      & role = 'actress'
+      & person.(name like '%Yo%' & name not like '%Yu%')
+    ).person.aka
+  , title
+)

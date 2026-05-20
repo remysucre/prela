@@ -1,0 +1,10 @@
+movie.(
+    keyword in ('murder', 'blood', 'gore', 'death', 'female-nudity')
+  : info.(type = 'genres' & info = 'Horror')
+  , data.(type = 'votes')
+  , cast.(
+        note in ('(writer)', '(head writer)', '(written by)', '(story)', '(story editor)')
+      & person.gender = 'm'
+    ).person
+  , title
+)

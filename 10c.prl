@@ -1,0 +1,6 @@
+movie.(
+    company.country = '[us]'
+  & production_year > 1990
+  : cast.(note like '%(producer)%').character
+  , title
+)

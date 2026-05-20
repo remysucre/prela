@@ -1,0 +1,13 @@
+movie.(
+    keyword = 'sequel'
+  & production_year >= 2000 & production_year <= 2010
+  & info.info in ('Germany', 'German')
+  : company.(
+        country != '[pl]'
+      & (name like '%Film%' | name like '%Warner%')
+      & type = 'production companies'
+      \ note
+    )
+  , link.(type like '%follow%').type
+  , title
+)

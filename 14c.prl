@@ -1,0 +1,8 @@
+movie.(
+    keyword in ('murder', 'murder-in-title', 'blood', 'violence')
+  & kind in ('movie', 'episode')
+  & info.(type = 'countries' & info in ('Sweden', 'Norway', 'Germany', 'Denmark', 'Swedish', 'Danish', 'Norwegian', 'German', 'USA', 'American'))
+  & production_year > 2005
+  : data.(type = 'rating' & data < '8.5')
+  , title
+)

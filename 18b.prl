@@ -1,0 +1,10 @@
+movie.(
+    cast.(
+        note in ('(writer)', '(head writer)', '(written by)', '(story)', '(story editor)')
+      & person.gender = 'f'
+    )
+  & production_year >= 2008 & production_year <= 2014
+  : info.(type = 'genres' & info in ('Horror', 'Thriller') \ note)
+  , data.(type = 'rating' & data > '8.0')
+  , title
+)

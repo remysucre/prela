@@ -1,0 +1,14 @@
+movie.(
+    company.(country = '[us]' & name = 'DreamWorks Animation')
+  & info.(type = 'release dates' & (info like 'Japan:%201%' | info like 'USA:%201%'))
+  & keyword in ('hero', 'martial-arts', 'hand-to-hand-combat', 'computer-animated-movie')
+  & production_year > 2010
+  & title like 'Kung Fu Panda%'
+  : cast.(
+        note in ('(voice)', '(voice: Japanese version)', '(voice) (uncredited)', '(voice: English version)')
+      & role = 'actress'
+      & person.(gender = 'f' & name like '%An%' & aka)
+      : character, person
+    )
+  , title
+)

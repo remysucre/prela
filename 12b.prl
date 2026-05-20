@@ -1,0 +1,8 @@
+movie.(
+    company.(country = '[us]' & type in ('production companies', 'distributors'))
+  & data.type = 'bottom 10 rank'
+  & production_year > 2000
+  & (title like 'Birdemic%' | title like '%Movie%')
+  : info.(type = 'budget')
+  , title
+)

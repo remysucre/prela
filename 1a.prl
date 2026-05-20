@@ -1,0 +1,10 @@
+movie.(
+    data.type = 'top 250 rank'
+  : company.(
+        type = 'production companies'
+      & note not like '%(as Metro-Goldwyn-Mayer Pictures)%'
+      & (note like '%(co-production)%' | note like '%(presents)%')
+    ).note
+  , title
+  , production_year
+)

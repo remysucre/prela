@@ -8,6 +8,7 @@ movie: Movie
 Movie : {
   title           : String,
   production_year : Int,
+  episode_nr      : Int,            // used by 16a, 16c, 16d
   kind            : Kind,
   info            : Info,
   keyword         : Keyword,
@@ -15,7 +16,8 @@ Movie : {
   company         : Company,
   cast            : Cast,           // used by 29a
   complete_cast   : CompleteCast,   // used by 29a
-  link            : MovieLink,      // used by 11a
+  link            : MovieLink,      // used by 11a, 32a (outgoing: this is source)
+  linked_by       : MovieLink,      // used by 7a-c (incoming: this is target)
   aka             : AkaTitle        // used by 15a
 }
 
@@ -65,10 +67,11 @@ Character : { name : String }    // char_name
 Role      : { role : String }    // role_type
 
 Person : {
-  name   : String,
-  gender : String,
-  info   : Info,                  // person_info
-  aka    : AkaName
+  name           : String,
+  gender         : String,
+  name_pcode_cf  : String,        // used by 7a-c
+  info           : Info,          // person_info
+  aka            : AkaName
 }
 
 AkaName : { name : String }      // aka_name
@@ -85,12 +88,14 @@ CompCastType : { kind : String }
 
 // --- used by 11a ---
 
-// movie_link row: a typed link from this movie to another.
+// movie_link row: a typed link from one movie (the source) to another (the target).
+// Accessed from both ends via Movie.link (this movie is the source) and Movie.linked_by
+// (this movie is the target).
 //   type   : the kind of link (link_type)
-//   linked : the other movie at the far end (movie_link.linked_movie_id)
+//   target : the other movie at the far end (movie_link.linked_movie_id)
 MovieLink : {
   type   : LinkType,
-  linked : Movie
+  target : Movie
 }
 
 LinkType : { link : String }       // link_type.link

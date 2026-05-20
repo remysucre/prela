@@ -1,0 +1,11 @@
+movie.(
+    company.(country = '[us]' & note like '%(200%)%' & (note like '%(USA)%' | note like '%(worldwide)%'))
+  & production_year >= 2007 & production_year <= 2010
+  : cast.(
+        note = '(voice)'
+      & role = 'actress'
+      & person.(gender = 'f' & name like '%Angel%')
+      : person.aka, character, person
+    )
+  , title
+)

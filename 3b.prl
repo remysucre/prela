@@ -1,0 +1,6 @@
+movie.(
+    keyword like '%sequel%'
+  & info.info = 'Bulgaria'
+  & production_year > 2010
+  : title
+)

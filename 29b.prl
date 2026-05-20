@@ -1,0 +1,15 @@
+movie.(
+    info.(type = 'release dates' & info like 'USA:%200%')
+  & keyword = 'computer-animation'
+  & company.country = '[us]'
+  & complete_cast.(subject = 'cast' & status = 'complete+verified')
+  & production_year >= 2000 & production_year <= 2005
+  : cast.(
+        note in ('(voice)', '(voice) (uncredited)', '(voice: English version)')
+      & character = 'Queen'
+      & role = 'actress'
+      & person.(gender = 'f' & name like '%An%' & info.type = 'height' & aka)
+      : character, person
+    )
+  , title = 'Shrek 2'
+)

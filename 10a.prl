@@ -1,0 +1,10 @@
+movie.(
+    company.country = '[ru]'
+  & production_year > 2005
+  : cast.(
+        note like '%(voice)%'
+      & note like '%(uncredited)%'
+      & role = 'actor'
+    ).character
+  , title
+)

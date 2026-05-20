@@ -1,0 +1,12 @@
+movie.(
+    company.country = '[us]'
+  & info.type = 'release dates'
+  & production_year > 2000
+  : cast.(
+        note in ('(voice)', '(voice: Japanese version)', '(voice) (uncredited)', '(voice: English version)')
+      & role = 'actress'
+      & character
+      & person.(gender = 'f' & aka)
+    ).person
+  , title
+)

@@ -1,0 +1,13 @@
+movie.(
+    company.(country = '[us]' & note like '%(200%)%' & (note like '%(USA)%' | note like '%(worldwide)%'))
+  & info.(type = 'release dates' & (info like 'Japan:%2007%' | info like 'USA:%2008%'))
+  & production_year >= 2007 & production_year <= 2008
+  & title like '%Kung%Fu%Panda%'
+  : cast.(
+        note = '(voice)'
+      & role = 'actress'
+      & character
+      & person.(gender = 'f' & name like '%Angel%' & aka)
+    ).person
+  , title
+)

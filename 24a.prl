@@ -1,0 +1,13 @@
+movie.(
+    company.country = '[us]'
+  & info.(type = 'release dates' & (info like 'Japan:%201%' | info like 'USA:%201%'))
+  & keyword in ('hero', 'martial-arts', 'hand-to-hand-combat')
+  & production_year > 2010
+  : cast.(
+        note in ('(voice)', '(voice: Japanese version)', '(voice) (uncredited)', '(voice: English version)')
+      & role = 'actress'
+      & person.(gender = 'f' & name like '%An%' & aka)
+      : character, person
+    )
+  , title
+)

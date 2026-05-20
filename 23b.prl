@@ -1,0 +1,10 @@
+movie.(
+    complete_cast.status = 'complete+verified'
+  & company.country = '[us]'
+  & kind = 'movie'
+  & info.(type = 'release dates' & note like '%internet%' & info like 'USA:% 200%')
+  & production_year > 2000
+  & keyword in ('nerd', 'loner', 'alienation', 'dignity')
+  : kind
+  , title
+)

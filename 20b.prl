@@ -1,0 +1,11 @@
+movie.(
+    complete_cast.(subject = 'cast' & status like '%complete%')
+  & kind = 'movie'
+  & keyword in ('superhero', 'sequel', 'second-part', 'marvel-comics', 'based-on-comic', 'tv-special', 'fight', 'violence')
+  & production_year > 2000
+  & cast.(
+        character.(name not like '%Sherlock%' & (name like '%Tony%Stark%' | name like '%Iron%Man%'))
+      & person.name like '%Downey%Robert%'
+    )
+  : title
+)

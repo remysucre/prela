@@ -1,0 +1,10 @@
+movie.(
+    company.(
+        type = 'production companies'
+      & note like '%(theatrical)%'
+      & note like '%(France)%'
+    )
+  & info.info in ('Sweden', 'Norway', 'Germany', 'Denmark', 'Swedish', 'Denish', 'Norwegian', 'German')
+  & production_year > 2005
+  : title
+)

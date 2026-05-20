@@ -1,0 +1,14 @@
+movie.(
+    info.(type = 'countries' & info in ('Sweden', 'Germany', 'Swedish', 'German'))
+  & keyword in ('murder', 'murder-in-title', 'blood', 'violence')
+  & kind in ('movie', 'episode')
+  & complete_cast.(subject = 'crew' & status != 'complete+verified')
+  & production_year > 2005
+  : company.(
+        country != '[us]'
+      & note not like '%(USA)%'
+      & note like '%(200%)%'
+    )
+  , data.(type = 'rating' & data > '6.5')
+  , title
+)

@@ -1,0 +1,8 @@
+movie.(
+    company.(country = '[us]' & name = 'YouTube' & note like '%(200%)%' & note like '%(worldwide)%')
+  & keyword
+  & aka
+  & production_year >= 2005 & production_year <= 2010
+  : info.(type = 'release dates' & info like 'USA:% 200%' & note like '%internet%')
+  , title
+)

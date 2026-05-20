@@ -1,0 +1,6 @@
+movie.(
+    keyword like '%sequel%'
+  & info.info in ('Sweden', 'Norway', 'Germany', 'Denmark', 'Swedish', 'Denish', 'Norwegian', 'German', 'USA', 'American')
+  & production_year > 1990
+  : title
+)

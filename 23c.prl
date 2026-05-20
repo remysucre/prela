@@ -1,0 +1,10 @@
+movie.(
+    complete_cast.status = 'complete+verified'
+  & company.country = '[us]'
+  & kind in ('movie', 'tv movie', 'video movie', 'video game')
+  & info.(type = 'release dates' & note like '%internet%' & (info like 'USA:% 199%' | info like 'USA:% 200%'))
+  & production_year > 1990
+  & keyword
+  : kind
+  , title
+)

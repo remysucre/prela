@@ -1,0 +1,5 @@
+movie.(
+    keyword = 'character-name-in-title'
+  & company.country = '[us]'
+  : cast.person
+)

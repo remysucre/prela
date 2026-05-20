@@ -1,0 +1,14 @@
+movie.(
+    keyword = 'sequel'
+  & production_year >= 1950 & production_year <= 2010
+  & info.info in ('Sweden', 'Norway', 'Germany', 'Denmark', 'Swedish', 'Denish', 'Norwegian', 'German', 'English')
+  & complete_cast.(subject = 'cast' & status like 'complete%')
+  : company.(
+        country != '[pl]'
+      & (name like '%Film%' | name like '%Warner%')
+      & type = 'production companies'
+      \ note
+    )
+  , link.(type like '%follow%').type
+  , title
+)
