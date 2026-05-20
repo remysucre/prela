@@ -1,13 +1,13 @@
 movie.(
-    kind = 'tv series'
-  : company.(country = '[nl]')
-  , data.(type = 'rating')
+    kind == "tv series"
+  : company.(country == "[nl]")
+  , data.(type == "rating")
   , title
   , link.(
-        type like '%follow%'
-      & target.(kind = 'tv series' & production_year = 2007)
+        type ~ r"follow"
+      & target.(kind == "tv series" & production_year == 2007)
       : target.company
-      , target.data.(type = 'rating' & data < '3.0')
+      , target.data.(type == "rating" & data < "3.0")
       , target.title
     )
 )

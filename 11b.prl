@@ -1,13 +1,13 @@
 movie.(
-    keyword = 'sequel'
-  & production_year = 1998
-  & title like '%Money%'
+    keyword == "sequel"
+  & production_year == 1998
+  & title ~ r"Money"
   : company.(
-        country != '[pl]'
-      & (name like '%Film%' | name like '%Warner%')
-      & type = 'production companies'
-      \ note
+        country != "[pl]"
+      & (name ~ r"Film" | name ~ r"Warner")
+      & type == "production companies"
+      - note
     )
-  , link.(type like '%follows%').type
+  , link.(type ~ r"follows").type
   , title
 )

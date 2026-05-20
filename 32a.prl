@@ -1,5 +1,5 @@
 movie.(
-    keyword = '10,000-mile-club'
+    keyword == "10,000-mile-club"
   : link.(type, target.title)
   , title
 )

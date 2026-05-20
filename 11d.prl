@@ -1,10 +1,10 @@
 movie.(
-    keyword in ('sequel', 'revenge', 'based-on-novel')
+    keyword in ("sequel", "revenge", "based-on-novel")
   & production_year > 1950
   & link
   : company.(
-        country != '[pl]'
-      & type != 'production companies'
+        country != "[pl]"
+      & type != "production companies"
       & note
       : name, note
     )

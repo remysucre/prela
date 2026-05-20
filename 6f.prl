@@ -1,6 +1,6 @@
 movie.(
     production_year > 2000
-  : keyword in ('superhero', 'sequel', 'second-part', 'marvel-comics', 'based-on-comic', 'tv-special', 'fight', 'violence')
+  : keyword in ("superhero", "sequel", "second-part", "marvel-comics", "based-on-comic", "tv-special", "fight", "violence")
   , cast.person
   , title
 )

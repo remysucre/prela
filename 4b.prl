@@ -1,6 +1,6 @@
 movie.(
-    keyword like '%sequel%'
+    keyword ~ r"sequel"
   & production_year > 2010
-  : data.(type = 'rating' & data > '9.0')
+  : data.(type == "rating" & data > "9.0")
   , title
 )

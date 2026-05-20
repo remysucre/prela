@@ -77,8 +77,8 @@ Person : {
 AkaName : { name : String }      // aka_name
 
 // complete_cast row: per-movie record of cast/crew completion status.
-// subject is the kind being graded ('cast' or 'crew'); status is the grade
-// ('complete', 'complete+verified', etc). Both FKs land on comp_cast_type.
+// subject is the kind being graded ("cast" or "crew"); status is the grade
+// ("complete", "complete+verified", etc). Both FKs land on comp_cast_type.
 CompleteCast : {
   subject : CompCastType,
   status  : CompCastType

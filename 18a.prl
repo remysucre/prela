@@ -1,9 +1,9 @@
 movie.(
     cast.(
-        note in ('(producer)', '(executive producer)')
-      & person.(gender = 'm' & name like '%Tim%')
+        note in ("(producer)", "(executive producer)")
+      & person.(gender == "m" & name ~ r"Tim")
     )
-  : info.(type = 'budget')
-  , data.(type = 'votes')
+  : info.(type == "budget")
+  , data.(type == "votes")
   , title
 )

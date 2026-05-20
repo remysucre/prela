@@ -1,14 +1,14 @@
 movie.(
-    keyword = 'sequel'
+    keyword == "sequel"
   & production_year >= 1950 & production_year <= 2000
-  & info.(info in ('Sweden', 'Germany', 'Swedish', 'German'))
-  & complete_cast.(subject in ('cast', 'crew') & status = 'complete')
+  & info.(info in ("Sweden", "Germany", "Swedish", "German"))
+  & complete_cast.(subject in ("cast", "crew") & status == "complete")
   : company.(
-        country != '[pl]'
-      & (name like '%Film%' | name like '%Warner%')
-      & type = 'production companies'
-      \ note
+        country != "[pl]"
+      & (name ~ r"Film" | name ~ r"Warner")
+      & type == "production companies"
+      - note
     )
-  , link.(type like '%follow%').type
+  , link.(type ~ r"follow").type
   , title
 )

@@ -1,11 +1,11 @@
 movie.(
-    company.name like 'Lionsgate%'
-  & keyword in ('murder', 'violence', 'blood', 'gore', 'death', 'female-nudity', 'hospital')
-  : info.(type = 'genres' & info in ('Horror', 'Thriller'))
-  , data.(type = 'votes')
+    company.name ~ r"^Lionsgate"
+  & keyword in ("murder", "violence", "blood", "gore", "death", "female-nudity", "hospital")
+  : info.(type == "genres" & info in ("Horror", "Thriller"))
+  , data.(type == "votes")
   , cast.(
-        note in ('(writer)', '(head writer)', '(written by)', '(story)', '(story editor)')
-      & person.gender = 'm'
+        note in ("(writer)", "(head writer)", "(written by)", "(story)", "(story editor)")
+      & person.gender == "m"
     ).person
   , title
 )

@@ -1,6 +1,6 @@
 movie.(
     production_year > 2014
-  : keyword in ('superhero', 'sequel', 'second-part', 'marvel-comics', 'based-on-comic', 'tv-special', 'fight', 'violence')
-  , cast.person.(name like '%Downey%Robert%')
+  : keyword in ("superhero", "sequel", "second-part", "marvel-comics", "based-on-comic", "tv-special", "fight", "violence")
+  , cast.person.(name ~ r"Downey.*Robert")
   , title
 )

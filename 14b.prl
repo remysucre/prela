@@ -1,9 +1,9 @@
 movie.(
-    keyword in ('murder', 'murder-in-title')
-  & kind = 'movie'
-  & info.(type = 'countries' & info in ('Sweden', 'Norway', 'Germany', 'Denmark', 'Swedish', 'Denish', 'Norwegian', 'German', 'USA', 'American'))
+    keyword in ("murder", "murder-in-title")
+  & kind == "movie"
+  & info.(type == "countries" & info in ("Sweden", "Norway", "Germany", "Denmark", "Swedish", "Denish", "Norwegian", "German", "USA", "American"))
   & production_year > 2010
-  & (title like '%murder%' | title like '%Murder%' | title like '%Mord%')
-  : data.(type = 'rating' & data > '6.0')
+  & (title ~ r"murder" | title ~ r"Murder" | title ~ r"Mord")
+  : data.(type == "rating" & data > "6.0")
   , title
 )

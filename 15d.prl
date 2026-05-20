@@ -1,7 +1,7 @@
 movie.(
-    company.country = '[us]'
+    company.country == "[us]"
   & keyword
-  & info.(type = 'release dates' & note like '%internet%')
+  & info.(type == "release dates" & note ~ r"internet")
   & production_year > 1990
   : aka
   , title

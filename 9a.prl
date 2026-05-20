@@ -1,10 +1,10 @@
 movie.(
-    company.(country = '[us]' & (note like '%(USA)%' | note like '%(worldwide)%'))
+    company.(country == "[us]" & (note ~ r"\(USA\)" | note ~ r"\(worldwide\)"))
   & production_year >= 2005 & production_year <= 2015
   : cast.(
-        note in ('(voice)', '(voice: Japanese version)', '(voice) (uncredited)', '(voice: English version)')
-      & role = 'actress'
-      & person.(gender = 'f' & name like '%Ang%')
+        note in ("(voice)", "(voice: Japanese version)", "(voice) (uncredited)", "(voice: English version)")
+      & role == "actress"
+      & person.(gender == "f" & name ~ r"Ang")
       : person.aka, character
     )
   , title

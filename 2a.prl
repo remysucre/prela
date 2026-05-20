@@ -1,5 +1,5 @@
 movie.(
-    keyword = 'character-name-in-title'
-  & company.country = '[de]'
+    keyword == "character-name-in-title"
+  & company.country == "[de]"
   : title
 )

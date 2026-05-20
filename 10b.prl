@@ -1,9 +1,9 @@
 movie.(
-    company.country = '[ru]'
+    company.country == "[ru]"
   & production_year > 2010
   : cast.(
-        note like '%(producer)%'
-      & role = 'actor'
+        note ~ r"\(producer\)"
+      & role == "actor"
     ).character
   , title
 )

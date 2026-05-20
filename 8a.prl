@@ -1,9 +1,9 @@
 movie.(
-    company.(country = '[jp]' & note like '%(Japan)%' & note not like '%(USA)%')
+    company.(country == "[jp]" & note ~ r"\(Japan\)" & note !~ r"\(USA\)")
   : cast.(
-        note = '(voice: English version)'
-      & role = 'actress'
-      & person.(name like '%Yo%' & name not like '%Yu%')
+        note == "(voice: English version)"
+      & role == "actress"
+      & person.(name ~ r"Yo" & name !~ r"Yu")
     ).person.aka
   , title
 )

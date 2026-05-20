@@ -1,5 +1,5 @@
 movie.(
-    keyword = 'character-name-in-title'
+    keyword == "character-name-in-title"
   & company
-  : cast.person.(name like '%B%')
+  : cast.person.(name ~ r"B")
 )

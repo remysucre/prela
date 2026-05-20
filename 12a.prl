@@ -1,7 +1,7 @@
 movie.(
-    info.(type = 'genres' & info in ('Drama', 'Horror'))
+    info.(type == "genres" & info in ("Drama", "Horror"))
   & production_year >= 2005 & production_year <= 2008
-  : company.(country = '[us]' & type = 'production companies')
-  , data.(type = 'rating' & data > '8.0')
+  : company.(country == "[us]" & type == "production companies")
+  , data.(type == "rating" & data > "8.0")
   , title
 )

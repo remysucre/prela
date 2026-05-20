@@ -1,5 +1,5 @@
 movie.(
-    company.country = '[us]'
-  : cast.(role = 'costume designer').person.aka
+    company.country == "[us]"
+  : cast.(role == "costume designer").person.aka
   , title
 )

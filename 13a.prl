@@ -1,7 +1,7 @@
 movie.(
-    company.(country = '[de]' & type = 'production companies')
-  & kind = 'movie'
-  : info.(type = 'release dates')
-  , data.(type = 'rating')
+    company.(country == "[de]" & type == "production companies")
+  & kind == "movie"
+  : info.(type == "release dates")
+  , data.(type == "rating")
   , title
 )

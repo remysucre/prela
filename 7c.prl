@@ -1,11 +1,11 @@
 movie.(
     production_year >= 1980 & production_year <= 2010
-  & linked_by.type in ('references', 'referenced in', 'features', 'featured in')
+  & linked_by.type in ("references", "referenced in", "features", "featured in")
   : cast.person.(
-        aka.(name like '%a%' | name like 'A%')
-      & name_pcode_cf >= 'A' & name_pcode_cf <= 'F'
-      & (gender = 'm' | (gender = 'f' & name like 'A%'))
-      & info.(type = 'mini biography' & note)
-      : name, info.(type = 'mini biography').info
+        aka.(name ~ r"a" | name ~ r"^A")
+      & name_pcode_cf >= "A" & name_pcode_cf <= "F"
+      & (gender == "m" | (gender == "f" & name ~ r"^A"))
+      & info.(type == "mini biography" & note)
+      : name, info.(type == "mini biography").info
     )
 )

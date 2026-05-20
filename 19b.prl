@@ -1,13 +1,13 @@
 movie.(
-    company.(country = '[us]' & note like '%(200%)%' & (note like '%(USA)%' | note like '%(worldwide)%'))
-  & info.(type = 'release dates' & (info like 'Japan:%2007%' | info like 'USA:%2008%'))
+    company.(country == "[us]" & note ~ r"\(200.*\)" & (note ~ r"\(USA\)" | note ~ r"\(worldwide\)"))
+  & info.(type == "release dates" & (info ~ r"^Japan:.*2007" | info ~ r"^USA:.*2008"))
   & production_year >= 2007 & production_year <= 2008
-  & title like '%Kung%Fu%Panda%'
+  & title ~ r"Kung.*Fu.*Panda"
   : cast.(
-        note = '(voice)'
-      & role = 'actress'
+        note == "(voice)"
+      & role == "actress"
       & character
-      & person.(gender = 'f' & name like '%Angel%' & aka)
+      & person.(gender == "f" & name ~ r"Angel" & aka)
     ).person
   , title
 )

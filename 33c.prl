@@ -1,13 +1,13 @@
 movie.(
-    kind in ('tv series', 'episode')
-  : company.(country != '[us]')
-  , data.(type = 'rating')
+    kind in ("tv series", "episode")
+  : company.(country != "[us]")
+  , data.(type == "rating")
   , title
   , link.(
-        type in ('sequel', 'follows', 'followed by')
-      & target.(kind in ('tv series', 'episode') & production_year >= 2000 & production_year <= 2010)
+        type in ("sequel", "follows", "followed by")
+      & target.(kind in ("tv series", "episode") & production_year >= 2000 & production_year <= 2010)
       : target.company
-      , target.data.(type = 'rating' & data < '3.5')
+      , target.data.(type == "rating" & data < "3.5")
       , target.title
     )
 )

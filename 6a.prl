@@ -1,6 +1,6 @@
 movie.(
     production_year > 2010
-  : keyword = 'marvel-cinematic-universe'
-  , cast.person.(name like '%Downey%Robert%')
+  : keyword == "marvel-cinematic-universe"
+  , cast.person.(name ~ r"Downey.*Robert")
   , title
 )

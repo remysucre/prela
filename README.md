@@ -47,16 +47,16 @@ If they are both unary, then same as intersection.
 
 Intersection `&`: `r: x -> y & s: x -> z` is the intersections of their keys, i.e. a set over `x`.
 
-Set difference `\`: `r \ s` is `r` with keys not in `s`'s domain. Same precedence as `&`,
+Set difference `-`: `r - s` is `r` with keys not in `s`'s domain. Same precedence as `&`,
  left-associative. Prela has no NULLs or 3VL — fully normalized binary relations mean a
- missing value is simply absent, so SQL's `IS NULL` is expressed as `\ r`. E.g. inside
- `company.(...)`, `& type = 'production companies' \ note` reads "matching companies that
+ missing value is simply absent, so SQL's `IS NULL` is expressed as `- r`. E.g. inside
+ `company.(...)`, `& type == "production companies" - note` reads "matching companies that
  have no note".
 
 Select `:`: same as sequential composition, but requiring lhs to be unary (domain reistriction).
 
 Disjunction `|`: `r | s` is the union of compatible relations. Used between
- predicates it reads as OR, e.g. `info like 'Japan:%200%' | info like 'USA:%200%'`.
+ predicates it reads as OR, e.g. `info ~ r"^Japan:.*200" | info ~ r"^USA:.*200"`.
 
 Predicates are applied to the range of each relation:
  `r < 3` with `r: x -> y` filters `r` by `y < 3`.
@@ -79,9 +79,9 @@ Primary field: each type has a designated primary field, defaulting to the first
  (`Movie.title`).
 
 Predicate elision: when a predicate compares an entity-typed expression to a scalar
- literal (e.g. `keyword = 'sequel'` where `keyword: Movie -> Keyword`), Prela auto-
- traverses to the entity's primary field. So `keyword = 'sequel'` is sugar for
- `keyword.keyword = 'sequel'`.
+ literal (e.g. `keyword == "sequel"` where `keyword: Movie -> Keyword`), Prela auto-
+ traverses to the entity's primary field. So `keyword == "sequel"` is sugar for
+ `keyword.keyword == "sequel"`.
 
 Returning entities: there is no explicit unwrap operator. To return a scalar, compose
  to the relevant scalar relation. To return an entity, just include it in a `,` or `:`;
@@ -93,17 +93,17 @@ Here's JOB q22a:
 
 ```
 movie.(
-    info.(type = 'countries' & info in ('Germany', 'German', 'USA', 'American'))
-  & keyword in ('murder', 'murder-in-title', 'blood', 'violence')
+    info.(type == "countries" & info in ("Germany", "German", "USA", "American"))
+  & keyword in ("murder", "murder-in-title", "blood", "violence")
   & production_year > 2008
-  & kind in ('movie', 'episode')
+  & kind in ("movie", "episode")
   : title
-  , data.(data < '7.0' & type = 'rating')
+  , data.(data < "7.0" & type == "rating")
   , company.(
-       note not like '%(USA)%' &
-       note like '%(200%)%' &
-       country != '[us]' &
-       type = 'production companies'
+       note !~ r"\(USA\)" &
+       note ~ r"\(200.*\)" &
+       country != "[us]" &
+       type == "production companies"
     )
 )
 ```

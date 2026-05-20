@@ -1,8 +1,8 @@
 movie.(
-    complete_cast.status = 'complete+verified'
-  & company.country = '[us]'
-  & kind = 'movie'
-  & info.(type = 'release dates' & note like '%internet%' & (info like 'USA:% 199%' | info like 'USA:% 200%'))
+    complete_cast.status == "complete+verified"
+  & company.country == "[us]"
+  & kind == "movie"
+  & info.(type == "release dates" & note ~ r"internet" & (info ~ r"^USA:.* 199" | info ~ r"^USA:.* 200"))
   & production_year > 2000
   & keyword
   : kind
