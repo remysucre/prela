@@ -24,7 +24,7 @@ module Prela
 
 import Base.Broadcast: BroadcastStyle, broadcasted, materialize
 
-export Rel, Unary, Entity, ID, primary, lookup_field, dom
+export Rel, Unary, Entity, ID, primary, lookup_field
 
 abstract type Entity end
 
@@ -63,13 +63,6 @@ struct Rel{D, R}
     pairs::Vector{Pair{D, R}}
 end
 Rel(ps::Vector{Pair{D, R}}) where {D, R} = Rel{D, R}(ps)
-
-# Project the key set of a Rel as a Unary. Useful when a single predicate
-# result `Info.type == "release dates"` (a Rel{ID{Info}, String}) needs to be
-# used as a filter while preserving the Info entity in the composed result —
-# `info ∘ dom(filter)` returns Rel{Movie, ID{Info}} rather than Rel{Movie, String}.
-dom(r::Rel{X, Y}) where {X, Y} = Unary{X}(unique(p.first for p in r.pairs))
-dom(u::Unary{X}) where X = u
 
 # ===== composition =====
 

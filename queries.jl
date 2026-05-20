@@ -97,8 +97,8 @@ let t = time()
     q = movie.(
             ((company ∘ ((Company.country == "[de]") & (Company.type == "production companies")))
            & (kind == "movie"))
-          : (info ∘ dom(Info.type == "release dates")).info
-          , (data ∘ dom(Data.type == "rating")).data
+          : info ∘ ((Info.type == "release dates") : Info.info)
+          , data ∘ ((Data.type == "rating") : Data.data)
           , title)
     println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
     flush(stdout)
@@ -314,7 +314,7 @@ let t = time()
            & (title != "")
            & ((title ~ r"Champion") | (title ~ r"Loser")))
           : (company ∘ ((Company.country == "[us]") & (Company.type == "production companies"))).name
-          , (data ∘ dom(Data.type == "rating")).data
+          , data ∘ ((Data.type == "rating") : Data.data)
           , title)
     println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
     flush(stdout)
@@ -372,7 +372,7 @@ let t = time()
            & (data ∘ (Data.type == "bottom 10 rank"))
            & (production_year > 2000)
            & ((title ~ r"^Birdemic") | (title ~ r"Movie")))
-          : (info ∘ dom(Info.type == "budget")).info
+          : info ∘ ((Info.type == "budget") : Info.info)
           , title)
     println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
     flush(stdout)
@@ -402,7 +402,7 @@ let t = time()
            & (title != "")
            & ((title ~ r"^Champion") | (title ~ r"^Loser")))
           : (company ∘ ((Company.country == "[us]") & (Company.type == "production companies"))).name
-          , (data ∘ dom(Data.type == "rating")).data
+          , data ∘ ((Data.type == "rating") : Data.data)
           , title)
     println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
     flush(stdout)
