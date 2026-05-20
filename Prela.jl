@@ -42,6 +42,10 @@ Base.show(io::IO, a::ID{E}) where E = print(io, nameof(E), "(", a.id, ")")
 function primary end
 function lookup_field end
 
+# Macro-time registry of entity → field names. Populated by `@entity` (in its
+# emitted top-level block) and read by `@expose` at its macro-expansion time.
+const _ENTITY_FIELDS = Dict{Symbol, Vector{Symbol}}()
+
 struct Unary{R}
     values::Vector{R}
 end
@@ -276,6 +280,12 @@ macro entity(entity_sym, block)
             $primary_fn(::Type{$(esc(entity_sym))}) = $(esc(field_consts[1]))
         end)
 
+        # Register fields for @expose to read.
+        push!(out.args, :(
+            $(GlobalRef(@__MODULE__, :_ENTITY_FIELDS))[$(QuoteNode(entity_sym))] =
+                $(field_names)
+        ))
+
         # Per-entity Base.getproperty: name === :field && return _Entity_field;
         # falls through to default for non-matching (DataType internals).
         gp_body = Expr(:block)
@@ -292,5 +302,21 @@ macro entity(entity_sym, block)
 end
 
 export @entity
+
+# `@expose Movie` declares short-name `const`s for each of Movie's fields,
+# bound to the qualified internal storage (`_Movie_title`, etc.). Use it on
+# the "root" entity whose fields you want to use bare in queries.
+macro expose(entity_sym)
+    entity_sym isa Symbol || error("@expose expects a symbol entity name")
+    haskey(_ENTITY_FIELDS, entity_sym) ||
+        error("@expose: no @entity declaration found for `$entity_sym`")
+    out = Expr(:block)
+    for f in _ENTITY_FIELDS[entity_sym]
+        qual_sym = Symbol("_", entity_sym, "_", f)
+        push!(out.args, :(const $(esc(f)) = $(esc(qual_sym))))
+    end
+    out
+end
+export @expose
 
 end # module
