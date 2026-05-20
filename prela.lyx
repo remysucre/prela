@@ -48,6 +48,8 @@ PackageOptions algorithm2e ruled
 \output_sync 0
 \bibtex_command default
 \index_command default
+\float_placement class
+\float_alignment class
 \paperfontsize default
 \spacing single
 \use_hyperref false
@@ -99,6 +101,7 @@ PackageOptions algorithm2e ruled
 \papersides 1
 \paperpagestyle default
 \tablestyle default
+\listings_params "basicstyle={\ttfamily\small}"
 \tracking_changes false
 \output_changes false
 \change_bars false

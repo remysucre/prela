@@ -968,7 +968,7 @@ If
 \begin_layout Standard
 Or in positional relational algebra:
  
-\begin_inset Formula $\pi_{(R.1,S.2)}(R\Join_{R.2=S.1}S)$
+\begin_inset Formula $\pi_{(R.1,S.2)}(R\bowtie_{R.2=S.1}S)$
 \end_inset
 
  where 
