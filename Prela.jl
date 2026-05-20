@@ -24,7 +24,7 @@ module Prela
 
 import Base.Broadcast: BroadcastStyle, broadcasted, materialize
 
-export Rel, Unary, Entity, ID, primary, lookup_field
+export Rel, Unary, Entity, ID, primary, lookup_field, dom
 
 abstract type Entity end
 
@@ -37,6 +37,7 @@ struct ID{E <: Entity}
 end
 Base.:(==)(a::ID{E}, b::ID{E}) where E = a.id == b.id
 Base.hash(a::ID, h::UInt) = hash(a.id, h)
+Base.isless(a::ID{E}, b::ID{E}) where E = a.id < b.id
 Base.show(io::IO, a::ID{E}) where E = print(io, nameof(E), "(", a.id, ")")
 
 function primary end
@@ -63,6 +64,13 @@ struct Rel{D, R}
 end
 Rel(ps::Vector{Pair{D, R}}) where {D, R} = Rel{D, R}(ps)
 
+# Project the key set of a Rel as a Unary. Useful when a single predicate
+# result `Info.type == "release dates"` (a Rel{ID{Info}, String}) needs to be
+# used as a filter while preserving the Info entity in the composed result —
+# `info ∘ dom(filter)` returns Rel{Movie, ID{Info}} rather than Rel{Movie, String}.
+dom(r::Rel{X, Y}) where {X, Y} = Unary{X}(unique(p.first for p in r.pairs))
+dom(u::Unary{X}) where X = u
+
 # ===== composition =====
 
 function compose(u::Unary{X}, r::Rel{X, Y}) where {X, Y}
@@ -83,6 +91,21 @@ function fwd_index(s::Rel{Y, Z}) where {Y, Z}
         end
         d::Dict{Y, Vector{Z}}
     end::Dict{Y, Vector{Z}}
+end
+
+# Per-Rel inverse-index cache (R → list of Ds). Used by `==` and `in` against
+# scalar literals so repeated value-filter queries don't re-scan.
+const _INV_INDEX_CACHE = IdDict{Any, Any}()
+
+function inv_index(s::Rel{Y, Z}) where {Y, Z}
+    get!(_INV_INDEX_CACHE, s) do
+        d = Dict{Z, Vector{Y}}()
+        sizehint!(d, length(s.pairs))
+        for p in s.pairs
+            push!(get!(d, p.second, Y[]), p.first)
+        end
+        d::Dict{Z, Vector{Y}}
+    end::Dict{Z, Vector{Y}}
 end
 
 function compose(r::Rel{X, Y}, s::Rel{Y, Z}) where {X, Y, Z}
@@ -107,6 +130,8 @@ end
 # instead so the predicate filters `s` first.
 Base.:∘(r::Rel{X, Y}, s::Rel{Y, Z}) where {X, Y, Z} = compose(r, s)
 Base.:∘(u::Unary{X}, r::Rel{X, Y}) where {X, Y} = compose(u, r)
+Base.:∘(r::Rel{X, Y}, u::Unary{Y}) where {X, Y} = compose(r, u)
+Base.:∘(u::Unary{X}, v::Unary{X}) where X = compose(u, v)
 
 function compose(r::Rel{X, Y}, u::Unary{Y}) where {X, Y}
     s = Set(u.values)
@@ -116,14 +141,22 @@ end
 compose(u::Unary{X}, v::Unary{X}) where X =
     Unary{X}(collect(intersect(Set(u.values), Set(v.values))))
 
-# Navigation: r.field looks up `field` on R via multiple dispatch.
+# Navigation: r.field looks up `field` on R via multiple dispatch. Fall through
+# to getfield for any name not registered as a Prela field (so internal Julia
+# accesses like .singletonname don't trip us during serialization).
 function Base.getproperty(r::Rel{X, R}, name::Symbol) where {X, R}
     name === :pairs && return getfield(r, name)
-    compose(r, lookup_field(R, Val(name)))
+    if hasmethod(lookup_field, Tuple{Type{R}, Val{name}})
+        return compose(r, lookup_field(R, Val(name)))
+    end
+    return getfield(r, name)
 end
 function Base.getproperty(u::Unary{R}, name::Symbol) where R
     name === :values && return getfield(u, name)
-    compose(u, lookup_field(R, Val(name)))
+    if hasmethod(lookup_field, Tuple{Type{R}, Val{name}})
+        return compose(u, lookup_field(R, Val(name)))
+    end
+    return getfield(u, name)
 end
 
 # ===== intersection & =====
@@ -174,20 +207,35 @@ end
 
 # ===== range predicates =====
 
-for op in (:(==), :(!=), :<, :>, :(<=), :(>=))
-    @eval Base.$op(r::Rel{X, Y}, val) where {X, Y} =
-        Rel{X, Y}([p for p in r.pairs if $op(p.second, val)])
-    # Predicate elision: filter the primary FIRST (small), then compose with r.
-    # This is predicate pushdown — avoids materializing the huge intermediate
-    # join `compose(r, primary)`.
-    @eval Base.$op(r::Rel{X, ID{E}}, val) where {X, E <: Entity} =
-        compose(r, $op(primary(E), val))
+# Equality and `in`: indexed via inv_index — O(1) per probed value after
+# the first call (which builds the index).
+function Base.:(==)(r::Rel{X, Y}, val) where {X, Y}
+    inv = inv_index(r)
+    keys = get(inv, val, X[])
+    Rel{X, Y}([k => val for k in keys])
+end
+function Base.in(r::Rel{X, Y}, vals::Tuple) where {X, Y}
+    inv = inv_index(r)
+    out = Pair{X, Y}[]
+    for v in vals
+        for k in get(inv, v, X[])
+            push!(out, k => v)
+        end
+    end
+    Rel{X, Y}(out)
 end
 
-# in (membership in a tuple)
-function Base.in(r::Rel{X, Y}, vals::Tuple) where {X, Y}
-    s = Set(vals)
-    Rel{X, Y}([p for p in r.pairs if p.second in s])
+# Order predicates: linear scan (can't use value index for ranges).
+for op in (:(!=), :<, :>, :(<=), :(>=))
+    @eval Base.$op(r::Rel{X, Y}, val) where {X, Y} =
+        Rel{X, Y}([p for p in r.pairs if $op(p.second, val)])
+end
+
+# Predicate elision: filter the primary FIRST (small), then compose with r.
+# Avoids materializing the huge intermediate join `compose(r, primary)`.
+for op in (:(==), :(!=), :<, :>, :(<=), :(>=))
+    @eval Base.$op(r::Rel{X, ID{E}}, val) where {X, E <: Entity} =
+        compose(r, $op(primary(E), val))
 end
 Base.in(r::Rel{X, ID{E}}, vals::Tuple) where {X, E <: Entity} =
     compose(r, in(primary(E), vals))

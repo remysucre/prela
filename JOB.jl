@@ -301,7 +301,7 @@ function load_all!()
     println("  TOTAL: $(round(time() - t_total; digits=1))s")
 end
 
-println("Loading JOB tables...")
+println("Loading JOB tables from parquet...")
 load_all!()
 
 # Universe of movies = the keys of the title relation.
