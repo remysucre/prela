@@ -1577,8 +1577,374 @@ As Tarski's Relational Algebra fundamentally restricts relations to be at most b
  we allow columns to store record data types.
  Another motivation is that record-typed columns leads to a natural implementation of group-by aggregation which will be covered soon.
  Nevertheless,
- we recognize that having record data may pollute the purity of the formal foundation of Tarski's Relational Algebra,
+ we recognize that having record data betrays the purity of the formal foundation of Tarski's Relational Algebra,
  and time will tell if this design turns out to be a mistake for Prela like that of nulls and duplicates for SQL.
+ We also remark that impurity in Prela is 
+\emph on
+contained
+\emph default
+ within record creation and aggregations that group by records,
+ both of which usually occur as the last step of a query.
+ The 
+\emph on
+product
+\emph default
+ operator 
+\begin_inset Quotes eld
+\end_inset
+
+
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+,
+\end_layout
+
+\end_inset
+
+
+\begin_inset Quotes erd
+\end_inset
+
+ (formally 
+\begin_inset Formula $\times$
+\end_inset
+
+) creates a record from its arguments:
+ 
+\end_layout
+
+\begin_layout Definition
+For 
+\begin_inset Formula $R:X\to Y$
+\end_inset
+
+ and 
+\begin_inset Formula $S:X\to Z$
+\end_inset
+
+,
+ their 
+\emph on
+product
+\emph default
+ 
+\begin_inset Formula $R\times S$
+\end_inset
+
+ is a relation of type 
+\begin_inset Formula $X\to\left\{ R:Y,S:Z\right\} $
+\end_inset
+
+ where 
+\begin_inset Formula $\left\{ R:Y,S:Z\right\} $
+\end_inset
+
+ denotes a record type with field 
+\begin_inset Formula $R$
+\end_inset
+
+ of type 
+\begin_inset Formula $Y$
+\end_inset
+
+ and field 
+\begin_inset Formula $S$
+\end_inset
+
+ of type 
+\begin_inset Formula $Z$
+\end_inset
+
+.
+ The content of the relation is 
+\begin_inset Formula $\left\{ (x,\left\{ R:y,S:z\right\} )\mid(x,y)\in R\land(x,z)\in S\right\} $
+\end_inset
+
+.
+ 
+\end_layout
+
+\begin_layout Example
+The query 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.cast.(character,
+ person)
+\end_layout
+
+\end_inset
+
+ returns what character each actor plays for every movie.
+ In other words,
+ the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+,
+\end_layout
+
+\end_inset
+
+ operator joins 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+character:
+ Cast -> Character
+\end_layout
+
+\end_inset
+
+ with 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Person:
+ Cast -> Person
+\end_layout
+
+\end_inset
+
+ to produce a relation of type 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Cast -> {character:
+ Character,
+ person:
+ Person}
+\end_layout
+
+\end_inset
+
+ which is composed with 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+cast
+\end_layout
+
+\end_inset
+
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie
+\end_layout
+
+\end_inset
+
+ to list the roles per movie.
+ 
+\end_layout
+
+\begin_layout Standard
+Record types pave the way for grouping by multiple attributes for aggregation,
+ together with the 
+\emph on
+inverse
+\emph default
+ operator 
+\begin_inset Quotes eld
+\end_inset
+
+
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+~
+\end_layout
+
+\end_inset
+
+
+\begin_inset Quotes erd
+\end_inset
+
+ (formally 
+\begin_inset Formula $R^{-1}$
+\end_inset
+
+):
+ 
+\end_layout
+
+\begin_layout Definition
+The 
+\emph on
+inverse
+\emph default
+ of a relation 
+\begin_inset Formula $R:X\to Y$
+\end_inset
+
+ is the relation 
+\begin_inset Formula $R^{-1}:Y\to X=\left\{ (y,x)\mid(x,y)\in R\right\} $
+\end_inset
+
+.
+ 
+\end_layout
+
+\begin_layout Standard
+To apply an aggregation,
+ we generalize the composition operator 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.
+\end_layout
+
+\end_inset
+
+ to accept aggregate functions:
+\end_layout
+
+\begin_layout Definition
+An aggregate function takes in a set of values and produces a single value.
+ For an aggregate function 
+\begin_inset Formula $\gamma$
+\end_inset
+
+ and relation 
+\begin_inset Formula $R:X\to Y$
+\end_inset
+
+,
+ their composition 
+\begin_inset Formula $R\circ\gamma$
+\end_inset
+
+ is the relation 
+\begin_inset Formula $\left\{ (x,\sum_{y:(x,y)\in R}y)\mid\exists z.(x,z\in R)\right\} $
+\end_inset
+
+.
+ 
+\end_layout
+
+\begin_layout Standard
+In other words,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+R.f
+\end_layout
+
+\end_inset
+
+ groups by the first attribute of 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+R
+\end_layout
+
+\end_inset
+
+ and aggregates over the second attribute per group using 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+f
+\end_layout
+
+\end_inset
+
+.
+ We are now ready to implement SQL's group-by aggregate using inversion and aggregate functions:
+ 
+\end_layout
+
+\begin_layout Example
+To find when each company produced its first movie,
+ we compose the inverse of the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+company
+\end_layout
+
+\end_inset
+
+ relation with the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+production_year
+\end_layout
+
+\end_inset
+
+ relation and apply the min-aggregate:
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+(~company.movie.production_year).min
+\end_layout
+
+\end_inset
+
+.
+ 
+\end_layout
+
+\begin_layout Standard
+To group by multiple attributes,
+ we take the inverse of their product:
+ 
+\end_layout
+
+\begin_layout Example
+The query 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+(~(company,cast.person).movie.production_year).min
+\end_layout
+
+\end_inset
+
+ finds the first time a production company has collaborated with an actor.
  
 \end_layout
 
