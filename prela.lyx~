@@ -118,6 +118,10 @@ Prela:
  A Purely Algebraic Relational Query Language
 \end_layout
 
+\begin_layout Section
+Introduction
+\end_layout
+
 \begin_layout Standard
 Codd's Relational Algebra is the theoretical foundation underlying all modern relational databases.
  Yet,
@@ -298,6 +302,1281 @@ is
  On the other hand,
  the programmer may also choose to write the query in the most natural way,
  and pass it to a query optimizer that applies simple algebraic rewritings to improve performance.
+ 
+\end_layout
+
+\begin_layout Standard
+In the rest of this paper,
+ TODO summarize.
+ 
+\end_layout
+
+\begin_layout Section
+Data Model and Related Work
+\end_layout
+
+\begin_layout Standard
+The design of a query language is closely guided by its choice of data model.
+ While we defer a formal treatment of Prela's data model to Section TODO,
+ this Section provides a high-level discussion in the context of several related design points.
+ 
+\end_layout
+
+\begin_layout Standard
+As Prela is built upon the formal foundation of Tarski's Relational Algebra where the fundamental data type is the 
+\emph on
+binary
+\emph default
+ relation,
+ our data model can be understood as an instantiation of the Entity/Relational model.
+ Consider again the query 29a,
+ which can be understood as operating over 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie
+\end_layout
+
+\end_inset
+
+ entities (of entity 
+\lang english
+type 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Movie
+\end_layout
+
+\end_inset
+
+),
+ while we use the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.
+\end_layout
+
+\end_inset
+
+ syntax to access various attributes of the entity.
+ In our experience this is a helpful mental model when programming in Prela.
+ This syntax also connects Prela to object-oriented and document data,
+ for which SQL infamously struggles to model due to impedance mismatch.
+ Users of document/nested query languages like XPath or the more recent jq may find Prela's syntax familiar.
+ This is not a coincidence,
+ as Tarski's Relational Algebra has also been used to analyze nested data models.
+ Unlike these langauges,
+ Prela is not constrained to a single nested data schema or to the nested data model.
+ In our example query,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+cast
+\end_layout
+
+\end_inset
+
+ appears to be a nested attribute under 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie
+\end_layout
+
+\end_inset
+
+,
+ but the programmer is free to define a 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+stars_in
+\end_layout
+
+\end_inset
+
+ relation over 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Cast
+\end_layout
+
+\end_inset
+
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Movie
+\end_layout
+
+\end_inset
+
+ then query 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+cast.stars_in
+\end_layout
+
+\end_inset
+
+.
+ This is because 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.
+\end_layout
+
+\end_inset
+
+ is in fact the 
+\emph on
+relational composition operator
+\emph default
+ (defined in TODO) under the hood,
+ and requires no syntactic extension to the host language to implement.
+ Tarski's Relational Algebra has also been applied to formalize various graph query languages TODO CITE,
+ where binary relation naturally model edge sets.
+ While graph query languages aim to support a wide range of multi-hop,
+ recursive queries over large networks,
+ the current focus of Prela is non-recursive queries over tabular data.
+ 
+\end_layout
+
+\begin_layout Standard
+Last but not least,
+ the original motivation of Prela was to address issues in practical instantiations of Codd's relational model.
+ At SQL's 50th anniversary,
+ the language co-creator Don Chamerlin questioned two design decisions:
+ the need for nulls to represent missing data,
+ and the allowance of duplicated data (
+\emph on
+a la
+\emph default
+ bag semantics).
+ In the programming languages community,
+ nulls were considered a 
+\begin_inset Quotes eld
+\end_inset
+
+billion-dollar mistake
+\begin_inset Quotes erd
+\end_inset
+
+ by its creator Tony Hoare,
+ and many modern languages have adopted features like option types to rid of nulls.
+ Yet,
+ nulls prevail in every SQL database today.
+ Similarly,
+ bag semantics was offered as a convinience for database users and system builders,
+ yet continues to frustrate both groups.
+ To remove the reliance on nulls and bag semantics,
+ Prela follows the approach of the Rel programming language and operate over fully normalized data:
+ a wide relation over many columns is 
+\begin_inset Quotes eld
+\end_inset
+
+shredded
+\begin_inset Quotes erd
+\end_inset
+
+ into multiple 
+\begin_inset Quotes eld
+\end_inset
+
+skinny
+\begin_inset Quotes erd
+\end_inset
+
+ relations,
+ each over two columns,
+ a primary key column (think 
+\begin_inset Quotes eld
+\end_inset
+
+row number
+\begin_inset Quotes erd
+\end_inset
+
+ of the original table) and data column.
+ For example,
+ the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie
+\end_layout
+
+\end_inset
+
+ table (originally named 
+\begin_inset Quotes eld
+\end_inset
+
+title
+\begin_inset Quotes erd
+\end_inset
+
+) from JOB over attributes 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+id
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+title
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+production_year
+\end_layout
+
+\end_inset
+
+,
+ ...
+ ,
+ is represented with a 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+title
+\end_layout
+
+\end_inset
+
+ table mapping each 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+id
+\end_layout
+
+\end_inset
+
+ to the title text,
+ a 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+production_year
+\end_layout
+
+\end_inset
+
+ table mapping each 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+id
+\end_layout
+
+\end_inset
+
+ to the production year,
+ etc.,
+ one per non-primary key attribute of the original table.
+ In each shredded relation,
+ the primary key constraint on the first column rules out the possibility of duplicates,
+ and a missing value is naturally represented by the absence of an entry in the corresponding 
+\begin_inset Quotes eld
+\end_inset
+
+shred
+\begin_inset Quotes erd
+\end_inset
+
+.
+ There is theoretical evidence that giving up nulls does not compromise expressiveness,
+ and the normalization approach has proven to be practical by large scale deployments of Rel.
+ The key distinction between Prela and Rel goes back to the algebraic foundation of Prela – while Rel is a declarative language based on Datalog,
+ Prela is imperative and therefore 
+\begin_inset Quotes eld
+\end_inset
+
+closer to the metal
+\begin_inset Quotes erd
+\end_inset
+
+,
+ while remaining readable as demonstrated by the examples.
+ 
+\end_layout
+
+\begin_layout Section
+The Prela Language
+\end_layout
+
+\begin_layout Standard
+This Section defines the data model,
+ syntax,
+ and semantics of the Prela query language.
+ While Prela is based on a mathematical formalization of relations due to Tarski,
+ we feel a rote recitation of the formalism would overwhelm the reader and detract from the simple essence of Prela.
+ Instead,
+ we will introduce language constructs one-by-one,
+ guided by examples,
+ without attempting to fully cover the formal algebra,
+ and take liberty to depart from it to meet pratical demands.
+ 
+\end_layout
+
+\begin_layout Subsection
+Data Model.
+\end_layout
+
+\begin_layout Standard
+The fundamental datatype of Prela is (typed) relations of no more than two columns.
+ Although retricting relations to be at most binary may appear limiting at first glance,
+ it is simple to recover the flexibility of multi-column tables with ones over only two columns.
+ We have demonstrated this in Section TODO with the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie
+\end_layout
+
+\end_inset
+
+ table which is 
+\begin_inset Quotes eld
+\end_inset
+
+shredded
+\begin_inset Quotes erd
+\end_inset
+
+ into multiple two-column tables,
+ each mapping the row to the value under the corresponding column.
+ Perhaps a better starting point to understand Prela's data model is the Entity/Relationship model:
+ entities of type 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Movie
+\end_layout
+
+\end_inset
+
+ can be represented as a unary relation (over the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+id
+\end_layout
+
+\end_inset
+
+s),
+ and a relation 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+title
+\end_layout
+
+\end_inset
+
+ over column types 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Movie
+\end_layout
+
+\end_inset
+
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+String
+\end_layout
+
+\end_inset
+
+ maps each movie to its title text.
+ We will intuitively write the type of the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+title
+\end_layout
+
+\end_inset
+
+ table as 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Movie -> String
+\end_layout
+
+\end_inset
+
+.
+ While the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+title
+\end_layout
+
+\end_inset
+
+ relation represents an attribute of the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Movie
+\end_layout
+
+\end_inset
+
+ entity,
+ we can also model relationships between entities:
+ the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+stars_in
+\end_layout
+
+\end_inset
+
+ relation introduced in Section TODO has type 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Cast -> Movie
+\end_layout
+
+\end_inset
+
+ and tells us which actor stars in which movie.
+ 
+\end_layout
+
+\begin_layout Subsection
+Relational Combinators.
+\end_layout
+
+\begin_layout Standard
+Prela queries are composed of operators applied to relational arguments,
+ much like the classic Relational Algebra 
+\emph on
+a la 
+\emph default
+Codd.
+ We will refer to Prela's operators as 
+\emph on
+combinators
+\emph default
+ to emphasize on their purely algebraic nature.
+ The most powerful combinator is the relational composition 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.
+\end_layout
+
+\end_inset
+
+ which takes two binary relations,
+ joins them,
+ and produces a binary relation.
+ Formally (writing 
+\begin_inset Formula $\circ$
+\end_inset
+
+ for 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.
+\end_layout
+
+\end_inset
+
+):
+ 
+\end_layout
+
+\begin_layout Definition
+The composition 
+\begin_inset Formula $R\circ S$
+\end_inset
+
+ over relations 
+\begin_inset Formula $R:X\to Y$
+\end_inset
+
+ and 
+\begin_inset Formula $S:Y\to Z$
+\end_inset
+
+ is the relation 
+\begin_inset Formula $\left\{ (x,z)\mid\exists y.(x,y)\in R\land(y,z)\in S\right\} $
+\end_inset
+
+ of type 
+\begin_inset Formula $X\to Z$
+\end_inset
+
+.
+ When one or both of the arguments are unary,
+ composition is defined in the natural way TODO put in footnote?:
+ 
+\end_layout
+
+\begin_layout Itemize
+If 
+\begin_inset Formula $R:Y$
+\end_inset
+
+,
+ 
+\begin_inset Formula $S:Y\to Z$
+\end_inset
+
+,
+ 
+\begin_inset Formula $R\circ S=\left\{ (y,z)\mid y\in R\land(y,z)\in S\right\} $
+\end_inset
+
+
+\end_layout
+
+\begin_layout Itemize
+If 
+\begin_inset Formula $R:X\to Y$
+\end_inset
+
+,
+ 
+\begin_inset Formula $S:Y$
+\end_inset
+
+,
+ 
+\begin_inset Formula $R\circ S=\left\{ (x,y)\mid(x,y)\in R\land y\in S\right\} $
+\end_inset
+
+
+\end_layout
+
+\begin_layout Itemize
+If 
+\begin_inset Formula $R:X$
+\end_inset
+
+,
+ 
+\begin_inset Formula $S:X$
+\end_inset
+
+,
+ 
+\begin_inset Formula $R\circ S=\left\{ x\mid x\in R\land x\in S\right\} $
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+Or in positional relational algebra:
+ 
+\begin_inset Formula $\pi_{(R.1,S.2)}(R\Join_{R.2=S.1}S)$
+\end_inset
+
+ where 
+\begin_inset Formula $R.i$
+\end_inset
+
+ indicates the 
+\begin_inset Formula $i$
+\end_inset
+
+-th column of 
+\begin_inset Formula $R$
+\end_inset
+
+.
+ The corresponding SQL query is 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+SELECT distinct(R.x,
+ S.z) FROM R,
+ S WHERE R.y = S.y
+\end_layout
+
+\end_inset
+
+.
+ 
+\end_layout
+
+\begin_layout Example
+Given unary relation 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie
+\end_layout
+
+\end_inset
+
+ of type 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Movie
+\end_layout
+
+\end_inset
+
+ and binary relation 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+title
+\end_layout
+
+\end_inset
+
+ of type 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Movie -> String
+\end_layout
+
+\end_inset
+
+ ,
+ their composition 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.title
+\end_layout
+
+\end_inset
+
+ is a binary relation of type 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Movie -> String
+\end_layout
+
+\end_inset
+
+.
+ Specifically,
+ it is the subset of the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+title
+\end_layout
+
+\end_inset
+
+ relation such that the first attribute appears in the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie
+\end_layout
+
+\end_inset
+
+ relation.
+ 
+\end_layout
+
+\begin_layout Standard
+Composition is powerful because it allows us to 
+\emph on
+zoom in
+\emph default
+ by composing multiple relations:
+ 
+\end_layout
+
+\begin_layout Example
+The query 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.cast.person.name
+\end_layout
+
+\end_inset
+
+ lists,
+ for each movie,
+ the names of all actors starring in that movie.
+ It is a 3-step composition:
+ 
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.cast
+\end_layout
+
+\end_inset
+
+ has type 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Movie -> Cast
+\end_layout
+
+\end_inset
+
+ and lists the casting table for each movie;
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.cast.person
+\end_layout
+
+\end_inset
+
+ has type 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Movie -> Person
+\end_layout
+
+\end_inset
+
+ and lists all 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+Person
+\end_layout
+
+\end_inset
+
+ entities in the cast;
+ 
+\end_layout
+
+\begin_layout Enumerate
+Finally,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.cast.person.name
+\end_layout
+
+\end_inset
+
+ composes the relation from the last step with 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+name
+\end_layout
+
+\end_inset
+
+ to list the names.
+ 
+\end_layout
+
+\begin_layout Standard
+Intuitively,
+ relational composition can be thought of as a join and a projection,
+ or,
+ as the name suggests,
+ a generalization of function composition.
+ It can also been seen as multiplying boolean matrices.
+ 
+\end_layout
+
+\begin_layout Standard
+Next,
+ filtering in Prela is expressed by directly applying the predicate to a relation:
+ 
+\end_layout
+
+\begin_layout Definition
+Given predicate 
+\begin_inset Formula $\phi$
+\end_inset
+
+ and binary relation 
+\begin_inset Formula $R$
+\end_inset
+
+,
+ the expression 
+\begin_inset Formula $\phi(R)$
+\end_inset
+
+ is the relation 
+\begin_inset Formula $\left\{ (x,y)\in R\mid\phi(y)\right\} $
+\end_inset
+
+.
+\end_layout
+
+\begin_layout Standard
+Note that predicates can only be applied to the second column of a binary relation,
+ because unary relations in Prela can only store opaque entity types.
+\end_layout
+
+\begin_layout Standard
+Filtered relations can be intersected and combined with the familiar boolean connectives 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+&
+\end_layout
+
+\end_inset
+
+ (formally 
+\begin_inset Formula $\land$
+\end_inset
+
+) and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+|
+\end_layout
+
+\end_inset
+
+ (formally 
+\begin_inset Formula $\lor$
+\end_inset
+
+),
+ as well as the set difference 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+
+\backslash
+
+\end_layout
+
+\end_inset
+
+ :
+\end_layout
+
+\begin_layout Definition
+For relations 
+\begin_inset Formula $R:X\to Y,S:X\to Z$
+\end_inset
+
+,
+ their 
+\emph on
+intersection
+\emph default
+ 
+\begin_inset Formula $R\land S$
+\end_inset
+
+ is the unary relation 
+\begin_inset Formula $\left\{ x\mid\exists y.(x,y)\in R\land\exists z.(x,z)\in S\right\} $
+\end_inset
+
+;
+ their 
+\emph on
+union
+\emph default
+ 
+\begin_inset Formula $R\lor S$
+\end_inset
+
+ is the relation 
+\begin_inset Formula $\left\{ x\mid\exists y.(x,y)\in R\lor\exists z.(x,z)\in S\right\} $
+\end_inset
+
+;
+ their difference is the relation 
+\begin_inset Formula $\left\{ x\mid\exists y.(x,y)\in R\land\exists z.(x,z)\not\in S\right\} $
+\end_inset
+
+.
+ When an input relation is unary,
+ the operators are extended in the natural way.
+ 
+\end_layout
+
+\begin_layout Standard
+With composition,
+ predicates,
+ and boolean connectives,
+ we can specify complex selection queries in Prela in a natural way:
+ 
+\end_layout
+
+\begin_layout Example
+The query 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.(production_year >= 2000 & production_year <= 2010)
+\end_layout
+
+\end_inset
+
+ returns all movies made between the years of 2000 and 2010.
+ 
+\end_layout
+
+\begin_layout Standard
+The next example shows why boolean connectives operate only on the first column of the input relations:
+ 
+\end_layout
+
+\begin_layout Example
+The query 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.(production_year >= 2000 & company.country = '[us]')
+\end_layout
+
+\end_inset
+
+ returns movies produced after 2000 by US-based companies.
+ 
+\end_layout
+
+\begin_layout Standard
+Because intersection focuses on the first column of the inputs,
+ it allows us to combine prediactes over different data types.
+ Also note that,
+ in the above query,
+ we can freely intermix composition,
+ prediactes,
+ and intersection,
+ because each is simply a relational combinator under the hood.
+ 
+\end_layout
+
+\begin_layout Standard
+A couple more combinators are needed to express select-project-join queries.
+ First,
+ the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+:
+\end_layout
+
+\end_inset
+
+ combinator is akin to the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+SELECT
+\end_layout
+
+\end_inset
+
+ clause in SQL:
+ 
+\end_layout
+
+\begin_layout Definition
+For relations 
+\begin_inset Formula $R:X$
+\end_inset
+
+ and 
+\begin_inset Formula $S:X\to Y$
+\end_inset
+
+ ,
+ the expression 
+\begin_inset Formula $R:S$
+\end_inset
+
+ is the relation 
+\begin_inset Formula $\left\{ (x,y)\in S\mid x\in R\right\} $
+\end_inset
+
+.
+ When the first input 
+\begin_inset Formula $R$
+\end_inset
+
+ is binary,
+ its second column is ignored.
+ 
+\end_layout
+
+\begin_layout Standard
+We will also write 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+S where R
+\end_layout
+
+\end_inset
+
+ as a syntactic sugar for 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+R :
+ S
+\end_layout
+
+\end_inset
+
+,
+ i.e.,
+ the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+where
+\end_layout
+
+\end_inset
+
+ combinator is the same as 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+:
+\end_layout
+
+\end_inset
+
+ but with the arugments swapped.
+ 
+\end_layout
+
+\begin_layout Example
+The query 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.(company.country = '[us]' :
+ title)
+\end_layout
+
+\end_inset
+
+ returns the titles of all movies made by American companies.
+ We can also apply predicates to the 
+\begin_inset Quotes eld
+\end_inset
+
+selected attributes
+\begin_inset Quotes erd
+\end_inset
+
+:
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.(title != 'Shrek 2' where company.country = '[us]')
+\end_layout
+
+\end_inset
+
+ excercises the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+where
+\end_layout
+
+\end_inset
+
+ combinator and will be helpful for those who dislike Shrek.
+ 
+\end_layout
+
+\begin_layout Standard
+As Tarski's Relational Algebra fundamentally restricts relations to be at most binary,
+ a particular challenge is to return a result over multiple columns.
+ One pedantic solution is to write multiple queries,
+ one for each output attribute,
+ returning multiple correlated binary relations at the same time that can be joined by the user.
+ This is inspired by the recent idea of allowing queries to return a full database instead of a single table TODO CITE.
+ However,
+ in Prela we choose to implement a more pragmatic approach:
+ we allow columns to store record data types.
+ Another motivation is that record-typed columns leads to a natural implementation of group-by aggregation which will be covered soon.
+ Nevertheless,
+ we recognize that having record data may pollute the purity of the formal foundation of Tarski's Relational Algebra,
+ and time will tell if this design turns out to be a mistake for Prela like that of nulls and duplicates for SQL.
  
 \end_layout
 
