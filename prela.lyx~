@@ -671,8 +671,7 @@ This Section defines the data model,
  Instead,
  we will introduce language constructs one-by-one,
  guided by examples,
- without attempting to fully cover the formal algebra,
- and take liberty to depart from it to meet pratical demands.
+ without attempting to fully cover the formal algebra.
  
 \end_layout
 
