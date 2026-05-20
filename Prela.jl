@@ -249,16 +249,16 @@ macro entity(entity_sym, block)
     lookup_fn  = GlobalRef(@__MODULE__, :lookup_field)
     primary_fn = GlobalRef(@__MODULE__, :primary)
 
-    first_field = nothing
+    field_names = Symbol[]
+    field_consts = Symbol[]
     for stmt in block.args
         stmt isa LineNumberNode && continue
         if stmt isa Expr && stmt.head === :(::)
             field_sym  = stmt.args[1]
             range_expr = stmt.args[2]
-            first_field === nothing && (first_field = field_sym)
-            # Qualified internal name avoids cross-entity clashes when two
-            # entities share a field name (e.g. Movie.keyword + Keyword.keyword).
             qual_sym = Symbol("_", entity_sym, "_", field_sym)
+            push!(field_names, field_sym)
+            push!(field_consts, qual_sym)
             push!(out.args, quote
                 const $(esc(qual_sym)) = $rel_type{$id_type, $(esc(range_expr))}(
                     Pair{$id_type, $(esc(range_expr))}[]
@@ -270,10 +270,23 @@ macro entity(entity_sym, block)
         end
     end
 
-    first_field !== nothing && push!(out.args, quote
-        $primary_fn(::Type{$(esc(entity_sym))}) =
-            $lookup_fn($id_type, Val($(QuoteNode(first_field))))
-    end)
+    if !isempty(field_names)
+        # primary = first field
+        push!(out.args, quote
+            $primary_fn(::Type{$(esc(entity_sym))}) = $(esc(field_consts[1]))
+        end)
+
+        # Per-entity Base.getproperty: name === :field && return _Entity_field;
+        # falls through to default for non-matching (DataType internals).
+        gp_body = Expr(:block)
+        for (fname, fconst) in zip(field_names, field_consts)
+            push!(gp_body.args, :(name === $(QuoteNode(fname)) && return $(esc(fconst))))
+        end
+        push!(gp_body.args, :(return getfield($(esc(entity_sym)), name)))
+        push!(out.args, :(
+            Base.getproperty(::Type{$(esc(entity_sym))}, name::Symbol) = $gp_body
+        ))
+    end
 
     out
 end
