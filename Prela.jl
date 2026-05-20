@@ -46,6 +46,13 @@ function lookup_field end
 # emitted top-level block) and read by `@expose` at its macro-expansion time.
 const _ENTITY_FIELDS = Dict{Symbol, Vector{Symbol}}()
 
+# Idempotent abstract-type declaration. Lets @entity be called after a forward
+# `@declare`, and lets cyclic schemas (Movie ↔ MovieLink) work.
+function _declare_if_needed(mod::Module, sym::Symbol)
+    isdefined(mod, sym) && return
+    Core.eval(mod, Expr(:abstract, Expr(:(<:), sym, GlobalRef(@__MODULE__, :Entity))))
+end
+
 struct Unary{R}
     values::Vector{R}
 end
@@ -63,21 +70,43 @@ function compose(u::Unary{X}, r::Rel{X, Y}) where {X, Y}
     Rel{X, Y}([p for p in r.pairs if p.first in s])
 end
 
+# Per-Rel forward-index cache (D → list of Rs). Lazily built; first compose
+# call against a Rel pays the index-build cost, subsequent calls reuse it.
+const _FWD_INDEX_CACHE = IdDict{Any, Any}()
+
+function fwd_index(s::Rel{Y, Z}) where {Y, Z}
+    get!(_FWD_INDEX_CACHE, s) do
+        d = Dict{Y, Vector{Z}}()
+        sizehint!(d, length(s.pairs))
+        for p in s.pairs
+            push!(get!(d, p.first, Z[]), p.second)
+        end
+        d::Dict{Y, Vector{Z}}
+    end::Dict{Y, Vector{Z}}
+end
+
 function compose(r::Rel{X, Y}, s::Rel{Y, Z}) where {X, Y, Z}
-    s_by = Dict{Y, Vector{Z}}()
-    for p in s.pairs
-        push!(get!(s_by, p.first, Z[]), p.second)
-    end
+    s_by = fwd_index(s)
     out = Pair{X, Z}[]
+    # No sizehint: output size depends on join cardinality, which we don't know
+    # ahead of time. Hinting to length(r) preallocates huge arrays for sparse
+    # joins (e.g. predicate-pushed-down filters); Vector's geometric growth
+    # handles the unknown-size case fine.
     for p in r.pairs
-        if haskey(s_by, p.second)
-            for z in s_by[p.second]
-                push!(out, p.first => z)
-            end
+        zs = get(s_by, p.second, nothing)
+        zs === nothing && continue
+        for z in zs
+            push!(out, p.first => z)
         end
     end
     Rel{X, Z}(out)
 end
+
+# Infix relation composition: `r ∘ s`. Useful for predicate pushdown when
+# `r.s == val` would force a huge intermediate join: write `r ∘ (s == val)`
+# instead so the predicate filters `s` first.
+Base.:∘(r::Rel{X, Y}, s::Rel{Y, Z}) where {X, Y, Z} = compose(r, s)
+Base.:∘(u::Unary{X}, r::Rel{X, Y}) where {X, Y} = compose(u, r)
 
 function compose(r::Rel{X, Y}, u::Unary{Y}) where {X, Y}
     s = Set(u.values)
@@ -103,8 +132,10 @@ _keys(r::Rel) = Set(p.first for p in r.pairs)
 
 Base.:&(r::Rel{X, Y}, s::Rel{X, Z}) where {X, Y, Z} =
     Unary{X}(collect(intersect(_keys(r), _keys(s))))
-Base.:&(u::Unary{X}, r::Rel{X, Y}) where {X, Y} =
-    Unary{X}([x for x in u.values if x in _keys(r)])
+function Base.:&(u::Unary{X}, r::Rel{X, Y}) where {X, Y}
+    k = _keys(r)
+    Unary{X}([x for x in u.values if x in k])
+end
 Base.:&(r::Rel{X, Y}, u::Unary{X}) where {X, Y} = u & r
 Base.:&(u::Unary{X}, v::Unary{X}) where X =
     Unary{X}(collect(intersect(Set(u.values), Set(v.values))))
@@ -146,9 +177,11 @@ end
 for op in (:(==), :(!=), :<, :>, :(<=), :(>=))
     @eval Base.$op(r::Rel{X, Y}, val) where {X, Y} =
         Rel{X, Y}([p for p in r.pairs if $op(p.second, val)])
-    # Predicate elision when range is an entity ID: auto-traverse to primary.
+    # Predicate elision: filter the primary FIRST (small), then compose with r.
+    # This is predicate pushdown — avoids materializing the huge intermediate
+    # join `compose(r, primary)`.
     @eval Base.$op(r::Rel{X, ID{E}}, val) where {X, E <: Entity} =
-        $op(compose(r, primary(E)), val)
+        compose(r, $op(primary(E), val))
 end
 
 # in (membership in a tuple)
@@ -157,13 +190,13 @@ function Base.in(r::Rel{X, Y}, vals::Tuple) where {X, Y}
     Rel{X, Y}([p for p in r.pairs if p.second in s])
 end
 Base.in(r::Rel{X, ID{E}}, vals::Tuple) where {X, E <: Entity} =
-    in(compose(r, primary(E)), vals)
+    compose(r, in(primary(E), vals))
 
 # regex
 Base.:~(r::Rel{X, Y}, re::Regex) where {X, Y <: AbstractString} =
     Rel{X, Y}([p for p in r.pairs if occursin(re, p.second)])
 Base.:~(r::Rel{X, ID{E}}, re::Regex) where {X, E <: Entity} =
-    compose(r, primary(E)) ~ re
+    compose(r, primary(E) ~ re)
 
 # Julia doesn't parse `!~` as a binary operator; use `≁` (input via `\nsim<TAB>`).
 ≁(r::Rel{X, Y}, re::Regex) where {X, Y <: AbstractString} =
@@ -246,7 +279,7 @@ macro entity(entity_sym, block)
     (block isa Expr && block.head === :block) || error("@entity expects `begin ... end`")
 
     out = Expr(:block)
-    push!(out.args, :(abstract type $(esc(entity_sym)) <: $(GlobalRef(@__MODULE__, :Entity)) end))
+    push!(out.args, :($(GlobalRef(@__MODULE__, :_declare_if_needed))(@__MODULE__, $(QuoteNode(entity_sym)))))
 
     id_type    = :($(GlobalRef(@__MODULE__, :ID)){$(esc(entity_sym))})
     rel_type   = GlobalRef(@__MODULE__, :Rel)
@@ -302,6 +335,18 @@ macro entity(entity_sym, block)
 end
 
 export @entity
+
+# Forward declare entity types — needed when schemas have cyclic references
+# (e.g. Movie references MovieLink which references Movie back).
+macro declare(syms...)
+    out = Expr(:block)
+    for s in syms
+        s isa Symbol || error("@declare expects symbols")
+        push!(out.args, :($(GlobalRef(@__MODULE__, :_declare_if_needed))(@__MODULE__, $(QuoteNode(s)))))
+    end
+    out
+end
+export @declare
 
 # `@expose Movie` declares short-name `const`s for each of Movie's fields,
 # bound to the qualified internal storage (`_Movie_title`, etc.). Use it on
