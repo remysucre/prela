@@ -6,8 +6,7 @@ movie.(
       & (name like '%Film%' | name like '%Warner%')
       & type = 'production companies'
       \ note
-      : name
     )
-  , link.(type like '%follow%' : type!)
+  , link.(type like '%follow%').type
   , title
 )

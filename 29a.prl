@@ -9,7 +9,7 @@ movie.(
       & character = 'Queen'
       & role = 'actress'
       & person.( gender = 'f' & name like '%An%' & info.type = 'trivia' & aka)
-      : character!, person!
+      : character, person
     )
   , title = 'Shrek 2'
 )

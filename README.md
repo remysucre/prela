@@ -73,15 +73,19 @@ For more than two components, nest by association: `a, b, c` parses as `(a, b), 
 Per-`x` semantics: the cross product of tuple sets from each side. If `r` yields multiple
  `y` values and `s` yields multiple `z` values for the same `x`, every combination is emitted.
 
-Return `!`: `r!` is `r.<primary>`, where `<primary>` is the type's primary field. The
- primary defaults to the first field of the struct and may have any name; by convention
- it shares the type's name (lowercased) for single-field lookups (e.g. `Keyword.keyword`,
- `Kind.kind`), while multi-field types pick a semantic name (e.g. `Movie.title`).
+Primary field: each type has a designated primary field, defaulting to the first field
+ of the struct. By convention, single-field lookup types use a name matching the type
+ (`Keyword.keyword`, `Kind.kind`), while multi-field types pick a semantic name
+ (`Movie.title`).
 
-`!` elision: when the surrounding context makes the target type unambiguous
- (e.g. a predicate `keyword in ('murder', ...)` against a `Keyword`, or
- `type = 'countries'` against an `InfoType`), the trailing `!` may be omitted
- and `.<primary>` is inserted implicitly.
+Predicate elision: when a predicate compares an entity-typed expression to a scalar
+ literal (e.g. `keyword = 'sequel'` where `keyword: Movie -> Keyword`), Prela auto-
+ traverses to the entity's primary field. So `keyword = 'sequel'` is sugar for
+ `keyword.keyword = 'sequel'`.
+
+Returning entities: there is no explicit unwrap operator. To return a scalar, compose
+ to the relevant scalar relation. To return an entity, just include it in a `,` or `:`;
+ display layers render the entity via its primary field.
 
 Aggregation `min, max, sum, ...`: `agg(r)` where `r: x -> y` groups by `x` and aggregates over `y`.
 
@@ -94,13 +98,13 @@ movie.(
   & production_year > 2008
   & kind in ('movie', 'episode')
   : title
-  , data.(data < '7.0' & type = 'rating')!
+  , data.(data < '7.0' & type = 'rating')
   , company.(
        note not like '%(USA)%' &
        note like '%(200%)%' &
        country != '[us]' &
        type = 'production companies'
-    ).name
+    )
 )
 ```
 

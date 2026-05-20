@@ -4,11 +4,11 @@ movie.(
   & production_year > 2008
   & kind in ('movie', 'episode')
   : title
-  , data.(data < '7.0' & type = 'rating')!
+  , data.(data < '7.0' & type = 'rating')
   , company.(
        note not like '%(USA)%' &
        note like '%(200%)%' &
        country != '[us]' &
        type = 'production companies'
-    ).name
+    )
 )
