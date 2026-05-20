@@ -1,71 +1,95 @@
 include("Prela.jl")
 using .Prela
-import .Prela: lookup_field, primary
 
-# === A tiny "JOB-shaped" schema, with String-valued range relations to keep
-# the demo focused on the core algebra. Entity / predicate elision is wired
-# up by a separate pass (see entity_demo.jl, TODO).
+# === Schema: declare each entity once. `@entity` emits the abstract type,
+# qualified internal storage (`_Movie_title`, etc.), `lookup_field` methods,
+# and `primary` (defaulting to the first field).
 
-# Movies are represented as Ints. Field relations:
-const movie = Unary{Int}([1, 2, 3, 4, 5])
+@entity Keyword begin
+    keyword :: String
+end
 
-const _title = Rel{Int, String}([
-    1 => "Shrek 2", 2 => "Iron Man", 3 => "Iron Man 2",
-    4 => "Inception", 5 => "The Departed",
+@entity Company begin
+    name    :: String
+    note    :: String
+    country :: String
+end
+
+@entity Movie begin
+    title           :: String
+    production_year :: Int
+    keyword         :: ID{Keyword}
+    company         :: ID{Company}
+end
+
+# Short aliases for Movie's fields (so queries can write bare `title`, etc.).
+# Other entities' fields are reached via navigation (e.g. `m.keyword.keyword`).
+const title           = Prela.lookup_field(ID{Movie}, Val(:title))
+const production_year = Prela.lookup_field(ID{Movie}, Val(:production_year))
+const keyword         = Prela.lookup_field(ID{Movie}, Val(:keyword))
+const company         = Prela.lookup_field(ID{Movie}, Val(:company))
+
+# === Data ===
+
+M(i) = ID{Movie}(i); K(i) = ID{Keyword}(i); C(i) = ID{Company}(i)
+
+const movie = Unary{ID{Movie}}(M.(1:5))
+
+append!(title.pairs, [
+    M(1) => "Shrek 2", M(2) => "Iron Man", M(3) => "Iron Man 2",
+    M(4) => "Inception", M(5) => "The Departed",
 ])
-const _production_year = Rel{Int, Int}([
-    1 => 2004, 2 => 2008, 3 => 2010, 4 => 2010, 5 => 2006,
+append!(production_year.pairs, [
+    M(1) => 2004, M(2) => 2008, M(3) => 2010, M(4) => 2010, M(5) => 2006,
 ])
-const _keyword = Rel{Int, String}([
-    1 => "animation", 2 => "marvel", 2 => "action",
-    3 => "marvel", 3 => "action",
-    4 => "thriller", 4 => "heist",
-    5 => "crime",
+append!(keyword.pairs, [
+    M(1) => K(10),
+    M(2) => K(11), M(2) => K(12),
+    M(3) => K(11), M(3) => K(12),
+    M(4) => K(13), M(4) => K(14),
+    M(5) => K(15),
 ])
-const _country = Rel{Int, String}([
-    1 => "[us]", 2 => "[us]", 3 => "[us]", 4 => "[us]", 5 => "[us]",
+append!(company.pairs, [
+    M(1) => C(100), M(2) => C(101), M(3) => C(101),
+    M(4) => C(102), M(5) => C(103),
+])
+append!(Prela.lookup_field(ID{Keyword}, Val(:keyword)).pairs, [
+    K(10) => "animation", K(11) => "marvel", K(12) => "action",
+    K(13) => "thriller", K(14) => "heist",  K(15) => "crime",
+])
+append!(Prela.lookup_field(ID{Company}, Val(:name)).pairs, [
+    C(100) => "DreamWorks", C(101) => "Marvel Studios",
+    C(102) => "Warner Bros", C(103) => "Plan B",
+])
+append!(Prela.lookup_field(ID{Company}, Val(:country)).pairs, [
+    C(100) => "[us]", C(101) => "[us]", C(102) => "[us]", C(103) => "[us]",
 ])
 
-# Wire up navigation for `m.title`, `m.keyword`, etc.
-lookup_field(::Type{Int}, ::Val{:title})           = _title
-lookup_field(::Type{Int}, ::Val{:production_year}) = _production_year
-lookup_field(::Type{Int}, ::Val{:keyword})         = _keyword
-lookup_field(::Type{Int}, ::Val{:country})         = _country
-
+# === Helpers ===
 print_pairs(r::Rel) = (for p in r.pairs; println("  $(p.first) -> $(p.second)"); end)
-print_unary(u::Unary) = (for v in u.values; println("  $v"); end)
 
-# === Q1: titles of movies made after 2005 ===
+# === Queries ===
+
 println("\nQ1: movie.((production_year > 2005) : title)")
-q1 = movie.((_production_year > 2005) : _title)
-print_pairs(q1)
+print_pairs(movie.((production_year > 2005) : title))
 
-# === Q2: titles of movies with the "marvel" keyword ===
 println("\nQ2: movie.((keyword == \"marvel\") : title)")
-q2 = movie.((_keyword == "marvel") : _title)
-print_pairs(q2)
+print_pairs(movie.((keyword == "marvel") : title))
 
-# === Q3: movies with 'action' keyword AND year >= 2010, return (title, year) ===
 println("\nQ3: movie.(((keyword == \"action\") & (production_year >= 2010)) : title, production_year)")
-q3 = movie.(((_keyword == "action") & (_production_year >= 2010)) : _title, _production_year)
-print_pairs(q3)
+print_pairs(movie.(((keyword == "action") & (production_year >= 2010)) : title, production_year))
 
-# === Q4: navigation — movie.keyword (all movie/keyword pairs) ===
-println("\nQ4: movie.keyword")
-q4 = movie.keyword
-print_pairs(q4)
+println("\nQ4: movie.keyword.keyword")
+print_pairs(movie.keyword.keyword)
 
-# === Q5: regex match — movies whose title contains "Iron" ===
-println("\nQ5: movie.((title ~ r\"Iron\") : title)")
-q5 = movie.((_title ~ r"Iron") : _title)
-print_pairs(q5)
+println("\nQ5: movie.((keyword ~ r\"^a\") : title)")
+print_pairs(movie.((keyword ~ r"^a") : title))
 
-# === Q6: set difference — movies WITHOUT the "marvel" keyword ===
-println("\nQ6: movie - (keyword == \"marvel\")  [movies without marvel keyword]")
-q6 = movie - (_keyword == "marvel")
-print_unary(q6)
+println("\nQ6: movie.((company.country == \"[us]\") : title)")
+print_pairs(movie.((company.country == "[us]") : title))
 
-# === Q7: union | — movies with year > 2009 OR title contains "Shrek" ===
-println("\nQ7: movie.(((production_year > 2009) | (title ~ r\"Shrek\")) : title)")
-q7 = movie.(((_production_year > 2009) | (_title ~ r"Shrek")) : _title)
-print_pairs(q7)
+println("\nQ7: movie.((keyword in (\"marvel\", \"crime\")) : title)")
+print_pairs(movie.((keyword in ("marvel", "crime")) : title))
+
+println("\nQ8: movie.(((production_year > 2009) | (title ~ r\"Shrek\")) : title)")
+print_pairs(movie.(((production_year > 2009) | (title ~ r"Shrek")) : title))

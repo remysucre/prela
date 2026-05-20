@@ -24,9 +24,20 @@ module Prela
 
 import Base.Broadcast: BroadcastStyle, broadcasted, materialize
 
-export Rel, Unary, Entity, primary, lookup_field
+export Rel, Unary, Entity, ID, primary, lookup_field
 
 abstract type Entity end
+
+# Phantom-typed entity ID. `ID{Movie}(7)` is an opaque reference to the 7th
+# Movie. The type parameter lets Julia dispatch on the entity type — that's how
+# predicate elision and per-entity `lookup_field` methods know which entity
+# they're dealing with.
+struct ID{E <: Entity}
+    id::Int
+end
+Base.:(==)(a::ID{E}, b::ID{E}) where E = a.id == b.id
+Base.hash(a::ID, h::UInt) = hash(a.id, h)
+Base.show(io::IO, a::ID{E}) where E = print(io, nameof(E), "(", a.id, ")")
 
 function primary end
 function lookup_field end
@@ -131,8 +142,8 @@ end
 for op in (:(==), :(!=), :<, :>, :(<=), :(>=))
     @eval Base.$op(r::Rel{X, Y}, val) where {X, Y} =
         Rel{X, Y}([p for p in r.pairs if $op(p.second, val)])
-    # Predicate elision when range is an Entity
-    @eval Base.$op(r::Rel{X, E}, val) where {X, E <: Entity} =
+    # Predicate elision when range is an entity ID: auto-traverse to primary.
+    @eval Base.$op(r::Rel{X, ID{E}}, val) where {X, E <: Entity} =
         $op(compose(r, primary(E)), val)
 end
 
@@ -141,18 +152,19 @@ function Base.in(r::Rel{X, Y}, vals::Tuple) where {X, Y}
     s = Set(vals)
     Rel{X, Y}([p for p in r.pairs if p.second in s])
 end
-Base.in(r::Rel{X, E}, vals::Tuple) where {X, E <: Entity} = in(compose(r, primary(E)), vals)
+Base.in(r::Rel{X, ID{E}}, vals::Tuple) where {X, E <: Entity} =
+    in(compose(r, primary(E)), vals)
 
 # regex
 Base.:~(r::Rel{X, Y}, re::Regex) where {X, Y <: AbstractString} =
     Rel{X, Y}([p for p in r.pairs if occursin(re, p.second)])
-Base.:~(r::Rel{X, E}, re::Regex) where {X, E <: Entity} =
+Base.:~(r::Rel{X, ID{E}}, re::Regex) where {X, E <: Entity} =
     compose(r, primary(E)) ~ re
 
 # Julia doesn't parse `!~` as a binary operator; use `≁` (input via `\nsim<TAB>`).
 ≁(r::Rel{X, Y}, re::Regex) where {X, Y <: AbstractString} =
     Rel{X, Y}([p for p in r.pairs if !occursin(re, p.second)])
-≁(r::Rel{X, E}, re::Regex) where {X, E <: Entity} =
+≁(r::Rel{X, ID{E}}, re::Regex) where {X, E <: Entity} =
     compose(r, primary(E)) ≁ re
 export ≁
 
@@ -205,5 +217,67 @@ end
 
 Base.Broadcast.materialize(x::Rel) = x
 Base.Broadcast.materialize(x::Unary) = x
+
+# ===== schema sugar =====
+#
+# Declare an entity type + its field relations in one place:
+#
+#   @entity Movie begin
+#       title           :: String
+#       production_year :: Int
+#       keyword         :: ID{Keyword}    # entity-typed range
+#       company         :: ID{Company}
+#   end
+#
+# Emits:
+#   - `abstract type Movie <: Entity end`
+#   - one `const <field>` per field, initialized to an empty Rel{ID{Movie}, T}
+#   - one `lookup_field(::Type{ID{Movie}}, ::Val{:<field>})` method per field
+#   - `primary(::Type{Movie}) = <first_field>`  (convention)
+#
+# Data is loaded later by appending to the `.pairs` vector of each relation.
+
+macro entity(entity_sym, block)
+    entity_sym isa Symbol || error("@entity expects a symbol entity name")
+    (block isa Expr && block.head === :block) || error("@entity expects `begin ... end`")
+
+    out = Expr(:block)
+    push!(out.args, :(abstract type $(esc(entity_sym)) <: $(GlobalRef(@__MODULE__, :Entity)) end))
+
+    id_type    = :($(GlobalRef(@__MODULE__, :ID)){$(esc(entity_sym))})
+    rel_type   = GlobalRef(@__MODULE__, :Rel)
+    lookup_fn  = GlobalRef(@__MODULE__, :lookup_field)
+    primary_fn = GlobalRef(@__MODULE__, :primary)
+
+    first_field = nothing
+    for stmt in block.args
+        stmt isa LineNumberNode && continue
+        if stmt isa Expr && stmt.head === :(::)
+            field_sym  = stmt.args[1]
+            range_expr = stmt.args[2]
+            first_field === nothing && (first_field = field_sym)
+            # Qualified internal name avoids cross-entity clashes when two
+            # entities share a field name (e.g. Movie.keyword + Keyword.keyword).
+            qual_sym = Symbol("_", entity_sym, "_", field_sym)
+            push!(out.args, quote
+                const $(esc(qual_sym)) = $rel_type{$id_type, $(esc(range_expr))}(
+                    Pair{$id_type, $(esc(range_expr))}[]
+                )
+                $lookup_fn(::Type{$id_type}, ::Val{$(QuoteNode(field_sym))}) = $(esc(qual_sym))
+            end)
+        else
+            error("@entity: unsupported statement $stmt; expected `name :: Type`")
+        end
+    end
+
+    first_field !== nothing && push!(out.args, quote
+        $primary_fn(::Type{$(esc(entity_sym))}) =
+            $lookup_fn($id_type, Val($(QuoteNode(first_field))))
+    end)
+
+    out
+end
+
+export @entity
 
 end # module
