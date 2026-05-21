@@ -1,6 +1,0 @@
-movie.(
-    keyword ~ r"sequel"
-  & production_year > 2005
-  : data.(type == "rating" & data > "5.0")
-  , title
-)

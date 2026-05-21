@@ -1,9 +1,0 @@
-movie.(
-    complete_cast.(subject == "cast" & status ~ r"complete")
-  & kind == "movie"
-  & keyword in ("superhero", "marvel-comics", "based-on-comic", "fight")
-  & production_year > 2005
-  : cast.(character.(name ~ r"man" | name ~ r"Man")).character
-  , data.(type == "rating" & data > "8.0")
-  , title
-)

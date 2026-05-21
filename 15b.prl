@@ -1,8 +1,0 @@
-movie.(
-    company.(country == "[us]" & name == "YouTube" & note ~ r"\(200.*\)" & note ~ r"\(worldwide\)")
-  & keyword
-  & aka
-  & production_year >= 2005 & production_year <= 2010
-  : info.(type == "release dates" & info ~ r"^USA:.* 200" & note ~ r"internet")
-  , title
-)

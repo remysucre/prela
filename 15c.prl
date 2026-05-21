@@ -1,8 +1,0 @@
-movie.(
-    company.country == "[us]"
-  & keyword
-  & aka
-  & production_year > 1990
-  : info.(type == "release dates" & (info ~ r"^USA:.* 199" | info ~ r"^USA:.* 200") & note ~ r"internet")
-  , title
-)

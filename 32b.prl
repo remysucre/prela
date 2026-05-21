@@ -1,5 +1,0 @@
-movie.(
-    keyword == "character-name-in-title"
-  : link.(type, target.title)
-  , title
-)

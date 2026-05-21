@@ -1,8 +1,0 @@
-movie.(
-    complete_cast.(subject == "cast" & status ~ r"complete")
-  & kind == "movie"
-  & keyword in ("superhero", "sequel", "second-part", "marvel-comics", "based-on-comic", "tv-special", "fight", "violence")
-  & production_year > 1950
-  & cast.character.(name !~ r"Sherlock" & (name ~ r"Tony.*Stark" | name ~ r"Iron.*Man"))
-  : title
-)

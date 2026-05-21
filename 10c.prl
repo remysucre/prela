@@ -1,6 +1,0 @@
-movie.(
-    company.country == "[us]"
-  & production_year > 1990
-  : cast.(note ~ r"\(producer\)").character
-  , title
-)

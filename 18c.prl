@@ -1,9 +1,0 @@
-movie.(
-    cast.(
-        note in ("(writer)", "(head writer)", "(written by)", "(story)", "(story editor)")
-      & person.gender == "m"
-    )
-  : info.(type == "genres" & info in ("Horror", "Action", "Sci-Fi", "Thriller", "Crime", "War"))
-  , data.(type == "votes")
-  , title
-)

@@ -1,7 +1,0 @@
-movie.(
-    info.(type == "genres" & info in ("Drama", "Horror", "Western", "Family"))
-  & production_year >= 2000 & production_year <= 2010
-  : company.(country == "[us]" & type == "production companies")
-  , data.(type == "rating" & data > "7.0")
-  , title
-)

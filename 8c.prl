@@ -1,5 +1,0 @@
-movie.(
-    company.country == "[us]"
-  : cast.(role == "writer").person.aka
-  , title
-)

@@ -1,7 +1,0 @@
-movie.(
-    kind == "movie"
-  & info.type == "release dates"
-  : company.(country == "[us]" & type == "production companies")
-  , data.(type == "rating")
-  , title
-)
