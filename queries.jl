@@ -92,14 +92,14 @@ _q("2a", "'Doc'") do
     (movie
         → (keyword == "character-name-in-title")
         ∧ (company → (Company.country == "[de]"))
-        → title)
+        : title)
 end
 
 _q("2d", "& Teller") do
     (movie
         → (keyword == "character-name-in-title")
         ∧ (company → (Company.country == "[us]"))
-        → title)
+        : title)
 end
 
 _q("3b", "300: Rise of an Empire") do
@@ -107,14 +107,14 @@ _q("3b", "300: Rise of an Empire") do
         → (keyword ~ r"sequel")
         ∧ (info → (Info.info == "Bulgaria"))
         ∧ (production_year > 2010)
-        → title)
+        : title)
 end
 
 _q("4a", "5.1 || & Teller 2") do
     (movie
         → (keyword ~ r"sequel")
         ∧ (production_year > 2005)
-        → (data → (Data.type == "rating") ∧ (Data.data > "5.0")).data
+        : (data → (Data.type == "rating") ∧ (Data.data > "5.0")).data
         × title)
 end
 
@@ -122,7 +122,7 @@ _q("13a", "Afghanistan:24 June 2012 || 1.0 || &Me") do
     (movie
         → (company → (Company.country == "[de]") ∧ (Company.type == "production companies"))
         ∧ (kind == "movie")
-        → (info → (Info.type == "release dates") : Info.info)
+        : (info → (Info.type == "release dates") : Info.info)
         × (data → (Data.type == "rating") : Data.data)
         × title)
 end
@@ -132,7 +132,7 @@ _q("11a", "Churchill Films || followed by || Batman Beyond") do
         → (keyword == "sequel")
         ∧ (production_year >= 1950)
         ∧ (production_year <= 2000)
-        → (company → (Company.country != "[pl]")
+        : (company → (Company.country != "[pl]")
                    ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner"))
                    ∧ (Company.type == "production companies") - Company.note).name
         × (link → (MovieLink.type ~ r"follow"))
@@ -146,7 +146,7 @@ _q("22a", "(empty)") do
         ∧ (keyword in ("murder", "murder-in-title", "blood", "violence"))
         ∧ (production_year > 2008)
         ∧ (kind in ("movie", "episode"))
-        → title
+        : title
         × (data → (Data.data < "7.0") ∧ (Data.type == "rating")).data
         × (company → (Company.note ≁ r"\(USA\)")
                    ∧ (Company.note ~ r"\(200.*\)")
@@ -172,7 +172,7 @@ _q("5a", "(empty)") do
         ∧ (info → (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
                                  "Swedish", "Denish", "Norwegian", "German")))
         ∧ (production_year > 2005)
-        → title)
+        : title)
 end
 
 _q("12a", "10th Grade Reunion Films || 8.1 || 3:20") do
@@ -180,7 +180,7 @@ _q("12a", "10th Grade Reunion Films || 8.1 || 3:20") do
         → (info → (Info.type == "genres") ∧ (Info.info in ("Drama", "Horror")))
         ∧ (production_year >= 2005)
         ∧ (production_year <= 2008)
-        → (company → (Company.country == "[us]") ∧ (Company.type == "production companies")).name
+        : (company → (Company.country == "[us]") ∧ (Company.type == "production companies")).name
         × (data → (Data.type == "rating") ∧ (Data.data > "8.0")).data
         × title)
 end
@@ -194,7 +194,7 @@ _q("14a", "1.0 || \$lowdown") do
                                  "Swedish", "Denish", "Norwegian", "German",
                                  "USA", "American")))
         ∧ (production_year > 2010)
-        → (data → (Data.type == "rating") ∧ (Data.data < "8.5")).data
+        : (data → (Data.type == "rating") ∧ (Data.data < "8.5")).data
         × title)
 end
 
@@ -203,7 +203,7 @@ _q("1b", "(Set Decoration Rentals) (uncredited) || Disaster Movie || 2008") do
         → (data → (Data.type == "bottom 10 rank"))
         ∧ (production_year >= 2005)
         ∧ (production_year <= 2010)
-        → (company → (Company.type == "production companies")
+        : (company → (Company.type == "production companies")
                    ∧ (Company.note ≁ r"\(as Metro-Goldwyn-Mayer Pictures\)")).note
         × title
         × production_year)
@@ -213,14 +213,14 @@ _q("2b", "'Doc'") do
     (movie
         → (keyword == "character-name-in-title")
         ∧ (company → (Company.country == "[nl]"))
-        → title)
+        : title)
 end
 
 _q("2c", "(empty)") do
     (movie
         → (keyword == "character-name-in-title")
         ∧ (company → (Company.country == "[sm]"))
-        → title)
+        : title)
 end
 
 _q("3a", "2 Days in New York") do
@@ -229,7 +229,7 @@ _q("3a", "2 Days in New York") do
         ∧ (info → (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
                                  "Swedish", "Denish", "Norwegian", "German")))
         ∧ (production_year > 2005)
-        → title)
+        : title)
 end
 
 _q("3c", "& Teller 2") do
@@ -239,14 +239,14 @@ _q("3c", "& Teller 2") do
                                  "Swedish", "Denish", "Norwegian", "German",
                                  "USA", "American")))
         ∧ (production_year > 1990)
-        → title)
+        : title)
 end
 
 _q("4b", "9.1 || Batman: Arkham City") do
     (movie
         → (keyword ~ r"sequel")
         ∧ (production_year > 2010)
-        → (data → (Data.type == "rating") ∧ (Data.data > "9.0")).data
+        : (data → (Data.type == "rating") ∧ (Data.data > "9.0")).data
         × title)
 end
 
@@ -255,7 +255,7 @@ _q("11b", "Filmlance International AB || follows || The Money Man") do
         → (keyword == "sequel")
         ∧ (production_year == 1998)
         ∧ (title ~ r"Money")
-        → (company → (Company.country != "[pl]")
+        : (company → (Company.country != "[pl]")
                    ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner"))
                    ∧ (Company.type == "production companies") - Company.note).name
         × (link → (MovieLink.type ~ r"follows"))
@@ -268,7 +268,7 @@ _q("13b", "501audio || 1.8 || 5 Time Champion") do
         ∧ (info → (Info.type == "release dates"))
         ∧ (title != "")
         ∧ ((title ~ r"Champion") ∨ (title ~ r"Loser"))
-        → (company → (Company.country == "[us]") ∧ (Company.type == "production companies")).name
+        : (company → (Company.country == "[us]") ∧ (Company.type == "production companies")).name
         × (data → (Data.type == "rating") : Data.data)
         × title)
 end
@@ -277,7 +277,7 @@ _q("1c", "(co-production) || Intouchables || 2011") do
     (movie
         → (data → (Data.type == "top 250 rank"))
         ∧ (production_year > 2010)
-        → (company → (Company.type == "production companies")
+        : (company → (Company.type == "production companies")
                    ∧ (Company.note ≁ r"\(as Metro-Goldwyn-Mayer Pictures\)")
                    ∧ (Company.note ~ r"\(co-production\)")).note
         × title
@@ -288,7 +288,7 @@ _q("1d", "(Set Decoration Rentals) (uncredited) || Disaster Movie || 2004") do
     (movie
         → (data → (Data.type == "bottom 10 rank"))
         ∧ (production_year > 2000)
-        → (company → (Company.type == "production companies")
+        : (company → (Company.type == "production companies")
                    ∧ (Company.note ≁ r"\(as Metro-Goldwyn-Mayer Pictures\)")).note
         × title
         × production_year)
@@ -298,7 +298,7 @@ _q("4c", "2.1 || & Teller 2") do
     (movie
         → (keyword ~ r"sequel")
         ∧ (production_year > 1990)
-        → (data → (Data.type == "rating") ∧ (Data.data > "2.0")).data
+        : (data → (Data.type == "rating") ∧ (Data.data > "2.0")).data
         × title)
 end
 
@@ -309,7 +309,7 @@ _q("12b", "\$10,000 || Birdemic: Shock and Terror") do
         ∧ (data → (Data.type == "bottom 10 rank"))
         ∧ (production_year > 2000)
         ∧ ((title ~ r"^Birdemic") ∨ (title ~ r"Movie"))
-        → (info → (Info.type == "budget") : Info.info)
+        : (info → (Info.type == "budget") : Info.info)
         × title)
 end
 
@@ -319,7 +319,7 @@ _q("12c", "\"Oh That Gus!\" || 7.1 || \$1.11") do
                 ∧ (Info.info in ("Drama", "Horror", "Western", "Family")))
         ∧ (production_year >= 2000)
         ∧ (production_year <= 2010)
-        → (company → (Company.country == "[us]") ∧ (Company.type == "production companies")).name
+        : (company → (Company.country == "[us]") ∧ (Company.type == "production companies")).name
         × (data → (Data.type == "rating") ∧ (Data.data > "7.0")).data
         × title)
 end
@@ -330,7 +330,7 @@ _q("13c", "DL Sites || 1.8 || Champion") do
         ∧ (info → (Info.type == "release dates"))
         ∧ (title != "")
         ∧ ((title ~ r"^Champion") ∨ (title ~ r"^Loser"))
-        → (company → (Company.country == "[us]") ∧ (Company.type == "production companies")).name
+        : (company → (Company.country == "[us]") ∧ (Company.type == "production companies")).name
         × (data → (Data.type == "rating") : Data.data)
         × title)
 end
@@ -345,7 +345,7 @@ _q("14b", "6.4 || Of Dolls and Murder") do
                                  "USA", "American")))
         ∧ (production_year > 2010)
         ∧ ((title ~ r"murder") ∨ (title ~ r"Murder") ∨ (title ~ r"Mord"))
-        → (data → (Data.type == "rating") ∧ (Data.data > "6.0")).data
+        : (data → (Data.type == "rating") ∧ (Data.data > "6.0")).data
         × title)
 end
 
@@ -358,7 +358,7 @@ _q("14c", "1.0 || \$lowdown") do
                                  "Swedish", "Danish", "Norwegian", "German",
                                  "USA", "American")))
         ∧ (production_year > 2005)
-        → (data → (Data.type == "rating") ∧ (Data.data < "8.5")).data
+        : (data → (Data.type == "rating") ∧ (Data.data < "8.5")).data
         × title)
 end
 
@@ -369,7 +369,7 @@ _q("22b", "(empty)") do
         ∧ (keyword in ("murder", "murder-in-title", "blood", "violence"))
         ∧ (production_year > 2009)
         ∧ (kind in ("movie", "episode"))
-        → title
+        : title
         × (data → (Data.data < "7.0") ∧ (Data.type == "rating")).data
         × (company → (Company.note ≁ r"\(USA\)")
                    ∧ (Company.note ~ r"\(200.*\)")
@@ -386,7 +386,7 @@ _q("22c", "(empty)") do
         ∧ (keyword in ("murder", "murder-in-title", "blood", "violence"))
         ∧ (production_year > 2005)
         ∧ (kind in ("movie", "episode"))
-        → title
+        : title
         × (data → (Data.data < "8.5") ∧ (Data.type == "rating")).data
         × (company → (Company.note ≁ r"\(USA\)")
                    ∧ (Company.note ~ r"\(200.*\)")
@@ -403,7 +403,7 @@ _q("22d", "(#1.1) || 2.0 || 13 Productions") do
         ∧ (keyword in ("murder", "murder-in-title", "blood", "violence"))
         ∧ (production_year > 2005)
         ∧ (kind in ("movie", "episode"))
-        → title
+        : title
         × (data → (Data.data < "8.5") ∧ (Data.type == "rating")).data
         × (company → (Company.country != "[us]") ∧ (Company.type == "production companies")).name)
 end
@@ -416,7 +416,7 @@ _q("5b", "(empty)") do
                    ∧ (Company.note ~ r"\(1994\)"))
         ∧ (info → (Info.info in ("USA", "America")))
         ∧ (production_year > 2010)
-        → title)
+        : title)
 end
 
 _q("5c", "11,830,420") do
@@ -428,7 +428,7 @@ _q("5c", "11,830,420") do
                                  "Swedish", "Denish", "Norwegian", "German",
                                  "USA", "American")))
         ∧ (production_year > 1990)
-        → title)
+        : title)
 end
 
 _q("15a", "USA:1 June 2007 || Battlestar Galactica: The Resistance") do
@@ -439,7 +439,7 @@ _q("15a", "USA:1 June 2007 || Battlestar Galactica: The Resistance") do
                    ∧ (Company.note ~ r"\(worldwide\)"))
         ∧ keyword
         ∧ aka
-        → (info → (Info.type == "release dates")
+        : (info → (Info.type == "release dates")
                 ∧ (Info.info ~ r"^USA:.* 200")
                 ∧ (Info.note ~ r"internet")).info
         × title)
@@ -455,7 +455,7 @@ _q("15b", "USA:27 April 2007 || RoboCop vs Terminator") do
         ∧ aka
         ∧ (production_year >= 2005)
         ∧ (production_year <= 2010)
-        → (info → (Info.type == "release dates")
+        : (info → (Info.type == "release dates")
                 ∧ (Info.info ~ r"^USA:.* 200")
                 ∧ (Info.note ~ r"internet")).info
         × title)
@@ -467,7 +467,7 @@ _q("15c", "USA:1 April 2003 || 24: Day Six - Debrief") do
         ∧ keyword
         ∧ aka
         ∧ (production_year > 1990)
-        → (info → (Info.type == "release dates")
+        : (info → (Info.type == "release dates")
                 ∧ ((Info.info ~ r"^USA:.* 199") ∨ (Info.info ~ r"^USA:.* 200"))
                 ∧ (Info.note ~ r"internet")).info
         × title)
@@ -479,7 +479,7 @@ _q("15d", "(Not So) Instant Photo || 06/05") do
         ∧ keyword
         ∧ (info → (Info.type == "release dates") ∧ (Info.note ~ r"internet"))
         ∧ (production_year > 1990)
-        → aka.title
+        : aka.title
         × title)
 end
 
@@ -488,7 +488,7 @@ _q("11c", "20th Century Fox Home Entertainment || (1997-2002) (worldwide) (all m
         → (keyword in ("sequel", "revenge", "based-on-novel"))
         ∧ (production_year > 1950)
         ∧ link
-        → (company → ((Company.country != "[pl]")
+        : (company → ((Company.country != "[pl]")
                     ∧ ((Company.name ~ r"^20th Century Fox") ∨ (Company.name ~ r"^Twentieth Century Fox"))
                     ∧ (Company.type != "production companies")
                     ∧ Company.note) : (Company.name × Company.note))
@@ -500,7 +500,7 @@ _q("11d", "13th Street || (1954) (UK) (TV) || ...denn sie wissen nicht, was sie 
         → (keyword in ("sequel", "revenge", "based-on-novel"))
         ∧ (production_year > 1950)
         ∧ link
-        → (company → ((Company.country != "[pl]")
+        : (company → ((Company.country != "[pl]")
                     ∧ (Company.type != "production companies")
                     ∧ Company.note) : (Company.name × Company.note))
         × title)
@@ -510,7 +510,7 @@ _q("13d", "\"O\" Films || 1.0 || #54 Meets #47") do
     (movie
         → (kind == "movie")
         ∧ (info → (Info.type == "release dates"))
-        → (company → (Company.country == "[us]") ∧ (Company.type == "production companies")).name
+        : (company → (Company.country == "[us]") ∧ (Company.type == "production companies")).name
         × (data → (Data.type == "rating") : Data.data)
         × title)
 end
@@ -818,73 +818,72 @@ end
 
 # ===================================================================
 _q("21a", "Det Danske Filminstitut || followed by || Der Serienkiller - Klinge des Todes") do
-    (movie
-       → (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note)))
-       ∧ (keyword == "sequel")
-       ∧ (link → (MovieLink.type ~ r"follow"))
-       ∧ (info → (Info.info in _NORDIC8))
-       ∧ (production_year >= 1950) ∧ (production_year <= 2000)
-       → (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note))).name
-       × (link → (MovieLink.type ~ r"follow"))
-       × title)
+    let co = (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note))),
+        lk = (link → (MovieLink.type ~ r"follow"))
+        (movie
+           → co ∧ (keyword == "sequel") ∧ lk
+           ∧ (info → (Info.info in _NORDIC8))
+           ∧ (production_year >= 1950) ∧ (production_year <= 2000)
+           : co.name × lk × title)
+    end
 end
 
 _q("21b", "Filmlance International AB || followed by || Hämndens pris") do
-    (movie
-       → (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note)))
-       ∧ (keyword == "sequel")
-       ∧ (link → (MovieLink.type ~ r"follow"))
-       ∧ (info → (Info.info in ("Germany", "German")))
-       ∧ (production_year >= 2000) ∧ (production_year <= 2010)
-       → (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note))).name
-       × (link → (MovieLink.type ~ r"follow"))
-       × title)
+    let co = (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note))),
+        lk = (link → (MovieLink.type ~ r"follow"))
+        (movie
+           → co ∧ (keyword == "sequel") ∧ lk
+           ∧ (info → (Info.info in ("Germany", "German")))
+           ∧ (production_year >= 2000) ∧ (production_year <= 2010)
+           : co.name × lk × title)
+    end
 end
 
 _q("21c", "Churchill Films || followed by || Batman Beyond") do
-    (movie
-       → (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note)))
-       ∧ (keyword == "sequel")
-       ∧ (link → (MovieLink.type ~ r"follow"))
-       ∧ (info → (Info.info in _NORDIC9))
-       ∧ (production_year >= 1950) ∧ (production_year <= 2010)
-       → (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note))).name
-       × (link → (MovieLink.type ~ r"follow"))
-       × title)
+    let co = (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note))),
+        lk = (link → (MovieLink.type ~ r"follow"))
+        (movie
+           → co ∧ (keyword == "sequel") ∧ lk
+           ∧ (info → (Info.info in _NORDIC9))
+           ∧ (production_year >= 1950) ∧ (production_year <= 2010)
+           : co.name × lk × title)
+    end
 end
 
 # ===================================================================
 _q("23a", "movie || The Analysts") do
-    (movie
-       → (complete_cast → (CompleteCast.status == "complete+verified"))
-       ∧ (company → (Company.country == "[us]"))
-       ∧ (info → ((Info.type == "release dates") ∧ (Info.note ~ r"internet") ∧ ((Info.info ~ r"^USA:.* 199") ∨ (Info.info ~ r"^USA:.* 200"))))
-       ∧ (kind == "movie") ∧ keyword ∧ (production_year > 2000)
-       → (kind == "movie")
-       × title)
+    let k = (kind == "movie")
+        (movie
+           → (complete_cast → (CompleteCast.status == "complete+verified"))
+           ∧ (company → (Company.country == "[us]"))
+           ∧ (info → ((Info.type == "release dates") ∧ (Info.note ~ r"internet") ∧ ((Info.info ~ r"^USA:.* 199") ∨ (Info.info ~ r"^USA:.* 200"))))
+           ∧ k ∧ keyword ∧ (production_year > 2000)
+           : k × title)
+    end
 end
 
 _q("23b", "movie || The Big Mope") do
-    (movie
-       → (complete_cast → (CompleteCast.status == "complete+verified"))
-       ∧ (company → (Company.country == "[us]"))
-       ∧ (info → ((Info.type == "release dates") ∧ (Info.note ~ r"internet") ∧ (Info.info ~ r"^USA:.* 200")))
-       ∧ (kind == "movie")
-       ∧ (keyword in ("nerd", "loner", "alienation", "dignity"))
-       ∧ (production_year > 2000)
-       → (kind == "movie")
-       × title)
+    let k = (kind == "movie")
+        (movie
+           → (complete_cast → (CompleteCast.status == "complete+verified"))
+           ∧ (company → (Company.country == "[us]"))
+           ∧ (info → ((Info.type == "release dates") ∧ (Info.note ~ r"internet") ∧ (Info.info ~ r"^USA:.* 200")))
+           ∧ k
+           ∧ (keyword in ("nerd", "loner", "alienation", "dignity"))
+           ∧ (production_year > 2000)
+           : k × title)
+    end
 end
 
 _q("23c", "movie || Dirt Merchant") do
-    (movie
-       → (complete_cast → (CompleteCast.status == "complete+verified"))
-       ∧ (company → (Company.country == "[us]"))
-       ∧ (info → ((Info.type == "release dates") ∧ (Info.note ~ r"internet") ∧ ((Info.info ~ r"^USA:.* 199") ∨ (Info.info ~ r"^USA:.* 200"))))
-       ∧ (kind in ("movie", "tv movie", "video movie", "video game"))
-       ∧ keyword ∧ (production_year > 1990)
-       → (kind in ("movie", "tv movie", "video movie", "video game"))
-       × title)
+    let k = (kind in ("movie", "tv movie", "video movie", "video game"))
+        (movie
+           → (complete_cast → (CompleteCast.status == "complete+verified"))
+           ∧ (company → (Company.country == "[us]"))
+           ∧ (info → ((Info.type == "release dates") ∧ (Info.note ~ r"internet") ∧ ((Info.info ~ r"^USA:.* 199") ∨ (Info.info ~ r"^USA:.* 200"))))
+           ∧ k ∧ keyword ∧ (production_year > 1990)
+           : k × title)
+    end
 end
 
 # ===================================================================
@@ -976,79 +975,79 @@ end
 
 # ===================================================================
 _q("27a", "Det Danske Filminstitut || followed by || Spår i mörker") do
-    (movie
-       → (complete_cast → ((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete")))
-       ∧ (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note)))
-       ∧ (keyword == "sequel")
-       ∧ (link → (MovieLink.type ~ r"follow"))
-       ∧ (info → (Info.info in ("Sweden", "Germany", "Swedish", "German")))
-       ∧ (production_year >= 1950) ∧ (production_year <= 2000)
-       → (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note))).name
-       × (link → (MovieLink.type ~ r"follow"))
-       × title)
+    let co = (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note))),
+        lk = (link → (MovieLink.type ~ r"follow"))
+        (movie
+           → (complete_cast → ((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete")))
+           ∧ co ∧ (keyword == "sequel") ∧ lk
+           ∧ (info → (Info.info in ("Sweden", "Germany", "Swedish", "German")))
+           ∧ (production_year >= 1950) ∧ (production_year <= 2000)
+           : co.name × lk × title)
+    end
 end
 
 _q("27b", "Filmlance International AB || followed by || Vita nätter") do
-    (movie
-       → (complete_cast → ((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete")))
-       ∧ (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note)))
-       ∧ (keyword == "sequel")
-       ∧ (link → (MovieLink.type ~ r"follow"))
-       ∧ (info → (Info.info in ("Sweden", "Germany", "Swedish", "German")))
-       ∧ (production_year == 1998)
-       → (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note))).name
-       × (link → (MovieLink.type ~ r"follow"))
-       × title)
+    let co = (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note))),
+        lk = (link → (MovieLink.type ~ r"follow"))
+        (movie
+           → (complete_cast → ((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete")))
+           ∧ co ∧ (keyword == "sequel") ∧ lk
+           ∧ (info → (Info.info in ("Sweden", "Germany", "Swedish", "German")))
+           ∧ (production_year == 1998)
+           : co.name × lk × title)
+    end
 end
 
 _q("27c", "Det Danske Filminstitut || followed by || Spår i mörker") do
-    (movie
-       → (complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"^complete")))
-       ∧ (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note)))
-       ∧ (keyword == "sequel")
-       ∧ (link → (MovieLink.type ~ r"follow"))
-       ∧ (info → (Info.info in _NORDIC9))
-       ∧ (production_year >= 1950) ∧ (production_year <= 2010)
-       → (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note))).name
-       × (link → (MovieLink.type ~ r"follow"))
-       × title)
+    let co = (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note))),
+        lk = (link → (MovieLink.type ~ r"follow"))
+        (movie
+           → (complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"^complete")))
+           ∧ co ∧ (keyword == "sequel") ∧ lk
+           ∧ (info → (Info.info in _NORDIC9))
+           ∧ (production_year >= 1950) ∧ (production_year <= 2010)
+           : co.name × lk × title)
+    end
 end
 
 # ===================================================================
 _q("28a", "01 Distribuzione || 2.9 || (#1.1)") do
-    (movie
-       → (complete_cast → ((CompleteCast.subject == "crew") ∧ (CompleteCast.status != "complete+verified")))
-       ∧ (company → ((Company.country != "[us]") ∧ (Company.note ≁ r"\(USA\)") ∧ (Company.note ~ r"\(200.*\)")))
-       ∧ (info → ((Info.type == "countries") ∧ (Info.info in _NORDIC10)))
-       ∧ (data → ((Data.type == "rating") ∧ (Data.data < "8.5")))
-       ∧ (keyword in _MURDER4) ∧ (kind in ("movie", "episode")) ∧ (production_year > 2000)
-       → (company → ((Company.country != "[us]") ∧ (Company.note ≁ r"\(USA\)") ∧ (Company.note ~ r"\(200.*\)"))).name
-       × (data → ((Data.type == "rating") ∧ (Data.data < "8.5")) : Data.data)
-       × title)
+    let co = (company → ((Company.country != "[us]") ∧ (Company.note ≁ r"\(USA\)") ∧ (Company.note ~ r"\(200.*\)"))),
+        dt = (data → ((Data.type == "rating") ∧ (Data.data < "8.5")))
+        (movie
+           → (complete_cast → ((CompleteCast.subject == "crew") ∧ (CompleteCast.status != "complete+verified")))
+           ∧ co
+           ∧ (info → ((Info.type == "countries") ∧ (Info.info in _NORDIC10)))
+           ∧ dt
+           ∧ (keyword in _MURDER4) ∧ (kind in ("movie", "episode")) ∧ (production_year > 2000)
+           : co.name × dt.data × title)
+    end
 end
 
 _q("28b", "20th Century Fox || 6.6 || (#1.1)") do
-    (movie
-       → (complete_cast → ((CompleteCast.subject == "crew") ∧ (CompleteCast.status != "complete+verified")))
-       ∧ (company → ((Company.country != "[us]") ∧ (Company.note ≁ r"\(USA\)") ∧ (Company.note ~ r"\(200.*\)")))
-       ∧ (info → ((Info.type == "countries") ∧ (Info.info in ("Sweden", "Germany", "Swedish", "German"))))
-       ∧ (data → ((Data.type == "rating") ∧ (Data.data > "6.5")))
-       ∧ (keyword in _MURDER4) ∧ (kind in ("movie", "episode")) ∧ (production_year > 2005)
-       → (company → ((Company.country != "[us]") ∧ (Company.note ≁ r"\(USA\)") ∧ (Company.note ~ r"\(200.*\)"))).name
-       × (data → ((Data.type == "rating") ∧ (Data.data > "6.5")) : Data.data)
-       × title)
+    let co = (company → ((Company.country != "[us]") ∧ (Company.note ≁ r"\(USA\)") ∧ (Company.note ~ r"\(200.*\)"))),
+        dt = (data → ((Data.type == "rating") ∧ (Data.data > "6.5")))
+        (movie
+           → (complete_cast → ((CompleteCast.subject == "crew") ∧ (CompleteCast.status != "complete+verified")))
+           ∧ co
+           ∧ (info → ((Info.type == "countries") ∧ (Info.info in ("Sweden", "Germany", "Swedish", "German"))))
+           ∧ dt
+           ∧ (keyword in _MURDER4) ∧ (kind in ("movie", "episode")) ∧ (production_year > 2005)
+           : co.name × dt.data × title)
+    end
 end
 
 _q("28c", "01 Distribuzione || 1.9 || (#1.1)") do
-    (movie
-       → (complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete")))
-       ∧ (company → ((Company.country != "[us]") ∧ (Company.note ≁ r"\(USA\)") ∧ (Company.note ~ r"\(200.*\)")))
-       ∧ (info → ((Info.type == "countries") ∧ (Info.info in _NORDIC10)))
-       ∧ (data → ((Data.type == "rating") ∧ (Data.data < "8.5")))
-       ∧ (keyword in _MURDER4) ∧ (kind in ("movie", "episode")) ∧ (production_year > 2005)
-       → (company → ((Company.country != "[us]") ∧ (Company.note ≁ r"\(USA\)") ∧ (Company.note ~ r"\(200.*\)"))).name
-       × (data → ((Data.type == "rating") ∧ (Data.data < "8.5")) : Data.data)
-       × title)
+    let co = (company → ((Company.country != "[us]") ∧ (Company.note ≁ r"\(USA\)") ∧ (Company.note ~ r"\(200.*\)"))),
+        dt = (data → ((Data.type == "rating") ∧ (Data.data < "8.5")))
+        (movie
+           → (complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete")))
+           ∧ co
+           ∧ (info → ((Info.type == "countries") ∧ (Info.info in _NORDIC10)))
+           ∧ dt
+           ∧ (keyword in _MURDER4) ∧ (kind in ("movie", "episode")) ∧ (production_year > 2005)
+           : co.name × dt.data × title)
+    end
 end
 
 # ===================================================================
@@ -1164,7 +1163,7 @@ end
 _q("32a", "(empty)") do
     (movie
        → (keyword == "10,000-mile-club") ∧ link
-       → (link → MovieLink.type).link
+       : (link → MovieLink.type).link
        × title
        × (link → MovieLink.target → title))
 end
@@ -1172,7 +1171,7 @@ end
 _q("32b", "alternate language version of || 12 oz. Mouse || 'Angel': Season 2 Overview") do
     (movie
        → (keyword == "character-name-in-title") ∧ link
-       → (link → MovieLink.type).link
+       : (link → MovieLink.type).link
        × title
        × (link → MovieLink.target → title))
 end
@@ -1190,12 +1189,13 @@ _q("33a", "495 Productions || 495 Productions || 3.3 || 2.7 || A Double Shot at 
         t1 = (movie → (kind == "tv series")
                     ∧ (company → (Company.country == "[us]"))
                     ∧ (data → (Data.type == "rating")) ∧ qlink)
-        ((t1 : (company → ((Company.country == "[us]") : Company.name)))
-       × (t1 : (qlink → MovieLink.target → company → Company.name))
-       × (t1 : (data → ((Data.type == "rating") : Data.data)))
-       × (t1 : (qlink → MovieLink.target → data → (((Data.type == "rating") ∧ (Data.data < "3.0")) : Data.data)))
-       × (t1 : title)
-       × (t1 : (qlink → MovieLink.target → title)))
+        (t1 :
+            ((company → ((Company.country == "[us]") : Company.name))
+           × (qlink → MovieLink.target → company → Company.name)
+           × (data → ((Data.type == "rating") : Data.data))
+           × (qlink → MovieLink.target → data → (((Data.type == "rating") ∧ (Data.data < "3.0")) : Data.data))
+           × title
+           × (qlink → MovieLink.target → title)))
     end
 end
 
@@ -1207,12 +1207,13 @@ _q("33b", "MTV Netherlands || 495 Productions || 3.3 || 2.7 || A Double Shot at 
         t1 = (movie → (kind == "tv series")
                     ∧ (company → (Company.country == "[nl]"))
                     ∧ (data → (Data.type == "rating")) ∧ qlink)
-        ((t1 : (company → ((Company.country == "[nl]") : Company.name)))
-       × (t1 : (qlink → MovieLink.target → company → Company.name))
-       × (t1 : (data → ((Data.type == "rating") : Data.data)))
-       × (t1 : (qlink → MovieLink.target → data → (((Data.type == "rating") ∧ (Data.data < "3.0")) : Data.data)))
-       × (t1 : title)
-       × (t1 : (qlink → MovieLink.target → title)))
+        (t1 :
+            ((company → ((Company.country == "[nl]") : Company.name))
+           × (qlink → MovieLink.target → company → Company.name)
+           × (data → ((Data.type == "rating") : Data.data))
+           × (qlink → MovieLink.target → data → (((Data.type == "rating") ∧ (Data.data < "3.0")) : Data.data))
+           × title
+           × (qlink → MovieLink.target → title)))
     end
 end
 
@@ -1224,12 +1225,13 @@ _q("33c", "2BE || 495 Productions || 1.3 || 1.0 || A Double Shot at Love || A Do
         t1 = (movie → (kind in ("tv series", "episode"))
                     ∧ (company → (Company.country != "[us]"))
                     ∧ (data → (Data.type == "rating")) ∧ qlink)
-        ((t1 : (company → ((Company.country != "[us]") : Company.name)))
-       × (t1 : (qlink → MovieLink.target → company → Company.name))
-       × (t1 : (data → ((Data.type == "rating") : Data.data)))
-       × (t1 : (qlink → MovieLink.target → data → (((Data.type == "rating") ∧ (Data.data < "3.5")) : Data.data)))
-       × (t1 : title)
-       × (t1 : (qlink → MovieLink.target → title)))
+        (t1 :
+            ((company → ((Company.country != "[us]") : Company.name))
+           × (qlink → MovieLink.target → company → Company.name)
+           × (data → ((Data.type == "rating") : Data.data))
+           × (qlink → MovieLink.target → data → (((Data.type == "rating") ∧ (Data.data < "3.5")) : Data.data))
+           × title
+           × (qlink → MovieLink.target → title)))
     end
 end
 
