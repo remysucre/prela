@@ -578,3 +578,47 @@ let t = time()
     println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
     flush(stdout)
 end
+
+# === 11c ===
+println("\n=== 11c ===")
+let t = time()
+    q = (movie
+        → (keyword in ("sequel", "revenge", "based-on-novel"))
+        ∧ (production_year > 1950)
+        ∧ link
+        → (company → ((Company.country != "[pl]")
+                    ∧ ((Company.name ~ r"^20th Century Fox") ∨ (Company.name ~ r"^Twentieth Century Fox"))
+                    ∧ (Company.type != "production companies")
+                    ∧ Company.note) : (Company.name × Company.note))
+        × title)
+    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
+    flush(stdout)
+end
+
+# === 11d ===
+println("\n=== 11d ===")
+let t = time()
+    q = (movie
+        → (keyword in ("sequel", "revenge", "based-on-novel"))
+        ∧ (production_year > 1950)
+        ∧ link
+        → (company → ((Company.country != "[pl]")
+                    ∧ (Company.type != "production companies")
+                    ∧ Company.note) : (Company.name × Company.note))
+        × title)
+    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
+    flush(stdout)
+end
+
+# === 13d ===
+println("\n=== 13d ===")
+let t = time()
+    q = (movie
+        → (kind == "movie")
+        ∧ (info → (Info.type == "release dates"))
+        → (company → (Company.country == "[us]") ∧ (Company.type == "production companies")).name
+        × (data → (Data.type == "rating") : Data.data)
+        × title)
+    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
+    flush(stdout)
+end

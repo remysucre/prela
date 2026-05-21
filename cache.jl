@@ -126,12 +126,17 @@ end
 
 function load_cache!()
     isdir(CACHE_DIR) || return false
+    # Pre-check every rel before loading any — a partial cache (e.g. after a
+    # schema change adds new rels) must be a clean full miss, otherwise the
+    # parquet fallback would append on top of cache-loaded rels.
+    for (E, f, _) in _each_rel()
+        path = _cache_path(E, f)
+        isfile(path) || (println("  cache miss: $path"); return false)
+    end
     t = time()
     total = 0
     for (E, f, rel) in _each_rel()
-        path = _cache_path(E, f)
-        isfile(path) || (println("  cache miss: $path"); return false)
-        _load_rel!(rel, path)
+        _load_rel!(rel, _cache_path(E, f))
         total += length(rel.pairs)
     end
     println("  cache: loaded $total pairs from $CACHE_DIR ($(round(time()-t; digits=1))s)")

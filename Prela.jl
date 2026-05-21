@@ -187,6 +187,12 @@ function Base.:(:)(r::Rel{X, Y}, s::Rel{X, Z}) where {X, Y, Z}
     k = _keys(r)
     Rel{X, Z}([p for p in s.pairs if p.first in k])
 end
+# Unary on the left: a conjunction of predicates reduces to a `Unary` of keys,
+# so `(pred₁ ∧ pred₂) : field` projects `field` for the matching domain.
+function Base.:(:)(u::Unary{X}, s::Rel{X, Z}) where {X, Z}
+    k = Set(u.values)
+    Rel{X, Z}([p for p in s.pairs if p.first in k])
+end
 
 # ===== range predicates =====
 
@@ -236,15 +242,29 @@ Base.:~(r::Rel{X, ID{E}}, re::Regex) where {X, E <: Entity} =
 
 # ===== product (× at times precedence — tightest binary op in queries) =====
 
+# Hash-join on the shared key. Build the hash on the smaller side so an
+# unfiltered (wide) output column is streamed, not materialized into a hash.
 function ×(r::Rel{X, Y}, s::Rel{X, Z}) where {X, Y, Z}
-    s_by = Dict{X, Vector{Z}}()
-    for p in s.pairs
-        push!(get!(s_by, p.first, Z[]), p.second)
-    end
     out = Pair{X, Tuple{Y, Z}}[]
-    for p in r.pairs
-        for z in get(s_by, p.first, Z[])
-            push!(out, p.first => (p.second, z))
+    if length(s.pairs) <= length(r.pairs)
+        s_by = Dict{X, Vector{Z}}()
+        for p in s.pairs
+            push!(get!(s_by, p.first, Z[]), p.second)
+        end
+        for p in r.pairs
+            for z in get(s_by, p.first, Z[])
+                push!(out, p.first => (p.second, z))
+            end
+        end
+    else
+        r_by = Dict{X, Vector{Y}}()
+        for p in r.pairs
+            push!(get!(r_by, p.first, Y[]), p.second)
+        end
+        for p in s.pairs
+            for y in get(r_by, p.first, Y[])
+                push!(out, p.first => (y, p.second))
+            end
         end
     end
     Rel{X, Tuple{Y, Z}}(out)
