@@ -54,6 +54,7 @@ end
 end
 
 @entity Cast begin
+    movie     :: ID{Movie}
     person    :: ID{Person}
     character :: ID{Character}
     role      :: ID{RoleType}
@@ -74,7 +75,6 @@ end
     keyword         :: ID{Keyword}
     data            :: ID{Data}
     company         :: ID{Company}
-    cast            :: ID{Cast}
     complete_cast   :: ID{CompleteCast}
     link            :: ID{MovieLink}
     linked_by       :: ID{MovieLink}
@@ -298,12 +298,93 @@ function load_all!()
     _load!(aka_title, col(df, 0), col(df, 2), ID{AkaTitle}, identity)
     println("  aka_title: $(length(aka.pairs)) movie-aka pairs ($(round(time()-t; digits=1))s)")
 
+    # ---- name (Person) ----
+    t = time()
+    df = load_df("name")
+    _load!(Prela.lookup_field(ID{Person}, Val(:name)),
+           col(df, 0), col(df, 1), ID{Person}, identity)
+    _load!(Prela.lookup_field(ID{Person}, Val(:gender)),
+           col(df, 0), col(df, 4), ID{Person}, identity)
+    _load!(Prela.lookup_field(ID{Person}, Val(:name_pcode_cf)),
+           col(df, 0), col(df, 5), ID{Person}, identity)
+    println("  name (Person): $(length(Prela.lookup_field(ID{Person}, Val(:name)).pairs)) persons ($(round(time()-t; digits=1))s)")
+
+    # ---- char_name (Character) ----
+    t = time()
+    df = load_df("char_name")
+    _load!(Prela.lookup_field(ID{Character}, Val(:name)),
+           col(df, 0), col(df, 1), ID{Character}, identity)
+    println("  char_name (Character): $(length(Prela.lookup_field(ID{Character}, Val(:name)).pairs)) characters ($(round(time()-t; digits=1))s)")
+
+    # ---- role_type ----
+    t = time()
+    df = load_df("role_type")
+    _load!(Prela.lookup_field(ID{RoleType}, Val(:role)),
+           col(df, 0), col(df, 1), ID{RoleType}, identity)
+    println("  role_type: $(length(Prela.lookup_field(ID{RoleType}, Val(:role)).pairs)) roles ($(round(time()-t; digits=1))s)")
+
+    # ---- aka_name ----
+    t = time()
+    df = load_df("aka_name")
+    _load!(Prela.lookup_field(ID{AkaName}, Val(:name)),
+           col(df, 0), col(df, 2), ID{AkaName}, identity)
+    println("  aka_name: $(length(Prela.lookup_field(ID{AkaName}, Val(:name)).pairs)) aka names ($(round(time()-t; digits=1))s)")
+
+    # ---- cast_info (Cast) — the big one (~37M rows) ----
+    # Columns: id, person_id, movie_id, person_role_id, note, nr_order, role_id.
+    t = time()
+    ci_df = load_df("cast_info")
+    ci_ids     = col(ci_df, 0)
+    ci_person  = col(ci_df, 1)
+    ci_movie   = col(ci_df, 2)
+    ci_charrole= col(ci_df, 3)
+    ci_note    = col(ci_df, 4)
+    ci_role    = col(ci_df, 6)
+
+    cast_movie     = Prela.lookup_field(ID{Cast}, Val(:movie))
+    cast_person    = Prela.lookup_field(ID{Cast}, Val(:person))
+    cast_character = Prela.lookup_field(ID{Cast}, Val(:character))
+    cast_role      = Prela.lookup_field(ID{Cast}, Val(:role))
+    cast_note      = Prela.lookup_field(ID{Cast}, Val(:note))
+
+    n = length(ci_ids)
+    sizehint!(cast_movie.pairs, n)
+    sizehint!(cast_person.pairs, n)
+    sizehint!(cast_character.pairs, n)
+    sizehint!(cast_role.pairs, n)
+    sizehint!(cast_note.pairs, n)
+
+    for i in 1:n
+        cid_raw = ci_ids[i]
+        ismissing(cid_raw) && continue
+        cid = ID{Cast}(cid_raw)
+        m  = ci_movie[i];   ismissing(m)  || push!(cast_movie.pairs,     cid => ID{Movie}(m))
+        p  = ci_person[i];  ismissing(p)  || push!(cast_person.pairs,    cid => ID{Person}(p))
+        c  = ci_charrole[i];ismissing(c)  || push!(cast_character.pairs, cid => ID{Character}(c))
+        r  = ci_role[i];    ismissing(r)  || push!(cast_role.pairs,      cid => ID{RoleType}(r))
+        nt = ci_note[i];    ismissing(nt) || push!(cast_note.pairs,      cid => nt)
+    end
+    println("  cast_info: $(length(cast_movie.pairs)) cast→movie, $(length(cast_person.pairs)) cast→person, $(length(cast_note.pairs)) notes ($(round(time()-t; digits=1))s)")
+
     println("  TOTAL: $(round(time() - t_total; digits=1))s")
 end
 
-println("Loading JOB tables from parquet...")
-load_all!()
+include("cache.jl")
+
+if isdir(CACHE_DIR)
+    println("Loading JOB tables from cache (binary + mmap)...")
+    load_cache!()
+else
+    println("Cache miss; loading JOB tables from parquet...")
+    load_all!()
+    println("Saving cache for next time...")
+    save_cache!()
+end
 
 # Universe of movies = the keys of the title relation.
 const movie = Unary{ID{Movie}}(unique(p.first for p in title.pairs))
 println("Universe: $(length(movie.values)) movies")
+
+# Universe of casts = the keys of Cast.movie (the canonical Cast rel).
+const cast = Unary{ID{Cast}}(unique(p.first for p in Prela.lookup_field(ID{Cast}, Val(:movie)).pairs))
+println("Universe: $(length(cast.values)) casts")

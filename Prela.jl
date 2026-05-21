@@ -335,6 +335,16 @@ macro entity(entity_sym, block)
         push!(out.args, :(
             Base.getproperty(::Type{$(esc(entity_sym))}, name::Symbol) = $gp_body
         ))
+        # Bypass our Type{E}.name override for Julia internals: when a Prela
+        # field is also a DataType property (notably `:name`), `nameof(E)` and
+        # `show_datatype(E)` would otherwise hit our override (returning the
+        # Prela Rel) and crash. Provide entity-specific overrides for those.
+        push!(out.args, :(
+            Base.nameof(::Type{$(esc(entity_sym))}) = $(QuoteNode(entity_sym))
+        ))
+        push!(out.args, :(
+            Base.show(io::IO, ::Type{$(esc(entity_sym))}) = print(io, $(string(entity_sym)))
+        ))
     end
 
     out
