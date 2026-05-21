@@ -62,34 +62,50 @@ function compose(u::Unary{X}, r::Rel{X, Y}) where {X, Y}
     Rel{X, Y}([p for p in r.pairs if p.first in s])
 end
 
-# Per-Rel forward-index cache (D → list of Rs). Lazily built; first compose
-# call against a Rel pays the index-build cost, subsequent calls reuse it.
+# Index caches are shared mutable state; this lock makes `fwd_index`/`inv_index`
+# safe to call from a parallel (multi-threaded) query run.
+const _CACHE_LOCK = ReentrantLock()
+
+# Only *leaf* relations (the per-field stores created by `@entity`) are cached:
+# they're reused across every query. Derived relations are single-use, so their
+# indexes are built fresh and discarded — caching them would grow unboundedly.
+const _LEAF_RELS = Base.IdSet{Any}()
+
 const _FWD_INDEX_CACHE = IdDict{Any, Any}()
-
-function fwd_index(s::Rel{Y, Z}) where {Y, Z}
-    get!(_FWD_INDEX_CACHE, s) do
-        d = Dict{Y, Vector{Z}}()
-        sizehint!(d, length(s.pairs))
-        for p in s.pairs
-            push!(get!(d, p.first, Z[]), p.second)
-        end
-        d::Dict{Y, Vector{Z}}
-    end::Dict{Y, Vector{Z}}
-end
-
-# Per-Rel inverse-index cache (R → list of Ds). Used by `==` and `in` against
-# scalar literals so repeated value-filter queries don't re-scan.
 const _INV_INDEX_CACHE = IdDict{Any, Any}()
 
+function _build_fwd(s::Rel{Y, Z}) where {Y, Z}
+    d = Dict{Y, Vector{Z}}()
+    sizehint!(d, length(s.pairs))
+    for p in s.pairs
+        push!(get!(d, p.first, Z[]), p.second)
+    end
+    d
+end
+
+# Forward index D → list of Rs. Cached for leaf relations, rebuilt for derived.
+function fwd_index(s::Rel{Y, Z}) where {Y, Z}
+    s in _LEAF_RELS || return _build_fwd(s)
+    lock(_CACHE_LOCK) do
+        get!(() -> _build_fwd(s), _FWD_INDEX_CACHE, s)::Dict{Y, Vector{Z}}
+    end
+end
+
+function _build_inv(s::Rel{Y, Z}) where {Y, Z}
+    d = Dict{Z, Vector{Y}}()
+    sizehint!(d, length(s.pairs))
+    for p in s.pairs
+        push!(get!(d, p.second, Y[]), p.first)
+    end
+    d
+end
+
+# Inverse index R → list of Ds, used by `==`/`in`. Cached for leaf relations.
 function inv_index(s::Rel{Y, Z}) where {Y, Z}
-    get!(_INV_INDEX_CACHE, s) do
-        d = Dict{Z, Vector{Y}}()
-        sizehint!(d, length(s.pairs))
-        for p in s.pairs
-            push!(get!(d, p.second, Y[]), p.first)
-        end
-        d::Dict{Z, Vector{Y}}
-    end::Dict{Z, Vector{Y}}
+    s in _LEAF_RELS || return _build_inv(s)
+    lock(_CACHE_LOCK) do
+        get!(() -> _build_inv(s), _INV_INDEX_CACHE, s)::Dict{Z, Vector{Y}}
+    end
 end
 
 function compose(r::Rel{X, Y}, s::Rel{Y, Z}) where {X, Y, Z}
@@ -327,6 +343,7 @@ macro entity(entity_sym, block)
                     Pair{$id_type, $(esc(range_expr))}[]
                 )
                 $lookup_fn(::Type{$id_type}, ::Val{$(QuoteNode(field_sym))}) = $(esc(qual_sym))
+                push!($(GlobalRef(@__MODULE__, :_LEAF_RELS)), $(esc(qual_sym)))
             end)
         else
             error("@entity: unsupported statement $stmt; expected `name :: Type`")

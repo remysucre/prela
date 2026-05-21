@@ -1,108 +1,134 @@
-# JOB queries. Assumes `include("start.jl")` (or `include("JOB.jl")`) has run.
-@assert isdefined(Main, :movie) "Run `include(\"JOB.jl\")` first."
+# JOB benchmark — all 113 queries (templates 1-33) in one file.
+#
+# Idiomatic Prela: movie-rooted queries start from `movie`, cast-rooted ones
+# from `cast`; filters are fused onto the column they constrain so every
+# intermediate stays small. `:` restricts a projection to a predicate's
+# domain, `×` joins output columns on the shared key, `∧`/`∨` combine
+# predicates, `→` navigates / composes.
+#
+# Run after include("JOB.jl"), then call runall(). Queries evaluate in
+# parallel when Julia is started with threads (e.g. `julia -t8 ...`); each
+# result's MIN tuple is checked against its recorded reference.
+@assert isdefined(Main, :movie) "Run include(\"JOB.jl\") first."
 
-# Helper: flatten a left-associated tuple into a flat vector of leaf values.
-function _flatten_leaves(v)
-    if v isa Tuple
-        out = Any[]
-        function go(x)
-            if x isa Tuple
-                for el in x
-                    go(el)
-                end
-            else
-                push!(out, x)
-            end
-        end
-        go(v)
-        out
-    else
-        Any[v]
-    end
-end
+# A query registers a (name, reference, thunk); runall() evaluates them.
+const _Q = Tuple{String,String,Function}[]
+_q(f, name, oracle) = push!(_Q, (name, oracle, f))
 
-function _min_cols(q::Rel)
-    isempty(q.pairs) && return Any[]
-    sample = _flatten_leaves(q.pairs[1].second)
-    n = length(sample)
-    cols = [Vector{Any}(undef, 0) for _ in 1:n]
-    for p in q.pairs
-        flat = _flatten_leaves(p.second)
+_flat(v) = v isa Tuple ? collect(Iterators.flatten(_flat(x) for x in v)) : Any[v]
+
+function _mins(r::Rel)
+    isempty(r.pairs) && return Any[]
+    n = length(_flat(r.pairs[1].second))
+    cols = [Any[] for _ in 1:n]
+    for p in r.pairs
+        fl = _flat(p.second)
         for i in 1:n
-            push!(cols[i], flat[i])
+            push!(cols[i], fl[i])
         end
     end
     [minimum(c) for c in cols]
 end
 
-_fmt_mins(q::Rel) = isempty(q.pairs) ? "(empty)" :
-    join(("MIN[$i]=$(repr(v))" for (i, v) in enumerate(_min_cols(q))), ", ")
+_vals(r) = isempty(r.pairs) ? "(empty)" : join(string.(_mins(r)), " || ")
 
-println()
+const _PRINT_LOCK = ReentrantLock()
 
-# === 2a ===
-println("=== 2a ===  (expected MIN(title): \"'Doc'\")")
-let t = time()
-    q = (movie
+# Evaluate every registered query (parallel across threads when Julia is
+# started with -t N), printing each result with its reference as it finishes,
+# then a final match count.
+function runall()
+    res = Vector{Any}(undef, length(_Q))
+    done = Threads.Atomic{Int}(0)
+    Threads.@threads for i in eachindex(_Q)
+        name, oracle, f = _Q[i]
+        t = time()
+        got = try
+            _vals(f())
+        catch e
+            "ERROR: " * sprint(showerror, e)
+        end
+        dt = round(time() - t; digits=1)
+        res[i] = (name, got, oracle, dt)
+        k = Threads.atomic_add!(done, 1) + 1
+        ok = got == oracle
+        msg = rpad("[$k/$(length(_Q))]", 9) * rpad(name, 6) *
+              (ok ? "ok   " : "DIFF ") * rpad("$(dt)s", 9) * got
+        ok || (msg *= "\n       expected: " * oracle)
+        lock(_PRINT_LOCK) do
+            println(msg)
+            flush(stdout)
+        end
+    end
+    pass = count(t -> t[2] == t[3], res)
+    println("\n", pass, " / ", length(_Q), " queries match reference")
+    flush(stdout)
+end
+
+const _KW8 = ("superhero", "sequel", "second-part", "marvel-comics",
+              "based-on-comic", "tv-special", "fight", "violence")
+const _KW10 = ("superhero", "marvel-comics", "based-on-comic", "tv-special",
+               "fight", "violence", "magnet", "web", "claw", "laser")
+const _KW7 = ("murder", "violence", "blood", "gore", "death",
+              "female-nudity", "hospital")
+const _VOICE4 = ("(voice)", "(voice: Japanese version)",
+                 "(voice) (uncredited)", "(voice: English version)")
+const _VOICE3 = ("(voice)", "(voice) (uncredited)", "(voice: English version)")
+const _WRITER5 = ("(writer)", "(head writer)", "(written by)",
+                  "(story)", "(story editor)")
+const _GENRE6 = ("Horror", "Action", "Sci-Fi", "Thriller", "Crime", "War")
+const _MURDER4 = ("murder", "murder-in-title", "blood", "violence")
+const _NORDIC8 = ("Sweden", "Norway", "Germany", "Denmark",
+                  "Swedish", "Denish", "Norwegian", "German")
+const _NORDIC9 = ("Sweden", "Norway", "Germany", "Denmark", "Swedish",
+                  "Denish", "Norwegian", "German", "English")
+const _NORDIC10 = ("Sweden", "Norway", "Germany", "Denmark", "Swedish",
+                   "Danish", "Norwegian", "German", "USA", "American")
+const _LINK3 = ("sequel", "follows", "followed by")
+
+# ---- templates 1-5, 11-15, 22 (movie-only) ----
+
+_q("2a", "'Doc'") do
+    (movie
         → (keyword == "character-name-in-title")
         ∧ (company → (Company.country == "[de]"))
         → title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 2d ===
-println("\n=== 2d ===")
-let t = time()
-    q = (movie
+_q("2d", "& Teller") do
+    (movie
         → (keyword == "character-name-in-title")
         ∧ (company → (Company.country == "[us]"))
         → title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 3b ===
-println("\n=== 3b ===")
-let t = time()
-    q = (movie
+_q("3b", "300: Rise of an Empire") do
+    (movie
         → (keyword ~ r"sequel")
         ∧ (info → (Info.info == "Bulgaria"))
         ∧ (production_year > 2010)
         → title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 4a ===
-println("\n=== 4a ===")
-let t = time()
-    q = (movie
+_q("4a", "5.1 || & Teller 2") do
+    (movie
         → (keyword ~ r"sequel")
         ∧ (production_year > 2005)
         → (data → (Data.type == "rating") ∧ (Data.data > "5.0")).data
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 13a ===
-println("\n=== 13a ===")
-let t = time()
-    q = (movie
+_q("13a", "Afghanistan:24 June 2012 || 1.0 || &Me") do
+    (movie
         → (company → (Company.country == "[de]") ∧ (Company.type == "production companies"))
         ∧ (kind == "movie")
         → (info → (Info.type == "release dates") : Info.info)
         × (data → (Data.type == "rating") : Data.data)
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 11a ===
-println("\n=== 11a ===")
-let t = time()
-    q = (movie
+_q("11a", "Churchill Films || followed by || Batman Beyond") do
+    (movie
         → (keyword == "sequel")
         ∧ (production_year >= 1950)
         ∧ (production_year <= 2000)
@@ -111,14 +137,10 @@ let t = time()
                    ∧ (Company.type == "production companies") - Company.note).name
         × (link → (MovieLink.type ~ r"follow"))
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 22a === (empty: verified vs DuckDB)
-println("\n=== 22a ===  (empty)")
-let t = time()
-    q = (movie
+_q("22a", "(empty)") do
+    (movie
         → (info → (Info.type == "countries")
                 ∧ (Info.info in ("Germany", "German", "USA", "American")))
         ∧ (keyword in ("murder", "murder-in-title", "blood", "violence"))
@@ -130,28 +152,20 @@ let t = time()
                    ∧ (Company.note ~ r"\(200.*\)")
                    ∧ (Company.country != "[us]")
                    ∧ (Company.type == "production companies")).name)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 1a ===
-println("\n=== 1a ===")
-let t = time()
-    q = (movie
+_q("1a", "(A Warner Bros.-First National Picture) (presents) || A Clockwork Orange || 1934") do
+    (movie
         → (data → (Data.type == "top 250 rank"))
         : (company → (Company.type == "production companies")
                    ∧ (Company.note ≁ r"\(as Metro-Goldwyn-Mayer Pictures\)")
                    ∧ ((Company.note ~ r"\(co-production\)") ∨ (Company.note ~ r"\(presents\)"))).note
         × title
         × production_year)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 5a === (empty)
-println("\n=== 5a ===  (empty)")
-let t = time()
-    q = (movie
+_q("5a", "(empty)") do
+    (movie
         → (company → (Company.type == "production companies")
                    ∧ (Company.note ~ r"\(theatrical\)")
                    ∧ (Company.note ~ r"\(France\)"))
@@ -159,28 +173,20 @@ let t = time()
                                  "Swedish", "Denish", "Norwegian", "German")))
         ∧ (production_year > 2005)
         → title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 12a ===
-println("\n=== 12a ===")
-let t = time()
-    q = (movie
+_q("12a", "10th Grade Reunion Films || 8.1 || 3:20") do
+    (movie
         → (info → (Info.type == "genres") ∧ (Info.info in ("Drama", "Horror")))
         ∧ (production_year >= 2005)
         ∧ (production_year <= 2008)
         → (company → (Company.country == "[us]") ∧ (Company.type == "production companies")).name
         × (data → (Data.type == "rating") ∧ (Data.data > "8.0")).data
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 14a ===
-println("\n=== 14a ===")
-let t = time()
-    q = (movie
+_q("14a", "1.0 || \$lowdown") do
+    (movie
         → (keyword in ("murder", "murder-in-title", "blood", "violence"))
         ∧ (kind == "movie")
         ∧ (info → (Info.type == "countries")
@@ -190,14 +196,10 @@ let t = time()
         ∧ (production_year > 2010)
         → (data → (Data.type == "rating") ∧ (Data.data < "8.5")).data
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 1b ===
-println("\n=== 1b ===")
-let t = time()
-    q = (movie
+_q("1b", "(Set Decoration Rentals) (uncredited) || Disaster Movie || 2008") do
+    (movie
         → (data → (Data.type == "bottom 10 rank"))
         ∧ (production_year >= 2005)
         ∧ (production_year <= 2010)
@@ -205,75 +207,51 @@ let t = time()
                    ∧ (Company.note ≁ r"\(as Metro-Goldwyn-Mayer Pictures\)")).note
         × title
         × production_year)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 2b ===
-println("\n=== 2b ===")
-let t = time()
-    q = (movie
+_q("2b", "'Doc'") do
+    (movie
         → (keyword == "character-name-in-title")
         ∧ (company → (Company.country == "[nl]"))
         → title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 2c === (empty)
-println("\n=== 2c ===  (empty)")
-let t = time()
-    q = (movie
+_q("2c", "(empty)") do
+    (movie
         → (keyword == "character-name-in-title")
         ∧ (company → (Company.country == "[sm]"))
         → title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 3a ===
-println("\n=== 3a ===")
-let t = time()
-    q = (movie
+_q("3a", "2 Days in New York") do
+    (movie
         → (keyword ~ r"sequel")
         ∧ (info → (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
                                  "Swedish", "Denish", "Norwegian", "German")))
         ∧ (production_year > 2005)
         → title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 3c ===
-println("\n=== 3c ===")
-let t = time()
-    q = (movie
+_q("3c", "& Teller 2") do
+    (movie
         → (keyword ~ r"sequel")
         ∧ (info → (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
                                  "Swedish", "Denish", "Norwegian", "German",
                                  "USA", "American")))
         ∧ (production_year > 1990)
         → title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 4b ===
-println("\n=== 4b ===")
-let t = time()
-    q = (movie
+_q("4b", "9.1 || Batman: Arkham City") do
+    (movie
         → (keyword ~ r"sequel")
         ∧ (production_year > 2010)
         → (data → (Data.type == "rating") ∧ (Data.data > "9.0")).data
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 11b ===
-println("\n=== 11b ===")
-let t = time()
-    q = (movie
+_q("11b", "Filmlance International AB || follows || The Money Man") do
+    (movie
         → (keyword == "sequel")
         ∧ (production_year == 1998)
         ∧ (title ~ r"Money")
@@ -282,14 +260,10 @@ let t = time()
                    ∧ (Company.type == "production companies") - Company.note).name
         × (link → (MovieLink.type ~ r"follows"))
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 13b ===
-println("\n=== 13b ===")
-let t = time()
-    q = (movie
+_q("13b", "501audio || 1.8 || 5 Time Champion") do
+    (movie
         → (kind == "movie")
         ∧ (info → (Info.type == "release dates"))
         ∧ (title != "")
@@ -297,14 +271,10 @@ let t = time()
         → (company → (Company.country == "[us]") ∧ (Company.type == "production companies")).name
         × (data → (Data.type == "rating") : Data.data)
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 1c ===
-println("\n=== 1c ===")
-let t = time()
-    q = (movie
+_q("1c", "(co-production) || Intouchables || 2011") do
+    (movie
         → (data → (Data.type == "top 250 rank"))
         ∧ (production_year > 2010)
         → (company → (Company.type == "production companies")
@@ -312,40 +282,28 @@ let t = time()
                    ∧ (Company.note ~ r"\(co-production\)")).note
         × title
         × production_year)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 1d ===
-println("\n=== 1d ===")
-let t = time()
-    q = (movie
+_q("1d", "(Set Decoration Rentals) (uncredited) || Disaster Movie || 2004") do
+    (movie
         → (data → (Data.type == "bottom 10 rank"))
         ∧ (production_year > 2000)
         → (company → (Company.type == "production companies")
                    ∧ (Company.note ≁ r"\(as Metro-Goldwyn-Mayer Pictures\)")).note
         × title
         × production_year)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 4c ===
-println("\n=== 4c ===")
-let t = time()
-    q = (movie
+_q("4c", "2.1 || & Teller 2") do
+    (movie
         → (keyword ~ r"sequel")
         ∧ (production_year > 1990)
         → (data → (Data.type == "rating") ∧ (Data.data > "2.0")).data
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 12b ===
-println("\n=== 12b ===")
-let t = time()
-    q = (movie
+_q("12b", "\$10,000 || Birdemic: Shock and Terror") do
+    (movie
         → (company → (Company.country == "[us]")
                    ∧ (Company.type in ("production companies", "distributors")))
         ∧ (data → (Data.type == "bottom 10 rank"))
@@ -353,14 +311,10 @@ let t = time()
         ∧ ((title ~ r"^Birdemic") ∨ (title ~ r"Movie"))
         → (info → (Info.type == "budget") : Info.info)
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 12c ===
-println("\n=== 12c ===")
-let t = time()
-    q = (movie
+_q("12c", "\"Oh That Gus!\" || 7.1 || \$1.11") do
+    (movie
         → (info → (Info.type == "genres")
                 ∧ (Info.info in ("Drama", "Horror", "Western", "Family")))
         ∧ (production_year >= 2000)
@@ -368,14 +322,10 @@ let t = time()
         → (company → (Company.country == "[us]") ∧ (Company.type == "production companies")).name
         × (data → (Data.type == "rating") ∧ (Data.data > "7.0")).data
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 13c ===
-println("\n=== 13c ===")
-let t = time()
-    q = (movie
+_q("13c", "DL Sites || 1.8 || Champion") do
+    (movie
         → (kind == "movie")
         ∧ (info → (Info.type == "release dates"))
         ∧ (title != "")
@@ -383,14 +333,10 @@ let t = time()
         → (company → (Company.country == "[us]") ∧ (Company.type == "production companies")).name
         × (data → (Data.type == "rating") : Data.data)
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 14b ===
-println("\n=== 14b ===")
-let t = time()
-    q = (movie
+_q("14b", "6.4 || Of Dolls and Murder") do
+    (movie
         → (keyword in ("murder", "murder-in-title"))
         ∧ (kind == "movie")
         ∧ (info → (Info.type == "countries")
@@ -401,14 +347,10 @@ let t = time()
         ∧ ((title ~ r"murder") ∨ (title ~ r"Murder") ∨ (title ~ r"Mord"))
         → (data → (Data.type == "rating") ∧ (Data.data > "6.0")).data
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 14c ===
-println("\n=== 14c ===")
-let t = time()
-    q = (movie
+_q("14c", "1.0 || \$lowdown") do
+    (movie
         → (keyword in ("murder", "murder-in-title", "blood", "violence"))
         ∧ (kind in ("movie", "episode"))
         ∧ (info → (Info.type == "countries")
@@ -418,14 +360,10 @@ let t = time()
         ∧ (production_year > 2005)
         → (data → (Data.type == "rating") ∧ (Data.data < "8.5")).data
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 22b === (empty)
-println("\n=== 22b ===  (empty)")
-let t = time()
-    q = (movie
+_q("22b", "(empty)") do
+    (movie
         → (info → (Info.type == "countries")
                 ∧ (Info.info in ("Germany", "German", "USA", "American")))
         ∧ (keyword in ("murder", "murder-in-title", "blood", "violence"))
@@ -437,14 +375,10 @@ let t = time()
                    ∧ (Company.note ~ r"\(200.*\)")
                    ∧ (Company.country != "[us]")
                    ∧ (Company.type == "production companies")).name)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 22c === (empty)
-println("\n=== 22c ===  (empty)")
-let t = time()
-    q = (movie
+_q("22c", "(empty)") do
+    (movie
         → (info → (Info.type == "countries")
                 ∧ (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
                                  "Swedish", "Danish", "Norwegian", "German",
@@ -458,14 +392,10 @@ let t = time()
                    ∧ (Company.note ~ r"\(200.*\)")
                    ∧ (Company.country != "[us]")
                    ∧ (Company.type == "production companies")).name)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 22d ===
-println("\n=== 22d ===")
-let t = time()
-    q = (movie
+_q("22d", "(#1.1) || 2.0 || 13 Productions") do
+    (movie
         → (info → (Info.type == "countries")
                 ∧ (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
                                  "Swedish", "Danish", "Norwegian", "German",
@@ -476,14 +406,10 @@ let t = time()
         → title
         × (data → (Data.data < "8.5") ∧ (Data.type == "rating")).data
         × (company → (Company.country != "[us]") ∧ (Company.type == "production companies")).name)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 5b === (empty)
-println("\n=== 5b ===  (empty)")
-let t = time()
-    q = (movie
+_q("5b", "(empty)") do
+    (movie
         → (company → (Company.type == "production companies")
                    ∧ (Company.note ~ r"\(VHS\)")
                    ∧ (Company.note ~ r"\(USA\)")
@@ -491,14 +417,10 @@ let t = time()
         ∧ (info → (Info.info in ("USA", "America")))
         ∧ (production_year > 2010)
         → title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 5c ===
-println("\n=== 5c ===")
-let t = time()
-    q = (movie
+_q("5c", "11,830,420") do
+    (movie
         → (company → (Company.type == "production companies")
                    ∧ (Company.note ≁ r"\(TV\)")
                    ∧ (Company.note ~ r"\(USA\)"))
@@ -507,14 +429,10 @@ let t = time()
                                  "USA", "American")))
         ∧ (production_year > 1990)
         → title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 15a ===
-println("\n=== 15a ===")
-let t = time()
-    q = (movie
+_q("15a", "USA:1 June 2007 || Battlestar Galactica: The Resistance") do
+    (movie
         → (production_year > 2000)
         ∧ (company → (Company.country == "[us]")
                    ∧ (Company.note ~ r"\(200.*\)")
@@ -525,14 +443,10 @@ let t = time()
                 ∧ (Info.info ~ r"^USA:.* 200")
                 ∧ (Info.note ~ r"internet")).info
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 15b ===
-println("\n=== 15b ===")
-let t = time()
-    q = (movie
+_q("15b", "USA:27 April 2007 || RoboCop vs Terminator") do
+    (movie
         → (company → (Company.country == "[us]")
                    ∧ (Company.name == "YouTube")
                    ∧ (Company.note ~ r"\(200.*\)")
@@ -545,14 +459,10 @@ let t = time()
                 ∧ (Info.info ~ r"^USA:.* 200")
                 ∧ (Info.note ~ r"internet")).info
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 15c ===
-println("\n=== 15c ===")
-let t = time()
-    q = (movie
+_q("15c", "USA:1 April 2003 || 24: Day Six - Debrief") do
+    (movie
         → (company → (Company.country == "[us]"))
         ∧ keyword
         ∧ aka
@@ -561,28 +471,20 @@ let t = time()
                 ∧ ((Info.info ~ r"^USA:.* 199") ∨ (Info.info ~ r"^USA:.* 200"))
                 ∧ (Info.note ~ r"internet")).info
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 15d ===
-println("\n=== 15d ===")
-let t = time()
-    q = (movie
+_q("15d", "(Not So) Instant Photo || 06/05") do
+    (movie
         → (company → (Company.country == "[us]"))
         ∧ keyword
         ∧ (info → (Info.type == "release dates") ∧ (Info.note ~ r"internet"))
         ∧ (production_year > 1990)
         → aka.title
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 11c ===
-println("\n=== 11c ===")
-let t = time()
-    q = (movie
+_q("11c", "20th Century Fox Home Entertainment || (1997-2002) (worldwide) (all media) || 24") do
+    (movie
         → (keyword in ("sequel", "revenge", "based-on-novel"))
         ∧ (production_year > 1950)
         ∧ link
@@ -591,14 +493,10 @@ let t = time()
                     ∧ (Company.type != "production companies")
                     ∧ Company.note) : (Company.name × Company.note))
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 11d ===
-println("\n=== 11d ===")
-let t = time()
-    q = (movie
+_q("11d", "13th Street || (1954) (UK) (TV) || ...denn sie wissen nicht, was sie tun") do
+    (movie
         → (keyword in ("sequel", "revenge", "based-on-novel"))
         ∧ (production_year > 1950)
         ∧ link
@@ -606,19 +504,733 @@ let t = time()
                     ∧ (Company.type != "production companies")
                     ∧ Company.note) : (Company.name × Company.note))
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
 
-# === 13d ===
-println("\n=== 13d ===")
-let t = time()
-    q = (movie
+_q("13d", "\"O\" Films || 1.0 || #54 Meets #47") do
+    (movie
         → (kind == "movie")
         ∧ (info → (Info.type == "release dates"))
         → (company → (Company.country == "[us]") ∧ (Company.type == "production companies")).name
         × (data → (Data.type == "rating") : Data.data)
         × title)
-    println("  $(length(q.pairs)) rows, MINs = $(_fmt_mins(q))  ($(round(time()-t; digits=2))s)")
-    flush(stdout)
 end
+
+# ---- templates 6-10, 16-33 (cast / complete_cast / person_info) ----
+
+_q("6a", "marvel-cinematic-universe || Downey Jr., Robert || Iron Man 3") do
+    ((cast.movie → ((keyword == "marvel-cinematic-universe") ∧ (production_year > 2010)) : (keyword == "marvel-cinematic-universe"))
+   × (cast.person → (Person.name ~ r"Downey.*Robert"))
+   × (cast.movie → ((keyword == "marvel-cinematic-universe") ∧ (production_year > 2010)) : title))
+end
+
+_q("6b", "based-on-comic || Downey Jr., Robert || The Avengers 2") do
+    ((cast.movie → ((keyword in _KW8) ∧ (production_year > 2014)) : (keyword in _KW8))
+   × (cast.person → (Person.name ~ r"Downey.*Robert"))
+   × (cast.movie → ((keyword in _KW8) ∧ (production_year > 2014)) : title))
+end
+
+_q("6c", "marvel-cinematic-universe || Downey Jr., Robert || The Avengers 2") do
+    ((cast.movie → ((keyword == "marvel-cinematic-universe") ∧ (production_year > 2014)) : (keyword == "marvel-cinematic-universe"))
+   × (cast.person → (Person.name ~ r"Downey.*Robert"))
+   × (cast.movie → ((keyword == "marvel-cinematic-universe") ∧ (production_year > 2014)) : title))
+end
+
+_q("6d", "based-on-comic || Downey Jr., Robert || 2008 MTV Movie Awards") do
+    ((cast.movie → ((keyword in _KW8) ∧ (production_year > 2000)) : (keyword in _KW8))
+   × (cast.person → (Person.name ~ r"Downey.*Robert"))
+   × (cast.movie → ((keyword in _KW8) ∧ (production_year > 2000)) : title))
+end
+
+_q("6e", "marvel-cinematic-universe || Downey Jr., Robert || Iron Man 3") do
+    ((cast.movie → ((keyword == "marvel-cinematic-universe") ∧ (production_year > 2000)) : (keyword == "marvel-cinematic-universe"))
+   × (cast.person → (Person.name ~ r"Downey.*Robert"))
+   × (cast.movie → ((keyword == "marvel-cinematic-universe") ∧ (production_year > 2000)) : title))
+end
+
+_q("6f", "based-on-comic || \"Steff\", Stefanie Oxmann Mcgaha || & Teller 2") do
+    ((cast.movie → ((keyword in _KW8) ∧ (production_year > 2000)) : (keyword in _KW8))
+   × (cast.person → Person.name)
+   × (cast.movie → ((keyword in _KW8) ∧ (production_year > 2000)) : title))
+end
+
+# ===================================================================
+_q("7a", "Antonioni, Michelangelo || Dressed to Kill") do
+    ((cast.person → (((Person.aka.name ~ r"a")
+                    ∧ (Person.name_pcode_cf >= "A") ∧ (Person.name_pcode_cf <= "F")
+                    ∧ ((Person.gender == "m") ∨ ((Person.gender == "f") ∧ (Person.name ~ r"^B")))
+                    ∧ (Person.info → ((PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm")))) : Person.name))
+   × (cast.movie → (((production_year >= 1980) ∧ (production_year <= 1995)
+                   ∧ (linked_by → (MovieLink.type == "features"))) : title)))
+end
+
+_q("7b", "De Palma, Brian || Dressed to Kill") do
+    ((cast.person → (((Person.aka.name ~ r"a")
+                    ∧ (Person.name_pcode_cf ~ r"^D") ∧ (Person.gender == "m")
+                    ∧ (Person.info → ((PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm")))) : Person.name))
+   × (cast.movie → (((production_year >= 1980) ∧ (production_year <= 1984)
+                   ∧ (linked_by → (MovieLink.type == "features"))) : title)))
+end
+
+_q("7c", "50 Cent || \"Boo\" Arnold was born Earl Arnold in Hattiesburg, Mississippi in 1966. His father gave him the nickname 'Boo' early in life and it stuck through grade school, high school, and college. He is still known as \"Boo\" to family and friends.  Raised in central Texas, Arnold played baseball at Texas Tech University where he graduated with a BA in Advertising and Marketing. While at Texas Tech he was also a member of the Texas Epsilon chapter of Phi Delta Theta fraternity. After college he worked with Young Life, an outreach to high school students, in San Antonio, Texas.  While with Young Life Arnold began taking extension courses through Fuller Theological Seminary and ultimately went full-time to Gordon-Conwell Theological Seminary in Boston, Massachusetts. At Gordon-Conwell he completed a Master's Degree in Divinity studying Theology, Philosophy, Church History, Biblical Languages (Hebrew & Greek), and Exegetical Methods. Following seminary he was involved with reconciliation efforts in the former Yugoslavia shortly after the war ended there in1995.  Arnold started acting in his early thirties in Texas. After an encouraging visit to Los Angeles where he spent time with childhood friend George Eads (of CSI Las Vegas) he decided to move to Los Angeles in 2001 to pursue acting full-time. While in Los Angeles he has studied acting with Judith Weston at Judith Weston Studio for Actors and Directors.  Arnold's acting career has been one of steady development, booking co-star and guest-star roles in nighttime television. He guest-starred opposite of Jane Seymour on the night time television drama Justice. He played the lead, Michael Hollister, in the film The Seer, written and directed by Patrick Masset (Friday Night Lights).  He was nominated Best Actor in the168 Film Festival for the role of Phil Stevens in the short-film Useless. In Useless he played a US Marshal who must choose between mercy and justice as he confronts the man who murdered his father. Arnold's performance in Useless confirmed his ability to carry lead roles, and he continues to work toward solidifying himself as a male lead in film and television.  Arnold married fellow Texan Stacy Rudd of San Antonio in 2003 and they are now raising their three children in the Los Angeles area.") do
+    # movie (year + link type) is a filter only — 7c outputs just name + pi.info.
+    ((cast.movie → ((production_year >= 1980) ∧ (production_year <= 2010)
+                  ∧ (linked_by → (MovieLink.type in ("references", "referenced in", "features", "featured in")))))
+   : ((cast.person → (((Person.aka.name ~ r"a|^A")
+                     ∧ (Person.name_pcode_cf >= "A") ∧ (Person.name_pcode_cf <= "F")
+                     ∧ ((Person.gender == "m") ∨ ((Person.gender == "f") ∧ (Person.name ~ r"^A")))
+                     ∧ (Person.info → ((PersonInfo.type == "mini biography") ∧ PersonInfo.note))) : Person.name))
+    × (cast.person → (((Person.aka.name ~ r"a|^A")
+                     ∧ (Person.name_pcode_cf >= "A") ∧ (Person.name_pcode_cf <= "F")
+                     ∧ ((Person.gender == "m") ∨ ((Person.gender == "f") ∧ (Person.name ~ r"^A")))) : Person.info → ((PersonInfo.type == "mini biography") ∧ PersonInfo.note) : PersonInfo.info))))
+end
+
+# ===================================================================
+_q("8a", "Chambers, Linda || .hack//Quantum") do
+    ((cast.note == "(voice: English version)")
+   : ((cast.role == "actress")
+   : ((cast.person → (((Person.name ~ r"Yo") ∧ (Person.name ≁ r"Yu")) : Person.aka.name))
+    × (cast.movie → ((company → ((Company.country == "[jp]") ∧ (Company.note ~ r"\(Japan\)") ∧ (Company.note ≁ r"\(USA\)"))) : title)))))
+end
+
+_q("8b", "Chambers, Linda || Dragon Ball Z: Shin Budokai") do
+    ((cast.note == "(voice: English version)")
+   : ((cast.role == "actress")
+   : ((cast.person → (((Person.name ~ r"Yo") ∧ (Person.name ≁ r"Yu")) : Person.aka.name))
+    × (cast.movie → (((company → ((Company.country == "[jp]") ∧ (Company.note ~ r"\(Japan\)") ∧ (Company.note ≁ r"\(USA\)") ∧ ((Company.note ~ r"\(2006\)") ∨ (Company.note ~ r"\(2007\)"))))
+                     ∧ (production_year >= 2006) ∧ (production_year <= 2007)
+                     ∧ ((title ~ r"^One Piece") ∨ (title ~ r"^Dragon Ball Z"))) : title)))))
+end
+
+_q("8c", "\"A.J.\" || #1 Cheerleader Camp") do
+    ((cast.role == "writer")
+   : ((cast.person → Person.aka.name)
+    × (cast.movie → ((company → (Company.country == "[us]")) : title))))
+end
+
+_q("8d", "\"Jenny from the Block\" || #1 Cheerleader Camp") do
+    ((cast.role == "costume designer")
+   : ((cast.person → Person.aka.name)
+    × (cast.movie → ((company → (Company.country == "[us]")) : title))))
+end
+
+# ===================================================================
+_q("9a", "AJ || Airport Announcer || Blue Harvest") do
+    ((cast.note in _VOICE4)
+   : ((cast.role == "actress")
+   : ((cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"Ang")) : Person.aka.name))
+    × (cast.character → Character.name)
+    × (cast.movie → (((company → ((Company.country == "[us]") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)"))))
+                     ∧ (production_year >= 2005) ∧ (production_year <= 2015)) : title)))))
+end
+
+_q("9b", "AJ || Airport Announcer || Bassett, Angela || Blue Harvest") do
+    ((cast.note == "(voice)")
+   : ((cast.role == "actress")
+   : ((cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"Angel")) : Person.aka.name))
+    × (cast.character → Character.name)
+    × (cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"Angel")) : Person.name))
+    × (cast.movie → (((company → ((Company.country == "[us]") ∧ (Company.note ~ r"\(200.*\)") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)"))))
+                     ∧ (production_year >= 2007) ∧ (production_year <= 2010)) : title)))))
+end
+
+_q("9c", "'Annette' || 2nd Balladeer || Alborg, Ana Esther || (1975-01-20)") do
+    ((cast.note in _VOICE4)
+   : ((cast.role == "actress")
+   : ((cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"An")) : Person.aka.name))
+    × (cast.character → Character.name)
+    × (cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"An")) : Person.name))
+    × (cast.movie → ((company → (Company.country == "[us]")) : title)))))
+end
+
+_q("9d", "!!!, Toy || \"Cockamamie's\" Salesgirl || Aaron, Caroline || \$15,000.00 Error") do
+    ((cast.note in _VOICE4)
+   : ((cast.role == "actress")
+   : ((cast.person → ((Person.gender == "f") : Person.aka.name))
+    × (cast.character → Character.name)
+    × (cast.person → ((Person.gender == "f") : Person.name))
+    × (cast.movie → ((company → (Company.country == "[us]")) : title)))))
+end
+
+# ===================================================================
+_q("10a", "Actor || 12 Rounds") do
+    (((cast.note ~ r"\(voice\)") ∧ (cast.note ~ r"\(uncredited\)"))
+   : ((cast.role == "actor")
+   : ((cast.character → Character.name)
+    × (cast.movie → (((company → (Company.country == "[ru]")) ∧ (production_year > 2005)) : title)))))
+end
+
+_q("10b", "(empty)") do
+    ((cast.note ~ r"\(producer\)")
+   : ((cast.role == "actor")
+   : ((cast.character → Character.name)
+    × (cast.movie → (((company → (Company.country == "[ru]")) ∧ (production_year > 2010)) : title)))))
+end
+
+_q("10c", "Himself || Evil Eyes: Behind the Scenes") do
+    ((cast.note ~ r"\(producer\)")
+   : ((cast.character → Character.name)
+    × (cast.movie → (((company → (Company.country == "[us]")) ∧ (production_year > 1990)) : title))))
+end
+
+# ===================================================================
+_q("16a", "Adams, Stan || Carol Burnett vs. Anthony Perkins") do
+    ((cast.person → Person.aka.name)
+   × (cast.movie → (((company → (Company.country == "[us]")) ∧ (keyword == "character-name-in-title")
+                   ∧ (episode_nr >= 50) ∧ (episode_nr < 100)) : title)))
+end
+
+_q("16b", "!!!, Toy || & Teller") do
+    ((cast.person → Person.aka.name)
+   × (cast.movie → (((company → (Company.country == "[us]")) ∧ (keyword == "character-name-in-title")) : title)))
+end
+
+_q("16c", "\"Brooklyn\" Tony Danza || (#1.5)") do
+    ((cast.person → Person.aka.name)
+   × (cast.movie → (((company → (Company.country == "[us]")) ∧ (keyword == "character-name-in-title")
+                   ∧ (episode_nr < 100)) : title)))
+end
+
+_q("16d", "\"Brooklyn\" Tony Danza || (#1.5)") do
+    ((cast.person → Person.aka.name)
+   × (cast.movie → (((company → (Company.country == "[us]")) ∧ (keyword == "character-name-in-title")
+                   ∧ (episode_nr >= 5) ∧ (episode_nr < 100)) : title)))
+end
+
+# ===================================================================
+_q("17a", "B, Khaz") do
+    ((cast.movie → (((company → (Company.country == "[us]")) ∧ (keyword == "character-name-in-title")) : title))
+   : (cast.person → (Person.name ~ r"^B")))
+end
+
+_q("17b", "Z'Dar, Robert") do
+    ((cast.movie → ((company ∧ (keyword == "character-name-in-title")) : title))
+   : (cast.person → (Person.name ~ r"^Z")))
+end
+
+_q("17c", "X'Volaitis, John") do
+    ((cast.movie → ((company ∧ (keyword == "character-name-in-title")) : title))
+   : (cast.person → (Person.name ~ r"^X")))
+end
+
+_q("17d", "Abrahamsson, Bertil") do
+    ((cast.movie → ((company ∧ (keyword == "character-name-in-title")) : title))
+   : (cast.person → (Person.name ~ r"Bert")))
+end
+
+_q("17e", "\$hort, Too") do
+    ((cast.movie → (((company → (Company.country == "[us]")) ∧ (keyword == "character-name-in-title")) : title))
+   : (cast.person → Person.name))
+end
+
+_q("17f", "'El Galgo PornoStar', Blanquito") do
+    ((cast.movie → ((company ∧ (keyword == "character-name-in-title")) : title))
+   : (cast.person → (Person.name ~ r"B")))
+end
+
+# ===================================================================
+_q("18a", "\$1,000 || 10 || 40 Days and 40 Nights") do
+    ((cast.note in ("(producer)", "(executive producer)"))
+   : ((cast.person → ((Person.gender == "m") ∧ (Person.name ~ r"Tim")))
+   : ((cast.movie → (info → ((Info.type == "budget") : Info.info)))
+    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
+    × (cast.movie → ((info → (Info.type == "budget")) : title)))))
+end
+
+_q("18b", "Horror || 8.1 || Agorable") do
+    ((cast.note in _WRITER5)
+   : ((cast.person → (Person.gender == "f"))
+   : ((cast.movie → (info → ((((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))) - Info.note) : Info.info)))
+    × (cast.movie → (data → (((Data.type == "rating") ∧ (Data.data > "8.0")) : Data.data)))
+    × (cast.movie → (((info → (((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))) - Info.note))
+                     ∧ (production_year >= 2008) ∧ (production_year <= 2014)) : title)))))
+end
+
+_q("18c", "Action || 10 || #PostModem") do
+    ((cast.note in _WRITER5)
+   : ((cast.person → (Person.gender == "m"))
+   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info in _GENRE6)) : Info.info)))
+    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
+    × (cast.movie → ((info → ((Info.type == "genres") ∧ (Info.info in _GENRE6))) : title)))))
+end
+
+# ===================================================================
+_q("19a", "Angeline, Moriah || Blue Harvest") do
+    ((cast.note in _VOICE4)
+   : ((cast.role == "actress")
+   : ((cast.character → Character.name)
+   : ((cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"Ang") ∧ Person.aka) : Person.name))
+    × (cast.movie → (((company → ((Company.country == "[us]") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)"))))
+                     ∧ (info → ((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*200") ∨ (Info.info ~ r"^USA:.*200"))))
+                     ∧ (production_year >= 2005) ∧ (production_year <= 2009)) : title))))))
+end
+
+_q("19b", "Jolie, Angelina || Kung Fu Panda") do
+    ((cast.note == "(voice)")
+   : ((cast.role == "actress")
+   : ((cast.character → Character.name)
+   : ((cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"Angel") ∧ Person.aka) : Person.name))
+    × (cast.movie → (((company → ((Company.country == "[us]") ∧ (Company.note ~ r"\(200.*\)") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)"))))
+                     ∧ (info → ((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*2007") ∨ (Info.info ~ r"^USA:.*2008"))))
+                     ∧ (production_year >= 2007) ∧ (production_year <= 2008)
+                     ∧ (title ~ r"Kung.*Fu.*Panda")) : title))))))
+end
+
+_q("19c", "Alborg, Ana Esther || .hack//Akusei heni vol. 2") do
+    ((cast.note in _VOICE4)
+   : ((cast.role == "actress")
+   : ((cast.character → Character.name)
+   : ((cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka) : Person.name))
+    × (cast.movie → (((company → (Company.country == "[us]"))
+                     ∧ (info → ((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*200") ∨ (Info.info ~ r"^USA:.*200"))))
+                     ∧ (production_year > 2000)) : title))))))
+end
+
+_q("19d", "Aaron, Caroline || \$9.99") do
+    ((cast.note in _VOICE4)
+   : ((cast.role == "actress")
+   : ((cast.character → Character.name)
+   : ((cast.person → (((Person.gender == "f") ∧ Person.aka) : Person.name))
+    × (cast.movie → (((company → (Company.country == "[us]"))
+                     ∧ (info → (Info.type == "release dates"))
+                     ∧ (production_year > 2000)) : title))))))
+end
+
+# ===================================================================
+_q("20a", "Disaster Movie") do
+    ((cast.character → ((Character.name ≁ r"Sherlock") ∧ ((Character.name ~ r"Tony.*Stark") ∨ (Character.name ~ r"Iron.*Man"))))
+   : (cast.movie → (((complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete")))
+                    ∧ (keyword in _KW8) ∧ (kind == "movie") ∧ (production_year > 1950)) : title)))
+end
+
+_q("20b", "Iron Man") do
+    ((cast.character → ((Character.name ≁ r"Sherlock") ∧ ((Character.name ~ r"Tony.*Stark") ∨ (Character.name ~ r"Iron.*Man"))))
+   : ((cast.person → (Person.name ~ r"Downey.*Robert"))
+   : (cast.movie → (((complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete")))
+                    ∧ (keyword in _KW8) ∧ (kind == "movie") ∧ (production_year > 2000)) : title))))
+end
+
+_q("20c", "Abell, Alistair || ...And Then I...") do
+    ((cast.character → (Character.name ~ r"[Mm]an"))
+   : ((cast.person → Person.name)
+    × (cast.movie → (((complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete")))
+                     ∧ (keyword in _KW10) ∧ (kind == "movie") ∧ (production_year > 2000)) : title))))
+end
+
+# ===================================================================
+_q("21a", "Det Danske Filminstitut || followed by || Der Serienkiller - Klinge des Todes") do
+    (movie
+       → (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note)))
+       ∧ (keyword == "sequel")
+       ∧ (link → (MovieLink.type ~ r"follow"))
+       ∧ (info → (Info.info in _NORDIC8))
+       ∧ (production_year >= 1950) ∧ (production_year <= 2000)
+       → (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note))).name
+       × (link → (MovieLink.type ~ r"follow"))
+       × title)
+end
+
+_q("21b", "Filmlance International AB || followed by || Hämndens pris") do
+    (movie
+       → (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note)))
+       ∧ (keyword == "sequel")
+       ∧ (link → (MovieLink.type ~ r"follow"))
+       ∧ (info → (Info.info in ("Germany", "German")))
+       ∧ (production_year >= 2000) ∧ (production_year <= 2010)
+       → (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note))).name
+       × (link → (MovieLink.type ~ r"follow"))
+       × title)
+end
+
+_q("21c", "Churchill Films || followed by || Batman Beyond") do
+    (movie
+       → (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note)))
+       ∧ (keyword == "sequel")
+       ∧ (link → (MovieLink.type ~ r"follow"))
+       ∧ (info → (Info.info in _NORDIC9))
+       ∧ (production_year >= 1950) ∧ (production_year <= 2010)
+       → (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note))).name
+       × (link → (MovieLink.type ~ r"follow"))
+       × title)
+end
+
+# ===================================================================
+_q("23a", "movie || The Analysts") do
+    (movie
+       → (complete_cast → (CompleteCast.status == "complete+verified"))
+       ∧ (company → (Company.country == "[us]"))
+       ∧ (info → ((Info.type == "release dates") ∧ (Info.note ~ r"internet") ∧ ((Info.info ~ r"^USA:.* 199") ∨ (Info.info ~ r"^USA:.* 200"))))
+       ∧ (kind == "movie") ∧ keyword ∧ (production_year > 2000)
+       → (kind == "movie")
+       × title)
+end
+
+_q("23b", "movie || The Big Mope") do
+    (movie
+       → (complete_cast → (CompleteCast.status == "complete+verified"))
+       ∧ (company → (Company.country == "[us]"))
+       ∧ (info → ((Info.type == "release dates") ∧ (Info.note ~ r"internet") ∧ (Info.info ~ r"^USA:.* 200")))
+       ∧ (kind == "movie")
+       ∧ (keyword in ("nerd", "loner", "alienation", "dignity"))
+       ∧ (production_year > 2000)
+       → (kind == "movie")
+       × title)
+end
+
+_q("23c", "movie || Dirt Merchant") do
+    (movie
+       → (complete_cast → (CompleteCast.status == "complete+verified"))
+       ∧ (company → (Company.country == "[us]"))
+       ∧ (info → ((Info.type == "release dates") ∧ (Info.note ~ r"internet") ∧ ((Info.info ~ r"^USA:.* 199") ∨ (Info.info ~ r"^USA:.* 200"))))
+       ∧ (kind in ("movie", "tv movie", "video movie", "video game"))
+       ∧ keyword ∧ (production_year > 1990)
+       → (kind in ("movie", "tv movie", "video movie", "video game"))
+       × title)
+end
+
+# ===================================================================
+_q("24a", "Additional Voices || Baker, Andrea || Baiohazâdo 6") do
+    ((cast.note in _VOICE4)
+   : ((cast.role == "actress")
+   : ((cast.character → Character.name)
+    × (cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka) : Person.name))
+    × (cast.movie → (((company → (Company.country == "[us]"))
+                     ∧ (info → ((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*201") ∨ (Info.info ~ r"^USA:.*201"))))
+                     ∧ (keyword in ("hero", "martial-arts", "hand-to-hand-combat"))
+                     ∧ (production_year > 2010)) : title)))))
+end
+
+_q("24b", "Tigress || Jolie, Angelina || Kung Fu Panda 2") do
+    ((cast.note in _VOICE4)
+   : ((cast.role == "actress")
+   : ((cast.character → Character.name)
+    × (cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka) : Person.name))
+    × (cast.movie → (((company → ((Company.country == "[us]") ∧ (Company.name == "DreamWorks Animation")))
+                     ∧ (info → ((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*201") ∨ (Info.info ~ r"^USA:.*201"))))
+                     ∧ (keyword in ("hero", "martial-arts", "hand-to-hand-combat", "computer-animated-movie"))
+                     ∧ (production_year > 2010) ∧ (title ~ r"^Kung Fu Panda")) : title)))))
+end
+
+# ===================================================================
+_q("25a", "Horror || 10 || Abdallah, Damon || -- And Now the Screaming Starts!") do
+    ((cast.note in _WRITER5)
+   : ((cast.person → (Person.gender == "m"))
+   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info == "Horror")) : Info.info)))
+    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
+    × (cast.person → ((Person.gender == "m") : Person.name))
+    × (cast.movie → (((info → ((Info.type == "genres") ∧ (Info.info == "Horror")))
+                     ∧ (keyword in ("murder", "blood", "gore", "death", "female-nudity"))) : title)))))
+end
+
+_q("25b", "Horror || 138 || Campbell, Jeremiah || Vampire Boys") do
+    ((cast.note in _WRITER5)
+   : ((cast.person → (Person.gender == "m"))
+   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info == "Horror")) : Info.info)))
+    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
+    × (cast.person → ((Person.gender == "m") : Person.name))
+    × (cast.movie → (((info → ((Info.type == "genres") ∧ (Info.info == "Horror")))
+                     ∧ (keyword in ("murder", "blood", "gore", "death", "female-nudity"))
+                     ∧ (production_year > 2010) ∧ (title ~ r"^Vampire")) : title)))))
+end
+
+_q("25c", "Action || 10 || Aakeson, Kim Fupz || \$") do
+    ((cast.note in _WRITER5)
+   : ((cast.person → (Person.gender == "m"))
+   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info in _GENRE6)) : Info.info)))
+    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
+    × (cast.person → ((Person.gender == "m") : Person.name))
+    × (cast.movie → (((info → ((Info.type == "genres") ∧ (Info.info in _GENRE6)))
+                     ∧ (keyword in _KW7)) : title)))))
+end
+
+# ===================================================================
+_q("26a", "'Agua' Man || 7.1 || Acereda, Hermie || 3:10 to Yuma") do
+    ((cast.character → (Character.name ~ r"[Mm]an"))
+   : ((cast.character → (Character.name ~ r"[Mm]an"))
+    × (cast.movie → (data → (((Data.type == "rating") ∧ (Data.data > "7.0")) : Data.data)))
+    × (cast.person → Person.name)
+    × (cast.movie → (((complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete")))
+                     ∧ (keyword in _KW10) ∧ (kind == "movie")
+                     ∧ (data → ((Data.type == "rating") ∧ (Data.data > "7.0")))
+                     ∧ (production_year > 2000)) : title))))
+end
+
+_q("26b", "Bank Manager || 8.2 || Inception") do
+    ((cast.character → (Character.name ~ r"[Mm]an"))
+   : ((cast.character → (Character.name ~ r"[Mm]an"))
+    × (cast.movie → (data → (((Data.type == "rating") ∧ (Data.data > "8.0")) : Data.data)))
+    × (cast.movie → (((complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete")))
+                     ∧ (keyword in ("superhero", "marvel-comics", "based-on-comic", "fight")) ∧ (kind == "movie")
+                     ∧ (data → ((Data.type == "rating") ∧ (Data.data > "8.0")))
+                     ∧ (production_year > 2005)) : title))))
+end
+
+_q("26c", "'Agua' Man || 1.9 || 12 Rounds") do
+    ((cast.character → (Character.name ~ r"[Mm]an"))
+   : ((cast.character → (Character.name ~ r"[Mm]an"))
+    × (cast.movie → (data → ((Data.type == "rating") : Data.data)))
+    × (cast.movie → (((complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete")))
+                     ∧ (keyword in _KW10) ∧ (kind == "movie")
+                     ∧ (data → (Data.type == "rating"))
+                     ∧ (production_year > 2000)) : title))))
+end
+
+# ===================================================================
+_q("27a", "Det Danske Filminstitut || followed by || Spår i mörker") do
+    (movie
+       → (complete_cast → ((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete")))
+       ∧ (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note)))
+       ∧ (keyword == "sequel")
+       ∧ (link → (MovieLink.type ~ r"follow"))
+       ∧ (info → (Info.info in ("Sweden", "Germany", "Swedish", "German")))
+       ∧ (production_year >= 1950) ∧ (production_year <= 2000)
+       → (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note))).name
+       × (link → (MovieLink.type ~ r"follow"))
+       × title)
+end
+
+_q("27b", "Filmlance International AB || followed by || Vita nätter") do
+    (movie
+       → (complete_cast → ((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete")))
+       ∧ (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note)))
+       ∧ (keyword == "sequel")
+       ∧ (link → (MovieLink.type ~ r"follow"))
+       ∧ (info → (Info.info in ("Sweden", "Germany", "Swedish", "German")))
+       ∧ (production_year == 1998)
+       → (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note))).name
+       × (link → (MovieLink.type ~ r"follow"))
+       × title)
+end
+
+_q("27c", "Det Danske Filminstitut || followed by || Spår i mörker") do
+    (movie
+       → (complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"^complete")))
+       ∧ (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note)))
+       ∧ (keyword == "sequel")
+       ∧ (link → (MovieLink.type ~ r"follow"))
+       ∧ (info → (Info.info in _NORDIC9))
+       ∧ (production_year >= 1950) ∧ (production_year <= 2010)
+       → (company → ((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note))).name
+       × (link → (MovieLink.type ~ r"follow"))
+       × title)
+end
+
+# ===================================================================
+_q("28a", "01 Distribuzione || 2.9 || (#1.1)") do
+    (movie
+       → (complete_cast → ((CompleteCast.subject == "crew") ∧ (CompleteCast.status != "complete+verified")))
+       ∧ (company → ((Company.country != "[us]") ∧ (Company.note ≁ r"\(USA\)") ∧ (Company.note ~ r"\(200.*\)")))
+       ∧ (info → ((Info.type == "countries") ∧ (Info.info in _NORDIC10)))
+       ∧ (data → ((Data.type == "rating") ∧ (Data.data < "8.5")))
+       ∧ (keyword in _MURDER4) ∧ (kind in ("movie", "episode")) ∧ (production_year > 2000)
+       → (company → ((Company.country != "[us]") ∧ (Company.note ≁ r"\(USA\)") ∧ (Company.note ~ r"\(200.*\)"))).name
+       × (data → ((Data.type == "rating") ∧ (Data.data < "8.5")) : Data.data)
+       × title)
+end
+
+_q("28b", "20th Century Fox || 6.6 || (#1.1)") do
+    (movie
+       → (complete_cast → ((CompleteCast.subject == "crew") ∧ (CompleteCast.status != "complete+verified")))
+       ∧ (company → ((Company.country != "[us]") ∧ (Company.note ≁ r"\(USA\)") ∧ (Company.note ~ r"\(200.*\)")))
+       ∧ (info → ((Info.type == "countries") ∧ (Info.info in ("Sweden", "Germany", "Swedish", "German"))))
+       ∧ (data → ((Data.type == "rating") ∧ (Data.data > "6.5")))
+       ∧ (keyword in _MURDER4) ∧ (kind in ("movie", "episode")) ∧ (production_year > 2005)
+       → (company → ((Company.country != "[us]") ∧ (Company.note ≁ r"\(USA\)") ∧ (Company.note ~ r"\(200.*\)"))).name
+       × (data → ((Data.type == "rating") ∧ (Data.data > "6.5")) : Data.data)
+       × title)
+end
+
+_q("28c", "01 Distribuzione || 1.9 || (#1.1)") do
+    (movie
+       → (complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete")))
+       ∧ (company → ((Company.country != "[us]") ∧ (Company.note ≁ r"\(USA\)") ∧ (Company.note ~ r"\(200.*\)")))
+       ∧ (info → ((Info.type == "countries") ∧ (Info.info in _NORDIC10)))
+       ∧ (data → ((Data.type == "rating") ∧ (Data.data < "8.5")))
+       ∧ (keyword in _MURDER4) ∧ (kind in ("movie", "episode")) ∧ (production_year > 2005)
+       → (company → ((Company.country != "[us]") ∧ (Company.note ≁ r"\(USA\)") ∧ (Company.note ~ r"\(200.*\)"))).name
+       × (data → ((Data.type == "rating") ∧ (Data.data < "8.5")) : Data.data)
+       × title)
+end
+
+# ===================================================================
+_q("29a", "Queen || Andrews, Julie || Shrek 2") do
+    ((cast.note in _VOICE3)
+   : ((cast.role == "actress")
+   : ((cast.character → (Character.name == "Queen"))
+    × (cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka
+                     ∧ (Person.info → (PersonInfo.type == "trivia"))) : Person.name))
+    × (cast.movie → (((complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete+verified")))
+                     ∧ (company → (Company.country == "[us]"))
+                     ∧ (info → ((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*200") ∨ (Info.info ~ r"^USA:.*200"))))
+                     ∧ (keyword == "computer-animation") ∧ (title == "Shrek 2")
+                     ∧ (production_year >= 2000) ∧ (production_year <= 2010)) : title)))))
+end
+
+_q("29b", "Queen || Andrews, Julie || Shrek 2") do
+    ((cast.note in _VOICE3)
+   : ((cast.role == "actress")
+   : ((cast.character → (Character.name == "Queen"))
+    × (cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka
+                     ∧ (Person.info → (PersonInfo.type == "height"))) : Person.name))
+    × (cast.movie → (((complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete+verified")))
+                     ∧ (company → (Company.country == "[us]"))
+                     ∧ (info → ((Info.type == "release dates") ∧ (Info.info ~ r"^USA:.*200")))
+                     ∧ (keyword == "computer-animation") ∧ (title == "Shrek 2")
+                     ∧ (production_year >= 2000) ∧ (production_year <= 2005)) : title)))))
+end
+
+_q("29c", "Lola || Andrews, Julie || Hoodwinked!") do
+    ((cast.note in _VOICE4)
+   : ((cast.role == "actress")
+   : ((cast.character → Character.name)
+    × (cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka
+                     ∧ (Person.info → (PersonInfo.type == "trivia"))) : Person.name))
+    × (cast.movie → (((complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete+verified")))
+                     ∧ (company → (Company.country == "[us]"))
+                     ∧ (info → ((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*200") ∨ (Info.info ~ r"^USA:.*200"))))
+                     ∧ (keyword == "computer-animation")
+                     ∧ (production_year >= 2000) ∧ (production_year <= 2010)) : title)))))
+end
+
+# ===================================================================
+_q("30a", "Horror || 100356 || Abrams, J.J. || 16 Blocks") do
+    ((cast.note in _WRITER5)
+   : ((cast.person → (Person.gender == "m"))
+   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))) : Info.info)))
+    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
+    × (cast.person → ((Person.gender == "m") : Person.name))
+    × (cast.movie → (((complete_cast → ((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete+verified")))
+                     ∧ (info → ((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))))
+                     ∧ (keyword in _KW7) ∧ (production_year > 2000)) : title)))))
+end
+
+_q("30b", "Horror || 194782 || Shannon, Damian || Freddy vs. Jason") do
+    ((cast.note in _WRITER5)
+   : ((cast.person → (Person.gender == "m"))
+   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))) : Info.info)))
+    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
+    × (cast.person → ((Person.gender == "m") : Person.name))
+    × (cast.movie → (((complete_cast → ((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete+verified")))
+                     ∧ (info → ((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))))
+                     ∧ (keyword in _KW7) ∧ (production_year > 2000)
+                     ∧ ((title ~ r"Freddy") ∨ (title ~ r"Jason") ∨ (title ~ r"^Saw"))) : title)))))
+end
+
+_q("30c", "Action || 100356 || Abernathy, Lewis || \$") do
+    ((cast.note in _WRITER5)
+   : ((cast.person → (Person.gender == "m"))
+   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info in _GENRE6)) : Info.info)))
+    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
+    × (cast.person → ((Person.gender == "m") : Person.name))
+    × (cast.movie → (((complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete+verified")))
+                     ∧ (info → ((Info.type == "genres") ∧ (Info.info in _GENRE6)))
+                     ∧ (keyword in _KW7)) : title)))))
+end
+
+# ===================================================================
+_q("31a", "Horror || 1040 || Agnew, Jim || 2001 Maniacs") do
+    ((cast.note in _WRITER5)
+   : ((cast.person → (Person.gender == "m"))
+   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))) : Info.info)))
+    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
+    × (cast.person → ((Person.gender == "m") : Person.name))
+    × (cast.movie → (((company → (Company.name ~ r"^Lionsgate"))
+                     ∧ (info → ((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))))
+                     ∧ (keyword in _KW7)) : title)))))
+end
+
+_q("31b", "Horror || 129755 || Bousman, Darren Lynn || Saw") do
+    ((cast.note in _WRITER5)
+   : ((cast.person → (Person.gender == "m"))
+   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))) : Info.info)))
+    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
+    × (cast.person → ((Person.gender == "m") : Person.name))
+    × (cast.movie → (((company → ((Company.name ~ r"^Lionsgate") ∧ (Company.note ~ r"\(Blu-ray\)")))
+                     ∧ (info → ((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))))
+                     ∧ (keyword in _KW7) ∧ (production_year > 2000)
+                     ∧ ((title ~ r"Freddy") ∨ (title ~ r"Jason") ∨ (title ~ r"^Saw"))) : title)))))
+end
+
+_q("31c", "Action || 1008 || Abraham, Brad || 11:14") do
+    ((cast.note in _WRITER5)
+   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info in _GENRE6)) : Info.info)))
+    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
+    × (cast.person → Person.name)
+    × (cast.movie → (((company → (Company.name ~ r"^Lionsgate"))
+                     ∧ (info → ((Info.type == "genres") ∧ (Info.info in _GENRE6)))
+                     ∧ (keyword in _KW7)) : title))))
+end
+
+# ===================================================================
+_q("32a", "(empty)") do
+    (movie
+       → (keyword == "10,000-mile-club") ∧ link
+       → (link → MovieLink.type).link
+       × title
+       × (link → MovieLink.target → title))
+end
+
+_q("32b", "alternate language version of || 12 oz. Mouse || 'Angel': Season 2 Overview") do
+    (movie
+       → (keyword == "character-name-in-title") ∧ link
+       → (link → MovieLink.type).link
+       × title
+       × (link → MovieLink.target → title))
+end
+
+# ===================================================================
+# 33 is a movie self-join (t1 linked to t2). `qlink` is the *qualifying* link
+# (right type, target satisfying the t2 predicate); `t1` is the filtered
+# source domain. Both t1- and t2-side projections restrict to those, so the
+# 6-way `×` runs over a few hundred rows, not the whole universe.
+_q("33a", "495 Productions || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila") do
+    let qlink = (link → ((MovieLink.type in _LINK3)
+                       ∧ (MovieLink.target → ((kind == "tv series") ∧ company
+                                            ∧ (data → ((Data.type == "rating") ∧ (Data.data < "3.0")))
+                                            ∧ (production_year >= 2005) ∧ (production_year <= 2008))))),
+        t1 = (movie → (kind == "tv series")
+                    ∧ (company → (Company.country == "[us]"))
+                    ∧ (data → (Data.type == "rating")) ∧ qlink)
+        ((t1 : (company → ((Company.country == "[us]") : Company.name)))
+       × (t1 : (qlink → MovieLink.target → company → Company.name))
+       × (t1 : (data → ((Data.type == "rating") : Data.data)))
+       × (t1 : (qlink → MovieLink.target → data → (((Data.type == "rating") ∧ (Data.data < "3.0")) : Data.data)))
+       × (t1 : title)
+       × (t1 : (qlink → MovieLink.target → title)))
+    end
+end
+
+_q("33b", "MTV Netherlands || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila") do
+    let qlink = (link → ((MovieLink.type ~ r"follow")
+                       ∧ (MovieLink.target → ((kind == "tv series") ∧ company
+                                            ∧ (data → ((Data.type == "rating") ∧ (Data.data < "3.0")))
+                                            ∧ (production_year == 2007))))),
+        t1 = (movie → (kind == "tv series")
+                    ∧ (company → (Company.country == "[nl]"))
+                    ∧ (data → (Data.type == "rating")) ∧ qlink)
+        ((t1 : (company → ((Company.country == "[nl]") : Company.name)))
+       × (t1 : (qlink → MovieLink.target → company → Company.name))
+       × (t1 : (data → ((Data.type == "rating") : Data.data)))
+       × (t1 : (qlink → MovieLink.target → data → (((Data.type == "rating") ∧ (Data.data < "3.0")) : Data.data)))
+       × (t1 : title)
+       × (t1 : (qlink → MovieLink.target → title)))
+    end
+end
+
+_q("33c", "2BE || 495 Productions || 1.3 || 1.0 || A Double Shot at Love || A Double Shot at Love") do
+    let qlink = (link → ((MovieLink.type in _LINK3)
+                       ∧ (MovieLink.target → ((kind in ("tv series", "episode")) ∧ company
+                                            ∧ (data → ((Data.type == "rating") ∧ (Data.data < "3.5")))
+                                            ∧ (production_year >= 2000) ∧ (production_year <= 2010))))),
+        t1 = (movie → (kind in ("tv series", "episode"))
+                    ∧ (company → (Company.country != "[us]"))
+                    ∧ (data → (Data.type == "rating")) ∧ qlink)
+        ((t1 : (company → ((Company.country != "[us]") : Company.name)))
+       × (t1 : (qlink → MovieLink.target → company → Company.name))
+       × (t1 : (data → ((Data.type == "rating") : Data.data)))
+       × (t1 : (qlink → MovieLink.target → data → (((Data.type == "rating") ∧ (Data.data < "3.5")) : Data.data)))
+       × (t1 : title)
+       × (t1 : (qlink → MovieLink.target → title)))
+    end
+end
+
+runall()
