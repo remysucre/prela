@@ -259,6 +259,7 @@ end
 # ===== intersection (∧ at lazy-and precedence) =====
 
 _keys(r::Relation) = Set(_keys_iter(r))
+_keys(u::Unary{X}) where X = Set(u.values)
 
 ∧(r::Relation{X, Y}, s::Relation{X, Z}) where {X, Y, Z} =
     Unary{X}(collect(intersect(_keys(r), _keys(s))))
@@ -422,30 +423,107 @@ end
 
 _range_type(::Relation{D, R}) where {D, R} = R
 
-function (u::Unary{X})(prods::Vararg{Any}; preds...) where X
-    pred_keysets = Set{X}[_keys(v) for (_, v) in pairs(preds)]
+# If a relation's range is `ID{E}` for some entity E, traverse it through
+# E's primary field so values are scalars (per Prela's "entities render as
+# primary" rule). Used to auto-resolve `keyword` prods/preds in broadcast
+# to their string values without an explicit `.<primary>` chain.
+function _maybe_traverse(rel::Relation{D, R}) where {D, R}
+    if R isa Type && R <: ID
+        E = R.parameters[1]
+        return compose(rel, primary(E))
+    end
+    rel
+end
+_maybe_traverse(x) = x   # fallback for non-Relation values
 
-    # Pick the smallest pred's keyset as the outer iteration domain (instead
-    # of the full universe). Massive win when one pred is sparse, e.g. a few
-    # thousand casts with a specific note value.
-    if isempty(pred_keysets)
+# Split preds into set-style (Relation/Unary, materialized as keyset) and
+# column-style (any other value, interpreted as a predicate function applied
+# to the entity's named field). Returns (set_keysets, col_preds).
+function _split_preds(preds, ::Type{Y}) where Y
+    set_keysets = Set{Y}[]
+    col_preds = Tuple{Any, Any}[]
+    for (k, v) in pairs(preds)
+        if v isa Union{Relation, Unary}
+            push!(set_keysets, _keys(v))
+        elseif hasmethod(lookup_field, Tuple{Type{Y}, Val{k}})
+            push!(col_preds, (_maybe_traverse(lookup_field(Y, Val(k))), v))
+        else
+            error("pred `$k` is neither a Relation/Unary nor a field-predicate of $Y")
+        end
+    end
+    set_keysets, col_preds
+end
+
+@inline function _y_passes(y, rest_sets, col_preds_ix)
+    for ks in rest_sets
+        y in ks || return false
+    end
+    for (frel, fix, fn) in col_preds_ix
+        any(fn, _idx_lookup(frel, fix, y)) || return false
+    end
+    return true
+end
+
+# Lookup wrapper: VecRel → direct array access; MapRel → use pre-built fwd_index.
+@inline _idx_lookup(frel::VecRel{E, R}, _fix, k::ID{E}) where {E, R} = (frel.values[k.id],)
+@inline _idx_lookup(frel::MapRel{D, R}, fix::Dict{D, Vector{R}}, k::D) where {D, R} = get(fix, k, EMPTY_Z(R))
+
+# When a column-pred kwarg name matches the field-rel of a prod, the col-pred
+# fn becomes a value filter on that prod: only matching values are emitted.
+# E.g., `Cast.movie.(keyword; keyword = in(_KW8))` emits only _KW8 keywords.
+function _prod_value_filters(prods, preds, ::Type{Y}) where Y
+    fns = Vector{Any}(undef, length(prods))
+    fill!(fns, nothing)
+    for (k, v) in pairs(preds)
+        (v isa Union{Relation, Unary}) && continue
+        hasmethod(lookup_field, Tuple{Type{Y}, Val{k}}) || continue
+        frel = lookup_field(Y, Val(k))
+        for i in eachindex(prods)
+            prods[i] === frel && (fns[i] = v)
+        end
+    end
+    fns
+end
+
+# Filter prod-lookup output by an optional value-pred fn.
+@inline _apply_value_fn(vs, ::Nothing) = vs
+@inline _apply_value_fn(vs, fn) = Iterators.filter(fn, vs)
+
+# Build a tuple of (field_rel, fwd_idx_or_nothing, fn) for each column pred.
+function _precompute_col_preds(col_preds)
+    Tuple{Any, Any, Any}[ (frel, frel isa MapRel ? fwd_index(frel) : nothing, fn) for (frel, fn) in col_preds ]
+end
+
+# Build prod indexes: VecRel → nothing (direct); MapRel → fwd_index.
+function _precompute_prod_idx(prods)
+    Any[ p isa MapRel ? fwd_index(p) : nothing for p in prods ]
+end
+
+@inline _prod_lookup(p::VecRel{E, R}, _idx, k::ID{E}) where {E, R} = (p.values[k.id],)
+@inline _prod_lookup(p::MapRel{D, R}, idx::Dict{D, Vector{R}}, k::D) where {D, R} = get(idx, k, EMPTY_Z(R))
+
+function (u::Unary{X})(prods::Vararg{Any}; preds...) where X
+    set_keysets, col_preds = _split_preds(preds, X)
+    col_preds_ix = _precompute_col_preds(col_preds)
+    prod_value_fns = _prod_value_filters(prods, preds, X)
+    prods = map(_maybe_traverse, prods)
+
+    # Pick the smallest set-pred's keyset as the outer iteration domain.
+    # Column preds are checked per-element after iter is chosen.
+    if isempty(set_keysets)
         iter_keys = u.values
-        rest_sets = pred_keysets
+        rest_sets = set_keysets
     else
-        sizes = map(length, pred_keysets)
+        sizes = map(length, set_keysets)
         smallest_idx = argmin(sizes)
-        iter_keys = pred_keysets[smallest_idx]
-        rest_sets = Set{X}[ks for (i, ks) in enumerate(pred_keysets) if i != smallest_idx]
+        iter_keys = set_keysets[smallest_idx]
+        rest_sets = Set{X}[ks for (i, ks) in enumerate(set_keysets) if i != smallest_idx]
     end
 
     if isempty(prods)
         result = X[]
         for x in iter_keys
-            ok = true
-            for ks in rest_sets
-                if !(x in ks); ok = false; break; end
-            end
-            ok && push!(result, x)
+            _y_passes(x, rest_sets, col_preds_ix) && push!(result, x)
         end
         return Unary{X}(result)
     end
@@ -453,21 +531,13 @@ function (u::Unary{X})(prods::Vararg{Any}; preds...) where X
     nprods = length(prods)
     range_types = map(_range_type, prods)
     R = nprods == 1 ? range_types[1] : Tuple{range_types...}
-
-    prod_indexes = Any[fwd_index(p) for p in prods]
+    prod_idx = _precompute_prod_idx(prods)
     out = Pair{X, R}[]
 
     for x in iter_keys
-        # predicates — short-circuit
-        ok = true
-        for ks in rest_sets
-            if !(x in ks); ok = false; break; end
-        end
-        ok || continue
-
+        _y_passes(x, rest_sets, col_preds_ix) || continue
         if nprods == 1
-            vs = get(prod_indexes[1], x, nothing)
-            vs === nothing && continue
+            vs = _apply_value_fn(_prod_lookup(prods[1], prod_idx[1], x), prod_value_fns[1])
             for v in vs
                 push!(out, x => v)
             end
@@ -475,9 +545,9 @@ function (u::Unary{X})(prods::Vararg{Any}; preds...) where X
             vals = Vector{Any}(undef, nprods)
             skip = false
             for i in 1:nprods
-                v = get(prod_indexes[i], x, nothing)
-                if v === nothing; skip = true; break; end
-                vals[i] = v
+                vs = collect(_apply_value_fn(_prod_lookup(prods[i], prod_idx[i], x), prod_value_fns[i]))
+                if isempty(vs); skip = true; break; end
+                vals[i] = vs
             end
             skip && continue
             for combo in Iterators.product(vals...)
@@ -500,23 +570,21 @@ Base.broadcastable(u::Unary) = Ref(u)
 # `person.(Person.aka.name; gender == "f")` to push filters into the leaf
 # entity without paying for an inverse index on r.
 function (r::Relation{X, Y})(prods::Vararg{Any}; preds...) where {X, Y}
-    pred_keysets = Set{Y}[_keys(v) for (_, v) in pairs(preds)]
+    set_keysets, col_preds = _split_preds(preds, Y)
+    col_preds_ix = _precompute_col_preds(col_preds)
+    prod_value_fns = _prod_value_filters(prods, preds, Y)
+    prods = map(_maybe_traverse, prods)
     nprods = length(prods)
     range_types = map(_range_type, prods)
     R = nprods == 0 ? Nothing : (nprods == 1 ? range_types[1] : Tuple{range_types...})
-    prod_indexes = Any[fwd_index(p) for p in prods]
+    prod_idx = _precompute_prod_idx(prods)
     out = Pair{X, R}[]
 
     for p in _pairs(r)
         x, y = p.first, p.second
-        ok = true
-        for ks in pred_keysets
-            y in ks || (ok = false; break)
-        end
-        ok || continue
+        _y_passes(y, set_keysets, col_preds_ix) || continue
         if nprods == 1
-            vs = get(prod_indexes[1], y, nothing)
-            vs === nothing && continue
+            vs = _apply_value_fn(_prod_lookup(prods[1], prod_idx[1], y), prod_value_fns[1])
             for v in vs
                 push!(out, x => v)
             end
@@ -524,9 +592,9 @@ function (r::Relation{X, Y})(prods::Vararg{Any}; preds...) where {X, Y}
             vals = Vector{Any}(undef, nprods)
             skip = false
             for i in 1:nprods
-                v = get(prod_indexes[i], y, nothing)
-                if v === nothing; skip = true; break; end
-                vals[i] = v
+                vs = collect(_apply_value_fn(_prod_lookup(prods[i], prod_idx[i], y), prod_value_fns[i]))
+                if isempty(vs); skip = true; break; end
+                vals[i] = vs
             end
             skip && continue
             for combo in Iterators.product(vals...)
