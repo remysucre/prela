@@ -1,5 +1,4 @@
-# CPS diagnostic — @time a few cast queries (after warmup) to see per-row
-# allocation. High alloc count ⇒ boxing / non-inlined closures on the hot path.
+# @time a few cast queries (post-warmup) — allocation count is the tell.
 ENV["PRELA_SKIP_RUNALL"] = "1"
 include("JOB.jl")
 include("queries.jl")
@@ -7,7 +6,7 @@ include("queries.jl")
 function diag(name)
     for (n, _, f) in _Q
         n == name || continue
-        _vals(f())          # warmup: compile + materialize
+        _vals(f())          # warmup
         GC.gc()
         print(rpad(name, 6), " ")
         @time _vals(f())
@@ -16,7 +15,7 @@ function diag(name)
     end
 end
 
-println("\n=== cast-query @time (post-warmup) ===")
-for nm in ("6a", "30a", "8a", "25b", "9a", "17e")
+println("\n=== @time (post-warmup) ===")
+for nm in ("6a", "30a", "8a", "25b", "9a", "17e", "15a")
     diag(nm)
 end

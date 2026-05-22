@@ -68,7 +68,9 @@ end
 
 mutable struct MapRel{D, R} <: Query{D, R}
     pairs::Vector{Pair{D, R}}
-    fwd::Union{Nothing, Dict{D, Vector{R}}}   # forward index, built lazily
+    # forward index: dense Vector{Vector{R}} keyed by .id when D is ID{E}
+    # (entity PKs are contiguous → array access, not a hash), else a Dict.
+    fwd::Union{Nothing, Vector{Vector{R}}, Dict{D, Vector{R}}}
     inv::Union{Nothing, Dict{R, Vector{D}}}   # inverse index, built lazily
 end
 MapRel{D, R}(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps, nothing, nothing)
@@ -105,14 +107,35 @@ function vectorize(r::MapRel{ID{E}, R}, n::Int) where {E, R}
 end
 
 # ===== leaf indexes =====================================================
-# Each leaf MapRel carries its own forward/inverse index, built lazily on
-# first use and then read as a plain field — so a top-down probe, which calls
-# fwd_index once per row, never allocates or locks on the hot path. (For a
-# parallel `runall` these fields would become `@atomic` with a double-checked
-# lock; single-threaded they need neither.)
+# Each leaf carries its own forward/inverse index, built lazily on first use
+# and then read as a plain field — so a top-down probe, which calls fwd_index
+# once per row, never allocates or locks on the hot path. (For a parallel
+# `runall` these fields would become `@atomic` with a double-checked lock;
+# single-threaded they need neither.)
 
 const _LEAF_RELS = Base.IdSet{Any}()      # populated by @entity; kept for compat
 const _UNARY_SETS = IdDict{Any, Any}()
+
+# Dense forward index: for an entity-keyed relation (contiguous PK 1..n) the
+# index is a Vector{Vector{R}} addressed by `.id` — an array access per probe,
+# no hashing. Unfilled slots share one empty vector.
+function _dense_fwd(pairs::Vector{Pair{ID{E}, R}}) where {E, R}
+    n = 0
+    for p in pairs
+        i = p.first.id
+        i > n && (n = i)
+    end
+    empty = R[]
+    v = fill(empty, n)
+    for p in pairs
+        i = p.first.id
+        i < 1 && continue          # junk pair → nonexistent entity (id ≤ 0)
+        @inbounds vi = v[i]
+        vi === empty && (vi = R[]; @inbounds v[i] = vi)
+        push!(vi, p.second)
+    end
+    v
+end
 
 function _build_fwd(s::Query{Y, Z}) where {Y, Z}
     d = Dict{Y, Vector{Z}}()
@@ -132,10 +155,20 @@ function _build_inv(s::Query{Y, Z}) where {Y, Z}
     d
 end
 
-function fwd_index(r::MapRel)
+# entity-keyed leaf → dense array index; other domains → Dict.
+function fwd_index(r::MapRel{ID{E}, R}) where {E, R}
     f = r.fwd
-    f === nothing || return f
-    r.fwd = _build_fwd(r)
+    f === nothing || return f::Vector{Vector{R}}
+    d = _dense_fwd(r.pairs)
+    r.fwd = d
+    d
+end
+function fwd_index(r::MapRel{D, R}) where {D, R}
+    f = r.fwd
+    f === nothing || return f::Dict{D, Vector{R}}
+    d = _build_fwd(r)
+    r.fwd = d
+    d
 end
 
 function inv_index(r::MapRel)
@@ -144,6 +177,40 @@ function inv_index(r::MapRel)
     r.inv = _build_inv(r)
 end
 inv_index(s::Query) = _build_inv(s)       # VecRel etc. — rare, uncached
+
+# Uniform per-key access over either index representation.
+@inline function _idx_probe(idx::Vector{Vector{R}}, x::ID, k) where {R}
+    i = x.id
+    (1 <= i <= length(idx)) || return
+    @inbounds vs = idx[i]
+    for y in vs
+        k(y)
+    end
+end
+@inline function _idx_probe(idx::Dict, x, k)
+    vs = get(idx, x, nothing)
+    vs === nothing && return
+    for y in vs
+        k(y)
+    end
+end
+@inline function _idx_probe_any(idx::Vector{Vector{R}}, x::ID, k) where {R}
+    i = x.id
+    (1 <= i <= length(idx)) || return false
+    @inbounds vs = idx[i]
+    for y in vs
+        k(y) && return true
+    end
+    false
+end
+@inline function _idx_probe_any(idx::Dict, x, k)
+    vs = get(idx, x, nothing)
+    vs === nothing && return false
+    for y in vs
+        k(y) && return true
+    end
+    false
+end
 
 _unary_set(u::Unary{D}) where D = get!(() -> Set(u.values), _UNARY_SETS, u)::Set{D}
 
@@ -177,7 +244,7 @@ struct SetDiff{D, A, B} <: SetQ{D};  a::A;  b::B;  end
 mutable struct Materialized{D, R, A} <: Query{D, R}
     a::A
     mat::Union{Nothing, Vector{Pair{D, R}}}
-    idx::Union{Nothing, Dict{D, Vector{R}}}
+    idx::Union{Nothing, Vector{Vector{R}}, Dict{D, Vector{R}}}
 end
 
 # `materialize` on a set-query: evaluate once into a vector + membership set.
@@ -276,19 +343,13 @@ Base.:~(q::Query{D, ID{E}}, re::Regex) where {D, E} = Compose(q, primary(E)) ~ r
 # drivekeys(s,k): k(x) per member    member(s,x)::Bool
 
 # ---- leaves ----
-function drive(r::MapRel, k)
+@inline function drive(r::MapRel, k)
     for p in r.pairs
         k(p.first, p.second)
     end
 end
-function probe(r::MapRel{D, R}, x, k) where {D, R}
-    vs = get(fwd_index(r), x, nothing)
-    vs === nothing && return
-    for y in vs
-        k(y)
-    end
-end
-function drive(r::VecRel{E, R}, k) where {E, R}
+@inline probe(r::MapRel, x, k) = _idx_probe(fwd_index(r), x, k)
+@inline function drive(r::VecRel{E, R}, k) where {E, R}
     v = r.values
     @inbounds for i in eachindex(v)
         k(ID{E}(i), v[i])
@@ -350,36 +411,39 @@ end
     drive(n.ops[1], (x, y1) -> _pp(Base.tail(n.ops), x, (y1,), t -> k(x, t)))
 
 # ---- Materialized: materialize once, then serve from vector + hash index ----
-function _cmat(n::Materialized{D, R}) where {D, R}
-    if n.mat === nothing
-        out = Pair{D, R}[]
-        drive(n.a, (x, y) -> push!(out, x => y))
-        n.mat = out
-    end
-    n.mat
+# `A` (the inner query type) is named explicitly so the method specializes on
+# it — otherwise `n.a` is abstract and the materializing drive boxes per row.
+function _cmat(n::Materialized{D, R, A}) where {D, R, A}
+    m = n.mat
+    m === nothing || return m::Vector{Pair{D, R}}
+    out = Pair{D, R}[]
+    drive(n.a, (x, y) -> push!(out, x => y))
+    n.mat = out
+    out
 end
-function _cidx(n::Materialized{D, R}) where {D, R}
-    if n.idx === nothing
-        d = Dict{D, Vector{R}}()
-        for p in _cmat(n)
-            push!(get!(() -> R[], d, p.first), p.second)
-        end
-        n.idx = d
-    end
-    n.idx
+function _cidx(n::Materialized{ID{E}, R, A}) where {E, R, A}
+    f = n.idx
+    f === nothing || return f::Vector{Vector{R}}
+    d = _dense_fwd(_cmat(n))
+    n.idx = d
+    d
 end
-function drive(n::Materialized, k)
+function _cidx(n::Materialized{D, R, A}) where {D, R, A}
+    f = n.idx
+    f === nothing || return f::Dict{D, Vector{R}}
+    d = Dict{D, Vector{R}}()
+    for p in _cmat(n)
+        push!(get!(() -> R[], d, p.first), p.second)
+    end
+    n.idx = d
+    d
+end
+@inline function drive(n::Materialized, k)
     for p in _cmat(n)
         k(p.first, p.second)
     end
 end
-function probe(n::Materialized{D, R}, x, k) where {D, R}
-    vs = get(_cidx(n), x, nothing)
-    vs === nothing && return
-    for y in vs
-        k(y)
-    end
-end
+@inline probe(n::Materialized, x, k) = _idx_probe(_cidx(n), x, k)
 
 function _mkeys(n::MatSet{D}) where {D}
     if n.keys === nothing
@@ -393,15 +457,15 @@ function _mset(n::MatSet{D}) where {D}
     n.set === nothing && (n.set = Set(_mkeys(n)))
     n.set
 end
-drivekeys(n::MatSet, k) = (for x in _mkeys(n); k(x); end)
-member(n::MatSet, x) = x in _mset(n)
+@inline drivekeys(n::MatSet, k) = (for x in _mkeys(n); k(x); end)
+@inline member(n::MatSet, x) = x in _mset(n)
 
 # ---- SetQ: drivekeys + member ----
-drivekeys(u::Unary, k) = (for v in u.values; k(v); end)
-member(u::Unary, x) = x in _unary_set(u)
+@inline drivekeys(u::Unary, k) = (for v in u.values; k(v); end)
+@inline member(u::Unary, x) = x in _unary_set(u)
 
-drivekeys(u::Universe{E}, k) where {E} = (for i in 1:u.n; k(ID{E}(i)); end)
-member(u::Universe{E}, x::ID{E}) where {E} = 1 <= x.id <= u.n
+@inline drivekeys(u::Universe{E}, k) where {E} = (for i in 1:u.n; k(ID{E}(i)); end)
+@inline member(u::Universe{E}, x::ID{E}) where {E} = 1 <= x.id <= u.n
 
 @inline drivekeys(s::Keys, k) = drive(s.a, (x, _) -> k(x))
 @inline member(s::Keys, x) = member(s.a, x)
@@ -422,14 +486,7 @@ end
 # `probe_any` stops, returning true, as soon as `k` does. The Bool is threaded
 # through return values (no mutable cell) so the whole chain is allocation-free
 # when inlined — this is the hot path for `member` on a driven stream.
-function probe_any(r::MapRel, x, k)
-    vs = get(fwd_index(r), x, nothing)
-    vs === nothing && return false
-    for y in vs
-        k(y) && return true
-    end
-    false
-end
+@inline probe_any(r::MapRel, x, k) = _idx_probe_any(fwd_index(r), x, k)
 @inline probe_any(r::VecRel{E, R}, x::ID{E}, k) where {E, R} =
     k(@inbounds r.values[x.id])
 @inline probe_any(n::Compose, x, k) = probe_any(n.a, x, m -> probe_any(n.b, m, k))
@@ -443,14 +500,7 @@ end
     probe_any(n.a, x, y -> member(n.pred.s, y) && k(y))
 @inline probe_any(n::Restrict, x, k) = member(n.a, x) && probe_any(n.b, x, k)
 @inline probe_any(n::Diff, x, k) = (!member(n.b, x)) && probe_any(n.a, x, k)
-function probe_any(n::Materialized{D, R}, x, k) where {D, R}
-    vs = get(_cidx(n), x, nothing)
-    vs === nothing && return false
-    for y in vs
-        k(y) && return true
-    end
-    false
-end
+@inline probe_any(n::Materialized, x, k) = _idx_probe_any(_cidx(n), x, k)
 # generic fallback (Prod and other shapes) — no early exit, rarely on hot paths
 function probe_any(q::Query, x, k)
     found = Ref(false)
@@ -459,7 +509,7 @@ function probe_any(q::Query, x, k)
 end
 
 # member of a Query = "is x in its domain".
-member(q::Query, x) = probe_any(q, x, _ -> true)
+@inline member(q::Query, x) = probe_any(q, x, _ -> true)
 
 # ===== terminals ========================================================
 # Queries are consumed by `drive`/`drivekeys` with a folding continuation
