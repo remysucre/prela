@@ -20,6 +20,7 @@ function runall_st()
                 length(got) > 80 ? got[1:80] * "…" : got)
         ok || println("       expected: ",
                       length(oracle) > 80 ? oracle[1:80] * "…" : oracle)
+        flush(stdout)
     end
     println("\n$pass / $(length(_Q)) queries pass")
     isempty(fails) || println("FAILED: ", join(fails, " "))

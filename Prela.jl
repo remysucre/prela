@@ -17,7 +17,7 @@ module Prela
 #   →  composition  | ∨ union | ∧ intersection | ==,<,~,…  predicates
 #   ×  product (tightest) | -  difference | .field navigation
 
-export Rel, MapRel, VecRel, Relation, Query, SetQ, Unary, Entity, ID,
+export Rel, MapRel, VecRel, Relation, Query, SetQ, Unary, Universe, Entity, ID,
        primary, lookup_field, →, ∧, ∨, ×, ≁, vectorize,
        drive, probe, drivekeys, member, materialize
 
@@ -59,10 +59,20 @@ struct Unary{D} <: SetQ{D}
 end
 Unary(vs::Vector{D}) where D = Unary{D}(vs)
 
-struct MapRel{D, R} <: Query{D, R}
-    pairs::Vector{Pair{D, R}}
+# A dense primary-key universe ID{E}(1)..ID{E}(n) — stored as just `n`. The
+# entity tables have contiguous PKs, so "scanning the universe" is iterating a
+# range, with no N-element vector to hold or chase.
+struct Universe{E} <: SetQ{ID{E}}
+    n::Int
 end
-MapRel(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps)
+
+mutable struct MapRel{D, R} <: Query{D, R}
+    pairs::Vector{Pair{D, R}}
+    fwd::Union{Nothing, Dict{D, Vector{R}}}   # forward index, built lazily
+    inv::Union{Nothing, Dict{R, Vector{D}}}   # inverse index, built lazily
+end
+MapRel{D, R}(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps, nothing, nothing)
+MapRel(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps, nothing, nothing)
 
 struct VecRel{E, R} <: Query{ID{E}, R}
     values::Vector{R}
@@ -94,12 +104,14 @@ function vectorize(r::MapRel{ID{E}, R}, n::Int) where {E, R}
     VecRel{E, R}(vals)
 end
 
-# ===== leaf indexes (built once per leaf, cached) =======================
+# ===== leaf indexes =====================================================
+# Each leaf MapRel carries its own forward/inverse index, built lazily on
+# first use and then read as a plain field — so a top-down probe, which calls
+# fwd_index once per row, never allocates or locks on the hot path. (For a
+# parallel `runall` these fields would become `@atomic` with a double-checked
+# lock; single-threaded they need neither.)
 
-const _CACHE_LOCK = ReentrantLock()
-const _LEAF_RELS = Base.IdSet{Any}()
-const _FWD_INDEX_CACHE = IdDict{Any, Any}()
-const _INV_INDEX_CACHE = IdDict{Any, Any}()
+const _LEAF_RELS = Base.IdSet{Any}()      # populated by @entity; kept for compat
 const _UNARY_SETS = IdDict{Any, Any}()
 
 function _build_fwd(s::Query{Y, Z}) where {Y, Z}
@@ -111,13 +123,6 @@ function _build_fwd(s::Query{Y, Z}) where {Y, Z}
     d
 end
 
-function fwd_index(s::Query{Y, Z}) where {Y, Z}
-    s in _LEAF_RELS || return _build_fwd(s)
-    lock(_CACHE_LOCK) do
-        get!(() -> _build_fwd(s), _FWD_INDEX_CACHE, s)::Dict{Y, Vector{Z}}
-    end
-end
-
 function _build_inv(s::Query{Y, Z}) where {Y, Z}
     d = Dict{Z, Vector{Y}}()
     sizehint!(d, length(s))
@@ -127,18 +132,20 @@ function _build_inv(s::Query{Y, Z}) where {Y, Z}
     d
 end
 
-function inv_index(s::Query{Y, Z}) where {Y, Z}
-    s in _LEAF_RELS || return _build_inv(s)
-    lock(_CACHE_LOCK) do
-        get!(() -> _build_inv(s), _INV_INDEX_CACHE, s)::Dict{Z, Vector{Y}}
-    end
+function fwd_index(r::MapRel)
+    f = r.fwd
+    f === nothing || return f
+    r.fwd = _build_fwd(r)
 end
 
-function _unary_set(u::Unary{D}) where D
-    lock(_CACHE_LOCK) do
-        get!(() -> Set(u.values), _UNARY_SETS, u)::Set{D}
-    end
+function inv_index(r::MapRel)
+    v = r.inv
+    v === nothing || return v
+    r.inv = _build_inv(r)
 end
+inv_index(s::Query) = _build_inv(s)       # VecRel etc. — rare, uncached
+
+_unary_set(u::Unary{D}) where D = get!(() -> Set(u.values), _UNARY_SETS, u)::Set{D}
 
 # ===== predicate payloads (typed so codegen branches statically) ========
 
@@ -392,6 +399,9 @@ member(n::MatSet, x) = x in _mset(n)
 # ---- SetQ: drivekeys + member ----
 drivekeys(u::Unary, k) = (for v in u.values; k(v); end)
 member(u::Unary, x) = x in _unary_set(u)
+
+drivekeys(u::Universe{E}, k) where {E} = (for i in 1:u.n; k(ID{E}(i)); end)
+member(u::Universe{E}, x::ID{E}) where {E} = 1 <= x.id <= u.n
 
 @inline drivekeys(s::Keys, k) = drive(s.a, (x, _) -> k(x))
 @inline member(s::Keys, x) = member(s.a, x)

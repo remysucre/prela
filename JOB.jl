@@ -454,22 +454,22 @@ else
     save_cache!()
 end
 
-# Universe of movies = the keys of the title relation.
-const movie = Unary{ID{Movie}}(unique(p.first for p in title.pairs))
-println("Universe: $(length(movie.values)) movies")
+# Universe of movies — dense PK 1..n, so just a range-backed Universe.
+const movie = Universe{Movie}(length(title.pairs))
+println("Universe: $(movie.n) movies")
 
 # Universe of casts. Parallels `movie` for Movie. Use `cast → ...` to root a
 # cast-side query; `Cast.movie`/`Cast.person`/etc. when qualification is needed.
-const cast = Unary{ID{Cast}}(unique(p.first for p in _Cast_movie.pairs))
-println("Cast universe: $(length(cast.values)) casts")
+const cast = Universe{Cast}(length(_Cast_movie.pairs))
+println("Cast universe: $(cast.n) casts")
 
 # === Promote dense one-to-one leaf rels to VecRel (column-store) ========
 # Cache is already saved at this point (always as MapRel). Promotion only
 # changes the in-memory representation; the next session reloads MapRel from
 # cache, then promotes again.
 let
-    n_cast  = length(cast.values)
-    n_movie = length(movie.values)
+    n_cast  = cast.n
+    n_movie = movie.n
     function _promote!(qual_sym::Symbol, n::Int)
         old = getfield(@__MODULE__, qual_sym)
         old isa Prela.VecRel && return  # already promoted
@@ -499,10 +499,9 @@ const character = _Cast_character
 # Person universe — for person-rooted broadcasts (e.g. `persons.(Person.name; ...)`).
 # Iterating 4M persons is much cheaper than scanning 36M cast→person pairs when
 # the query filters persons before joining back to casts.
-const persons = let n = _Person_name isa Prela.VecRel ? length(_Person_name.values) : length(_Person_name.pairs)
-    Unary{ID{Person}}([ID{Person}(i) for i in 1:n])
-end
-println("Person universe: $(length(persons.values)) persons")
+const persons = Universe{Person}(_Person_name isa Prela.VecRel ?
+    length(_Person_name.values) : length(_Person_name.pairs))
+println("Person universe: $(persons.n) persons")
 
 # Re-bind Movie's bare-exposed fields whose backing rel was promoted. The
 # original `@expose Movie` captured the MapRel object by reference; const
