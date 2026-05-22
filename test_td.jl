@@ -1,12 +1,16 @@
-# Top-down engine test — runs all 113 JOB queries single-threaded.
+# Top-down engine test. Runs the whole suite, or _SUBSET if non-empty.
 ENV["PRELA_SKIP_RUNALL"] = "1"
 include("JOB.jl")
 include("queries.jl")
 
+const _SUBSET = Set(String[])
+
 function runall_st()
-    pass = 0
+    pass = 0; tot = 0
     fails = String[]
     for (name, oracle, f) in _Q
+        (isempty(_SUBSET) || name in _SUBSET) || continue
+        tot += 1
         t = time()
         got = try
             _vals(f())
@@ -22,7 +26,7 @@ function runall_st()
                       length(oracle) > 80 ? oracle[1:80] * "…" : oracle)
         flush(stdout)
     end
-    println("\n$pass / $(length(_Q)) queries pass")
+    println("\n$pass / $tot pass")
     isempty(fails) || println("FAILED: ", join(fails, " "))
 end
 

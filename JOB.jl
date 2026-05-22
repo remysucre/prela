@@ -88,6 +88,7 @@ end
     link            :: ID{MovieLink}
     linked_by       :: ID{MovieLink}
     aka             :: ID{AkaTitle}
+    cast            :: ID{Cast}        # movie → its cast_info rows (the M:N edge)
 end
 
 @expose Movie
@@ -420,6 +421,7 @@ function load_all!()
     cast_character = Prela.lookup_field(ID{Cast}, Val(:character))
     cast_role      = Prela.lookup_field(ID{Cast}, Val(:role))
     cast_note      = Prela.lookup_field(ID{Cast}, Val(:note))
+    movie_cast     = Prela.lookup_field(ID{Movie}, Val(:cast))   # the M:N edge, movie side
 
     n = length(ci_ids)
     sizehint!(cast_movie.pairs, n)
@@ -427,18 +429,20 @@ function load_all!()
     sizehint!(cast_character.pairs, n)
     sizehint!(cast_role.pairs, n)
     sizehint!(cast_note.pairs, n)
+    sizehint!(movie_cast.pairs, n)
 
     for i in 1:n
         cid_raw = ci_ids[i]
         ismissing(cid_raw) && continue
         cid = ID{Cast}(cid_raw)
-        m  = ci_movie[i];   ismissing(m)  || push!(cast_movie.pairs,     cid => ID{Movie}(m))
+        m  = ci_movie[i];   ismissing(m)  || (push!(cast_movie.pairs, cid => ID{Movie}(m));
+                                              push!(movie_cast.pairs, ID{Movie}(m) => cid))
         p  = ci_person[i];  ismissing(p)  || push!(cast_person.pairs,    cid => ID{Person}(p))
         c  = ci_charrole[i];ismissing(c)  || push!(cast_character.pairs, cid => ID{Character}(c))
         r  = ci_role[i];    ismissing(r)  || push!(cast_role.pairs,      cid => ID{RoleType}(r))
         nt = ci_note[i];    ismissing(nt) || push!(cast_note.pairs,      cid => nt)
     end
-    println("  cast_info: $(length(cast_movie.pairs)) cast→movie, $(length(cast_person.pairs)) cast→person, $(length(cast_note.pairs)) notes ($(round(time()-t; digits=1))s)")
+    println("  cast_info: $(length(cast_movie.pairs)) cast→movie, $(length(movie_cast.pairs)) movie→cast, $(length(cast_note.pairs)) notes ($(round(time()-t; digits=1))s)")
 
     println("  TOTAL: $(round(time() - t_total; digits=1))s")
 end
@@ -458,17 +462,13 @@ end
 const movie = Universe{Movie}(length(title.pairs))
 println("Universe: $(movie.n) movies")
 
-# Universe of casts. Parallels `movie` for Movie. Use `cast → ...` to root a
-# cast-side query; `Cast.movie`/`Cast.person`/etc. when qualification is needed.
-const cast = Universe{Cast}(length(_Cast_movie.pairs))
-println("Cast universe: $(cast.n) casts")
+# No `cast` universe — Cast is the M:N edge table, reached only via the
+# `movie → cast` edge. Every query roots at `movie`.
 
 # === Promote dense one-to-one leaf rels to VecRel (column-store) ========
-# Cache is already saved at this point (always as MapRel). Promotion only
-# changes the in-memory representation; the next session reloads MapRel from
-# cache, then promotes again.
+# Cache is saved as MapRel; promotion only changes the in-memory representation.
 let
-    n_cast  = cast.n
+    n_cast  = length(_Cast_movie.pairs)
     n_movie = movie.n
     function _promote!(qual_sym::Symbol, n::Int)
         old = getfield(@__MODULE__, qual_sym)
@@ -488,9 +488,8 @@ let
     _promote!(:_Movie_kind,   n_movie)
 end
 
-# Bare-expose Cast's non-conflicting field rels for navigation. `movie` clashes
-# with the Movie universe above, so callers use `Cast.movie` for that FK.
-# Bindings point at the (possibly promoted) leaf rels.
+# Bare-expose Cast's field rels for navigating from a cast row reached via
+# `movie → cast` — e.g. `movie → cast → person`, `cast → note`.
 const note      = _Cast_note
 const role      = _Cast_role
 const person    = _Cast_person
