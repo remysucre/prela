@@ -100,7 +100,7 @@ function _load_rel!(rel::Prela.Rel{D, R}, path::String) where {D, R}
 end
 
 function _each_rel()
-    out = Tuple{Type, Symbol, Prela.Rel}[]
+    out = Tuple{Type, Symbol, Prela.Relation}[]
     for (entity_sym, fields) in Prela._ENTITY_FIELDS
         E = getfield(Main, entity_sym)
         for f in fields

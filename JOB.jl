@@ -458,7 +458,47 @@ end
 const movie = Unary{ID{Movie}}(unique(p.first for p in title.pairs))
 println("Universe: $(length(movie.values)) movies")
 
-# Cast root: the Cast entity itself. Cast-rooted queries navigate from here —
-# `cast.movie`, `cast.person`, `cast.note`, … resolve to Cast's field relations,
-# so no `Cast.` qualifier and no 36M universe scan are needed.
-const cast = Cast
+# Universe of casts. Parallels `movie` for Movie. Use `cast → ...` to root a
+# cast-side query; `Cast.movie`/`Cast.person`/etc. when qualification is needed.
+const cast = Unary{ID{Cast}}(unique(p.first for p in _Cast_movie.pairs))
+println("Cast universe: $(length(cast.values)) casts")
+
+# === Promote dense one-to-one leaf rels to VecRel (column-store) ========
+# Cache is already saved at this point (always as MapRel). Promotion only
+# changes the in-memory representation; the next session reloads MapRel from
+# cache, then promotes again.
+let
+    n_cast  = length(cast.values)
+    n_movie = length(movie.values)
+    function _promote!(qual_sym::Symbol, n::Int)
+        old = getfield(@__MODULE__, qual_sym)
+        old isa Prela.VecRel && return  # already promoted
+        try
+            new = Prela.vectorize(old, n)
+            Core.eval(@__MODULE__, :(const $qual_sym = $new))
+            push!(Prela._LEAF_RELS, new)
+        catch e
+            @info "skip promote $qual_sym: $(sprint(showerror, e))"
+        end
+    end
+    _promote!(:_Cast_movie,   n_cast)
+    _promote!(:_Cast_person,  n_cast)
+    _promote!(:_Cast_role,    n_cast)
+    _promote!(:_Movie_title,  n_movie)
+    _promote!(:_Movie_kind,   n_movie)
+end
+
+# Bare-expose Cast's non-conflicting field rels for navigation. `movie` clashes
+# with the Movie universe above, so callers use `Cast.movie` for that FK.
+# Bindings point at the (possibly promoted) leaf rels.
+const note      = _Cast_note
+const role      = _Cast_role
+const person    = _Cast_person
+const character = _Cast_character
+
+# Re-bind Movie's bare-exposed fields whose backing rel was promoted. The
+# original `@expose Movie` captured the MapRel object by reference; const
+# redefinition swaps in the VecRel-backed binding so bare `title`/`kind`
+# get the fast path.
+const title = _Movie_title
+const kind  = _Movie_kind

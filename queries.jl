@@ -40,6 +40,7 @@ const _PRINT_LOCK = ReentrantLock()
 function runall()
     res = Vector{Any}(undef, length(_Q))
     done = Threads.Atomic{Int}(0)
+    log_file = open("/tmp/prela_progress.log", "w")
     Threads.@threads for i in eachindex(_Q)
         name, oracle, f = _Q[i]
         t = time()
@@ -58,11 +59,17 @@ function runall()
         lock(_PRINT_LOCK) do
             println(msg)
             flush(stdout)
+            println(log_file, msg)
+            flush(log_file)
         end
     end
     pass = count(t -> t[2] == t[3], res)
-    println("\n", pass, " / ", length(_Q), " queries match reference")
+    summary = "\n$pass / $(length(_Q)) queries match reference"
+    println(summary)
     flush(stdout)
+    println(log_file, summary)
+    flush(log_file)
+    close(log_file)
 end
 
 const _KW8 = ("superhero", "sequel", "second-part", "marvel-comics",
@@ -518,39 +525,57 @@ end
 # ---- templates 6-10, 16-33 (cast / complete_cast / person_info) ----
 
 _q("6a", "marvel-cinematic-universe || Downey Jr., Robert || Iron Man 3") do
-    ((cast.movie → ((keyword == "marvel-cinematic-universe") ∧ (production_year > 2010)) : (keyword == "marvel-cinematic-universe"))
-   × (cast.person → (Person.name ~ r"Downey.*Robert"))
-   × (cast.movie → ((keyword == "marvel-cinematic-universe") ∧ (production_year > 2010)) : title))
+    let kw = (keyword == "marvel-cinematic-universe"),
+        cm = (cast.movie → kw ∧ (production_year > 2010))
+        ((cm → kw)
+       × (cast.person → (Person.name ~ r"Downey.*Robert"))
+       × (cm → title))
+    end
 end
 
 _q("6b", "based-on-comic || Downey Jr., Robert || The Avengers 2") do
-    ((cast.movie → ((keyword in _KW8) ∧ (production_year > 2014)) : (keyword in _KW8))
-   × (cast.person → (Person.name ~ r"Downey.*Robert"))
-   × (cast.movie → ((keyword in _KW8) ∧ (production_year > 2014)) : title))
+    let kw = (keyword in _KW8),
+        cm = (cast.movie → kw ∧ (production_year > 2014))
+        ((cm → kw)
+       × (cast.person → (Person.name ~ r"Downey.*Robert"))
+       × (cm → title))
+    end
 end
 
 _q("6c", "marvel-cinematic-universe || Downey Jr., Robert || The Avengers 2") do
-    ((cast.movie → ((keyword == "marvel-cinematic-universe") ∧ (production_year > 2014)) : (keyword == "marvel-cinematic-universe"))
-   × (cast.person → (Person.name ~ r"Downey.*Robert"))
-   × (cast.movie → ((keyword == "marvel-cinematic-universe") ∧ (production_year > 2014)) : title))
+    let kw = (keyword == "marvel-cinematic-universe"),
+        cm = (cast.movie → kw ∧ (production_year > 2014))
+        ((cm → kw)
+       × (cast.person → (Person.name ~ r"Downey.*Robert"))
+       × (cm → title))
+    end
 end
 
 _q("6d", "based-on-comic || Downey Jr., Robert || 2008 MTV Movie Awards") do
-    ((cast.movie → ((keyword in _KW8) ∧ (production_year > 2000)) : (keyword in _KW8))
-   × (cast.person → (Person.name ~ r"Downey.*Robert"))
-   × (cast.movie → ((keyword in _KW8) ∧ (production_year > 2000)) : title))
+    let kw = (keyword in _KW8),
+        cm = (cast.movie → kw ∧ (production_year > 2000))
+        ((cm → kw)
+       × (cast.person → (Person.name ~ r"Downey.*Robert"))
+       × (cm → title))
+    end
 end
 
 _q("6e", "marvel-cinematic-universe || Downey Jr., Robert || Iron Man 3") do
-    ((cast.movie → ((keyword == "marvel-cinematic-universe") ∧ (production_year > 2000)) : (keyword == "marvel-cinematic-universe"))
-   × (cast.person → (Person.name ~ r"Downey.*Robert"))
-   × (cast.movie → ((keyword == "marvel-cinematic-universe") ∧ (production_year > 2000)) : title))
+    let kw = (keyword == "marvel-cinematic-universe"),
+        cm = (cast.movie → kw ∧ (production_year > 2000))
+        ((cm → kw)
+       × (cast.person → (Person.name ~ r"Downey.*Robert"))
+       × (cm → title))
+    end
 end
 
 _q("6f", "based-on-comic || \"Steff\", Stefanie Oxmann Mcgaha || & Teller 2") do
-    ((cast.movie → ((keyword in _KW8) ∧ (production_year > 2000)) : (keyword in _KW8))
-   × (cast.person → Person.name)
-   × (cast.movie → ((keyword in _KW8) ∧ (production_year > 2000)) : title))
+    let kw = (keyword in _KW8),
+        cm = (cast.movie → kw ∧ (production_year > 2000))
+        ((cm → kw)
+       × (cast.person → Person.name)
+       × (cm → title))
+    end
 end
 
 # ===================================================================
@@ -586,90 +611,100 @@ end
 
 # ===================================================================
 _q("8a", "Chambers, Linda || .hack//Quantum") do
-    ((cast.note == "(voice: English version)")
-   : ((cast.role == "actress")
-   : ((cast.person → (((Person.name ~ r"Yo") ∧ (Person.name ≁ r"Yu")) : Person.aka.name))
-    × (cast.movie → ((company → ((Company.country == "[jp]") ∧ (Company.note ~ r"\(Japan\)") ∧ (Company.note ≁ r"\(USA\)"))) : title)))))
+    let pf = (Person.name ~ r"Yo") ∧ (Person.name ≁ r"Yu")
+        cast.((person → (pf : Person.aka.name)),
+              (Cast.movie → ((company → ((Company.country == "[jp]") ∧ (Company.note ~ r"\(Japan\)") ∧ (Company.note ≁ r"\(USA\)"))) : title));
+              p1 = (note == "(voice: English version)"),
+              p2 = (role == "actress"))
+    end
 end
 
 _q("8b", "Chambers, Linda || Dragon Ball Z: Shin Budokai") do
-    ((cast.note == "(voice: English version)")
-   : ((cast.role == "actress")
-   : ((cast.person → (((Person.name ~ r"Yo") ∧ (Person.name ≁ r"Yu")) : Person.aka.name))
-    × (cast.movie → (((company → ((Company.country == "[jp]") ∧ (Company.note ~ r"\(Japan\)") ∧ (Company.note ≁ r"\(USA\)") ∧ ((Company.note ~ r"\(2006\)") ∨ (Company.note ~ r"\(2007\)"))))
-                     ∧ (production_year >= 2006) ∧ (production_year <= 2007)
-                     ∧ ((title ~ r"^One Piece") ∨ (title ~ r"^Dragon Ball Z"))) : title)))))
+    let pf = (Person.name ~ r"Yo") ∧ (Person.name ≁ r"Yu")
+        cast.((person → (pf : Person.aka.name)),
+              (Cast.movie → (((company → ((Company.country == "[jp]") ∧ (Company.note ~ r"\(Japan\)") ∧ (Company.note ≁ r"\(USA\)") ∧ ((Company.note ~ r"\(2006\)") ∨ (Company.note ~ r"\(2007\)"))))
+                            ∧ (production_year >= 2006) ∧ (production_year <= 2007)
+                            ∧ ((title ~ r"^One Piece") ∨ (title ~ r"^Dragon Ball Z"))) : title));
+              p1 = (note == "(voice: English version)"),
+              p2 = (role == "actress"))
+    end
 end
 
 _q("8c", "\"A.J.\" || #1 Cheerleader Camp") do
-    ((cast.role == "writer")
-   : ((cast.person → Person.aka.name)
-    × (cast.movie → ((company → (Company.country == "[us]")) : title))))
+    cast.(person.aka.name,
+          (Cast.movie → ((company → (Company.country == "[us]")) : title));
+          p1 = (role == "writer"))
 end
 
 _q("8d", "\"Jenny from the Block\" || #1 Cheerleader Camp") do
-    ((cast.role == "costume designer")
-   : ((cast.person → Person.aka.name)
-    × (cast.movie → ((company → (Company.country == "[us]")) : title))))
+    cast.(person.aka.name,
+          (Cast.movie → ((company → (Company.country == "[us]")) : title));
+          p1 = (role == "costume designer"))
 end
 
 # ===================================================================
 _q("9a", "AJ || Airport Announcer || Blue Harvest") do
-    ((cast.note in _VOICE4)
-   : ((cast.role == "actress")
-   : ((cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"Ang")) : Person.aka.name))
-    × (cast.character → Character.name)
-    × (cast.movie → (((company → ((Company.country == "[us]") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)"))))
-                     ∧ (production_year >= 2005) ∧ (production_year <= 2015)) : title)))))
+    let pf = (Person.gender == "f") ∧ (Person.name ~ r"Ang")
+        cast.((person → (pf : Person.aka.name)),
+              character.name,
+              (Cast.movie → (((company → ((Company.country == "[us]") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)"))))
+                            ∧ (production_year >= 2005) ∧ (production_year <= 2015)) : title));
+              p1 = (note in _VOICE4),
+              p2 = (role == "actress"))
+    end
 end
 
 _q("9b", "AJ || Airport Announcer || Bassett, Angela || Blue Harvest") do
-    ((cast.note == "(voice)")
-   : ((cast.role == "actress")
-   : ((cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"Angel")) : Person.aka.name))
-    × (cast.character → Character.name)
-    × (cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"Angel")) : Person.name))
-    × (cast.movie → (((company → ((Company.country == "[us]") ∧ (Company.note ~ r"\(200.*\)") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)"))))
-                     ∧ (production_year >= 2007) ∧ (production_year <= 2010)) : title)))))
+    let pf = (Person.gender == "f") ∧ (Person.name ~ r"Angel")
+        cast.((person → (pf : Person.aka.name)),
+              character.name,
+              (person → (pf : Person.name)),
+              (Cast.movie → (((company → ((Company.country == "[us]") ∧ (Company.note ~ r"\(200.*\)") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)"))))
+                            ∧ (production_year >= 2007) ∧ (production_year <= 2010)) : title));
+              p1 = (note == "(voice)"),
+              p2 = (role == "actress"))
+    end
 end
 
 _q("9c", "'Annette' || 2nd Balladeer || Alborg, Ana Esther || (1975-01-20)") do
-    ((cast.note in _VOICE4)
-   : ((cast.role == "actress")
-   : ((cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"An")) : Person.aka.name))
-    × (cast.character → Character.name)
-    × (cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"An")) : Person.name))
-    × (cast.movie → ((company → (Company.country == "[us]")) : title)))))
+    let pf = (Person.gender == "f") ∧ (Person.name ~ r"An")
+        cast.((person → (pf : Person.aka.name)),
+              character.name,
+              (person → (pf : Person.name)),
+              (Cast.movie → ((company → (Company.country == "[us]")) : title));
+              p1 = (note in _VOICE4),
+              p2 = (role == "actress"))
+    end
 end
 
 _q("9d", "!!!, Toy || \"Cockamamie's\" Salesgirl || Aaron, Caroline || \$15,000.00 Error") do
-    ((cast.note in _VOICE4)
-   : ((cast.role == "actress")
-   : ((cast.person → ((Person.gender == "f") : Person.aka.name))
-    × (cast.character → Character.name)
-    × (cast.person → ((Person.gender == "f") : Person.name))
-    × (cast.movie → ((company → (Company.country == "[us]")) : title)))))
+        cast.((person.(Person.aka.name, Person.name; pf = (Person.gender == "f"))),
+              character.name,
+              (Cast.movie → ((company → (Company.country == "[us]")) : title));
+              p1 = (note in _VOICE4),
+              p2 = (role == "actress"))
 end
 
 # ===================================================================
 _q("10a", "Actor || 12 Rounds") do
-    (((cast.note ~ r"\(voice\)") ∧ (cast.note ~ r"\(uncredited\)"))
-   : ((cast.role == "actor")
-   : ((cast.character → Character.name)
-    × (cast.movie → (((company → (Company.country == "[ru]")) ∧ (production_year > 2005)) : title)))))
+    cast.(character.name,
+          (Cast.movie → (((company → (Company.country == "[ru]")) ∧ (production_year > 2005)) : title));
+          p1 = (note ~ r"\(voice\)"),
+          p2 = (note ~ r"\(uncredited\)"),
+          p3 = (role == "actor"))
 end
 
 _q("10b", "(empty)") do
-    ((cast.note ~ r"\(producer\)")
-   : ((cast.role == "actor")
-   : ((cast.character → Character.name)
-    × (cast.movie → (((company → (Company.country == "[ru]")) ∧ (production_year > 2010)) : title)))))
+    cast.(character.name,
+          (Cast.movie → (((company → (Company.country == "[ru]")) ∧ (production_year > 2010)) : title));
+          p1 = (note ~ r"\(producer\)"),
+          p2 = (role == "actor"))
 end
 
 _q("10c", "Himself || Evil Eyes: Behind the Scenes") do
-    ((cast.note ~ r"\(producer\)")
-   : ((cast.character → Character.name)
-    × (cast.movie → (((company → (Company.country == "[us]")) ∧ (production_year > 1990)) : title))))
+    cast.(character.name,
+          (Cast.movie → (((company → (Company.country == "[us]")) ∧ (production_year > 1990)) : title));
+          p1 = (note ~ r"\(producer\)"))
 end
 
 # ===================================================================
@@ -729,70 +764,82 @@ end
 
 # ===================================================================
 _q("18a", "\$1,000 || 10 || 40 Days and 40 Nights") do
-    ((cast.note in ("(producer)", "(executive producer)"))
-   : ((cast.person → ((Person.gender == "m") ∧ (Person.name ~ r"Tim")))
-   : ((cast.movie → (info → ((Info.type == "budget") : Info.info)))
-    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
-    × (cast.movie → ((info → (Info.type == "budget")) : title)))))
+    cast.((Cast.movie → (info → ((Info.type == "budget") : Info.info))),
+          (Cast.movie → (data → ((Data.type == "votes") : Data.data))),
+          (Cast.movie → ((info → (Info.type == "budget")) : title));
+          p1 = (note in ("(producer)", "(executive producer)")),
+          p2 = (person → ((Person.gender == "m") ∧ (Person.name ~ r"Tim"))))
 end
 
 _q("18b", "Horror || 8.1 || Agorable") do
-    ((cast.note in _WRITER5)
-   : ((cast.person → (Person.gender == "f"))
-   : ((cast.movie → (info → ((((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))) - Info.note) : Info.info)))
-    × (cast.movie → (data → (((Data.type == "rating") ∧ (Data.data > "8.0")) : Data.data)))
-    × (cast.movie → (((info → (((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))) - Info.note))
-                     ∧ (production_year >= 2008) ∧ (production_year <= 2014)) : title)))))
+    let gf = ((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))) - Info.note
+        cast.((Cast.movie → (info → (gf : Info.info))),
+              (Cast.movie → (data → (((Data.type == "rating") ∧ (Data.data > "8.0")) : Data.data))),
+              (Cast.movie → (((info → gf)
+                            ∧ (production_year >= 2008) ∧ (production_year <= 2014)) : title));
+              p1 = (note in _WRITER5),
+              p2 = (person → (Person.gender == "f")))
+    end
 end
 
 _q("18c", "Action || 10 || #PostModem") do
-    ((cast.note in _WRITER5)
-   : ((cast.person → (Person.gender == "m"))
-   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info in _GENRE6)) : Info.info)))
-    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
-    × (cast.movie → ((info → ((Info.type == "genres") ∧ (Info.info in _GENRE6))) : title)))))
+    let gf = ((Info.type == "genres") ∧ (Info.info in _GENRE6))
+        cast.((Cast.movie → (info → (gf : Info.info))),
+              (Cast.movie → (data → ((Data.type == "votes") : Data.data))),
+              (Cast.movie → ((info → gf) : title));
+              p1 = (note in _WRITER5),
+              p2 = (person → (Person.gender == "m")))
+    end
 end
 
 # ===================================================================
 _q("19a", "Angeline, Moriah || Blue Harvest") do
-    ((cast.note in _VOICE4)
-   : ((cast.role == "actress")
-   : ((cast.character → Character.name)
-   : ((cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"Ang") ∧ Person.aka) : Person.name))
-    × (cast.movie → (((company → ((Company.country == "[us]") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)"))))
-                     ∧ (info → ((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*200") ∨ (Info.info ~ r"^USA:.*200"))))
-                     ∧ (production_year >= 2005) ∧ (production_year <= 2009)) : title))))))
+    let pf = (Person.gender == "f") ∧ (Person.name ~ r"Ang") ∧ Person.aka
+        cast.((person → (pf : Person.name)),
+              (Cast.movie → (((company → ((Company.country == "[us]") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)"))))
+                            ∧ (info → ((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*200") ∨ (Info.info ~ r"^USA:.*200"))))
+                            ∧ (production_year >= 2005) ∧ (production_year <= 2009)) : title));
+              p1 = (note in _VOICE4),
+              p2 = (role == "actress"),
+              p3 = character)
+    end
 end
 
 _q("19b", "Jolie, Angelina || Kung Fu Panda") do
-    ((cast.note == "(voice)")
-   : ((cast.role == "actress")
-   : ((cast.character → Character.name)
-   : ((cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"Angel") ∧ Person.aka) : Person.name))
-    × (cast.movie → (((company → ((Company.country == "[us]") ∧ (Company.note ~ r"\(200.*\)") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)"))))
-                     ∧ (info → ((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*2007") ∨ (Info.info ~ r"^USA:.*2008"))))
-                     ∧ (production_year >= 2007) ∧ (production_year <= 2008)
-                     ∧ (title ~ r"Kung.*Fu.*Panda")) : title))))))
+    let pf = (Person.gender == "f") ∧ (Person.name ~ r"Angel") ∧ Person.aka
+        cast.((person → (pf : Person.name)),
+              (Cast.movie → (((company → ((Company.country == "[us]") ∧ (Company.note ~ r"\(200.*\)") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)"))))
+                            ∧ (info → ((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*2007") ∨ (Info.info ~ r"^USA:.*2008"))))
+                            ∧ (production_year >= 2007) ∧ (production_year <= 2008)
+                            ∧ (title ~ r"Kung.*Fu.*Panda")) : title));
+              p1 = (note == "(voice)"),
+              p2 = (role == "actress"),
+              p3 = character)
+    end
 end
 
 _q("19c", "Alborg, Ana Esther || .hack//Akusei heni vol. 2") do
-    ((cast.note in _VOICE4)
-   : ((cast.role == "actress")
-   : ((cast.character → Character.name)
-   : ((cast.person → (((Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka) : Person.name))
-    × (cast.movie → (((company → (Company.country == "[us]"))
-                     ∧ (info → ((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*200") ∨ (Info.info ~ r"^USA:.*200"))))
-                     ∧ (production_year > 2000)) : title))))))
+    let pf = (Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka
+        cast.((person → (pf : Person.name)),
+              (Cast.movie → (((company → (Company.country == "[us]"))
+                            ∧ (info → ((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*200") ∨ (Info.info ~ r"^USA:.*200"))))
+                            ∧ (production_year > 2000)) : title));
+              p1 = (note in _VOICE4),
+              p2 = (role == "actress"),
+              p3 = character)
+    end
 end
 
 _q("19d", "Aaron, Caroline || \$9.99") do
-    ((cast.note in _VOICE4)
-   : ((cast.role == "actress")
-   : ((cast.character → Character.name)
-   : ((cast.person → (((Person.gender == "f") ∧ Person.aka) : Person.name))
-    × (cast.movie → (((company → (Company.country == "[us]"))
-                     ∧ (info → (Info.type == "release dates"))
-                     ∧ (production_year > 2000)) : title))))))
+    let pf = (Person.gender == "f") ∧ Person.aka
+        cast.((person → (pf : Person.name)),
+              (Cast.movie → (((company → (Company.country == "[us]"))
+                            ∧ (info → (Info.type == "release dates"))
+                            ∧ (production_year > 2000)) : title));
+              p1 = (note in _VOICE4),
+              p2 = (role == "actress"),
+              p3 = character)
+    end
 end
 
 # ===================================================================
@@ -911,66 +958,79 @@ end
 
 # ===================================================================
 _q("25a", "Horror || 10 || Abdallah, Damon || -- And Now the Screaming Starts!") do
-    ((cast.note in _WRITER5)
-   : ((cast.person → (Person.gender == "m"))
-   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info == "Horror")) : Info.info)))
-    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
-    × (cast.person → ((Person.gender == "m") : Person.name))
-    × (cast.movie → (((info → ((Info.type == "genres") ∧ (Info.info == "Horror")))
-                     ∧ (keyword in ("murder", "blood", "gore", "death", "female-nudity"))) : title)))))
+    let gf = ((Info.type == "genres") ∧ (Info.info == "Horror"))
+        cast.((Cast.movie → (info → (gf : Info.info))),
+              (Cast.movie → (data → ((Data.type == "votes") : Data.data))),
+              person.name,
+              (Cast.movie → (((info → gf)
+                            ∧ (keyword in ("murder", "blood", "gore", "death", "female-nudity"))) : title));
+              p1 = (note in _WRITER5),
+              p2 = (person → (Person.gender == "m")))
+    end
 end
 
 _q("25b", "Horror || 138 || Campbell, Jeremiah || Vampire Boys") do
-    ((cast.note in _WRITER5)
-   : ((cast.person → (Person.gender == "m"))
-   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info == "Horror")) : Info.info)))
-    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
-    × (cast.person → ((Person.gender == "m") : Person.name))
-    × (cast.movie → (((info → ((Info.type == "genres") ∧ (Info.info == "Horror")))
-                     ∧ (keyword in ("murder", "blood", "gore", "death", "female-nudity"))
-                     ∧ (production_year > 2010) ∧ (title ~ r"^Vampire")) : title)))))
+    let gf = ((Info.type == "genres") ∧ (Info.info == "Horror"))
+        cast.((Cast.movie → (info → (gf : Info.info))),
+              (Cast.movie → (data → ((Data.type == "votes") : Data.data))),
+              person.name,
+              (Cast.movie → (((info → gf)
+                            ∧ (keyword in ("murder", "blood", "gore", "death", "female-nudity"))
+                            ∧ (production_year > 2010) ∧ (title ~ r"^Vampire")) : title));
+              p1 = (note in _WRITER5),
+              p2 = (person → (Person.gender == "m")))
+    end
 end
 
 _q("25c", "Action || 10 || Aakeson, Kim Fupz || \$") do
-    ((cast.note in _WRITER5)
-   : ((cast.person → (Person.gender == "m"))
-   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info in _GENRE6)) : Info.info)))
-    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
-    × (cast.person → ((Person.gender == "m") : Person.name))
-    × (cast.movie → (((info → ((Info.type == "genres") ∧ (Info.info in _GENRE6)))
-                     ∧ (keyword in _KW7)) : title)))))
+    let gf = ((Info.type == "genres") ∧ (Info.info in _GENRE6))
+        cast.((Cast.movie → (info → (gf : Info.info))),
+              (Cast.movie → (data → ((Data.type == "votes") : Data.data))),
+              person.name,
+              (Cast.movie → (((info → gf) ∧ (keyword in _KW7)) : title));
+              p1 = (note in _WRITER5),
+              p2 = (person → (Person.gender == "m")))
+    end
 end
 
 # ===================================================================
 _q("26a", "'Agua' Man || 7.1 || Acereda, Hermie || 3:10 to Yuma") do
-    ((cast.character → (Character.name ~ r"[Mm]an"))
-   : ((cast.character → (Character.name ~ r"[Mm]an"))
-    × (cast.movie → (data → (((Data.type == "rating") ∧ (Data.data > "7.0")) : Data.data)))
-    × (cast.person → Person.name)
-    × (cast.movie → (((complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete")))
-                     ∧ (keyword in _KW10) ∧ (kind == "movie")
-                     ∧ (data → ((Data.type == "rating") ∧ (Data.data > "7.0")))
-                     ∧ (production_year > 2000)) : title))))
+    let cc = (cast.character → (Character.name ~ r"[Mm]an")),
+        rd = (data → ((Data.type == "rating") ∧ (Data.data > "7.0")))
+        (cc
+       : (cc
+        × (cast.movie → rd.data)
+        × (cast.person → Person.name)
+        × (cast.movie → (((complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete")))
+                         ∧ (keyword in _KW10) ∧ (kind == "movie")
+                         ∧ rd
+                         ∧ (production_year > 2000)) : title))))
+    end
 end
 
 _q("26b", "Bank Manager || 8.2 || Inception") do
-    ((cast.character → (Character.name ~ r"[Mm]an"))
-   : ((cast.character → (Character.name ~ r"[Mm]an"))
-    × (cast.movie → (data → (((Data.type == "rating") ∧ (Data.data > "8.0")) : Data.data)))
-    × (cast.movie → (((complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete")))
-                     ∧ (keyword in ("superhero", "marvel-comics", "based-on-comic", "fight")) ∧ (kind == "movie")
-                     ∧ (data → ((Data.type == "rating") ∧ (Data.data > "8.0")))
-                     ∧ (production_year > 2005)) : title))))
+    let cc = (cast.character → (Character.name ~ r"[Mm]an")),
+        rd = (data → ((Data.type == "rating") ∧ (Data.data > "8.0")))
+        (cc
+       : (cc
+        × (cast.movie → rd.data)
+        × (cast.movie → (((complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete")))
+                         ∧ (keyword in ("superhero", "marvel-comics", "based-on-comic", "fight")) ∧ (kind == "movie")
+                         ∧ rd
+                         ∧ (production_year > 2005)) : title))))
+    end
 end
 
 _q("26c", "'Agua' Man || 1.9 || 12 Rounds") do
-    ((cast.character → (Character.name ~ r"[Mm]an"))
-   : ((cast.character → (Character.name ~ r"[Mm]an"))
-    × (cast.movie → (data → ((Data.type == "rating") : Data.data)))
-    × (cast.movie → (((complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete")))
-                     ∧ (keyword in _KW10) ∧ (kind == "movie")
-                     ∧ (data → (Data.type == "rating"))
-                     ∧ (production_year > 2000)) : title))))
+    let cc = (character → (Character.name ~ r"[Mm]an"))
+        cast.(cc,
+              (Cast.movie → (data → ((Data.type == "rating") : Data.data))),
+              (Cast.movie → (((complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete")))
+                            ∧ (keyword in _KW10) ∧ (kind == "movie")
+                            ∧ (data → (Data.type == "rating"))
+                            ∧ (production_year > 2000)) : title));
+              p1 = cc)
+    end
 end
 
 # ===================================================================
@@ -1092,71 +1152,83 @@ end
 
 # ===================================================================
 _q("30a", "Horror || 100356 || Abrams, J.J. || 16 Blocks") do
-    ((cast.note in _WRITER5)
-   : ((cast.person → (Person.gender == "m"))
-   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))) : Info.info)))
-    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
-    × (cast.person → ((Person.gender == "m") : Person.name))
-    × (cast.movie → (((complete_cast → ((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete+verified")))
-                     ∧ (info → ((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))))
-                     ∧ (keyword in _KW7) ∧ (production_year > 2000)) : title)))))
+    let gf = ((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller")))
+        cast.((Cast.movie → (info → (gf : Info.info))),
+              (Cast.movie → (data → ((Data.type == "votes") : Data.data))),
+              person.name,
+              (Cast.movie → (((complete_cast → ((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete+verified")))
+                            ∧ (info → gf)
+                            ∧ (keyword in _KW7) ∧ (production_year > 2000)) : title));
+              p1 = (note in _WRITER5),
+              p2 = (person → (Person.gender == "m")))
+    end
 end
 
 _q("30b", "Horror || 194782 || Shannon, Damian || Freddy vs. Jason") do
-    ((cast.note in _WRITER5)
-   : ((cast.person → (Person.gender == "m"))
-   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))) : Info.info)))
-    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
-    × (cast.person → ((Person.gender == "m") : Person.name))
-    × (cast.movie → (((complete_cast → ((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete+verified")))
-                     ∧ (info → ((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))))
-                     ∧ (keyword in _KW7) ∧ (production_year > 2000)
-                     ∧ ((title ~ r"Freddy") ∨ (title ~ r"Jason") ∨ (title ~ r"^Saw"))) : title)))))
+    let gf = ((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller")))
+        cast.((Cast.movie → (info → (gf : Info.info))),
+              (Cast.movie → (data → ((Data.type == "votes") : Data.data))),
+              person.name,
+              (Cast.movie → (((complete_cast → ((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete+verified")))
+                            ∧ (info → gf)
+                            ∧ (keyword in _KW7) ∧ (production_year > 2000)
+                            ∧ ((title ~ r"Freddy") ∨ (title ~ r"Jason") ∨ (title ~ r"^Saw"))) : title));
+              p1 = (note in _WRITER5),
+              p2 = (person → (Person.gender == "m")))
+    end
 end
 
 _q("30c", "Action || 100356 || Abernathy, Lewis || \$") do
-    ((cast.note in _WRITER5)
-   : ((cast.person → (Person.gender == "m"))
-   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info in _GENRE6)) : Info.info)))
-    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
-    × (cast.person → ((Person.gender == "m") : Person.name))
-    × (cast.movie → (((complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete+verified")))
-                     ∧ (info → ((Info.type == "genres") ∧ (Info.info in _GENRE6)))
-                     ∧ (keyword in _KW7)) : title)))))
+    let gf = ((Info.type == "genres") ∧ (Info.info in _GENRE6))
+        cast.((Cast.movie → (info → (gf : Info.info))),
+              (Cast.movie → (data → ((Data.type == "votes") : Data.data))),
+              person.name,
+              (Cast.movie → (((complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete+verified")))
+                            ∧ (info → gf)
+                            ∧ (keyword in _KW7)) : title));
+              p1 = (note in _WRITER5),
+              p2 = (person → (Person.gender == "m")))
+    end
 end
 
 # ===================================================================
 _q("31a", "Horror || 1040 || Agnew, Jim || 2001 Maniacs") do
-    ((cast.note in _WRITER5)
-   : ((cast.person → (Person.gender == "m"))
-   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))) : Info.info)))
-    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
-    × (cast.person → ((Person.gender == "m") : Person.name))
-    × (cast.movie → (((company → (Company.name ~ r"^Lionsgate"))
-                     ∧ (info → ((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))))
-                     ∧ (keyword in _KW7)) : title)))))
+    let gf = ((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller")))
+        cast.((Cast.movie → (info → (gf : Info.info))),
+              (Cast.movie → (data → ((Data.type == "votes") : Data.data))),
+              person.name,
+              (Cast.movie → (((company → (Company.name ~ r"^Lionsgate"))
+                            ∧ (info → gf)
+                            ∧ (keyword in _KW7)) : title));
+              p1 = (note in _WRITER5),
+              p2 = (person → (Person.gender == "m")))
+    end
 end
 
 _q("31b", "Horror || 129755 || Bousman, Darren Lynn || Saw") do
-    ((cast.note in _WRITER5)
-   : ((cast.person → (Person.gender == "m"))
-   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))) : Info.info)))
-    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
-    × (cast.person → ((Person.gender == "m") : Person.name))
-    × (cast.movie → (((company → ((Company.name ~ r"^Lionsgate") ∧ (Company.note ~ r"\(Blu-ray\)")))
-                     ∧ (info → ((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))))
-                     ∧ (keyword in _KW7) ∧ (production_year > 2000)
-                     ∧ ((title ~ r"Freddy") ∨ (title ~ r"Jason") ∨ (title ~ r"^Saw"))) : title)))))
+    let gf = ((Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller")))
+        cast.((Cast.movie → (info → (gf : Info.info))),
+              (Cast.movie → (data → ((Data.type == "votes") : Data.data))),
+              person.name,
+              (Cast.movie → (((company → ((Company.name ~ r"^Lionsgate") ∧ (Company.note ~ r"\(Blu-ray\)")))
+                            ∧ (info → gf)
+                            ∧ (keyword in _KW7) ∧ (production_year > 2000)
+                            ∧ ((title ~ r"Freddy") ∨ (title ~ r"Jason") ∨ (title ~ r"^Saw"))) : title));
+              p1 = (note in _WRITER5),
+              p2 = (person → (Person.gender == "m")))
+    end
 end
 
 _q("31c", "Action || 1008 || Abraham, Brad || 11:14") do
-    ((cast.note in _WRITER5)
-   : ((cast.movie → (info → (((Info.type == "genres") ∧ (Info.info in _GENRE6)) : Info.info)))
-    × (cast.movie → (data → ((Data.type == "votes") : Data.data)))
-    × (cast.person → Person.name)
-    × (cast.movie → (((company → (Company.name ~ r"^Lionsgate"))
-                     ∧ (info → ((Info.type == "genres") ∧ (Info.info in _GENRE6)))
-                     ∧ (keyword in _KW7)) : title))))
+    let gf = ((Info.type == "genres") ∧ (Info.info in _GENRE6))
+        cast.((Cast.movie → (info → (gf : Info.info))),
+              (Cast.movie → (data → ((Data.type == "votes") : Data.data))),
+              person.name,
+              (Cast.movie → (((company → (Company.name ~ r"^Lionsgate"))
+                            ∧ (info → gf)
+                            ∧ (keyword in _KW7)) : title));
+              p1 = (note in _WRITER5))
+    end
 end
 
 # ===================================================================
@@ -1235,4 +1307,4 @@ _q("33c", "2BE || 495 Productions || 1.3 || 1.0 || A Double Shot at Love || A Do
     end
 end
 
-runall()
+get(ENV, "PRELA_SKIP_RUNALL", "0") == "0" && runall()

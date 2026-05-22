@@ -15,7 +15,7 @@ module Prela
 #   -   set difference (additions precedence)
 #   .field   navigation (via getproperty; chains scalar/entity fields)
 
-export Rel, Unary, Entity, ID, primary, lookup_field, →, ∧, ∨, ×, ≁
+export Rel, MapRel, VecRel, Relation, Unary, Entity, ID, primary, lookup_field, →, ∧, ∨, ×, ≁, vectorize
 
 abstract type Entity end
 
@@ -50,16 +50,69 @@ struct Unary{R}
 end
 Unary(vs::Vector{R}) where R = Unary{R}(vs)
 
-struct Rel{D, R}
+# ===== Relation hierarchy ===============================================
+# A `Relation{D, R}` is a finite multi-valued function D → R, accessed
+# through a tiny interface (`_pairs`, `_get`, `_inv_get`, `_keys`).
+# Two physical representations:
+#
+#   MapRel{D, R}    Vector{Pair{D, R}}                  — general case
+#   VecRel{E, R}    Vector{R}, dense over ID{E}(1..n)   — column-store path
+#
+# `vectorize(maprel, n)` promotes a MapRel that's a single-valued function
+# on a dense domain `ID{E}(1..n)` into a VecRel. Operators are written
+# polymorphically so the algebra is unchanged.
+
+abstract type Relation{D, R} end
+
+struct MapRel{D, R} <: Relation{D, R}
     pairs::Vector{Pair{D, R}}
 end
-Rel(ps::Vector{Pair{D, R}}) where {D, R} = Rel{D, R}(ps)
+MapRel(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps)
+
+struct VecRel{E, R} <: Relation{ID{E}, R}
+    values::Vector{R}
+end
+VecRel(::Type{E}, vs::Vector{R}) where {E, R} = VecRel{E, R}(vs)
+
+# Backward-compatible alias: most call sites still write `Rel{D, R}(...)`.
+const Rel = MapRel
+
+function vectorize(r::MapRel{ID{E}, R}, n::Int) where {E, R}
+    vals = Vector{R}(undef, n)
+    seen = falses(n)
+    for p in r.pairs
+        i = p.first.id
+        (1 <= i <= n) || error("ID $i out of dense range 1..$n")
+        seen[i] && error("duplicate ID $i — not a function, can't vectorize")
+        vals[i] = p.second
+        seen[i] = true
+    end
+    all(seen) || error("MapRel is sparse over 1..$n: only $(count(seen))/$n positions filled")
+    VecRel{E, R}(vals)
+end
+
+# ===== access interface ================================================
+# All operator code goes through these — never touch `.pairs`/`.values`
+# directly outside this section.
+
+Base.length(r::MapRel) = length(r.pairs)
+Base.length(r::VecRel) = length(r.values)
+Base.isempty(r::MapRel) = isempty(r.pairs)
+Base.isempty(r::VecRel) = isempty(r.values)
+
+# Pair iterator (Pair{D, R}).
+_pairs(r::MapRel) = r.pairs
+_pairs(r::VecRel{E}) where E = (ID{E}(i) => r.values[i] for i in eachindex(r.values))
+
+# Keys iterator (lazy).
+_keys_iter(r::MapRel) = (p.first for p in r.pairs)
+_keys_iter(r::VecRel{E}) where E = (ID{E}(i) for i in eachindex(r.values))
 
 # ===== composition (→ at arrow precedence) =====
 
-function compose(u::Unary{X}, r::Rel{X, Y}) where {X, Y}
+function compose(u::Unary{X}, r::Relation{X, Y}) where {X, Y}
     s = Set(u.values)
-    Rel{X, Y}([p for p in r.pairs if p.first in s])
+    MapRel{X, Y}([p for p in _pairs(r) if p.first in s])
 end
 
 # Index caches are shared mutable state; this lock makes `fwd_index`/`inv_index`
@@ -74,41 +127,83 @@ const _LEAF_RELS = Base.IdSet{Any}()
 const _FWD_INDEX_CACHE = IdDict{Any, Any}()
 const _INV_INDEX_CACHE = IdDict{Any, Any}()
 
-function _build_fwd(s::Rel{Y, Z}) where {Y, Z}
+function _build_fwd(s::Relation{Y, Z}) where {Y, Z}
     d = Dict{Y, Vector{Z}}()
-    sizehint!(d, length(s.pairs))
-    for p in s.pairs
+    sizehint!(d, length(s))
+    for p in _pairs(s)
         push!(get!(d, p.first, Z[]), p.second)
     end
     d
 end
 
 # Forward index D → list of Rs. Cached for leaf relations, rebuilt for derived.
-function fwd_index(s::Rel{Y, Z}) where {Y, Z}
+function fwd_index(s::Relation{Y, Z}) where {Y, Z}
     s in _LEAF_RELS || return _build_fwd(s)
     lock(_CACHE_LOCK) do
         get!(() -> _build_fwd(s), _FWD_INDEX_CACHE, s)::Dict{Y, Vector{Z}}
     end
 end
 
-function _build_inv(s::Rel{Y, Z}) where {Y, Z}
+function _build_inv(s::Relation{Y, Z}) where {Y, Z}
     d = Dict{Z, Vector{Y}}()
-    sizehint!(d, length(s.pairs))
-    for p in s.pairs
+    sizehint!(d, length(s))
+    for p in _pairs(s)
         push!(get!(d, p.second, Y[]), p.first)
     end
     d
 end
 
 # Inverse index R → list of Ds, used by `==`/`in`. Cached for leaf relations.
-function inv_index(s::Rel{Y, Z}) where {Y, Z}
+function inv_index(s::Relation{Y, Z}) where {Y, Z}
     s in _LEAF_RELS || return _build_inv(s)
     lock(_CACHE_LOCK) do
         get!(() -> _build_inv(s), _INV_INDEX_CACHE, s)::Dict{Z, Vector{Y}}
     end
 end
 
-function compose(r::Rel{X, Y}, s::Rel{Y, Z}) where {X, Y, Z}
+# Point access — VecRel bypasses the Dict entirely. Returns iterable of Rs.
+_get(s::MapRel{Y, Z}, k::Y) where {Y, Z} = get(fwd_index(s), k, EMPTY_Z(Z))
+_get(s::VecRel{E, Z}, k::ID{E}) where {E, Z} = (s.values[k.id],)
+@inline EMPTY_Z(::Type{Z}) where Z = Z[]
+
+# VecRel → VecRel: pure index-chasing, no Dict, no Pair allocation per item.
+function compose(r::VecRel{E, ID{F}}, s::VecRel{F, Z}) where {E, F, Z}
+    rv, sv = r.values, s.values
+    out = Vector{Z}(undef, length(rv))
+    @inbounds for i in eachindex(rv)
+        out[i] = sv[rv[i].id]
+    end
+    VecRel{E, Z}(out)
+end
+
+# VecRel → MapRel: one Dict lookup per row, but no front-pair iteration.
+function compose(r::VecRel{E, Y}, s::MapRel{Y, Z}) where {E, Y, Z}
+    s_by = fwd_index(s)
+    out = Pair{ID{E}, Z}[]
+    @inbounds for i in eachindex(r.values)
+        zs = get(s_by, r.values[i], nothing)
+        zs === nothing && continue
+        key = ID{E}(i)
+        for z in zs
+            push!(out, key => z)
+        end
+    end
+    MapRel{ID{E}, Z}(out)
+end
+
+# MapRel → VecRel: each (x, y) does a single array access on s.
+function compose(r::MapRel{X, ID{F}}, s::VecRel{F, Z}) where {X, F, Z}
+    sv = s.values
+    out = Pair{X, Z}[]
+    sizehint!(out, length(r.pairs))
+    @inbounds for p in r.pairs
+        push!(out, p.first => sv[p.second.id])
+    end
+    MapRel{X, Z}(out)
+end
+
+# MapRel → MapRel: the original general path.
+function compose(r::MapRel{X, Y}, s::MapRel{Y, Z}) where {X, Y, Z}
     s_by = fwd_index(s)
     out = Pair{X, Z}[]
     for p in r.pairs
@@ -118,12 +213,12 @@ function compose(r::Rel{X, Y}, s::Rel{Y, Z}) where {X, Y, Z}
             push!(out, p.first => z)
         end
     end
-    Rel{X, Z}(out)
+    MapRel{X, Z}(out)
 end
 
-function compose(r::Rel{X, Y}, u::Unary{Y}) where {X, Y}
+function compose(r::Relation{X, Y}, u::Unary{Y}) where {X, Y}
     s = Set(u.values)
-    Rel{X, Y}([p for p in r.pairs if p.second in s])
+    MapRel{X, Y}([p for p in _pairs(r) if p.second in s])
 end
 
 compose(u::Unary{X}, v::Unary{X}) where X =
@@ -131,16 +226,23 @@ compose(u::Unary{X}, v::Unary{X}) where X =
 
 # Infix → at arrow precedence (below ∧/∨/comparisons). RHS parses as a unit
 # without parens: `info → Info.type == "X" ∧ Info.info in vals` is well-formed.
-→(r::Rel{X, Y}, s::Rel{Y, Z}) where {X, Y, Z} = compose(r, s)
-→(u::Unary{X}, r::Rel{X, Y}) where {X, Y} = compose(u, r)
-→(r::Rel{X, Y}, u::Unary{Y}) where {X, Y} = compose(r, u)
+→(r::Relation{X, Y}, s::Relation{Y, Z}) where {X, Y, Z} = compose(r, s)
+→(u::Unary{X}, r::Relation{X, Y}) where {X, Y} = compose(u, r)
+→(r::Relation{X, Y}, u::Unary{Y}) where {X, Y} = compose(r, u)
 →(u::Unary{X}, v::Unary{X}) where X = compose(u, v)
 
 # Navigation: r.field looks up `field` on R via multiple dispatch. Fall through
 # to getfield for any name not registered as a Prela field (so internal Julia
 # accesses like .singletonname don't trip us during serialization).
-function Base.getproperty(r::Rel{X, R}, name::Symbol) where {X, R}
+function Base.getproperty(r::MapRel{X, R}, name::Symbol) where {X, R}
     name === :pairs && return getfield(r, name)
+    if hasmethod(lookup_field, Tuple{Type{R}, Val{name}})
+        return compose(r, lookup_field(R, Val(name)))
+    end
+    return getfield(r, name)
+end
+function Base.getproperty(r::VecRel{E, R}, name::Symbol) where {E, R}
+    name === :values && return getfield(r, name)
     if hasmethod(lookup_field, Tuple{Type{R}, Val{name}})
         return compose(r, lookup_field(R, Val(name)))
     end
@@ -156,40 +258,40 @@ end
 
 # ===== intersection (∧ at lazy-and precedence) =====
 
-_keys(r::Rel) = Set(p.first for p in r.pairs)
+_keys(r::Relation) = Set(_keys_iter(r))
 
-∧(r::Rel{X, Y}, s::Rel{X, Z}) where {X, Y, Z} =
+∧(r::Relation{X, Y}, s::Relation{X, Z}) where {X, Y, Z} =
     Unary{X}(collect(intersect(_keys(r), _keys(s))))
-function ∧(u::Unary{X}, r::Rel{X, Y}) where {X, Y}
+function ∧(u::Unary{X}, r::Relation{X, Y}) where {X, Y}
     k = _keys(r)
     Unary{X}([x for x in u.values if x in k])
 end
-∧(r::Rel{X, Y}, u::Unary{X}) where {X, Y} = u ∧ r
+∧(r::Relation{X, Y}, u::Unary{X}) where {X, Y} = u ∧ r
 ∧(u::Unary{X}, v::Unary{X}) where X =
     Unary{X}(collect(intersect(Set(u.values), Set(v.values))))
 
 # ===== union (∨ at lazy-or precedence) =====
 
-∨(r::Rel{X, Y}, s::Rel{X, Y}) where {X, Y} =
-    Rel{X, Y}(unique(vcat(r.pairs, s.pairs)))
+∨(r::Relation{X, Y}, s::Relation{X, Y}) where {X, Y} =
+    MapRel{X, Y}(unique(vcat(collect(_pairs(r)), collect(_pairs(s)))))
 # Mixed-range case: union over keys (predicate OR with differing value types).
-∨(r::Rel{X, Y}, s::Rel{X, Z}) where {X, Y, Z} =
+∨(r::Relation{X, Y}, s::Relation{X, Z}) where {X, Y, Z} =
     Unary{X}(collect(union(_keys(r), _keys(s))))
-∨(u::Unary{X}, r::Rel{X, Y}) where {X, Y} =
+∨(u::Unary{X}, r::Relation{X, Y}) where {X, Y} =
     Unary{X}(collect(union(Set(u.values), _keys(r))))
-∨(r::Rel{X, Y}, u::Unary{X}) where {X, Y} = u ∨ r
+∨(r::Relation{X, Y}, u::Unary{X}) where {X, Y} = u ∨ r
 ∨(u::Unary{X}, v::Unary{X}) where X =
     Unary{X}(unique(vcat(u.values, v.values)))
 
 # ===== set difference (-) =====
 
-function Base.:-(u::Unary{X}, r::Rel{X, Y}) where {X, Y}
+function Base.:-(u::Unary{X}, r::Relation{X, Y}) where {X, Y}
     k = _keys(r)
     Unary{X}([x for x in u.values if !(x in k)])
 end
-function Base.:-(r::Rel{X, Y}, s::Rel{X, Z}) where {X, Y, Z}
+function Base.:-(r::Relation{X, Y}, s::Relation{X, Z}) where {X, Y, Z}
     k = _keys(s)
-    Rel{X, Y}([p for p in r.pairs if !(p.first in k)])
+    MapRel{X, Y}([p for p in _pairs(r) if !(p.first in k)])
 end
 
 # ===== Rel→Rel restrict (`:`) =====
@@ -199,27 +301,27 @@ end
 # Rel: `(Info.type == "release dates") : Info.info` returns the actual info
 # text for Infos whose type matches. `→` can't express this because both sides
 # have the same first column (compose requires LHS's second = RHS's first).
-function Base.:(:)(r::Rel{X, Y}, s::Rel{X, Z}) where {X, Y, Z}
+function Base.:(:)(r::Relation{X, Y}, s::Relation{X, Z}) where {X, Y, Z}
     k = _keys(r)
-    Rel{X, Z}([p for p in s.pairs if p.first in k])
+    MapRel{X, Z}([p for p in _pairs(s) if p.first in k])
 end
 # Unary on the left: a conjunction of predicates reduces to a `Unary` of keys,
 # so `(pred₁ ∧ pred₂) : field` projects `field` for the matching domain.
-function Base.:(:)(u::Unary{X}, s::Rel{X, Z}) where {X, Z}
+function Base.:(:)(u::Unary{X}, s::Relation{X, Z}) where {X, Z}
     k = Set(u.values)
-    Rel{X, Z}([p for p in s.pairs if p.first in k])
+    MapRel{X, Z}([p for p in _pairs(s) if p.first in k])
 end
 
 # ===== range predicates =====
 
 # Equality and `in`: indexed via inv_index — O(1) per probed value after
 # the first call (which builds the index).
-function Base.:(==)(r::Rel{X, Y}, val) where {X, Y}
+function Base.:(==)(r::Relation{X, Y}, val) where {X, Y}
     inv = inv_index(r)
     keys = get(inv, val, X[])
-    Rel{X, Y}([k => val for k in keys])
+    MapRel{X, Y}([k => val for k in keys])
 end
-function Base.in(r::Rel{X, Y}, vals::Tuple) where {X, Y}
+function Base.in(r::Relation{X, Y}, vals::Tuple) where {X, Y}
     inv = inv_index(r)
     out = Pair{X, Y}[]
     for v in vals
@@ -227,75 +329,214 @@ function Base.in(r::Rel{X, Y}, vals::Tuple) where {X, Y}
             push!(out, k => v)
         end
     end
-    Rel{X, Y}(out)
+    MapRel{X, Y}(out)
 end
 
 # Order predicates: linear scan (can't use value index for ranges).
 for op in (:(!=), :<, :>, :(<=), :(>=))
-    @eval Base.$op(r::Rel{X, Y}, val) where {X, Y} =
-        Rel{X, Y}([p for p in r.pairs if $op(p.second, val)])
+    @eval Base.$op(r::Relation{X, Y}, val) where {X, Y} =
+        MapRel{X, Y}([p for p in _pairs(r) if $op(p.second, val)])
 end
 
 # Predicate elision: filter the primary FIRST (small), then compose with r.
 for op in (:(==), :(!=), :<, :>, :(<=), :(>=))
-    @eval Base.$op(r::Rel{X, ID{E}}, val) where {X, E <: Entity} =
+    @eval Base.$op(r::Relation{X, ID{E}}, val) where {X, E <: Entity} =
         compose(r, $op(primary(E), val))
 end
-Base.in(r::Rel{X, ID{E}}, vals::Tuple) where {X, E <: Entity} =
+Base.in(r::Relation{X, ID{E}}, vals::Tuple) where {X, E <: Entity} =
     compose(r, in(primary(E), vals))
 
 # regex
-Base.:~(r::Rel{X, Y}, re::Regex) where {X, Y <: AbstractString} =
-    Rel{X, Y}([p for p in r.pairs if occursin(re, p.second)])
-Base.:~(r::Rel{X, ID{E}}, re::Regex) where {X, E <: Entity} =
+Base.:~(r::Relation{X, Y}, re::Regex) where {X, Y <: AbstractString} =
+    MapRel{X, Y}([p for p in _pairs(r) if occursin(re, p.second)])
+Base.:~(r::Relation{X, ID{E}}, re::Regex) where {X, E <: Entity} =
     compose(r, primary(E) ~ re)
 
 # Julia doesn't parse `!~` as a binary operator; use `≁` (input via `\nsim<TAB>`).
-≁(r::Rel{X, Y}, re::Regex) where {X, Y <: AbstractString} =
-    Rel{X, Y}([p for p in r.pairs if !occursin(re, p.second)])
-≁(r::Rel{X, ID{E}}, re::Regex) where {X, E <: Entity} =
+≁(r::Relation{X, Y}, re::Regex) where {X, Y <: AbstractString} =
+    MapRel{X, Y}([p for p in _pairs(r) if !occursin(re, p.second)])
+≁(r::Relation{X, ID{E}}, re::Regex) where {X, E <: Entity} =
     compose(r, primary(E)) ≁ re
 
 # ===== product (× at times precedence — tightest binary op in queries) =====
 
+# VecRel × VecRel: dense + dense, zero hash needed.
+function ×(r::VecRel{E, Y}, s::VecRel{E, Z}) where {E, Y, Z}
+    n = length(r.values)
+    @assert n == length(s.values)
+    out = Vector{Tuple{Y, Z}}(undef, n)
+    @inbounds for i in 1:n
+        out[i] = (r.values[i], s.values[i])
+    end
+    VecRel{E, Tuple{Y, Z}}(out)
+end
+
 # Hash-join on the shared key. Build the hash on the smaller side so an
 # unfiltered (wide) output column is streamed, not materialized into a hash.
-function ×(r::Rel{X, Y}, s::Rel{X, Z}) where {X, Y, Z}
+function ×(r::Relation{X, Y}, s::Relation{X, Z}) where {X, Y, Z}
     out = Pair{X, Tuple{Y, Z}}[]
-    if length(s.pairs) <= length(r.pairs)
+    if length(s) <= length(r)
         s_by = Dict{X, Vector{Z}}()
-        for p in s.pairs
+        for p in _pairs(s)
             push!(get!(s_by, p.first, Z[]), p.second)
         end
-        for p in r.pairs
+        for p in _pairs(r)
             for z in get(s_by, p.first, Z[])
                 push!(out, p.first => (p.second, z))
             end
         end
     else
         r_by = Dict{X, Vector{Y}}()
-        for p in r.pairs
+        for p in _pairs(r)
             push!(get!(r_by, p.first, Y[]), p.second)
         end
-        for p in s.pairs
+        for p in _pairs(s)
             for y in get(r_by, p.first, Y[])
                 push!(out, p.first => (y, p.second))
             end
         end
     end
-    Rel{X, Tuple{Y, Z}}(out)
+    MapRel{X, Tuple{Y, Z}}(out)
 end
 
 # Unary as a "constraint" in product: restricts the domain but contributes no column.
-function ×(u::Unary{X}, r::Rel{X, Y}) where {X, Y}
+function ×(u::Unary{X}, r::Relation{X, Y}) where {X, Y}
     s = Set(u.values)
-    Rel{X, Y}([p for p in r.pairs if p.first in s])
+    MapRel{X, Y}([p for p in _pairs(r) if p.first in s])
 end
-function ×(r::Rel{X, Y}, u::Unary{X}) where {X, Y}
+function ×(r::Relation{X, Y}, u::Unary{X}) where {X, Y}
     s = Set(u.values)
-    Rel{X, Y}([p for p in r.pairs if p.first in s])
+    MapRel{X, Y}([p for p in _pairs(r) if p.first in s])
 end
 ×(u::Unary{X}, v::Unary{X}) where X = u ∧ v
+
+# ===== universe-rooted broadcast ========================================
+# `cast.(o₁, o₂, …; p₁, p₂, …)` iterates the Cast universe once. For each
+# `i ∈ universe`:
+#   - short-circuit if any pred is unsatisfied (i not in its domain);
+#   - look up each projection at i and ×-combine results into output rows.
+#
+# Each `oₖ`/`pₖ` is still a fully eager `Relation`; what's saved is the
+# per-operator intermediate (no chain of `(cast ∧ p₁) ∧ p₂` Set/Unary
+# allocations, no `: prod` filter pass — one loop instead).
+
+_range_type(::Relation{D, R}) where {D, R} = R
+
+function (u::Unary{X})(prods::Vararg{Any}; preds...) where X
+    pred_keysets = Set{X}[_keys(v) for (_, v) in pairs(preds)]
+
+    # Pick the smallest pred's keyset as the outer iteration domain (instead
+    # of the full universe). Massive win when one pred is sparse, e.g. a few
+    # thousand casts with a specific note value.
+    if isempty(pred_keysets)
+        iter_keys = u.values
+        rest_sets = pred_keysets
+    else
+        sizes = map(length, pred_keysets)
+        smallest_idx = argmin(sizes)
+        iter_keys = pred_keysets[smallest_idx]
+        rest_sets = Set{X}[ks for (i, ks) in enumerate(pred_keysets) if i != smallest_idx]
+    end
+
+    if isempty(prods)
+        result = X[]
+        for x in iter_keys
+            ok = true
+            for ks in rest_sets
+                if !(x in ks); ok = false; break; end
+            end
+            ok && push!(result, x)
+        end
+        return Unary{X}(result)
+    end
+
+    nprods = length(prods)
+    range_types = map(_range_type, prods)
+    R = nprods == 1 ? range_types[1] : Tuple{range_types...}
+
+    prod_indexes = Any[fwd_index(p) for p in prods]
+    out = Pair{X, R}[]
+
+    for x in iter_keys
+        # predicates — short-circuit
+        ok = true
+        for ks in rest_sets
+            if !(x in ks); ok = false; break; end
+        end
+        ok || continue
+
+        if nprods == 1
+            vs = get(prod_indexes[1], x, nothing)
+            vs === nothing && continue
+            for v in vs
+                push!(out, x => v)
+            end
+        else
+            vals = Vector{Any}(undef, nprods)
+            skip = false
+            for i in 1:nprods
+                v = get(prod_indexes[i], x, nothing)
+                if v === nothing; skip = true; break; end
+                vals[i] = v
+            end
+            skip && continue
+            for combo in Iterators.product(vals...)
+                push!(out, x => combo)
+            end
+        end
+    end
+
+    return MapRel{X, R}(out)
+end
+
+# Mark Relations and Unaries as broadcast-scalar so `cast.(args; kws)` resolves
+# to a single call into the method above (no per-element broadcast iteration).
+Base.broadcastable(r::Relation) = Ref(r)
+Base.broadcastable(u::Unary) = Ref(u)
+
+# Nested broadcast on a Relation: `r.(prods…; preds…)` where r::Rel{X, Y}.
+# Single scan over r's pairs, per-y short-circuit on preds (Y-space), per-y
+# prod lookups, emit (x, prod-combo) rows. Lets us write
+# `person.(Person.aka.name; gender == "f")` to push filters into the leaf
+# entity without paying for an inverse index on r.
+function (r::Relation{X, Y})(prods::Vararg{Any}; preds...) where {X, Y}
+    pred_keysets = Set{Y}[_keys(v) for (_, v) in pairs(preds)]
+    nprods = length(prods)
+    range_types = map(_range_type, prods)
+    R = nprods == 0 ? Nothing : (nprods == 1 ? range_types[1] : Tuple{range_types...})
+    prod_indexes = Any[fwd_index(p) for p in prods]
+    out = Pair{X, R}[]
+
+    for p in _pairs(r)
+        x, y = p.first, p.second
+        ok = true
+        for ks in pred_keysets
+            y in ks || (ok = false; break)
+        end
+        ok || continue
+        if nprods == 1
+            vs = get(prod_indexes[1], y, nothing)
+            vs === nothing && continue
+            for v in vs
+                push!(out, x => v)
+            end
+        else
+            vals = Vector{Any}(undef, nprods)
+            skip = false
+            for i in 1:nprods
+                v = get(prod_indexes[i], y, nothing)
+                if v === nothing; skip = true; break; end
+                vals[i] = v
+            end
+            skip && continue
+            for combo in Iterators.product(vals...)
+                push!(out, x => combo)
+            end
+        end
+    end
+
+    return MapRel{X, R}(out)
+end
 
 # ===== schema sugar =====
 #
