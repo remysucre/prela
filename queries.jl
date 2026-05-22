@@ -573,31 +573,33 @@ end
 
 # ===================================================================
 _q("7a", "Antonioni, Michelangelo || Dressed to Kill") do
-    let bio = (Person.info → ((PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm")))
+    let bio = (Person.info → ((PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm"))),
+        m = movie.(title;
+                   production_year = (y -> 1980 <= y <= 1995),
+                   lb = (linked_by → (MovieLink.type == "features"))),
+        cm = Cast.movie → m
         cast.(person.(Person.name;
                       a = (Person.aka.name ~ r"a"),
                       lo = (Person.name_pcode_cf >= "A"),
                       hi = (Person.name_pcode_cf <= "F"),
                       g = ((Person.gender == "m") ∨ ((Person.gender == "f") ∧ (Person.name ~ r"^B"))),
                       b = bio),
-              Cast.movie.(title;
-                          py_lo = (production_year >= 1980),
-                          py_hi = (production_year <= 1995),
-                          lb = (linked_by → (MovieLink.type == "features"))))
+              cm; mp = cm)
     end
 end
 
 _q("7b", "De Palma, Brian || Dressed to Kill") do
-    let bio = (Person.info → ((PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm")))
+    let bio = (Person.info → ((PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm"))),
+        m = movie.(title;
+                   production_year = (y -> 1980 <= y <= 1984),
+                   lb = (linked_by → (MovieLink.type == "features"))),
+        cm = Cast.movie → m
         cast.(person.(Person.name;
                       a = (Person.aka.name ~ r"a"),
                       pcf = (Person.name_pcode_cf ~ r"^D"),
                       g = (Person.gender == "m"),
                       b = bio),
-              Cast.movie.(title;
-                          py_lo = (production_year >= 1980),
-                          py_hi = (production_year <= 1984),
-                          lb = (linked_by → (MovieLink.type == "features"))))
+              cm; mp = cm)
     end
 end
 
@@ -634,58 +636,76 @@ _q("8b", "Chambers, Linda || Dragon Ball Z: Shin Budokai") do
 end
 
 _q("8c", "\"A.J.\" || #1 Cheerleader Camp") do
-    cast.(person.aka.name,
-          (Cast.movie → ((company → (Company.country == "[us]")) : title));
-          p1 = (role == "writer"))
+    let m = movie.(title; co = (company → (Company.country == "[us]"))),
+        cm = Cast.movie → m
+        cast.(person.aka.name, cm; p1 = (role == "writer"), mp = cm)
+    end
 end
 
 _q("8d", "\"Jenny from the Block\" || #1 Cheerleader Camp") do
-    cast.(person.aka.name,
-          (Cast.movie → ((company → (Company.country == "[us]")) : title));
-          p1 = (role == "costume designer"))
+    let m = movie.(title; co = (company → (Company.country == "[us]"))),
+        cm = Cast.movie → m
+        cast.(person.aka.name, cm; p1 = (role == "costume designer"), mp = cm)
+    end
 end
 
 # ===================================================================
 _q("9a", "AJ || Airport Announcer || Blue Harvest") do
-    let pf = (Person.gender == "f") ∧ (Person.name ~ r"Ang")
+    let pf = (Person.gender == "f") ∧ (Person.name ~ r"Ang"),
+        m = movie.(title;
+                   co = (company → ((Company.country == "[us]") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)")))),
+                   production_year = (y -> 2005 <= y <= 2015)),
+        cm = Cast.movie → m
         cast.((person → (pf : Person.aka.name)),
               character.name,
-              (Cast.movie → (((company → ((Company.country == "[us]") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)"))))
-                            ∧ (production_year >= 2005) ∧ (production_year <= 2015)) : title));
+              cm;
               p1 = (note in _VOICE4),
-              p2 = (role == "actress"))
+              p2 = (role == "actress"),
+              mp = cm)
     end
 end
 
 _q("9b", "AJ || Airport Announcer || Bassett, Angela || Blue Harvest") do
-    let pf = (Person.gender == "f") ∧ (Person.name ~ r"Angel")
+    let pf = (Person.gender == "f") ∧ (Person.name ~ r"Angel"),
+        m = movie.(title;
+                   co = (company → ((Company.country == "[us]") ∧ (Company.note ~ r"\(200.*\)") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)")))),
+                   production_year = (y -> 2007 <= y <= 2010)),
+        cm = Cast.movie → m
         cast.((person → (pf : Person.aka.name)),
               character.name,
               (person → (pf : Person.name)),
-              (Cast.movie → (((company → ((Company.country == "[us]") ∧ (Company.note ~ r"\(200.*\)") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)"))))
-                            ∧ (production_year >= 2007) ∧ (production_year <= 2010)) : title));
+              cm;
               p1 = (note == "(voice)"),
-              p2 = (role == "actress"))
+              p2 = (role == "actress"),
+              mp = cm)
     end
 end
 
 _q("9c", "'Annette' || 2nd Balladeer || Alborg, Ana Esther || (1975-01-20)") do
-    let pf = (Person.gender == "f") ∧ (Person.name ~ r"An")
+    let pf = (Person.gender == "f") ∧ (Person.name ~ r"An"),
+        m = movie.(title; co = (company → (Company.country == "[us]"))),
+        cm = Cast.movie → m
         cast.((person → (pf : Person.aka.name)),
               character.name,
               (person → (pf : Person.name)),
-              (Cast.movie → ((company → (Company.country == "[us]")) : title));
+              cm;
               p1 = (note in _VOICE4),
-              p2 = (role == "actress"))
+              p2 = (role == "actress"),
+              mp = cm)
     end
 end
 
 _q("9d", "!!!, Toy || Aaron, Caroline || \"Cockamamie's\" Salesgirl || \$15,000.00 Error") do
-        cast.((person.(Person.aka.name, Person.name; pf = (Person.gender == "f"))),
-              character.name,
-              (Cast.movie → ((company → (Company.country == "[us]")) : title));
+    let m = movie.(title; co = (company → (Company.country == "[us]"))),
+        cm = Cast.movie → m,
+        pq = persons.(Person.aka.name, Person.name; gender = ==("f")),
+        cp = Cast.person → pq
+        cast.(cp, character.name, cm;
               p1 = (note in _VOICE4),
-              p2 = (role == "actress"))
+              p2 = (role == "actress"),
+              mp = cm,
+              pp = cp)
+    end
 end
 
 # ===================================================================

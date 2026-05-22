@@ -496,6 +496,14 @@ const role      = _Cast_role
 const person    = _Cast_person
 const character = _Cast_character
 
+# Person universe — for person-rooted broadcasts (e.g. `persons.(Person.name; ...)`).
+# Iterating 4M persons is much cheaper than scanning 36M cast→person pairs when
+# the query filters persons before joining back to casts.
+const persons = let n = _Person_name isa Prela.VecRel ? length(_Person_name.values) : length(_Person_name.pairs)
+    Unary{ID{Person}}([ID{Person}(i) for i in 1:n])
+end
+println("Person universe: $(length(persons.values)) persons")
+
 # Re-bind Movie's bare-exposed fields whose backing rel was promoted. The
 # original `@expose Movie` captured the MapRel object by reference; const
 # redefinition swaps in the VecRel-backed binding so bare `title`/`kind`
