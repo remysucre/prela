@@ -1,0 +1,13 @@
+[package]
+name = "prela"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+memmap2 = "0.9"
+regex   = "1.10"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+debug = true                     # keep symbols for `cargo asm` / perf

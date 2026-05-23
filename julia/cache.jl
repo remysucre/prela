@@ -9,7 +9,7 @@
 
 using Mmap
 
-const CACHE_DIR = joinpath(@__DIR__, "cache")
+const CACHE_DIR = joinpath(@__DIR__, "..", "cache")
 
 # ---------------- bits-only Rels (ID×ID, ID×Int) ----------------
 # Stored as: raw Vector{Pair{Int, Int}} bytes. Just `write(io, pairs)`.

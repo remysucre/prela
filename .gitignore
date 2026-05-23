@@ -1,2 +1,13 @@
 # On-disk relation cache, regenerated from parquet on a cache miss (~9GB).
 cache/
+
+# Rust build artifacts
+rust/target/
+
+# Zig build artifacts
+zig/zig-out/
+zig/.zig-cache/
+
+# Editor / LyX backups
+*~
+.DS_Store

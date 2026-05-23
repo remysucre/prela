@@ -1,133 +1,147 @@
-Everything in Prela is a relation of arity at most 2.
-Such a relation can be thought of as a (finite) function
- that can return multiple results for the same input.
+# Prela
 
-Prela is typed, and the same name can be used for different relations thanks to type inference.
+A small navigational query language over typed, strictly-binary relations,
+with three reference implementations sharing the same algebraic engine:
 
-Let's look at what the JOB schema looks like in Prela:
+- **`julia/`** — original prototype with infix surface syntax (`→ ∧ × :`),
+  top-down CPS, JIT-fused.
+- **`rust/`** — AOT port, generic monomorphization + `#[inline(always)]`.
+- **`zig/`** — AOT port, `comptime` monomorphization + sink-struct CPS.
 
-```
-movie: Movie
+For the language design, see [`LANGUAGE.md`](LANGUAGE.md).
 
-info: Movie -> Info
+## Benchmark — JOB (Join Order Benchmark), 113 queries, single-threaded
 
-Info : {
-  info : String,
-  type : InfoType,
-  note : String
-}
-```
+|  | total (warm) | per-query bench |
+|---|---|---|
+| **prela-zig** | **5.49 s** | full suite under [zig/](zig/) |
+| **prela-rs**  | **5.82 s** | full suite under [rust/](rust/) |
+| DuckDB        | 19 s       | reference column store |
+| **prela-julia** (steady) | 90 s | full suite under [julia/](julia/) |
+| Postgres (indexed) | 152 s | reference baseline |
 
-Compare with SQL:
+All three impls produce identical results — the same algebra emits the same
+fused loop nest in each target. The Rust and Zig builds beat DuckDB by ~3×;
+the Julia version with JIT trails but still beats indexed Postgres.
 
-```
-CREATE TABLE movie_info (
-    id integer NOT NULL PRIMARY KEY,
-    movie_id integer NOT NULL,
-    info_type_id integer NOT NULL,
-    info text NOT NULL,
-    note text
-);
-```
-
-`movie: Movie` declares the name `movie` as an (abstract) unary relation
- representing the universe of all `Movie` entities.
-There is an abstract `Movie` type instead of the integer ID `movie_id`,
- and we're explicit that `info` returns the `Info` of a `Movie`.
-This makes is clear that `info` is a foreign key relationship between `Info` and `Movie`.
-The "struct" `Info` is in fact shorthand for declaring 3 relations:
- `info: Info -> String, type: Info -> InfoType, note: Info -> String`.
-This allows us to "access fields" with simple relational composition (introduced formally soon):
- `movie.info.note`.
-
-Sequential composition / join `.`: `r . s` with `r: x -> y, s: y -> z` is the relational composition
- `t: x -> z`.
-If `s: y`, then `t: x -> y` (range restriction); if `r: y`, then `t: y -> z` (domain restriction).
-If they are both unary, then same as intersection.
-
-Intersection `&`: `r: x -> y & s: x -> z` is the intersections of their keys, i.e. a set over `x`.
-
-Set difference `-`: `r - s` is `r` with keys not in `s`'s domain. Same precedence as `&`,
- left-associative. Prela has no NULLs or 3VL — fully normalized binary relations mean a
- missing value is simply absent, so SQL's `IS NULL` is expressed as `- r`. E.g. inside
- `company.(...)`, `& type == "production companies" - note` reads "matching companies that
- have no note".
-
-Select `:`: same as sequential composition, but requiring lhs to be unary (domain reistriction).
-
-Disjunction `|`: `r | s` is the union of compatible relations. Used between
- predicates it reads as OR, e.g. `info ~ r"^Japan:.*200" | info ~ r"^USA:.*200"`.
-
-Predicates are applied to the range of each relation:
- `r < 3` with `r: x -> y` filters `r` by `y < 3`.
-
-Because the fundamental data model of Prela is over unary/binary relations,
- creating "tuples" requires a bit more machinery.
-
-Parallel composition `,`: strictly binary. `r: x -> y, s: x -> z` returns `t: x -> (y, z)`,
- a 2-tuple per `x`. Tuple members are accessed positionally: `t.0` is `r` with domain
- restricted to those shared with `s`, and `t.1` is `s` similarly restricted.
-For more than two components, nest by association: `a, b, c` parses as `(a, b), c` and
- lands as `x -> ((y_a, y_b), y_c)`. Access: `.0.0`, `.0.1`, `.1`.
-
-Per-`x` semantics: the cross product of tuple sets from each side. If `r` yields multiple
- `y` values and `s` yields multiple `z` values for the same `x`, every combination is emitted.
-
-Primary field: each type has a designated primary field, defaulting to the first field
- of the struct. By convention, single-field lookup types use a name matching the type
- (`Keyword.keyword`, `Kind.kind`), while multi-field types pick a semantic name
- (`Movie.title`).
-
-Predicate elision: when a predicate compares an entity-typed expression to a scalar
- literal (e.g. `keyword == "sequel"` where `keyword: Movie -> Keyword`), Prela auto-
- traverses to the entity's primary field. So `keyword == "sequel"` is sugar for
- `keyword.keyword == "sequel"`.
-
-Returning entities: there is no explicit unwrap operator. To return a scalar, compose
- to the relevant scalar relation. To return an entity, just include it in a `,` or `:`;
- display layers render the entity via its primary field.
-
-Aggregation `min, max, sum, ...`: `agg(r)` where `r: x -> y` groups by `x` and aggregates over `y`.
-
-Here's JOB q22a:
+## Repo layout
 
 ```
-movie.(
-    info.(type == "countries" & info in ("Germany", "German", "USA", "American"))
-  & keyword in ("murder", "murder-in-title", "blood", "violence")
-  & production_year > 2008
-  & kind in ("movie", "episode")
-  : title
-  , data.(data < "7.0" & type == "rating")
-  , company.(
-       note !~ r"\(USA\)" &
-       note ~ r"\(200.*\)" &
-       country != "[us]" &
-       type == "production companies"
-    )
-)
+prela/
+├── README.md            this file
+├── LANGUAGE.md          language design + operator reference
+├── cache/               JOB binary cache (gitignored; generated on first Julia run)
+├── julia/               original Julia implementation
+├── rust/                AOT Rust port
+└── zig/                 AOT Zig port
 ```
 
-## Related work
+## Prerequisites
 
-Prela sits in a small family of navigational query languages over typed schemas:
+- **JOB dataset cache** in `cache/`. The Rust and Zig builds *read* this cache;
+  the Julia build *generates* it. So the first-time setup is: run Julia once
+  to populate `cache/`, then the AOT builds can use it.
 
-- **DAPLEX** (Shipman, 1981) and **FQL** — functional data model: entities are first-class
-  and relations are multi-valued functions between them. Closest in spirit to Prela's
-  struct sugar + dotted composition.
-- **CQL** (Categorical Query Language, Spivak/Wisnesky) — ER schemas as categories;
-  queries compose functorially.
-- **XPath / XQuery** — `book/author/name` reads like `book.author.name`; inline predicates
-  `[year > 2008]` mirror Prela's filtering. Multi-valued by default.
-- **jq** — `.author.name` for JSON; same navigational ergonomics but stream + callback
-  (`select(...)`, `any(.)`) rather than algebraic operators. Predicate composition is
-  `and`/`or` over booleans, not `&`/`|` over relations.
-- **SPARQL** — fundamentally binary (RDF triples); same data model, pattern-matching
-  surface rather than algebraic composition.
-- **Cypher** (Neo4j) — `MATCH (a)-[r]->(b)` graph patterns; ER worldview, pattern-shaped.
-- **Tarski's calculus of relations** and **allegory theory** — algebraic foundations for
-  `.`, `&`, `|`, transpose.
+- **Julia 1.11+** — only needed to populate the cache, then for the Julia
+  benchmark.
+- **Rust 1.85+** (edition 2024).
+- **Zig 0.16+** — uses the new `std.process.Init` main signature + `Io`
+  vtable.
 
-The distinctive bet: stay strictly binary, drop the SQL `JOIN`/`FROM`/`SELECT` skeleton,
-and lean on a small algebraic operator set so navigation reads like a path language while
-remaining closed under composition — XPath/DAPLEX ergonomics on a Tarski/Codd foundation.
+## First-time setup: populate the cache
+
+```bash
+cd julia
+julia --project=. -e 'include("JOB.jl")'
+```
+
+This ingests the raw JOB CSVs (~9 GB) and writes the binary relation cache
+into `prela/cache/*.bin` — 48 files, all small (~hundreds of MB total). Takes
+roughly 30 s on the first run. Subsequent runs mmap straight from the cache
+in ~2 s.
+
+## Run the Julia suite
+
+```bash
+cd julia
+julia --project=. -e 'include("JOB.jl"); include("queries.jl"); runall()'
+```
+
+Prints each query's result + match-against-reference timing, then a
+`N/113 queries match reference` summary.
+
+For an interactive REPL workflow (Revise auto-reload on edits):
+
+```bash
+cd julia
+julia --project=. -i -e 'include("start.jl")'
+```
+
+## Run the Rust suite
+
+```bash
+cd rust
+cargo build --release
+./target/release/prela
+```
+
+Prints `load: …s`, runs the 113 queries twice (cold + warm), reports
+`N/N ok` plus per-query timing for slow queries. Build takes ~20 s clean
+(LLVM optimizing 113 generic monomorphizations); steady runs land at ~5.8 s.
+
+## Run the Zig suite
+
+```bash
+cd zig
+zig build -Doptimize=ReleaseFast
+./zig-out/bin/prela-zig
+```
+
+Same output shape as the Rust version. Build takes ~15 s clean; steady runs
+land at ~5.5 s.
+
+## Notes on the build numbers
+
+The ~15–20 s release-mode build is **almost entirely LLVM optimization** of
+the 113 deeply-nested monomorphizations (each query is a unique concrete
+instantiation of `Restrict<Universe, Restrict<Conj<…>, Prod<…>>>`). The
+engine itself (operator structs + CPS protocol) is generic and produces
+almost no code on its own — compile time scales with how many queries you
+register and how deeply they nest.
+
+Incremental builds:
+- **Zig**: ~12 s with a real edit, **~90 ms with `touch` only** (content-hash).
+- **Rust** (LTO=fat, codegen-units=1): ~17 s either way, since cargo rebuilds
+  the crate on any mtime change.
+
+## How the three impls share an algebra
+
+Every port has the same set of nodes and the same CPS protocol:
+
+| Node    | Role                                               |
+|---------|----------------------------------------------------|
+| `Vec1`  | total 1:1 dense leaf relation, `Vec<R>` by id      |
+| `Many`  | multi-valued or partial leaf, `Vec<Vec<R>>` by id  |
+| `Universe` | a `SetQ` over `[1, n]`                          |
+| `Compose<A, B>` | Query ∘ Query — bridge is value           |
+| `Restrict<S, Q>` | SetQ ∘ Query — bridge is key            |
+| `Filter<A, P>` | value-side predicate                       |
+| `Conj` / `Disj` / `SetDiff` | SetQ boolean algebra          |
+| `Prod`  | Cartesian product per key                          |
+| `Keys`  | Query → SetQ (forget value)                        |
+
+All three ports use a single method `.o` that picks compose vs restrict based
+on the receiver's kind, via:
+- Julia: multiple dispatch on operator `→`.
+- Rust: trait method on `QueryExt` vs `SetQExt`.
+- Zig: method lookup on the receiver's struct type (Query types vs SetQ
+  types define different `.o` methods).
+
+The result is one unified surface (`.o`, `.k`, `.and`, `.or`, `.minus`, `.x`,
+`.eq`, `.ne`, `.gt`, `.lt`, `.ge`, `.le`, `.in_v`, `.in_s`, `.rx`, `.nrx`)
+across all three.
+
+## License
+
+See [LICENSE](LICENSE) if present, otherwise treat as research code — no
+warranty.
