@@ -586,7 +586,6 @@ fn q33a(d: &Data) -> String {
     let q = d.movie.o(
         (&d.movie_kind).o(&d.kind_kind).eq("tv series").k()
             .and((&d.movie_company).o((&d.company_country).eq("[us]")).k())
-            .and((&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("rating").k()).k())
             .and(qlink_33a(d).k())
             .o(
                 (&d.movie_company).o((&d.company_country).eq("[us]").k().o(&d.company_name))
@@ -616,7 +615,6 @@ fn q33b(d: &Data) -> String {
     let q = d.movie.o(
         (&d.movie_kind).o(&d.kind_kind).eq("tv series").k()
             .and((&d.movie_company).o((&d.company_country).eq("[nl]")).k())
-            .and((&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("rating").k()).k())
             .and(qlink_33b(d).k())
             .o(
                 (&d.movie_company).o((&d.company_country).eq("[nl]").k().o(&d.company_name))
@@ -646,7 +644,6 @@ fn q33c(d: &Data) -> String {
     let q = d.movie.o(
         (&d.movie_kind).o(&d.kind_kind).in_v(vec!["tv series", "episode"]).k()
             .and((&d.movie_company).o((&d.company_country).ne("[us]")).k())
-            .and((&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("rating").k()).k())
             .and(qlink_33c(d).k())
             .o(
                 (&d.movie_company).o((&d.company_country).ne("[us]").k().o(&d.company_name))

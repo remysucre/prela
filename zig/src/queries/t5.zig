@@ -811,6 +811,9 @@ fn q26b(d: *const Data, w: *Io.Writer) anyerror!void {
 }
 
 fn q26c(d: *const Data, w: *Io.Writer) anyerror!void {
+    const rd = d.movie_data.o(
+        d.data_type.o(d.infotype_info).eq("rating").k().o(d.data_data),
+    );
     const q = d.movie.o(
         d.movie_complete_cast.in_s(
             d.completecast_subject.o(d.compcasttype_kind).eq("cast").k()
@@ -820,12 +823,7 @@ fn q26c(d: *const Data, w: *Io.Writer) anyerror!void {
                 d.movie_keyword.o(d.keyword_keyword).in_v(sets.kw10).k()
                     .@"and"(
                         d.movie_kind.o(d.kind_kind).eq("movie").k()
-                            .@"and"(
-                                d.movie_data.o(
-                                    d.data_type.o(d.infotype_info).eq("rating"),
-                                ).k()
-                                    .@"and"(d.movie_production_year.gt(2000).k()),
-                            ),
+                            .@"and"(d.movie_production_year.gt(2000).k()),
                     ),
             )
             .o(
@@ -833,10 +831,7 @@ fn q26c(d: *const Data, w: *Io.Writer) anyerror!void {
                     d.cast_character.o(d.character_name.rx(rx.class_Man_an)).k()
                         .o(d.cast_character.o(d.character_name)),
                 )
-                    .x(d.movie_data.o(
-                        d.data_type.o(d.infotype_info).eq("rating").k()
-                            .o(d.data_data),
-                    ))
+                    .x(rd)
                     .x(d.movie_title),
             ),
     );

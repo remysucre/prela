@@ -534,57 +534,51 @@ end
 # ---- templates 6-10, 16-33 (cast / complete_cast / person_info) ----
 
 _q("6a", "marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert") do
-    (movie
-        → (production_year > 2010)
-        ∧ (keyword == "marvel-cinematic-universe")
-        : (keyword == "marvel-cinematic-universe")
-        × title
-        × (cast → person → (Person.name ~ r"Downey.*Robert")))
+    let kw = keyword == "marvel-cinematic-universe"
+        (movie
+            → (production_year > 2010) ∧ kw
+            : kw × title × (cast → person → (Person.name ~ r"Downey.*Robert")))
+    end
 end
 
 _q("6b", "based-on-comic || The Avengers 2 || Downey Jr., Robert") do
-    (movie
-        → (production_year > 2014)
-        ∧ (keyword in _KW8)
-        : (keyword in _KW8)
-        × title
-        × (cast → person → (Person.name ~ r"Downey.*Robert")))
+    let kw = keyword in _KW8
+        (movie
+            → (production_year > 2014) ∧ kw
+            : kw × title × (cast → person → (Person.name ~ r"Downey.*Robert")))
+    end
 end
 
 _q("6c", "marvel-cinematic-universe || The Avengers 2 || Downey Jr., Robert") do
-    (movie
-        → (production_year > 2014)
-        ∧ (keyword == "marvel-cinematic-universe")
-        : (keyword == "marvel-cinematic-universe")
-        × title
-        × (cast → person → (Person.name ~ r"Downey.*Robert")))
+    let kw = keyword == "marvel-cinematic-universe"
+        (movie
+            → (production_year > 2014) ∧ kw
+            : kw × title × (cast → person → (Person.name ~ r"Downey.*Robert")))
+    end
 end
 
 _q("6d", "based-on-comic || 2008 MTV Movie Awards || Downey Jr., Robert") do
-    (movie
-        → (production_year > 2000)
-        ∧ (keyword in _KW8)
-        : (keyword in _KW8)
-        × title
-        × (cast → person → (Person.name ~ r"Downey.*Robert")))
+    let kw = keyword in _KW8
+        (movie
+            → (production_year > 2000) ∧ kw
+            : kw × title × (cast → person → (Person.name ~ r"Downey.*Robert")))
+    end
 end
 
 _q("6e", "marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert") do
-    (movie
-        → (production_year > 2000)
-        ∧ (keyword == "marvel-cinematic-universe")
-        : (keyword == "marvel-cinematic-universe")
-        × title
-        × (cast → person → (Person.name ~ r"Downey.*Robert")))
+    let kw = keyword == "marvel-cinematic-universe"
+        (movie
+            → (production_year > 2000) ∧ kw
+            : kw × title × (cast → person → (Person.name ~ r"Downey.*Robert")))
+    end
 end
 
 _q("6f", "based-on-comic || & Teller 2 || \"Steff\", Stefanie Oxmann Mcgaha") do
-    (movie
-        → (production_year > 2000)
-        ∧ (keyword in _KW8)
-        : (keyword in _KW8)
-        × title
-        × (cast → person.name))
+    let kw = keyword in _KW8
+        (movie
+            → (production_year > 2000) ∧ kw
+            : kw × title × (cast → person.name))
+    end
 end
 
 # ===================================================================
@@ -1101,13 +1095,14 @@ _q("26b", "Bank Manager || 8.2 || Inception") do
 end
 
 _q("26c", "'Agua' Man || 1.9 || 12 Rounds") do
-    (movie
-        → (complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete")))
-        ∧ (keyword in _KW10) ∧ (kind == "movie") ∧ (data → (Data.type == "rating"))
-        ∧ (production_year > 2000)
-        : (cast → (character → (Character.name ~ r"[Mm]an")) : character.name)
-        × (data → ((Data.type == "rating") : Data.data))
-        × title)
+    let rd = data → ((Data.type == "rating") : Data.data)
+        (movie
+            → (complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete")))
+            ∧ (keyword in _KW10) ∧ (kind == "movie") ∧ (production_year > 2000)
+            : (cast → (character → (Character.name ~ r"[Mm]an")) : character.name)
+            × rd
+            × title)
+    end
 end
 
 # ===================================================================
@@ -1340,56 +1335,43 @@ end
 # source domain. Both t1- and t2-side projections restrict to those, so the
 # 6-way `×` runs over a few hundred rows, not the whole universe.
 _q("33a", "495 Productions || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila") do
-    let qlink = (link → ((MovieLink.type in _LINK3)
-                       ∧ (MovieLink.target → ((kind == "tv series") ∧ company
-                                            ∧ (data → ((Data.type == "rating") ∧ (Data.data < "3.0")))
-                                            ∧ (production_year >= 2005) ∧ (production_year <= 2008))))),
-        t1 = (movie → (kind == "tv series")
-                    ∧ (company → (Company.country == "[us]"))
-                    ∧ (data → (Data.type == "rating")) ∧ qlink)
-        (t1 :
-            ((company → ((Company.country == "[us]") : Company.name))
-           × (qlink → MovieLink.target → company → Company.name)
-           × (data → ((Data.type == "rating") : Data.data))
-           × (qlink → MovieLink.target → data → (((Data.type == "rating") ∧ (Data.data < "3.0")) : Data.data))
-           × title
-           × (qlink → MovieLink.target → title)))
+    let co  = company → ((Company.country == "[us]") : Company.name),
+        rd  = data    → ((Data.type    == "rating")  : Data.data),
+        rdlt = data   → (((Data.type   == "rating") ∧ (Data.data < "3.0")) : Data.data),
+        t2f = ((kind == "tv series") ∧ company ∧ rdlt
+                                     ∧ (production_year >= 2005) ∧ (production_year <= 2008)),
+        qlk = link → ((MovieLink.type in _LINK3) ∧ (MovieLink.target → t2f)),
+        t2  = qlk → MovieLink.target
+        (movie
+            → (kind == "tv series") ∧ co ∧ qlk
+            : co × (t2 → company.name) × rd × (t2 → rdlt) × title × (t2 → title))
     end
 end
 
 _q("33b", "MTV Netherlands || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila") do
-    let qlink = (link → ((MovieLink.type ~ r"follow")
-                       ∧ (MovieLink.target → ((kind == "tv series") ∧ company
-                                            ∧ (data → ((Data.type == "rating") ∧ (Data.data < "3.0")))
-                                            ∧ (production_year == 2007))))),
-        t1 = (movie → (kind == "tv series")
-                    ∧ (company → (Company.country == "[nl]"))
-                    ∧ (data → (Data.type == "rating")) ∧ qlink)
-        (t1 :
-            ((company → ((Company.country == "[nl]") : Company.name))
-           × (qlink → MovieLink.target → company → Company.name)
-           × (data → ((Data.type == "rating") : Data.data))
-           × (qlink → MovieLink.target → data → (((Data.type == "rating") ∧ (Data.data < "3.0")) : Data.data))
-           × title
-           × (qlink → MovieLink.target → title)))
+    let co  = company → ((Company.country == "[nl]") : Company.name),
+        rd  = data    → ((Data.type    == "rating")  : Data.data),
+        rdlt = data   → (((Data.type   == "rating") ∧ (Data.data < "3.0")) : Data.data),
+        t2f = (kind == "tv series") ∧ company ∧ rdlt ∧ (production_year == 2007),
+        qlk = link → ((MovieLink.type ~ r"follow") ∧ (MovieLink.target → t2f)),
+        t2  = qlk → MovieLink.target
+        (movie
+            → (kind == "tv series") ∧ co ∧ qlk
+            : co × (t2 → company.name) × rd × (t2 → rdlt) × title × (t2 → title))
     end
 end
 
 _q("33c", "2BE || 495 Productions || 1.3 || 1.0 || A Double Shot at Love || A Double Shot at Love") do
-    let qlink = (link → ((MovieLink.type in _LINK3)
-                       ∧ (MovieLink.target → ((kind in ("tv series", "episode")) ∧ company
-                                            ∧ (data → ((Data.type == "rating") ∧ (Data.data < "3.5")))
-                                            ∧ (production_year >= 2000) ∧ (production_year <= 2010))))),
-        t1 = (movie → (kind in ("tv series", "episode"))
-                    ∧ (company → (Company.country != "[us]"))
-                    ∧ (data → (Data.type == "rating")) ∧ qlink)
-        (t1 :
-            ((company → ((Company.country != "[us]") : Company.name))
-           × (qlink → MovieLink.target → company → Company.name)
-           × (data → ((Data.type == "rating") : Data.data))
-           × (qlink → MovieLink.target → data → (((Data.type == "rating") ∧ (Data.data < "3.5")) : Data.data))
-           × title
-           × (qlink → MovieLink.target → title)))
+    let co  = company → ((Company.country != "[us]") : Company.name),
+        rd  = data    → ((Data.type    == "rating")  : Data.data),
+        rdlt = data   → (((Data.type   == "rating") ∧ (Data.data < "3.5")) : Data.data),
+        t2f = ((kind in ("tv series", "episode")) ∧ company ∧ rdlt
+                                                  ∧ (production_year >= 2000) ∧ (production_year <= 2010)),
+        qlk = link → ((MovieLink.type in _LINK3) ∧ (MovieLink.target → t2f)),
+        t2  = qlk → MovieLink.target
+        (movie
+            → (kind in ("tv series", "episode")) ∧ co ∧ qlk
+            : co × (t2 → company.name) × rd × (t2 → rdlt) × title × (t2 → title))
     end
 end
 

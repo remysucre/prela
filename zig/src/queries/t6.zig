@@ -625,70 +625,34 @@ fn q32b(d: *const Data, w: *Io.Writer) anyerror!void {
 }
 
 fn q33a(d: *const Data, w: *Io.Writer) anyerror!void {
+    const co = d.movie_company.o(d.company_country.eq("[us]").k().o(d.company_name));
+    const rd = d.movie_data.o(d.data_type.o(d.infotype_info).eq("rating").k().o(d.data_data));
+    const rdlt = d.movie_data.o(
+        d.data_type.o(d.infotype_info).eq("rating").k()
+            .@"and"(d.data_data.lt("3.0").k())
+            .o(d.data_data),
+    );
+    const t2f = d.movie_kind.o(d.kind_kind).eq("tv series").k()
+        .@"and"(d.movie_company.k())
+        .@"and"(d.movie_data.in_s(
+            d.data_type.o(d.infotype_info).eq("rating").k()
+                .@"and"(d.data_data.lt("3.0").k())
+        ).k())
+        .@"and"(d.movie_production_year.ge(2005).k())
+        .@"and"(d.movie_production_year.le(2008).k());
+    const qlk = d.movie_link.in_s(
+        d.movielink_type.o(d.linktype_link).in_v(sets.link3).k()
+            .@"and"(d.movielink_target.in_s(t2f).k()),
+    );
+    const t2 = qlk.o(d.movielink_target);
     const q = d.movie.o(
         d.movie_kind.o(d.kind_kind).eq("tv series").k()
             .@"and"(d.movie_company.o(d.company_country.eq("[us]")).k())
-            .@"and"(d.movie_data.in_s(d.data_type.o(d.infotype_info).eq("rating").k()).k())
-            .@"and"(d.movie_link.in_s(
-                d.movielink_type.o(d.linktype_link).in_v(sets.link3).k()
-                    .@"and"(d.movielink_target.in_s(
-                        d.movie_kind.o(d.kind_kind).eq("tv series").k()
-                            .@"and"(d.movie_company.k())
-                            .@"and"(d.movie_data.in_s(
-                                d.data_type.o(d.infotype_info).eq("rating").k()
-                                    .@"and"(d.data_data.lt("3.0").k())
-                            ).k())
-                            .@"and"(d.movie_production_year.ge(2005).k())
-                            .@"and"(d.movie_production_year.le(2008).k())
-                    ).k())
-            ).k())
+            .@"and"(qlk.k())
             .o(
-                d.movie_company.o(d.company_country.eq("[us]").k().o(d.company_name))
-                    .x(d.movie_link.in_s(
-                        d.movielink_type.o(d.linktype_link).in_v(sets.link3).k()
-                            .@"and"(d.movielink_target.in_s(
-                                d.movie_kind.o(d.kind_kind).eq("tv series").k()
-                                    .@"and"(d.movie_company.k())
-                                    .@"and"(d.movie_data.in_s(
-                                        d.data_type.o(d.infotype_info).eq("rating").k()
-                                            .@"and"(d.data_data.lt("3.0").k())
-                                    ).k())
-                                    .@"and"(d.movie_production_year.ge(2005).k())
-                                    .@"and"(d.movie_production_year.le(2008).k())
-                            ).k())
-                    ).o(d.movielink_target.o(d.movie_company.o(d.company_name))))
-                    .x(d.movie_data.o(d.data_type.o(d.infotype_info).eq("rating").k().o(d.data_data)))
-                    .x(d.movie_link.in_s(
-                        d.movielink_type.o(d.linktype_link).in_v(sets.link3).k()
-                            .@"and"(d.movielink_target.in_s(
-                                d.movie_kind.o(d.kind_kind).eq("tv series").k()
-                                    .@"and"(d.movie_company.k())
-                                    .@"and"(d.movie_data.in_s(
-                                        d.data_type.o(d.infotype_info).eq("rating").k()
-                                            .@"and"(d.data_data.lt("3.0").k())
-                                    ).k())
-                                    .@"and"(d.movie_production_year.ge(2005).k())
-                                    .@"and"(d.movie_production_year.le(2008).k())
-                            ).k())
-                    ).o(d.movielink_target.o(d.movie_data.o(
-                        d.data_type.o(d.infotype_info).eq("rating").k()
-                            .@"and"(d.data_data.lt("3.0").k())
-                            .o(d.data_data)
-                    ))))
-                    .x(d.movie_title)
-                    .x(d.movie_link.in_s(
-                        d.movielink_type.o(d.linktype_link).in_v(sets.link3).k()
-                            .@"and"(d.movielink_target.in_s(
-                                d.movie_kind.o(d.kind_kind).eq("tv series").k()
-                                    .@"and"(d.movie_company.k())
-                                    .@"and"(d.movie_data.in_s(
-                                        d.data_type.o(d.infotype_info).eq("rating").k()
-                                            .@"and"(d.data_data.lt("3.0").k())
-                                    ).k())
-                                    .@"and"(d.movie_production_year.ge(2005).k())
-                                    .@"and"(d.movie_production_year.le(2008).k())
-                            ).k())
-                    ).o(d.movielink_target.o(d.movie_title)))
+                co.x(t2.o(d.movie_company.o(d.company_name)))
+                  .x(rd).x(t2.o(rdlt))
+                  .x(d.movie_title).x(t2.o(d.movie_title)),
             )
     );
     var acc = h.Acc6{};
@@ -697,66 +661,33 @@ fn q33a(d: *const Data, w: *Io.Writer) anyerror!void {
 }
 
 fn q33b(d: *const Data, w: *Io.Writer) anyerror!void {
+    const co = d.movie_company.o(d.company_country.eq("[nl]").k().o(d.company_name));
+    const rd = d.movie_data.o(d.data_type.o(d.infotype_info).eq("rating").k().o(d.data_data));
+    const rdlt = d.movie_data.o(
+        d.data_type.o(d.infotype_info).eq("rating").k()
+            .@"and"(d.data_data.lt("3.0").k())
+            .o(d.data_data),
+    );
+    const t2f = d.movie_kind.o(d.kind_kind).eq("tv series").k()
+        .@"and"(d.movie_company.k())
+        .@"and"(d.movie_data.in_s(
+            d.data_type.o(d.infotype_info).eq("rating").k()
+                .@"and"(d.data_data.lt("3.0").k())
+        ).k())
+        .@"and"(d.movie_production_year.eq(2007).k());
+    const qlk = d.movie_link.in_s(
+        d.movielink_type.o(d.linktype_link).rx(rx.follow).k()
+            .@"and"(d.movielink_target.in_s(t2f).k()),
+    );
+    const t2 = qlk.o(d.movielink_target);
     const q = d.movie.o(
         d.movie_kind.o(d.kind_kind).eq("tv series").k()
             .@"and"(d.movie_company.o(d.company_country.eq("[nl]")).k())
-            .@"and"(d.movie_data.in_s(d.data_type.o(d.infotype_info).eq("rating").k()).k())
-            .@"and"(d.movie_link.in_s(
-                d.movielink_type.o(d.linktype_link).rx(rx.follow).k()
-                    .@"and"(d.movielink_target.in_s(
-                        d.movie_kind.o(d.kind_kind).eq("tv series").k()
-                            .@"and"(d.movie_company.k())
-                            .@"and"(d.movie_data.in_s(
-                                d.data_type.o(d.infotype_info).eq("rating").k()
-                                    .@"and"(d.data_data.lt("3.0").k())
-                            ).k())
-                            .@"and"(d.movie_production_year.eq(2007).k())
-                    ).k())
-            ).k())
+            .@"and"(qlk.k())
             .o(
-                d.movie_company.o(d.company_country.eq("[nl]").k().o(d.company_name))
-                    .x(d.movie_link.in_s(
-                        d.movielink_type.o(d.linktype_link).rx(rx.follow).k()
-                            .@"and"(d.movielink_target.in_s(
-                                d.movie_kind.o(d.kind_kind).eq("tv series").k()
-                                    .@"and"(d.movie_company.k())
-                                    .@"and"(d.movie_data.in_s(
-                                        d.data_type.o(d.infotype_info).eq("rating").k()
-                                            .@"and"(d.data_data.lt("3.0").k())
-                                    ).k())
-                                    .@"and"(d.movie_production_year.eq(2007).k())
-                            ).k())
-                    ).o(d.movielink_target.o(d.movie_company.o(d.company_name))))
-                    .x(d.movie_data.o(d.data_type.o(d.infotype_info).eq("rating").k().o(d.data_data)))
-                    .x(d.movie_link.in_s(
-                        d.movielink_type.o(d.linktype_link).rx(rx.follow).k()
-                            .@"and"(d.movielink_target.in_s(
-                                d.movie_kind.o(d.kind_kind).eq("tv series").k()
-                                    .@"and"(d.movie_company.k())
-                                    .@"and"(d.movie_data.in_s(
-                                        d.data_type.o(d.infotype_info).eq("rating").k()
-                                            .@"and"(d.data_data.lt("3.0").k())
-                                    ).k())
-                                    .@"and"(d.movie_production_year.eq(2007).k())
-                            ).k())
-                    ).o(d.movielink_target.o(d.movie_data.o(
-                        d.data_type.o(d.infotype_info).eq("rating").k()
-                            .@"and"(d.data_data.lt("3.0").k())
-                            .o(d.data_data)
-                    ))))
-                    .x(d.movie_title)
-                    .x(d.movie_link.in_s(
-                        d.movielink_type.o(d.linktype_link).rx(rx.follow).k()
-                            .@"and"(d.movielink_target.in_s(
-                                d.movie_kind.o(d.kind_kind).eq("tv series").k()
-                                    .@"and"(d.movie_company.k())
-                                    .@"and"(d.movie_data.in_s(
-                                        d.data_type.o(d.infotype_info).eq("rating").k()
-                                            .@"and"(d.data_data.lt("3.0").k())
-                                    ).k())
-                                    .@"and"(d.movie_production_year.eq(2007).k())
-                            ).k())
-                    ).o(d.movielink_target.o(d.movie_title)))
+                co.x(t2.o(d.movie_company.o(d.company_name)))
+                  .x(rd).x(t2.o(rdlt))
+                  .x(d.movie_title).x(t2.o(d.movie_title)),
             )
     );
     var acc = h.Acc6{};
@@ -765,70 +696,35 @@ fn q33b(d: *const Data, w: *Io.Writer) anyerror!void {
 }
 
 fn q33c(d: *const Data, w: *Io.Writer) anyerror!void {
+    const tv_or_ep = &[_][]const u8{ "tv series", "episode" };
+    const co = d.movie_company.o(d.company_country.ne("[us]").k().o(d.company_name));
+    const rd = d.movie_data.o(d.data_type.o(d.infotype_info).eq("rating").k().o(d.data_data));
+    const rdlt = d.movie_data.o(
+        d.data_type.o(d.infotype_info).eq("rating").k()
+            .@"and"(d.data_data.lt("3.5").k())
+            .o(d.data_data),
+    );
+    const t2f = d.movie_kind.o(d.kind_kind).in_v(tv_or_ep).k()
+        .@"and"(d.movie_company.k())
+        .@"and"(d.movie_data.in_s(
+            d.data_type.o(d.infotype_info).eq("rating").k()
+                .@"and"(d.data_data.lt("3.5").k())
+        ).k())
+        .@"and"(d.movie_production_year.ge(2000).k())
+        .@"and"(d.movie_production_year.le(2010).k());
+    const qlk = d.movie_link.in_s(
+        d.movielink_type.o(d.linktype_link).in_v(sets.link3).k()
+            .@"and"(d.movielink_target.in_s(t2f).k()),
+    );
+    const t2 = qlk.o(d.movielink_target);
     const q = d.movie.o(
-        d.movie_kind.o(d.kind_kind).in_v(&[_][]const u8{ "tv series", "episode" }).k()
+        d.movie_kind.o(d.kind_kind).in_v(tv_or_ep).k()
             .@"and"(d.movie_company.o(d.company_country.ne("[us]")).k())
-            .@"and"(d.movie_data.in_s(d.data_type.o(d.infotype_info).eq("rating").k()).k())
-            .@"and"(d.movie_link.in_s(
-                d.movielink_type.o(d.linktype_link).in_v(sets.link3).k()
-                    .@"and"(d.movielink_target.in_s(
-                        d.movie_kind.o(d.kind_kind).in_v(&[_][]const u8{ "tv series", "episode" }).k()
-                            .@"and"(d.movie_company.k())
-                            .@"and"(d.movie_data.in_s(
-                                d.data_type.o(d.infotype_info).eq("rating").k()
-                                    .@"and"(d.data_data.lt("3.5").k())
-                            ).k())
-                            .@"and"(d.movie_production_year.ge(2000).k())
-                            .@"and"(d.movie_production_year.le(2010).k())
-                    ).k())
-            ).k())
+            .@"and"(qlk.k())
             .o(
-                d.movie_company.o(d.company_country.ne("[us]").k().o(d.company_name))
-                    .x(d.movie_link.in_s(
-                        d.movielink_type.o(d.linktype_link).in_v(sets.link3).k()
-                            .@"and"(d.movielink_target.in_s(
-                                d.movie_kind.o(d.kind_kind).in_v(&[_][]const u8{ "tv series", "episode" }).k()
-                                    .@"and"(d.movie_company.k())
-                                    .@"and"(d.movie_data.in_s(
-                                        d.data_type.o(d.infotype_info).eq("rating").k()
-                                            .@"and"(d.data_data.lt("3.5").k())
-                                    ).k())
-                                    .@"and"(d.movie_production_year.ge(2000).k())
-                                    .@"and"(d.movie_production_year.le(2010).k())
-                            ).k())
-                    ).o(d.movielink_target.o(d.movie_company.o(d.company_name))))
-                    .x(d.movie_data.o(d.data_type.o(d.infotype_info).eq("rating").k().o(d.data_data)))
-                    .x(d.movie_link.in_s(
-                        d.movielink_type.o(d.linktype_link).in_v(sets.link3).k()
-                            .@"and"(d.movielink_target.in_s(
-                                d.movie_kind.o(d.kind_kind).in_v(&[_][]const u8{ "tv series", "episode" }).k()
-                                    .@"and"(d.movie_company.k())
-                                    .@"and"(d.movie_data.in_s(
-                                        d.data_type.o(d.infotype_info).eq("rating").k()
-                                            .@"and"(d.data_data.lt("3.5").k())
-                                    ).k())
-                                    .@"and"(d.movie_production_year.ge(2000).k())
-                                    .@"and"(d.movie_production_year.le(2010).k())
-                            ).k())
-                    ).o(d.movielink_target.o(d.movie_data.o(
-                        d.data_type.o(d.infotype_info).eq("rating").k()
-                            .@"and"(d.data_data.lt("3.5").k())
-                            .o(d.data_data)
-                    ))))
-                    .x(d.movie_title)
-                    .x(d.movie_link.in_s(
-                        d.movielink_type.o(d.linktype_link).in_v(sets.link3).k()
-                            .@"and"(d.movielink_target.in_s(
-                                d.movie_kind.o(d.kind_kind).in_v(&[_][]const u8{ "tv series", "episode" }).k()
-                                    .@"and"(d.movie_company.k())
-                                    .@"and"(d.movie_data.in_s(
-                                        d.data_type.o(d.infotype_info).eq("rating").k()
-                                            .@"and"(d.data_data.lt("3.5").k())
-                                    ).k())
-                                    .@"and"(d.movie_production_year.ge(2000).k())
-                                    .@"and"(d.movie_production_year.le(2010).k())
-                            ).k())
-                    ).o(d.movielink_target.o(d.movie_title)))
+                co.x(t2.o(d.movie_company.o(d.company_name)))
+                  .x(rd).x(t2.o(rdlt))
+                  .x(d.movie_title).x(t2.o(d.movie_title)),
             )
     );
     var acc = h.Acc6{};
