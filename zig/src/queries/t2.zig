@@ -309,18 +309,11 @@ fn q13d(d: *const Data, w: *Io.Writer) anyerror!void {
 }
 
 fn q6a(d: *const Data, w: *Io.Writer) anyerror!void {
+    const kw = d.movie_keyword.o(d.keyword_keyword).eq("marvel-cinematic-universe");
+    const downey = d.movie_cast.o(d.cast_person.o(d.person_name.rx(rx.downey_robert)));
     const q = d.movie.o(
-        d.movie_production_year.gt(2010).k()
-            .@"and"(d.movie_keyword.o(d.keyword_keyword).eq("marvel-cinematic-universe").k())
-            .o(
-                d.movie_keyword.o(d.keyword_keyword).eq("marvel-cinematic-universe")
-                    .x(d.movie_title)
-                    .x(
-                        d.movie_cast.o(
-                            d.cast_person.o(d.person_name.rx(rx.downey_robert))
-                        )
-                    )
-            )
+        d.movie_production_year.gt(2010).k().@"and"(kw.k())
+            .o(kw.x(d.movie_title).x(downey))
     );
     var acc = h.Acc3{};
     q.drive(h.Sink(h.Acc3){ .acc = &acc });
@@ -328,18 +321,11 @@ fn q6a(d: *const Data, w: *Io.Writer) anyerror!void {
 }
 
 fn q6b(d: *const Data, w: *Io.Writer) anyerror!void {
+    const kw = d.movie_keyword.o(d.keyword_keyword).in_v(sets.kw8);
+    const downey = d.movie_cast.o(d.cast_person.o(d.person_name.rx(rx.downey_robert)));
     const q = d.movie.o(
-        d.movie_production_year.gt(2014).k()
-            .@"and"(d.movie_keyword.o(d.keyword_keyword).in_v(sets.kw8).k())
-            .o(
-                d.movie_keyword.o(d.keyword_keyword).in_v(sets.kw8)
-                    .x(d.movie_title)
-                    .x(
-                        d.movie_cast.o(
-                            d.cast_person.o(d.person_name.rx(rx.downey_robert))
-                        )
-                    )
-            )
+        d.movie_production_year.gt(2014).k().@"and"(kw.k())
+            .o(kw.x(d.movie_title).x(downey))
     );
     var acc = h.Acc3{};
     q.drive(h.Sink(h.Acc3){ .acc = &acc });
@@ -347,18 +333,11 @@ fn q6b(d: *const Data, w: *Io.Writer) anyerror!void {
 }
 
 fn q6c(d: *const Data, w: *Io.Writer) anyerror!void {
+    const kw = d.movie_keyword.o(d.keyword_keyword).eq("marvel-cinematic-universe");
+    const downey = d.movie_cast.o(d.cast_person.o(d.person_name.rx(rx.downey_robert)));
     const q = d.movie.o(
-        d.movie_production_year.gt(2014).k()
-            .@"and"(d.movie_keyword.o(d.keyword_keyword).eq("marvel-cinematic-universe").k())
-            .o(
-                d.movie_keyword.o(d.keyword_keyword).eq("marvel-cinematic-universe")
-                    .x(d.movie_title)
-                    .x(
-                        d.movie_cast.o(
-                            d.cast_person.o(d.person_name.rx(rx.downey_robert))
-                        )
-                    )
-            )
+        d.movie_production_year.gt(2014).k().@"and"(kw.k())
+            .o(kw.x(d.movie_title).x(downey))
     );
     var acc = h.Acc3{};
     q.drive(h.Sink(h.Acc3){ .acc = &acc });
@@ -366,18 +345,11 @@ fn q6c(d: *const Data, w: *Io.Writer) anyerror!void {
 }
 
 fn q6d(d: *const Data, w: *Io.Writer) anyerror!void {
+    const kw = d.movie_keyword.o(d.keyword_keyword).in_v(sets.kw8);
+    const downey = d.movie_cast.o(d.cast_person.o(d.person_name.rx(rx.downey_robert)));
     const q = d.movie.o(
-        d.movie_production_year.gt(2000).k()
-            .@"and"(d.movie_keyword.o(d.keyword_keyword).in_v(sets.kw8).k())
-            .o(
-                d.movie_keyword.o(d.keyword_keyword).in_v(sets.kw8)
-                    .x(d.movie_title)
-                    .x(
-                        d.movie_cast.o(
-                            d.cast_person.o(d.person_name.rx(rx.downey_robert))
-                        )
-                    )
-            )
+        d.movie_production_year.gt(2000).k().@"and"(kw.k())
+            .o(kw.x(d.movie_title).x(downey))
     );
     var acc = h.Acc3{};
     q.drive(h.Sink(h.Acc3){ .acc = &acc });
@@ -385,18 +357,11 @@ fn q6d(d: *const Data, w: *Io.Writer) anyerror!void {
 }
 
 fn q6e(d: *const Data, w: *Io.Writer) anyerror!void {
+    const kw = d.movie_keyword.o(d.keyword_keyword).eq("marvel-cinematic-universe");
+    const downey = d.movie_cast.o(d.cast_person.o(d.person_name.rx(rx.downey_robert)));
     const q = d.movie.o(
-        d.movie_production_year.gt(2000).k()
-            .@"and"(d.movie_keyword.o(d.keyword_keyword).eq("marvel-cinematic-universe").k())
-            .o(
-                d.movie_keyword.o(d.keyword_keyword).eq("marvel-cinematic-universe")
-                    .x(d.movie_title)
-                    .x(
-                        d.movie_cast.o(
-                            d.cast_person.o(d.person_name.rx(rx.downey_robert))
-                        )
-                    )
-            )
+        d.movie_production_year.gt(2000).k().@"and"(kw.k())
+            .o(kw.x(d.movie_title).x(downey))
     );
     var acc = h.Acc3{};
     q.drive(h.Sink(h.Acc3){ .acc = &acc });
@@ -404,16 +369,11 @@ fn q6e(d: *const Data, w: *Io.Writer) anyerror!void {
 }
 
 fn q6f(d: *const Data, w: *Io.Writer) anyerror!void {
+    const kw = d.movie_keyword.o(d.keyword_keyword).in_v(sets.kw8);
+    const cast_name = d.movie_cast.o(d.cast_person.o(d.person_name));
     const q = d.movie.o(
-        d.movie_production_year.gt(2000).k()
-            .@"and"(d.movie_keyword.o(d.keyword_keyword).in_v(sets.kw8).k())
-            .o(
-                d.movie_keyword.o(d.keyword_keyword).in_v(sets.kw8)
-                    .x(d.movie_title)
-                    .x(
-                        d.movie_cast.o(d.cast_person.o(d.person_name))
-                    )
-            )
+        d.movie_production_year.gt(2000).k().@"and"(kw.k())
+            .o(kw.x(d.movie_title).x(cast_name))
     );
     var acc = h.Acc3{};
     q.drive(h.Sink(h.Acc3){ .acc = &acc });

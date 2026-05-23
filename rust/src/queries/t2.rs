@@ -334,18 +334,11 @@ fn q13d(d: &Data) -> String {
 }
 
 fn q6a(d: &Data) -> String {
+    let kw = || (&d.movie_keyword).o(&d.keyword_keyword).eq("marvel-cinematic-universe");
+    let downey = (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"Downey.*Robert")));
     let q = d.movie.o(
-        (&d.movie_production_year).gt(2010).k()
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("marvel-cinematic-universe").k())
-            .o(
-                (&d.movie_keyword).o(&d.keyword_keyword).eq("marvel-cinematic-universe")
-                    .x(&d.movie_title)
-                    .x(
-                        (&d.movie_cast).o(
-                            (&d.cast_person).o((&d.person_name).rx(r"Downey.*Robert"))
-                        )
-                    )
-            )
+        (&d.movie_production_year).gt(2010).k().and(kw().k())
+            .o(kw().x(&d.movie_title).x(downey))
     );
     let mut m: [Option<&'static str>; 3] = [None; 3];
     q.drive(|_, ((kw, title), name)| {
@@ -357,18 +350,11 @@ fn q6a(d: &Data) -> String {
 }
 
 fn q6b(d: &Data) -> String {
+    let kw = || (&d.movie_keyword).o(&d.keyword_keyword).in_v(kw8());
+    let downey = (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"Downey.*Robert")));
     let q = d.movie.o(
-        (&d.movie_production_year).gt(2014).k()
-            .and((&d.movie_keyword).o(&d.keyword_keyword).in_v(kw8()).k())
-            .o(
-                (&d.movie_keyword).o(&d.keyword_keyword).in_v(kw8())
-                    .x(&d.movie_title)
-                    .x(
-                        (&d.movie_cast).o(
-                            (&d.cast_person).o((&d.person_name).rx(r"Downey.*Robert"))
-                        )
-                    )
-            )
+        (&d.movie_production_year).gt(2014).k().and(kw().k())
+            .o(kw().x(&d.movie_title).x(downey))
     );
     let mut m: [Option<&'static str>; 3] = [None; 3];
     q.drive(|_, ((kw, title), name)| {
@@ -380,18 +366,11 @@ fn q6b(d: &Data) -> String {
 }
 
 fn q6c(d: &Data) -> String {
+    let kw = || (&d.movie_keyword).o(&d.keyword_keyword).eq("marvel-cinematic-universe");
+    let downey = (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"Downey.*Robert")));
     let q = d.movie.o(
-        (&d.movie_production_year).gt(2014).k()
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("marvel-cinematic-universe").k())
-            .o(
-                (&d.movie_keyword).o(&d.keyword_keyword).eq("marvel-cinematic-universe")
-                    .x(&d.movie_title)
-                    .x(
-                        (&d.movie_cast).o(
-                            (&d.cast_person).o((&d.person_name).rx(r"Downey.*Robert"))
-                        )
-                    )
-            )
+        (&d.movie_production_year).gt(2014).k().and(kw().k())
+            .o(kw().x(&d.movie_title).x(downey))
     );
     let mut m: [Option<&'static str>; 3] = [None; 3];
     q.drive(|_, ((kw, title), name)| {
@@ -403,18 +382,11 @@ fn q6c(d: &Data) -> String {
 }
 
 fn q6d(d: &Data) -> String {
+    let kw = || (&d.movie_keyword).o(&d.keyword_keyword).in_v(kw8());
+    let downey = (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"Downey.*Robert")));
     let q = d.movie.o(
-        (&d.movie_production_year).gt(2000).k()
-            .and((&d.movie_keyword).o(&d.keyword_keyword).in_v(kw8()).k())
-            .o(
-                (&d.movie_keyword).o(&d.keyword_keyword).in_v(kw8())
-                    .x(&d.movie_title)
-                    .x(
-                        (&d.movie_cast).o(
-                            (&d.cast_person).o((&d.person_name).rx(r"Downey.*Robert"))
-                        )
-                    )
-            )
+        (&d.movie_production_year).gt(2000).k().and(kw().k())
+            .o(kw().x(&d.movie_title).x(downey))
     );
     let mut m: [Option<&'static str>; 3] = [None; 3];
     q.drive(|_, ((kw, title), name)| {
@@ -426,18 +398,11 @@ fn q6d(d: &Data) -> String {
 }
 
 fn q6e(d: &Data) -> String {
+    let kw = || (&d.movie_keyword).o(&d.keyword_keyword).eq("marvel-cinematic-universe");
+    let downey = (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"Downey.*Robert")));
     let q = d.movie.o(
-        (&d.movie_production_year).gt(2000).k()
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("marvel-cinematic-universe").k())
-            .o(
-                (&d.movie_keyword).o(&d.keyword_keyword).eq("marvel-cinematic-universe")
-                    .x(&d.movie_title)
-                    .x(
-                        (&d.movie_cast).o(
-                            (&d.cast_person).o((&d.person_name).rx(r"Downey.*Robert"))
-                        )
-                    )
-            )
+        (&d.movie_production_year).gt(2000).k().and(kw().k())
+            .o(kw().x(&d.movie_title).x(downey))
     );
     let mut m: [Option<&'static str>; 3] = [None; 3];
     q.drive(|_, ((kw, title), name)| {
@@ -449,16 +414,11 @@ fn q6e(d: &Data) -> String {
 }
 
 fn q6f(d: &Data) -> String {
+    let kw = || (&d.movie_keyword).o(&d.keyword_keyword).in_v(kw8());
+    let cast_name = (&d.movie_cast).o((&d.cast_person).o(&d.person_name));
     let q = d.movie.o(
-        (&d.movie_production_year).gt(2000).k()
-            .and((&d.movie_keyword).o(&d.keyword_keyword).in_v(kw8()).k())
-            .o(
-                (&d.movie_keyword).o(&d.keyword_keyword).in_v(kw8())
-                    .x(&d.movie_title)
-                    .x(
-                        (&d.movie_cast).o((&d.cast_person).o(&d.person_name))
-                    )
-            )
+        (&d.movie_production_year).gt(2000).k().and(kw().k())
+            .o(kw().x(&d.movie_title).x(cast_name))
     );
     let mut m: [Option<&'static str>; 3] = [None; 3];
     q.drive(|_, ((kw, title), name)| {
