@@ -284,24 +284,10 @@ Base.:!(s::SetQ) = materialize(s)
 askeys(q::Query) = Keys(q)
 askeys(s::SetQ) = s
 
-# ===== navigation (`.field`) ============================================
-# `q.field` ≡ Compose(q, <field leaf>). Node struct fields (a/b/pred/ops/mat)
-# have no `lookup_field` method, so they fall through to `getfield`.
-
-function Base.getproperty(q::Query{D, R}, name::Symbol) where {D, R}
-    if hasmethod(lookup_field, Tuple{Type{R}, Val{name}})
-        return Compose(q, lookup_field(R, Val(name)))
-    end
-    getfield(q, name)
-end
-function Base.getproperty(u::Unary{D}, name::Symbol) where D
-    if hasmethod(lookup_field, Tuple{Type{D}, Val{name}})
-        return Restrict(u, lookup_field(D, Val(name)))
-    end
-    getfield(u, name)
-end
-
 # ===== operators (build nodes) ==========================================
+# Navigation is `→` only — `q.field` overloads on Query/Unary were removed
+# (use `q → Type.field` instead). `Entity.field` (e.g. `Company.country`)
+# still works via the `@entity`-generated `Base.getproperty(::Type{E}, ...)`.
 
 # → composition / restriction / intersection
 →(a::Query{X, Y}, b::Query{Y, Z}) where {X, Y, Z} = Compose(a, b)

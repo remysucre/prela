@@ -3,6 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const no_llvm = b.option(bool, "no-llvm", "Use Zig's self-hosted backend instead of LLVM") orelse false;
 
     const exe = b.addExecutable(.{
         .name = "prela-zig",
@@ -11,6 +12,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         }),
+        .use_llvm = if (no_llvm) false else null,
     });
     b.installArtifact(exe);
 
