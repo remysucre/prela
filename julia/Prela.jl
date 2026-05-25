@@ -429,8 +429,12 @@ askeys(s::SetQ) = s
 Base.:(:)(a, b::Query) = Restrict(askeys(a), b)
 Base.:-(a::Query{D, R}, b) where {D, R} = Diff(a, askeys(b))
 Base.:-(a::SetQ{D},     b) where {D}    = SetDiff(a, askeys(b))
-×(a::Query, b::Query) = Prod((a, b))
-×(a::Prod,  b::Query) = Prod((a.ops..., b))
+# Product — `⊗` is the canonical spelling (tensor-product convention from math).
+# `×` is a legacy alias; both build flat `Prod` nodes.
+⊗(a::Query, b::Query) = Prod((a, b))
+⊗(a::Prod,  b::Query) = Prod((a.ops..., b))
+const × = ⊗
+export ⊗, ×
 
 # predicates — scalar range (value-vs-constant)
 Base.:(==)(q::Query{D, R}, val) where {D, R} = Filter(q, EqP(val))
