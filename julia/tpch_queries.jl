@@ -411,15 +411,13 @@ _q_tpch("7", _ORACLE_Q7, _q7)
 const _ORACLE_Q8 = read("/tmp/tpch_oracles/Q8.txt", String)
 
 function _q8()
-    let live = lineitem → ((order → Ord.customer → Cu.nation → Na.region → Re.name == "AMERICA")
-                            ∧ (Li.part → type == "ECONOMY ANODIZED STEEL")
-                            ∧ (order → date in ("1995-01-01" .. "1996-12-31"))),
+    let live = lineitem → ((order → ((Ord.customer → Cu.nation → Na.region → Re.name == "AMERICA")
+                                     ∧ (date in ("1995-01-01" .. "1996-12-31"))))
+                            ∧ (Li.part → type == "ECONOMY ANODIZED STEEL")),
         year = (live → order → date) ↦ (d -> d[1:4]),
-        snat = live → Li.supplier → Su.nation → Na.name,
-        groups = !(year'),
-        scan = ((live → extendedprice) ⊗ (live → discount) ⊗ snat)
+        snat = live → Li.supplier → Su.nation → Na.name
         # Per group, accumulate (brazil_sum, total_sum)
-        ((groups → scan) ▷ (
+        ((year ← live → (extendedprice ⊗ discount ⊗ snat)) ▷ (
             ((b, t), (e, d, nm)) -> begin
                 v = e * (1 - d)
                 (b + (nm == "BRAZIL" ? v : 0.0), t + v)
