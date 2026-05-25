@@ -252,11 +252,10 @@ const _ORACLE_Q10 = "57040|Customer#000057040|734235.25|632.87|JAPAN|nICtsILWBB|
                     "23431|Customer#000023431|554269.54|3381.86|ROMANIA|kKI5,CJAJQjQRQtOdCiFQ|29-915-458-2654|the final sentiments. carefully ironic packages"
 
 function _q10()
-    let scan = ((lineitem → ((Li.returnflag == "R")
-                              ∧ (Li.order → Order.orderdate in during("1993-10-01", "1994-01-01"))))
-                : (Li.extendedprice ⊗ Li.discount)),
-        # ← scan, probe customer per row (2-leaf chain)
-        revenue = ((Li.order → Order.customer) ← scan) ▷ (
+    let scan = (lineitem → (Li.returnflag == "R") ∧ 
+                           (Li.order → Order.orderdate in during("1993-10-01", "1994-01-01"))
+                         : (Li.extendedprice ⊗ Li.discount)),
+        revenue = (Order.customer ← Li.order ← scan) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
         )
