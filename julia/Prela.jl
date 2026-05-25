@@ -50,6 +50,7 @@ abstract type Query{D, R} end
 abstract type SetQ{D} end
 
 _domof(::Query{D, R}) where {D, R} = D
+_domof(::SetQ{D}) where {D} = D
 _rangeof(::Query{D, R}) where {D, R} = R
 
 # ===== leaf storage (also Query nodes) ==================================
@@ -293,6 +294,16 @@ struct LeftCompose{D, RK, SV, QR, QS} <: Query{RK, SV}
     s::QS
 end
 
+# `LeftConj(l, r)` — left-driving conjunction. `l ⩓ r` materializes `l`
+# (via `materialize(askeys(l))`) so its `member` is O(1), then drives `r`
+# and member-checks `l` per row. Lets a user-written `∧`-style expression
+# put a Query-shaped predicate (like an `Inv` for EXISTS) on the left
+# without needing an explicit `!` — the operator does the materialization.
+struct LeftConj{D, ML, R} <: SetQ{D}
+    l::ML  # already materialized SetQ (MatSet) — fast member
+    r::R   # SetQ to drive
+end
+
 # constructors — extract D/M/R via dispatch
 Compose(a::Query{D, M}, b::Query{M, R}) where {D, M, R} =
     Compose{D, M, R, typeof(a), typeof(b)}(a, b)
@@ -345,6 +356,19 @@ function ←(r::Query{D, RK}, s::Query{D, SV}) where {D, RK, SV}
     LeftCompose{D, RK, SV, typeof(r), typeof(s)}(r, s)
 end
 export ←
+
+# `⩓` — left-driving conjunction. `l ⩓ r` (where both reduce to a SetQ
+# via askeys) materializes `l` for fast member-check, then at drive time
+# drives `r` and member-checks `l` per row. Use when the natural driver
+# of an intersection is on the right (e.g. a Universe-rooted filter chain)
+# and the left side is a derived Query (e.g. an inverted relation) that
+# you want to use as a fast EXISTS check.
+function ⩓(l, r)
+    ml = materialize(askeys(l))   # → MatSet, O(1) member via Set
+    rs = askeys(r)
+    LeftConj{_domof(rs), typeof(ml), typeof(rs)}(ml, rs)
+end
+export ⩓
 
 # Prefix `!` is the terse spelling of `materialize` — `!(q)` ≡ `materialize(q)`.
 # Borrowed from Haskell's strictness bang; a query has no boolean-not, so `!`
@@ -534,6 +558,10 @@ end
 @inline function probe(n::LeftCompose{D, RK, SV}, rk, k) where {D, RK, SV}
     drive(n.s, (d, v) -> probe(n.r, d, x -> isequal(x, rk) && k(v)))
 end
+
+# ---- LeftConj: drive r, member-check materialized l ----
+@inline drivekeys(n::LeftConj, k) = drivekeys(n.r, x -> member(n.l, x) && k(x))
+@inline member(n::LeftConj, x) = member(n.l, x) && member(n.r, x)
 
 # ---- Fold: per-key foldl, lazy-cached ----
 function _fold_cache(n::Fold{D, R, S, Q, OP}) where {D, R, S, Q, OP}

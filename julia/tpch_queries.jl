@@ -172,24 +172,24 @@ const _ORACLE_Q3 = "2456423|406181.01|1995-03-05|0\n" *
                    "2300070|367371.15|1995-03-13|0"
 
 _q_tpch("3", _ORACLE_Q3;
-        sort_by = ((k, v),) -> (-v, k[2]),
+        sort_by = ((k, v),) -> (-v[1], v[2]),
         limit = 10,
-        # Output cols: orderkey | revenue | orderdate | shippriority
-        row = (k, v) -> [_fmt(k[1]), _fmt(v), _fmt(k[2]), _fmt(k[3])]) do
+        # value = (revenue, orderdate, shippriority); key = Order id
+        row = (k, (rev, od, sp)) -> [_fmt(k), _fmt(rev), _fmt(od), _fmt(sp)]) do
     let building_cust = (customer ∧ (Customer.mktsegment == "BUILDING")),
         qual_order = (orders ∧ (Order.orderdate < "1995-03-15")
                              ∧ (Order.customer → building_cust)),
-        live = (lineitem ∧ (Lineitem.shipdate > "1995-03-15")
-                        ∧ (Lineitem.order → qual_order)),
-        # group key per lineitem: (orderkey-id, orderdate, shippriority)
-        ok_per = live → Lineitem.order,
-        od_per = live → Lineitem.order → Order.orderdate,
-        sp_per = live → Lineitem.order → Order.shippriority,
-        groups = !((ok_per × od_per × sp_per)')
-        (groups → ((live → Lineitem.extendedprice) × (live → Lineitem.discount))) ▷ (
+        # SQL-style table scan: filtered lineitems → (ext, disc)
+        scan = ((lineitem ∧ (Lineitem.shipdate > "1995-03-15")
+                          ∧ (Lineitem.order → qual_order))
+                : (Lineitem.extendedprice × Lineitem.discount)),
+        # ← drives the scan, probes Lineitem.order per row to get the group key
+        revenue = (Lineitem.order ← scan) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
         )
+        # value-side decorate: revenue + per-order fields (all Query{Order, X})
+        revenue × Order.orderdate × Order.shippriority
     end
 end
 
@@ -205,12 +205,11 @@ const _ORACLE_Q4 = "1-URGENT|10594\n" *
 
 _q_tpch("4", _ORACLE_Q4) do
     let bad_li = lineitem ∧ (Lineitem.commitdate < Lineitem.receiptdate),
-        # `!` materializes the inverse so `member(b)` is O(1) — needed because
-        # `∧ bad_orders` drives the conjunction by member-checking.
-        bad_orders = !(bad_li → Lineitem.order)',
-        live_orders = (orders ∧ (Order.orderdate >= "1993-07-01")
-                              ∧ (Order.orderdate <  "1993-10-01")
-                              ∧ bad_orders),
+        bad_orders = (bad_li → Lineitem.order)',         # streaming Inv
+        # `⩓` drives the rhs (date-filtered orders) and member-checks the
+        # lhs (bad_orders), which it materializes internally — no `!` needed.
+        live_orders = bad_orders ⩓ (orders ∧ (Order.orderdate >= "1993-07-01")
+                                           ∧ (Order.orderdate <  "1993-10-01")),
         prio_per_order = live_orders → Order.orderpriority
         prio_per_order' ▷ ((a, _) -> a + 1, 0)
     end
