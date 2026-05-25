@@ -124,7 +124,7 @@ _q_tpch("6", _ORACLE_Q6; row = _value_only) do
                         ∧ (Lineitem.discount <= 0.07)
                         ∧ (Lineitem.quantity <  24.0)),
         all_key = (live → Lineitem.shipdate) ↦ (_ -> true),
-        groups = !(all_key')   # materialize: single-key, flat iter
+        groups = !(all_key')   # ! beats ← for high-matching-count scalar agg
         (groups → ((live → Lineitem.extendedprice) × (live → Lineitem.discount))) ▷ (
             (a, (e, d)) -> a + e * d,
             0.0
@@ -148,11 +148,9 @@ _q_tpch("14", _ORACLE_Q14; row = _value_only) do
     let live = (lineitem ∧ (Lineitem.shipdate >= "1995-09-01")
                         ∧ (Lineitem.shipdate <  "1995-10-01")),
         all_key = (live → Lineitem.shipdate) ↦ (_ -> true),
-        groups = !(all_key'),
-        per_li = groups → ((live → Lineitem.extendedprice) ×
-                           (live → Lineitem.discount) ×
-                           (live → Lineitem.part → Part.type))
-        per_li ▷ (step, (0.0, 0.0)) ↦ ratio
+        scan = live : (Lineitem.extendedprice × Lineitem.discount
+                                              × (Lineitem.part → Part.type))
+        (all_key ← scan) ▷ (step, (0.0, 0.0)) ↦ ratio
     end
 end
 
@@ -236,7 +234,7 @@ _q_tpch("5", _ORACLE_Q5; sort_by = ((k, v),) -> -v) do
                                   ∧ (Lineitem.supplier → Supplier.nation → asia_nations)
                                   ∧ (c_nation == s_nation)),
         name_per_li   = live_li → s_nation → Nation.name,
-        groups        = !(name_per_li')   # materialize: small dict, flat iter
+        groups        = !(name_per_li')   # deep chain ⇒ ! beats ← chain
         (groups → ((live_li → Lineitem.extendedprice) × (live_li → Lineitem.discount))) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
@@ -277,13 +275,12 @@ _q_tpch("10", _ORACLE_Q10;
     let live_li = (lineitem ∧ (Lineitem.returnflag == "R")
                             ∧ (Lineitem.order → orders ∧ (Order.orderdate >= "1993-10-01")
                                                       ∧ (Order.orderdate <  "1994-01-01"))),
-        cust_per_li = live_li → Lineitem.order → Order.customer,
-        groups = !(cust_per_li'),
-        revenue = (groups → ((live_li → Lineitem.extendedprice) × (live_li → Lineitem.discount))) ▷ (
+        scan = live_li : (Lineitem.extendedprice × Lineitem.discount)
+        # ← scan, probe customer per row (2-leaf chain)
+        revenue = ((Lineitem.order → Order.customer) ← scan) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
         )
-        # Pair revenue with the customer-side fields (all Query{Customer, X})
         revenue × Customer.name × Customer.acctbal × Customer.phone ×
             (Customer.nation → Nation.name) × Customer.address × Customer.comment
     end
