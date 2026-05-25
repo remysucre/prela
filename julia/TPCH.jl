@@ -38,6 +38,9 @@ using Parquet2, DataFrames, Dates
 
 @expose Lineitem
 
+# Short alias for the most-referenced entity.
+const Li = Lineitem
+
 # === Loader helpers ===
 
 const TPCH_BASE = "../cache/tpch"

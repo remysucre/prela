@@ -222,6 +222,17 @@ struct InP{T};  vs::T;  end          # in (tuple of vals)
 struct FnP{F};  f::F;  end          # any unary y -> Bool  (< > <= >= != ~ ≁)
 struct InSetP{S};  s::S;  end        # value ∈ a SetQ
 
+# Interval types — used as the rhs of `q in iv`. `a..b` is closed [a, b]
+# (matches IntervalSets convention); `during(a, b)` is half-open [a, b)
+# (the common date-range pattern). Concrete callable structs (not closures)
+# so the predicate type is stable across query constructions.
+struct ClosedInterval{T};      lo::T; hi::T; end
+struct ClosedOpenInterval{T};  lo::T; hi::T; end
+struct InClosed{T};      lo::T; hi::T; end
+struct InClosedOpen{T};  lo::T; hi::T; end
+@inline (p::InClosed{T})(v) where {T}     = (p.lo <= v <= p.hi)
+@inline (p::InClosedOpen{T})(v) where {T} = (p.lo <= v <  p.hi)
+
 # ===== query nodes ======================================================
 
 struct Compose{D, M, R, A, B} <: Query{D, R};  a::A;  b::B;  end
@@ -283,6 +294,17 @@ struct Map{D, R, S, Q, F} <: Query{D, S}
     f::F
 end
 
+# `Scalar(q, op, init)` — no-group foldl. Folds every value emitted by `q`
+# into a single scalar (keys ignored). Result is `Query{Nothing, S}` with
+# one row keyed by `nothing`, so it still composes uniformly with `↦`.
+# Surface syntax `q ▶ (op, init)`.
+mutable struct Scalar{S, Q, OP} <: Query{Nothing, S}
+    q::Q
+    op::OP
+    init::S
+    cache::Union{Nothing, Some{S}}
+end
+
 # `LeftCompose(r, s)` — for `r : D → R` and `s : D → S` (same domain),
 # produces `Query{R, S}`. Surface syntax `r ← s`. Driven by walking `s`
 # and probing `r` per row — distinct from `r' → s` which walks `r` and
@@ -335,6 +357,17 @@ function ▷(q::Query{D, R}, opinit::Tuple{OP, S}) where {D, R, OP, S}
     Fold{D, R, S, typeof(q), OP}(q, opinit[1], opinit[2], nothing)
 end
 export ▷
+
+# `⊵` — no-group foldl. Folds every value of `q` into one scalar; result
+# is `Query{Nothing, S}` with a single row, so it still chains with `↦`.
+# Equivalent of synthesizing a singleton group key, but cheaper: skips the
+# group-dict build. `▶` is a prefix-only alias (Julia parses `▶` as an
+# identifier, not as a binary operator).
+function ⊵(q::Query{D, R}, opinit::Tuple{OP, S}) where {D, R, OP, S}
+    Scalar{S, typeof(q), OP}(q, opinit[1], opinit[2], nothing)
+end
+const ▶ = ⊵
+export ⊵, ▶
 
 # `↦` — per-row Map (apply a Julia function to the value, key unchanged).
 # `q ↦ (v -> f(v))` produces `Map(q, f) : Query{D, S}` where `S` is the
@@ -402,9 +435,19 @@ Base.:-(a::SetQ{D},     b) where {D}    = SetDiff(a, askeys(b))
 # predicates — scalar range (value-vs-constant)
 Base.:(==)(q::Query{D, R}, val) where {D, R} = Filter(q, EqP(val))
 Base.in(q::Query{D, R}, vals::Tuple) where {D, R} = Filter(q, InP(vals))
+Base.in(q::Query{D, R}, iv::ClosedInterval) where {D, R} =
+    Filter(q, FnP(InClosed{typeof(iv.lo)}(iv.lo, iv.hi)))
+Base.in(q::Query{D, R}, iv::ClosedOpenInterval) where {D, R} =
+    Filter(q, FnP(InClosedOpen{typeof(iv.lo)}(iv.lo, iv.hi)))
 for op in (:(<), :(>), :(<=), :(>=), :(!=))
     @eval Base.$op(q::Query{D, R}, val) where {D, R} = Filter(q, FnP(Base.Fix2($op, val)))
 end
+
+# `a..b` — closed interval [a, b]; pair with `q in (a..b)`.
+# `during(a, b)` — half-open [a, b); idiomatic for date ranges.
+..(a, b) = ClosedInterval{promote_type(typeof(a), typeof(b))}(promote(a, b)...)
+during(a, b) = ClosedOpenInterval{promote_type(typeof(a), typeof(b))}(promote(a, b)...)
+export .., during
 
 # predicates — cross-column (Query-vs-Query, same domain). Comparing two
 # leaves of the same row is `Filter(a × b, FnP(((x, y),) -> op(x, y)))`;
@@ -429,6 +472,8 @@ Base.:~(q::Query{D, R}, re::Regex) where {D, R <: AbstractString} =
 # predicates — entity range: elide through the primary field
 Base.:(==)(q::Query{D, ID{E}}, val) where {D, E} = Compose(q, primary(E)) == val
 Base.in(q::Query{D, ID{E}}, vals::Tuple) where {D, E} = in(Compose(q, primary(E)), vals)
+Base.in(q::Query{D, ID{E}}, iv::ClosedInterval) where {D, E} = in(Compose(q, primary(E)), iv)
+Base.in(q::Query{D, ID{E}}, iv::ClosedOpenInterval) where {D, E} = in(Compose(q, primary(E)), iv)
 for op in (:(<), :(>), :(<=), :(>=), :(!=))
     @eval Base.$op(q::Query{D, ID{E}}, val) where {D, E} = $op(Compose(q, primary(E)), val)
 end
@@ -584,6 +629,17 @@ end
 # ---- Map: per-row lambda ----
 @inline drive(n::Map, k) = drive(n.q, (d, v) -> k(d, n.f(v)))
 @inline probe(n::Map, d, k) = probe(n.q, d, v -> k(n.f(v)))
+
+# ---- Scalar: no-group foldl, lazy-cached ----
+function _scalar_value(n::Scalar{S, Q, OP}) where {S, Q, OP}
+    n.cache === nothing || return (n.cache::Some{S}).value
+    acc = Ref{S}(n.init)
+    drive(n.q, (_, v) -> (acc[] = n.op(acc[], v)))
+    n.cache = Some(acc[])
+    acc[]
+end
+@inline drive(n::Scalar, k) = k(nothing, _scalar_value(n))
+@inline probe(n::Scalar, ::Nothing, k) = k(_scalar_value(n))
 
 function _mkeys(n::MatSet{D}) where {D}
     if n.keys === nothing

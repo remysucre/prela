@@ -2,22 +2,22 @@
 #
 #   julia --project=. -i -e 'include("start.jl")'
 #
-# Loads Revise (so edits to Prela.jl / queries.jl pick up automatically) and
-# JOB data (~30s one-time). Drop into REPL afterwards; re-run queries cheaply
-# by including queries.jl or typing them directly.
+# Loads Revise (so edits to Prela.jl pick up automatically). Pick a dataset
+# yourself afterwards — JOB or TPC-H — then run queries.
 
 using Revise
 
-# Load JOB data (one-time, ~30s). Prela is included from inside JOB.jl.
-include("JOB.jl")
-
-# Track Prela.jl now that the module exists. Edits will be picked up
-# automatically on the next REPL evaluation.
+# Load Prela module so Revise can track it without forcing a dataset load.
+include("Prela.jl")
 Revise.track(Prela, joinpath(@__DIR__, "Prela.jl"))
 
 println()
-println("Ready. To run queries, either:")
-println("  julia> include(\"queries.jl\")     # run all queries once")
-println("  julia> includet(\"queries.jl\")    # run + auto-rerun on edit")
-println("  julia> # or type a query directly, using `movie`, `title`, etc.")
+println("Ready. Pick a dataset:")
+println("  julia> include(\"JOB.jl\")            # load JOB tables (~30s one-time)")
+println("  julia> include(\"queries.jl\")        # then run all JOB queries")
+println("  julia> includet(\"queries.jl\")       # or run + auto-rerun on edit")
+println()
+println("  julia> include(\"TPCH.jl\")           # load TPC-H tables (one-time)")
+println("  julia> include(\"tpch_queries.jl\")   # then run all TPC-H queries")
+println("  julia> includet(\"tpch_queries.jl\")  # or run + auto-rerun on edit")
 println()

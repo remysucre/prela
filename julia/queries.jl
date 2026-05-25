@@ -13,7 +13,12 @@
 
 # A query registers a (name, reference, thunk); runall() evaluates them.
 const _Q = Tuple{String,String,Function}[]
-_q(f, name, oracle) = push!(_Q, (name, oracle, f))
+function _q(f, name, oracle)
+    entry = (name, oracle, f)
+    idx = findfirst(t -> t[1] == name, _Q)
+    idx === nothing ? push!(_Q, entry) : (_Q[idx] = entry)
+    nothing
+end
 
 # Recursively flatten nested tuples at compile time — left-associative Prod
 # yields `((((a, b), c), d), ...)`; we want a flat NTuple so the emit hot loop
