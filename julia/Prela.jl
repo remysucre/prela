@@ -255,12 +255,11 @@ mutable struct MatSet{D, A} <: SetQ{D}
 end
 
 # `Inv(q)` — invert a relation. `q : A → B` becomes `Inv(q) : B → A`.
-# Surface syntax is postfix adjoint `q'`. Materialized + lazy-cached like the
-# fwd/inv indexes on leaves — first drive/probe builds the dict, subsequent
-# uses hit the cache. Critical for groupby keys: `(x × y)' : (X, Y) → E`.
-mutable struct Inv{B, A, Q} <: Query{B, A}
+# Surface syntax is postfix adjoint `q'`. Streaming-only: `drive(Inv, k)` flips
+# pairs from `drive(q, …)` without any materialization. For fast probe/member
+# access, wrap explicitly via `materialize(q')` (or `!q'`).
+struct Inv{B, A, Q} <: Query{B, A}
     q::Q
-    idx::Union{Nothing, Dict{B, Vector{A}}}
 end
 
 # `Fold(q, op, init)` — per-key foldl aggregation. `q : D → R`, the inner
@@ -281,6 +280,17 @@ end
 struct Map{D, R, S, Q, F} <: Query{D, S}
     q::Q
     f::F
+end
+
+# `LeftCompose(r, s)` — for `r : D → R` and `s : D → S` (same domain),
+# produces `Query{R, S}`. Surface syntax `r ← s`. Driven by walking `s`
+# and probing `r` per row — distinct from `r' → s` which walks `r` and
+# probes `s`. Use `←` when `s` is the "natural" thing to scan (e.g. a
+# filtered universe + measure projection in SQL-table-scan style) and
+# the group-key extractor `r` is cheap to probe per row.
+struct LeftCompose{D, RK, SV, QR, QS} <: Query{RK, SV}
+    r::QR
+    s::QS
 end
 
 # constructors — extract D/M/R via dispatch
@@ -305,7 +315,7 @@ materialize(q::Query{D, R}) where {D, R} = Materialized{D, R, typeof(q)}(q, noth
 materialize(s::SetQ{D}) where {D} = MatSet{D, typeof(s)}(s, nothing, nothing)
 
 # Adjoint = inverse: `q'` on a Query{A, B} returns Inv : Query{B, A}.
-Base.adjoint(q::Query{A, B}) where {A, B} = Inv{B, A, typeof(q)}(q, nothing)
+Base.adjoint(q::Query{A, B}) where {A, B} = Inv{B, A, typeof(q)}(q)
 
 # `▷` — per-key foldl. Pass `(op, init)` as a 2-tuple on the rhs.
 # `q ▷ (+, 0.0)` is sum; `q ▷ ((a, _) -> a + 1, 0)` is count; arbitrary
@@ -325,6 +335,16 @@ function ↦(q::Query{D, R}, f::F) where {D, R, F<:Function}
     Map{D, R, S, typeof(q), F}(q, f)
 end
 export ↦
+
+# `←` — left compose. `r ← s` builds `LeftCompose(r, s) : Query{R, S}`
+# where both r and s have the same domain D. Drives `s`, probes `r` per
+# row. Distinct from `r' → s` (which drives r, probes s) — use `←` when
+# the source you want to scan is on the right (e.g. a filtered universe
+# with measures), and `r' → s` when the source is the left side.
+function ←(r::Query{D, RK}, s::Query{D, SV}) where {D, RK, SV}
+    LeftCompose{D, RK, SV, typeof(r), typeof(s)}(r, s)
+end
+export ←
 
 # Prefix `!` is the terse spelling of `materialize` — `!(q)` ≡ `materialize(q)`.
 # Borrowed from Haskell's strictness bang; a query has no boolean-not, so `!`
@@ -498,29 +518,22 @@ end
 end
 @inline probe(n::Materialized, x, k) = _idx_probe(_cidx(n), x, k)
 
-# ---- Inv: lazy inverse dict ----
-function _inv_idx(n::Inv{B, A, Q}) where {B, A, Q}
-    n.idx === nothing || return n.idx::Dict{B, Vector{A}}
-    d = Dict{B, Vector{A}}()
-    drive(n.q, (a, b) -> push!(get!(() -> A[], d, b), a))
-    n.idx = d
+# ---- Inv: streaming-only. drive flips pairs; no probe/member without ! ----
+# `probe`/`member`/`drivekeys` are not directly supported — wrap the Inv in
+# `materialize(...)` (or use `!q'`) to get an indexed copy that supports
+# them. The default streaming path keeps Inv allocation-free.
+@inline drive(n::Inv, k) = drive(n.q, (a, b) -> k(b, a))
+
+# ---- LeftCompose: drive s, probe r per row ----
+# `r ← s` semantically equals `r' ∘ s` but flips which side scans. Drives
+# `s` (the natural source — e.g. a filtered table scan) and probes `r` per
+# row to compute the would-be group key. Designed to feed `▷`.
+@inline function drive(n::LeftCompose, k)
+    drive(n.s, (d, v) -> probe(n.r, d, rk -> k(rk, v)))
 end
-@inline function drive(n::Inv{B, A, Q}, k) where {B, A, Q}
-    for (b, as) in _inv_idx(n)
-        for a in as
-            k(b, a)
-        end
-    end
+@inline function probe(n::LeftCompose{D, RK, SV}, rk, k) where {D, RK, SV}
+    drive(n.s, (d, v) -> probe(n.r, d, x -> isequal(x, rk) && k(v)))
 end
-@inline function probe(n::Inv{B, A, Q}, b, k) where {B, A, Q}
-    as = get(_inv_idx(n), b, nothing)
-    as === nothing && return
-    for a in as
-        k(a)
-    end
-end
-@inline drivekeys(n::Inv, k) = (for b in keys(_inv_idx(n)); k(b); end)
-@inline member(n::Inv, b) = haskey(_inv_idx(n), b)
 
 # ---- Fold: per-key foldl, lazy-cached ----
 function _fold_cache(n::Fold{D, R, S, Q, OP}) where {D, R, S, Q, OP}

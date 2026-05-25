@@ -98,15 +98,13 @@ _q_tpch("1", _ORACLE_Q1) do
          s_qty/n, s_ext/n, s_di/n,
          n)
     end
-    let live = lineitem ∧ (Lineitem.shipdate <= "1998-09-02"),
-        rf   = live → Lineitem.returnflag,
-        ls   = live → Lineitem.linestatus,
-        qty  = live → Lineitem.quantity,
-        ext  = live → Lineitem.extendedprice,
-        disc = live → Lineitem.discount,
-        tax  = live → Lineitem.tax,
-        groups = (rf × ls)'
-        (groups → (qty × ext × disc × tax)) ▷ (step, (0.0, 0.0, 0.0, 0.0, 0.0, 0)) ↦ project
+    let group_key = Lineitem.returnflag × Lineitem.linestatus,
+        # SQL-style "table scan": filtered lineitem domain, project measures
+        scan = ((lineitem ∧ (Lineitem.shipdate <= "1998-09-02"))
+                : (Lineitem.quantity × Lineitem.extendedprice
+                                     × Lineitem.discount × Lineitem.tax))
+        # `←` drives the scan, probes the group key per row, buckets in Fold.
+        (group_key ← scan) ▷ (step, (0.0, 0.0, 0.0, 0.0, 0.0, 0)) ↦ project
     end
 end
 
@@ -125,8 +123,8 @@ _q_tpch("6", _ORACLE_Q6; row = _value_only) do
                         ∧ (Lineitem.discount >= 0.05)
                         ∧ (Lineitem.discount <= 0.07)
                         ∧ (Lineitem.quantity <  24.0)),
-        all_key = (live → Lineitem.shipdate) ↦ (_ -> true),   # Query{Lineitem, Bool}
-        groups = all_key'
+        all_key = (live → Lineitem.shipdate) ↦ (_ -> true),
+        groups = !(all_key')   # materialize: single-key, flat iter
         (groups → ((live → Lineitem.extendedprice) × (live → Lineitem.discount))) ▷ (
             (a, (e, d)) -> a + e * d,
             0.0
@@ -150,7 +148,7 @@ _q_tpch("14", _ORACLE_Q14; row = _value_only) do
     let live = (lineitem ∧ (Lineitem.shipdate >= "1995-09-01")
                         ∧ (Lineitem.shipdate <  "1995-10-01")),
         all_key = (live → Lineitem.shipdate) ↦ (_ -> true),
-        groups = all_key',
+        groups = !(all_key'),
         per_li = groups → ((live → Lineitem.extendedprice) ×
                            (live → Lineitem.discount) ×
                            (live → Lineitem.part → Part.type))
@@ -184,11 +182,10 @@ _q_tpch("3", _ORACLE_Q3;
         live = (lineitem ∧ (Lineitem.shipdate > "1995-03-15")
                         ∧ (Lineitem.order → qual_order)),
         # group key per lineitem: (orderkey-id, orderdate, shippriority)
-        ok_per = live → Lineitem.order,             # Query{Lineitem, Order} (val is Order id)
+        ok_per = live → Lineitem.order,
         od_per = live → Lineitem.order → Order.orderdate,
         sp_per = live → Lineitem.order → Order.shippriority,
-        groups = (ok_per × od_per × sp_per)'
-        # revenue per group; final value = scalar Float64 = revenue
+        groups = !((ok_per × od_per × sp_per)')
         (groups → ((live → Lineitem.extendedprice) × (live → Lineitem.discount))) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
@@ -208,13 +205,14 @@ const _ORACLE_Q4 = "1-URGENT|10594\n" *
 
 _q_tpch("4", _ORACLE_Q4) do
     let bad_li = lineitem ∧ (Lineitem.commitdate < Lineitem.receiptdate),
-        bad_order_inv = (bad_li → Lineitem.order)',
+        # `!` materializes the inverse so `member(b)` is O(1) — needed because
+        # `∧ bad_orders` drives the conjunction by member-checking.
+        bad_orders = !(bad_li → Lineitem.order)',
         live_orders = (orders ∧ (Order.orderdate >= "1993-07-01")
                               ∧ (Order.orderdate <  "1993-10-01")
-                              ∧ bad_order_inv),
-        prio_per_order = live_orders → Order.orderpriority,
-        groups = prio_per_order'
-        groups ▷ ((a, _) -> a + 1, 0)
+                              ∧ bad_orders),
+        prio_per_order = live_orders → Order.orderpriority
+        prio_per_order' ▷ ((a, _) -> a + 1, 0)
     end
 end
 
@@ -239,7 +237,7 @@ _q_tpch("5", _ORACLE_Q5; sort_by = ((k, v),) -> -v) do
                                   ∧ (Lineitem.supplier → Supplier.nation → asia_nations)
                                   ∧ (c_nation == s_nation)),
         name_per_li   = live_li → s_nation → Nation.name,
-        groups        = name_per_li'
+        groups        = !(name_per_li')   # materialize: small dict, flat iter
         (groups → ((live_li → Lineitem.extendedprice) × (live_li → Lineitem.discount))) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
@@ -281,7 +279,7 @@ _q_tpch("10", _ORACLE_Q10;
                             ∧ (Lineitem.order → orders ∧ (Order.orderdate >= "1993-10-01")
                                                       ∧ (Order.orderdate <  "1994-01-01"))),
         cust_per_li = live_li → Lineitem.order → Order.customer,
-        groups = cust_per_li',
+        groups = !(cust_per_li'),
         revenue = (groups → ((live_li → Lineitem.extendedprice) × (live_li → Lineitem.discount))) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
@@ -310,7 +308,7 @@ _q_tpch("12", _ORACLE_Q12) do
                             ∧ (Lineitem.receiptdate >= "1994-01-01")
                             ∧ (Lineitem.receiptdate <  "1995-01-01")),
         mode_per_li = live_li → Lineitem.shipmode,
-        groups = mode_per_li',
+        groups = !(mode_per_li'),
         prio_per_li = live_li → Lineitem.order → Order.orderpriority
         (groups → prio_per_li) ▷ (step, (0, 0))
     end
