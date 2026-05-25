@@ -217,9 +217,8 @@ function _q5()
         s_nation = Li.supplier → Supplier.nation,
         live = lineitem → ((Li.order → Order.orderdate in during("1994-01-01", "1995-01-01"))
                             ∧ (s_nation → Nation.region → Region.name == "ASIA")
-                            ∧ (c_nation == s_nation)),
-        groups = !((live → s_nation → Nation.name)')   # deep chain ⇒ ! beats ← chain
-        (groups → ((live → Li.extendedprice) ⊗ (live → Li.discount))) ▷ (
+                            ∧ (c_nation == s_nation))
+        ((Nation.name ← s_nation ← live) → (Li.extendedprice ⊗ Li.discount)) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
         )

@@ -388,10 +388,11 @@ export ↦
 function ←(r::Query{D, RK}, s::Query{D, SV}) where {D, RK, SV}
     LeftCompose{D, RK, SV, typeof(r), typeof(s)}(r, s)
 end
-# `←` with a SetQ on the right: drive its keys (no values), probe r per key.
-# Result Query{RK, Nothing} — value is discarded; useful with `▷ ((a, _) -> a + 1, …)`.
+# `←` with a SetQ on the right: drive its keys, probe r per key. The SetQ has
+# no values, so we re-emit the key itself as the value (preserving the domain
+# for downstream composition). Result Query{RK, D}.
 function ←(r::Query{D, RK}, s::SetQ{D}) where {D, RK}
-    LeftCompose{D, RK, Nothing, typeof(r), typeof(s)}(r, s)
+    LeftCompose{D, RK, D, typeof(r), typeof(s)}(r, s)
 end
 export ←
 
@@ -616,12 +617,12 @@ end
 @inline function probe(n::LeftCompose{D, RK, SV}, rk, k) where {D, RK, SV}
     drive(n.s, (d, v) -> probe(n.r, d, x -> isequal(x, rk) && k(v)))
 end
-# SetQ-on-right specialization: drivekeys instead of drive; emit nothing as value.
-@inline function drive(n::LeftCompose{D, RK, Nothing, QR, QS}, k) where {D, RK, QR, QS <: SetQ}
-    drivekeys(n.s, d -> probe(n.r, d, rk -> k(rk, nothing)))
+# SetQ-on-right specialization: drivekeys instead of drive; emit the key as value.
+@inline function drive(n::LeftCompose{D, RK, SV, QR, QS}, k) where {D, RK, SV, QR, QS <: SetQ}
+    drivekeys(n.s, d -> probe(n.r, d, rk -> k(rk, d)))
 end
-@inline function probe(n::LeftCompose{D, RK, Nothing, QR, QS}, rk, k) where {D, RK, QR, QS <: SetQ}
-    drivekeys(n.s, d -> probe(n.r, d, x -> isequal(x, rk) && k(nothing)))
+@inline function probe(n::LeftCompose{D, RK, SV, QR, QS}, rk, k) where {D, RK, SV, QR, QS <: SetQ}
+    drivekeys(n.s, d -> probe(n.r, d, x -> isequal(x, rk) && k(d)))
 end
 
 # ---- LeftConj: drive r, member-check materialized l ----
