@@ -195,10 +195,9 @@ const _ORACLE_Q4 = "1-URGENT|10594\n" *
                    "5-LOW|10487"
 
 function _q4()
-    let bad_orders = ((lineitem ∧ (Li.commitdate < Li.receiptdate)) → Li.order)',
-        # `⩓` drives the rhs and member-checks the lhs (auto-materialized).
-        live = bad_orders ⩓ (orders ∧ (Order.orderdate in during("1993-07-01", "1993-10-01")))
-        (live → Order.orderpriority)' ▷ ((a, _) -> a + 1, 0)
+    let corrupted = (lineitem → (Li.commitdate < Li.receiptdate) : Li.order) ⩓
+               (orders ∧ (Order.orderdate in during("1993-07-01", "1993-10-01")))
+        (Order.orderpriority ← corrupted) ▷ ((a, _) -> a + 1, 0)
     end
 end
 _q_tpch("4", _ORACLE_Q4, _q4)

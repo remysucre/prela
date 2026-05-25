@@ -388,16 +388,25 @@ export ↦
 function ←(r::Query{D, RK}, s::Query{D, SV}) where {D, RK, SV}
     LeftCompose{D, RK, SV, typeof(r), typeof(s)}(r, s)
 end
+# `←` with a SetQ on the right: drive its keys (no values), probe r per key.
+# Result Query{RK, Nothing} — value is discarded; useful with `▷ ((a, _) -> a + 1, …)`.
+function ←(r::Query{D, RK}, s::SetQ{D}) where {D, RK}
+    LeftCompose{D, RK, Nothing, typeof(r), typeof(s)}(r, s)
+end
 export ←
 
-# `⩓` — left-driving conjunction. `l ⩓ r` (where both reduce to a SetQ
-# via askeys) materializes `l` for fast member-check, then at drive time
-# drives `r` and member-checks `l` per row. Use when the natural driver
-# of an intersection is on the right (e.g. a Universe-rooted filter chain)
-# and the left side is a derived Query (e.g. an inverted relation) that
-# you want to use as a fast EXISTS check.
-function ⩓(l, r)
-    ml = materialize(askeys(l))   # → MatSet, O(1) member via Set
+# `⩓` — left-driving conjunction. `l ⩓ r` materializes the *value-set*
+# of `l` (auto-invert, mirroring `←`), then drives `r` and member-checks
+# per row. So for `l : Query{A, B}` you intersect against `r : SetQ{B}`
+# — no need to write `l'` manually. For `l : SetQ{B}` (no values to
+# invert), materializes l directly and intersects with r.
+function ⩓(l::Query, r)
+    ml = materialize(Keys(Base.adjoint(l)))   # MatSet over l's *value* type
+    rs = askeys(r)
+    LeftConj{_domof(rs), typeof(ml), typeof(rs)}(ml, rs)
+end
+function ⩓(l::SetQ, r)
+    ml = materialize(l)
     rs = askeys(r)
     LeftConj{_domof(rs), typeof(ml), typeof(rs)}(ml, rs)
 end
@@ -606,6 +615,13 @@ end
 end
 @inline function probe(n::LeftCompose{D, RK, SV}, rk, k) where {D, RK, SV}
     drive(n.s, (d, v) -> probe(n.r, d, x -> isequal(x, rk) && k(v)))
+end
+# SetQ-on-right specialization: drivekeys instead of drive; emit nothing as value.
+@inline function drive(n::LeftCompose{D, RK, Nothing, QR, QS}, k) where {D, RK, QR, QS <: SetQ}
+    drivekeys(n.s, d -> probe(n.r, d, rk -> k(rk, nothing)))
+end
+@inline function probe(n::LeftCompose{D, RK, Nothing, QR, QS}, rk, k) where {D, RK, QR, QS <: SetQ}
+    drivekeys(n.s, d -> probe(n.r, d, x -> isequal(x, rk) && k(nothing)))
 end
 
 # ---- LeftConj: drive r, member-check materialized l ----
