@@ -254,6 +254,35 @@ mutable struct MatSet{D, A} <: SetQ{D}
     set::Union{Nothing, Set{D}}
 end
 
+# `Inv(q)` — invert a relation. `q : A → B` becomes `Inv(q) : B → A`.
+# Surface syntax is postfix adjoint `q'`. Materialized + lazy-cached like the
+# fwd/inv indexes on leaves — first drive/probe builds the dict, subsequent
+# uses hit the cache. Critical for groupby keys: `(x × y)' : (X, Y) → E`.
+mutable struct Inv{B, A, Q} <: Query{B, A}
+    q::Q
+    idx::Union{Nothing, Dict{B, Vector{A}}}
+end
+
+# `Fold(q, op, init)` — per-key foldl aggregation. `q : D → R`, the inner
+# is grouped by D on the fly (it emits (key, value) pairs many-to-one);
+# per key we foldl `op` over the values starting from `init`. Mutable +
+# lazy-cached so the same Fold can be referenced multiple times (e.g. by
+# both a sum and the mean built from sum/count) without re-aggregating.
+mutable struct Fold{D, R, S, Q, OP} <: Query{D, S}
+    q::Q
+    op::OP
+    init::S
+    cache::Union{Nothing, Dict{D, S}}
+end
+
+# `Map(q, f)` — generalized projection (per-row lambda). `q : D → R` with
+# `f : R → S` becomes `Map(q, f) : D → S`. The function `f` runs per emitted
+# row; no aggregation, no caching needed.
+struct Map{D, R, S, Q, F} <: Query{D, S}
+    q::Q
+    f::F
+end
+
 # constructors — extract D/M/R via dispatch
 Compose(a::Query{D, M}, b::Query{M, R}) where {D, M, R} =
     Compose{D, M, R, typeof(a), typeof(b)}(a, b)
@@ -274,6 +303,28 @@ function Prod(ops::Tuple)
 end
 materialize(q::Query{D, R}) where {D, R} = Materialized{D, R, typeof(q)}(q, nothing, nothing)
 materialize(s::SetQ{D}) where {D} = MatSet{D, typeof(s)}(s, nothing, nothing)
+
+# Adjoint = inverse: `q'` on a Query{A, B} returns Inv : Query{B, A}.
+Base.adjoint(q::Query{A, B}) where {A, B} = Inv{B, A, typeof(q)}(q, nothing)
+
+# `▷` — per-key foldl. Pass `(op, init)` as a 2-tuple on the rhs.
+# `q ▷ (+, 0.0)` is sum; `q ▷ ((a, _) -> a + 1, 0)` is count; arbitrary
+# `(S, R) → S` reductions supported. Free function, no getproperty overload.
+function ▷(q::Query{D, R}, opinit::Tuple{OP, S}) where {D, R, OP, S}
+    Fold{D, R, S, typeof(q), OP}(q, opinit[1], opinit[2], nothing)
+end
+export ▷
+
+# `↦` — per-row Map (apply a Julia function to the value, key unchanged).
+# `q ↦ (v -> f(v))` produces `Map(q, f) : Query{D, S}` where `S` is the
+# inferred return type. Used for post-aggregation arithmetic (mean = sum / cnt,
+# ratios, etc.) without leaving the algebra.
+function ↦(q::Query{D, R}, f::F) where {D, R, F<:Function}
+    S = Core.Compiler.return_type(f, Tuple{R})
+    S === Union{} && (S = Any)
+    Map{D, R, S, typeof(q), F}(q, f)
+end
+export ↦
 
 # Prefix `!` is the terse spelling of `materialize` — `!(q)` ≡ `materialize(q)`.
 # Borrowed from Haskell's strictness bang; a query has no boolean-not, so `!`
@@ -430,6 +481,52 @@ end
     end
 end
 @inline probe(n::Materialized, x, k) = _idx_probe(_cidx(n), x, k)
+
+# ---- Inv: lazy inverse dict ----
+function _inv_idx(n::Inv{B, A, Q}) where {B, A, Q}
+    n.idx === nothing || return n.idx::Dict{B, Vector{A}}
+    d = Dict{B, Vector{A}}()
+    drive(n.q, (a, b) -> push!(get!(() -> A[], d, b), a))
+    n.idx = d
+end
+@inline function drive(n::Inv{B, A, Q}, k) where {B, A, Q}
+    for (b, as) in _inv_idx(n)
+        for a in as
+            k(b, a)
+        end
+    end
+end
+@inline function probe(n::Inv{B, A, Q}, b, k) where {B, A, Q}
+    as = get(_inv_idx(n), b, nothing)
+    as === nothing && return
+    for a in as
+        k(a)
+    end
+end
+@inline drivekeys(n::Inv, k) = (for b in keys(_inv_idx(n)); k(b); end)
+@inline member(n::Inv, b) = haskey(_inv_idx(n), b)
+
+# ---- Fold: per-key foldl, lazy-cached ----
+function _fold_cache(n::Fold{D, R, S, Q, OP}) where {D, R, S, Q, OP}
+    n.cache === nothing || return n.cache::Dict{D, S}
+    acc = Dict{D, S}()
+    drive(n.q, (d, v) -> (acc[d] = n.op(get(acc, d, n.init), v)))
+    n.cache = acc
+end
+@inline function drive(n::Fold{D, R, S, Q, OP}, k) where {D, R, S, Q, OP}
+    for (d, s) in _fold_cache(n)
+        k(d, s)
+    end
+end
+@inline function probe(n::Fold{D, R, S, Q, OP}, d, k) where {D, R, S, Q, OP}
+    s = get(_fold_cache(n), d, nothing)
+    s === nothing && return
+    k(s)
+end
+
+# ---- Map: per-row lambda ----
+@inline drive(n::Map, k) = drive(n.q, (d, v) -> k(d, n.f(v)))
+@inline probe(n::Map, d, k) = probe(n.q, d, v -> k(n.f(v)))
 
 function _mkeys(n::MatSet{D}) where {D}
     if n.keys === nothing
