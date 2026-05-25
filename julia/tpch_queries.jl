@@ -195,7 +195,7 @@ const _ORACLE_Q4 = "1-URGENT|10594\n" *
                    "5-LOW|10487"
 
 function _q4()
-    let corrupted = (lineitem → (commitdate < receiptdate) : order) ⩓
+    let corrupted = (lineitem → (commitdate < receiptdate) : order) ⩘
                (orders ∧ (date in during("1993-07-01", "1993-10-01")))
         (priority ← corrupted) ▷ ((a, _) -> a + 1, 0)
     end

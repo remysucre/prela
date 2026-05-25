@@ -396,22 +396,24 @@ function ←(r::Query{D, RK}, s::SetQ{D}) where {D, RK}
 end
 export ←
 
-# `⩓` — left-driving conjunction. `l ⩓ r` materializes the *value-set*
-# of `l` (auto-invert, mirroring `←`), then drives `r` and member-checks
-# per row. So for `l : Query{A, B}` you intersect against `r : SetQ{B}`
-# — no need to write `l'` manually. For `l : SetQ{B}` (no values to
-# invert), materializes l directly and intersects with r.
-function ⩓(l::Query, r)
+# `⩘` — left-driving wedge (\bigslopedwedge). `l ⩘ r` materializes the
+# *value-set* of `l` (auto-invert, mirroring `←`), then drives `r` and
+# member-checks per row. So for `l : Query{A, B}` you intersect against
+# `r : SetQ{B}` — no need to write `l'` manually. For `l : SetQ{B}` (no
+# values to invert), materializes l directly. `⩓` kept as a back-compat
+# alias.
+function ⩘(l::Query, r)
     ml = materialize(Keys(Base.adjoint(l)))   # MatSet over l's *value* type
     rs = askeys(r)
     LeftConj{_domof(rs), typeof(ml), typeof(rs)}(ml, rs)
 end
-function ⩓(l::SetQ, r)
+function ⩘(l::SetQ, r)
     ml = materialize(l)
     rs = askeys(r)
     LeftConj{_domof(rs), typeof(ml), typeof(rs)}(ml, rs)
 end
-export ⩓
+const ⩓ = ⩘
+export ⩘, ⩓
 
 # Prefix `!` is the terse spelling of `materialize` — `!(q)` ≡ `materialize(q)`.
 # Borrowed from Haskell's strictness bang; a query has no boolean-not, so `!`
@@ -433,7 +435,7 @@ askeys(s::SetQ) = s
 →(a::SetQ{X},     b::SetQ{X})     where {X}       = Conj(a, b)
 →(a::Query{X, Y}, b::SetQ{Y})     where {X, Y}    = Filter(a, InSetP(b))
 
-# ∧ ∨ : - ×
+# ∧ ∨ : - ⊗
 ∧(a, b) = Conj(askeys(a), askeys(b))
 ∨(a, b) = Disj(askeys(a), askeys(b))
 Base.:(:)(a, b::Query) = Restrict(askeys(a), b)
