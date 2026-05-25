@@ -71,11 +71,6 @@ end
 # Helper: value-only formatter (drops the key) — for scalar queries.
 _value_only(_, v) = String[c for c in _fmt_iter(v)]
 
-# Helper: cross-column comparison as a SetQ filter on the domain. Wraps
-# `a × b` in a FnP that compares the two columns; askeys converts to SetQ.
-_cmp(a::Prela.Query, b::Prela.Query, op) =
-    Prela.Filter(a × b, Prela.FnP(((x, y),) -> op(x, y)))
-
 # ============================================================================
 # Q1 — pricing summary report
 # ============================================================================
@@ -212,7 +207,7 @@ const _ORACLE_Q4 = "1-URGENT|10594\n" *
                    "5-LOW|10487"
 
 _q_tpch("4", _ORACLE_Q4) do
-    let bad_li = lineitem ∧ _cmp(Lineitem.commitdate, Lineitem.receiptdate, <),
+    let bad_li = lineitem ∧ (Lineitem.commitdate < Lineitem.receiptdate),
         bad_order_inv = (bad_li → Lineitem.order)',
         live_orders = (orders ∧ (Order.orderdate >= "1993-07-01")
                               ∧ (Order.orderdate <  "1993-10-01")
@@ -240,10 +235,9 @@ _q_tpch("5", _ORACLE_Q5; sort_by = ((k, v),) -> -v) do
                                 ∧ (Order.orderdate <  "1995-01-01")),
         c_nation      = Lineitem.order → Order.customer → Customer.nation,
         s_nation      = Lineitem.supplier → Supplier.nation,
-        nation_match  = Prela.Filter(c_nation × s_nation, Prela.FnP(((c, s),) -> c == s)),
         live_li       = (lineitem ∧ (Lineitem.order → live_orders)
                                   ∧ (Lineitem.supplier → Supplier.nation → asia_nations)
-                                  ∧ nation_match),
+                                  ∧ (c_nation == s_nation)),
         name_per_li   = live_li → s_nation → Nation.name,
         groups        = name_per_li'
         (groups → ((live_li → Lineitem.extendedprice) × (live_li → Lineitem.discount))) ▷ (
@@ -311,8 +305,8 @@ _q_tpch("12", _ORACLE_Q12) do
         (high + (is_high ? 1 : 0), low + (is_high ? 0 : 1))
     end
     let live_li = (lineitem ∧ (Lineitem.shipmode in ("MAIL", "SHIP"))
-                            ∧ _cmp(Lineitem.commitdate,  Lineitem.receiptdate, <)
-                            ∧ _cmp(Lineitem.shipdate,    Lineitem.commitdate,  <)
+                            ∧ (Lineitem.commitdate < Lineitem.receiptdate)
+                            ∧ (Lineitem.shipdate   < Lineitem.commitdate)
                             ∧ (Lineitem.receiptdate >= "1994-01-01")
                             ∧ (Lineitem.receiptdate <  "1995-01-01")),
         mode_per_li = live_li → Lineitem.shipmode,

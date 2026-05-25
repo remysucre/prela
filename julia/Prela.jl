@@ -355,11 +355,27 @@ Base.:-(a::SetQ{D},     b) where {D}    = SetDiff(a, askeys(b))
 ×(a::Query, b::Query) = Prod((a, b))
 ×(a::Prod,  b::Query) = Prod((a.ops..., b))
 
-# predicates — scalar range
+# predicates — scalar range (value-vs-constant)
 Base.:(==)(q::Query{D, R}, val) where {D, R} = Filter(q, EqP(val))
 Base.in(q::Query{D, R}, vals::Tuple) where {D, R} = Filter(q, InP(vals))
 for op in (:(<), :(>), :(<=), :(>=), :(!=))
     @eval Base.$op(q::Query{D, R}, val) where {D, R} = Filter(q, FnP(Base.Fix2($op, val)))
+end
+
+# predicates — cross-column (Query-vs-Query, same domain). Comparing two
+# leaves of the same row is `Filter(a × b, FnP(((x, y),) -> op(x, y)))`;
+# this overload makes that the natural spelling, e.g.
+#   Lineitem.commitdate < Lineitem.receiptdate
+#   Customer.nation == Supplier.nation       (when composed onto the same domain)
+for op in (:(<), :(>), :(<=), :(>=), :(==), :(!=))
+    @eval Base.$op(a::Query{D, X}, b::Query{D, Y}) where {D, X, Y} =
+        Filter(Prod((a, b)), FnP(((x, y),) -> $op(x, y)))
+    # Specific override for entity-typed columns on both sides: compares the
+    # entity IDs directly (no primary-field elision). Resolves the ambiguity
+    # between the cross-column overload above and the scalar entity-elision
+    # overload below.
+    @eval Base.$op(a::Query{D, ID{E}}, b::Query{D, ID{E}}) where {D, E} =
+        Filter(Prod((a, b)), FnP(((x, y),) -> $op(x, y)))
 end
 Base.:~(q::Query{D, R}, re::Regex) where {D, R <: AbstractString} =
     Filter(q, FnP(Base.Fix1(occursin, re)))
