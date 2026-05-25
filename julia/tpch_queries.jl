@@ -71,6 +71,11 @@ end
 # Helper: value-only formatter (drops the key) — for scalar queries.
 _value_only(_, v) = String[c for c in _fmt_iter(v)]
 
+# Helper: cross-column comparison as a SetQ filter on the domain. Wraps
+# `a × b` in a FnP that compares the two columns; askeys converts to SetQ.
+_cmp(a::Prela.Query, b::Prela.Query, op) =
+    Prela.Filter(a × b, Prela.FnP(((x, y),) -> op(x, y)))
+
 # ============================================================================
 # Q1 — pricing summary report
 # ============================================================================
@@ -193,5 +198,126 @@ _q_tpch("3", _ORACLE_Q3;
             (a, (e, d)) -> a + e * (1 - d),
             0.0
         )
+    end
+end
+
+# ============================================================================
+# Q4 — order priority checking (EXISTS subquery)
+# ============================================================================
+
+const _ORACLE_Q4 = "1-URGENT|10594\n" *
+                   "2-HIGH|10476\n" *
+                   "3-MEDIUM|10410\n" *
+                   "4-NOT SPECIFIED|10556\n" *
+                   "5-LOW|10487"
+
+_q_tpch("4", _ORACLE_Q4) do
+    let bad_li = lineitem ∧ _cmp(Lineitem.commitdate, Lineitem.receiptdate, <),
+        bad_order_inv = (bad_li → Lineitem.order)',
+        live_orders = (orders ∧ (Order.orderdate >= "1993-07-01")
+                              ∧ (Order.orderdate <  "1993-10-01")
+                              ∧ bad_order_inv),
+        prio_per_order = live_orders → Order.orderpriority,
+        groups = prio_per_order'
+        groups ▷ ((a, _) -> a + 1, 0)
+    end
+end
+
+# ============================================================================
+# Q5 — local supplier volume (6-way join, group by nation, sum revenue)
+# ============================================================================
+
+const _ORACLE_Q5 = "INDONESIA|55502041.17\n" *
+                   "VIETNAM|55295087.00\n" *
+                   "CHINA|53724494.26\n" *
+                   "INDIA|52035512.00\n" *
+                   "JAPAN|45410175.70"
+
+_q_tpch("5", _ORACLE_Q5; sort_by = ((k, v),) -> -v) do
+    let asia          = region ∧ (Region.name == "ASIA"),
+        asia_nations  = nation ∧ (Nation.region → asia),
+        live_orders   = (orders ∧ (Order.orderdate >= "1994-01-01")
+                                ∧ (Order.orderdate <  "1995-01-01")),
+        c_nation      = Lineitem.order → Order.customer → Customer.nation,
+        s_nation      = Lineitem.supplier → Supplier.nation,
+        nation_match  = Prela.Filter(c_nation × s_nation, Prela.FnP(((c, s),) -> c == s)),
+        live_li       = (lineitem ∧ (Lineitem.order → live_orders)
+                                  ∧ (Lineitem.supplier → Supplier.nation → asia_nations)
+                                  ∧ nation_match),
+        name_per_li   = live_li → s_nation → Nation.name,
+        groups        = name_per_li'
+        (groups → ((live_li → Lineitem.extendedprice) × (live_li → Lineitem.discount))) ▷ (
+            (a, (e, d)) -> a + e * (1 - d),
+            0.0
+        )
+    end
+end
+
+# ============================================================================
+# Q10 — returned-item reporting (top-20 customers by revenue from returns)
+# ============================================================================
+
+const _ORACLE_Q10 = "57040|Customer#000057040|734235.25|632.87|JAPAN|nICtsILWBB|22-895-641-3466|ep. blithely regular foxes promise slyly furiously ironic depend\n" *
+                    "143347|Customer#000143347|721002.69|2557.47|EGYPT|,Q9Ml3w0gvX|14-742-935-3718|endencies sleep. slyly express deposits nag carefully around the even tithes. slyly regular \n" *
+                    "60838|Customer#000060838|679127.31|2454.77|BRAZIL|VWmQhWweqj5hFpcvhGFBeOY9hJ4m|12-913-494-9813|tes. final instructions nag quickly according to\n" *
+                    "101998|Customer#000101998|637029.57|3790.89|UNITED KINGDOM|0,ORojfDdyMca2E2H|33-593-865-6378|ost carefully. slyly regular packages cajole about the blithely final ideas. permanently daring deposit\n" *
+                    "125341|Customer#000125341|633508.09|4983.51|GERMANY|9YRcnoUPOM7Sa8xymhsDHdQg|17-582-695-5962|ly furiously brave packages. quickly regular dugouts kindle furiously carefully bold theodolites. \n" *
+                    "25501|Customer#000025501|620269.78|7725.04|ETHIOPIA|sr4VVVe3xCJQ2oo2QEhi19D,pXqo6kOGaSn2|15-874-808-6793|y ironic foxes hinder according to the furiously permanent dolphins. pending ideas integrate blithely from \n" *
+                    "115831|Customer#000115831|596423.87|5098.10|FRANCE|AlMpPnmtGrOFrDMUs5VLo EIA,Cg,Rw5TBuBoKiO|16-715-386-3788|unts nag carefully final packages. express theodolites are regular ac\n" *
+                    "84223|Customer#000084223|594998.02|528.65|UNITED KINGDOM|Eq51o UpQ4RBr  fYTdrZApDsPV4pQyuPq|33-442-824-8191|longside of the slyly final deposits. blithely final platelets about the blithely i\n" *
+                    "54289|Customer#000054289|585603.39|5583.02|IRAN|x3ouCpz6,pRNVhajr0CCQG1|20-834-292-4707| cajole furiously after the quickly unusual fo\n" *
+                    "39922|Customer#000039922|584878.11|7321.11|GERMANY|2KtWzW,FYkhdWBfobp6SFXWYKjvU9|17-147-757-8036|ironic deposits sublate furiously. carefully regular theodolites along the b\n" *
+                    "6226|Customer#000006226|576783.76|2230.09|UNITED KINGDOM|TKbxS1dbkGMtaa,KOi26lbip4P0tPbWK0|33-657-701-3391|nal packages are alongside of the quickly bold deposits. carefully \n" *
+                    "922|Customer#000000922|576767.53|3869.25|GERMANY|rsR9lRxyTdHbDOVt8nYbwjK5vAWH9sB|17-945-916-9648|cuses cajole carefully regular idea\n" *
+                    "147946|Customer#000147946|576455.13|2030.13|ALGERIA|Jqdt1kHAJtuTqHQK,B7 3tJh|10-886-956-3143|ly pending platelets. ironic requests haggle alongside of the furiou\n" *
+                    "115640|Customer#000115640|569341.19|6436.10|ARGENTINA|6yKLIRRAirUmBjKNO6Z3|11-411-543-4901|ffily ironic deposits. blithely specia\n" *
+                    "73606|Customer#000073606|568656.86|1785.67|JAPAN|vx9,7ACVtoKnLcoAHGNYDF|22-437-653-6966|uests cajole according to the foxe\n" *
+                    "110246|Customer#000110246|566842.98|7763.35|VIETNAM|UgsLFL3rendATzcHi|31-943-426-9837|ow carefully. blithely careful packages hag\n" *
+                    "142549|Customer#000142549|563537.24|5085.99|INDONESIA|pJAmChWXct HNjPzgoBUOgAHduwwIR|19-955-562-2398|. slyly bold packages nag quickly against the unusual deposits. express asymptotes detect furiously pending, eve\n" *
+                    "146149|Customer#000146149|557254.99|1791.55|ROMANIA| STLwtlaB6|29-744-164-6487|nic, special instructions. multipliers run carefully blithely iro\n" *
+                    "52528|Customer#000052528|556397.35|551.79|ARGENTINA|elsyt8c9Z,7ch|11-208-192-3205|olphins. blithely silent platelets affix carefully even platelets. ca\n" *
+                    "23431|Customer#000023431|554269.54|3381.86|ROMANIA|kKI5,CJAJQjQRQtOdCiFQ|29-915-458-2654|the final sentiments. carefully ironic packages"
+
+_q_tpch("10", _ORACLE_Q10;
+        sort_by = ((c, v),) -> -v[1],
+        limit = 20,
+        row = (c, (rev, name, acct, phone, n_name, addr, comm)) ->
+              [_fmt(c), name, _fmt(rev), _fmt(acct), n_name, addr, phone, comm]) do
+    let live_li = (lineitem ∧ (Lineitem.returnflag == "R")
+                            ∧ (Lineitem.order → orders ∧ (Order.orderdate >= "1993-10-01")
+                                                      ∧ (Order.orderdate <  "1994-01-01"))),
+        cust_per_li = live_li → Lineitem.order → Order.customer,
+        groups = cust_per_li',
+        revenue = (groups → ((live_li → Lineitem.extendedprice) × (live_li → Lineitem.discount))) ▷ (
+            (a, (e, d)) -> a + e * (1 - d),
+            0.0
+        )
+        # Pair revenue with the customer-side fields (all Query{Customer, X})
+        revenue × Customer.name × Customer.acctbal × Customer.phone ×
+            (Customer.nation → Nation.name) × Customer.address × Customer.comment
+    end
+end
+
+# ============================================================================
+# Q12 — shipping modes and order priority (conditional sums per shipmode)
+# ============================================================================
+
+const _ORACLE_Q12 = "MAIL|6202|9324\n" *
+                    "SHIP|6200|9262"
+
+_q_tpch("12", _ORACLE_Q12) do
+    function step((high, low), prio)
+        is_high = prio == "1-URGENT" || prio == "2-HIGH"
+        (high + (is_high ? 1 : 0), low + (is_high ? 0 : 1))
+    end
+    let live_li = (lineitem ∧ (Lineitem.shipmode in ("MAIL", "SHIP"))
+                            ∧ _cmp(Lineitem.commitdate,  Lineitem.receiptdate, <)
+                            ∧ _cmp(Lineitem.shipdate,    Lineitem.commitdate,  <)
+                            ∧ (Lineitem.receiptdate >= "1994-01-01")
+                            ∧ (Lineitem.receiptdate <  "1995-01-01")),
+        mode_per_li = live_li → Lineitem.shipmode,
+        groups = mode_per_li',
+        prio_per_li = live_li → Lineitem.order → Order.orderpriority
+        (groups → prio_per_li) ▷ (step, (0, 0))
     end
 end
