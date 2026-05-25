@@ -25,21 +25,33 @@ using Parquet2, DataFrames, Dates
 @entity PartSupp begin part :: ID{Part};  supplier :: ID{Supplier};
                        availqty :: Int;  supplycost :: Float64;  comment :: String  end
 @entity Order    begin customer :: ID{Customer};  status :: String;
-                       totalprice :: Float64;  orderdate :: String;
-                       orderpriority :: String;  clerk :: String;
+                       totalprice :: Float64;  date :: String;
+                       priority :: String;  clerk :: String;
                        shippriority :: Int;  comment :: String  end
 @entity Lineitem begin order :: ID{Order};  part :: ID{Part};  supplier :: ID{Supplier};
-                       linenumber :: Int;  quantity :: Float64;
+                       number :: Int;  quantity :: Float64;
                        extendedprice :: Float64;  discount :: Float64;
-                       tax :: Float64;  returnflag :: String;  linestatus :: String;
+                       tax :: Float64;  returnflag :: String;  status :: String;
                        shipdate :: String;  commitdate :: String;
                        receiptdate :: String;  shipinstruct :: String;
                        shipmode :: String;  comment :: String  end
 
 @expose Lineitem
+# Selective expose: bring entity-unique field names into bare scope, leaving
+# genuinely-shared names (name, comment, nation, phone, …) qualified.
+@expose Order    : totalprice, date, priority, shippriority, clerk
+@expose Part     : mfgr, brand, type, size, container, retailprice
+@expose PartSupp : availqty, supplycost
+@expose Customer : mktsegment
 
-# Short alias for the most-referenced entity.
+# Short aliases for entity types — reduce clutter in field accesses.
 const Li = Lineitem
+const Ord = Order
+const Cu = Customer
+const Su = Supplier
+const PS = PartSupp
+const Na = Nation
+const Re = Region
 
 # === Loader helpers ===
 
@@ -159,8 +171,8 @@ function load_tpch!()
         _push_pair!(Prela.lookup_field(ID{Order}, Val(:customer)),      id, ID{Customer}(Int(df.o_custkey[i])))
         _push_pair!(Prela.lookup_field(ID{Order}, Val(:status)),        id, _str(df.o_orderstatus[i]))
         _push_pair!(Prela.lookup_field(ID{Order}, Val(:totalprice)),    id, _f64(df.o_totalprice[i]))
-        _push_pair!(Prela.lookup_field(ID{Order}, Val(:orderdate)),     id, _date(df.o_orderdate[i]))
-        _push_pair!(Prela.lookup_field(ID{Order}, Val(:orderpriority)), id, _str(df.o_orderpriority[i]))
+        _push_pair!(Prela.lookup_field(ID{Order}, Val(:date)),          id, _date(df.o_orderdate[i]))
+        _push_pair!(Prela.lookup_field(ID{Order}, Val(:priority)),      id, _str(df.o_orderpriority[i]))
         _push_pair!(Prela.lookup_field(ID{Order}, Val(:clerk)),         id, _str(df.o_clerk[i]))
         _push_pair!(Prela.lookup_field(ID{Order}, Val(:shippriority)),  id, _int(df.o_shippriority[i]))
         _push_pair!(Prela.lookup_field(ID{Order}, Val(:comment)),       id, _str(df.o_comment[i]))
@@ -177,13 +189,13 @@ function load_tpch!()
         _push_pair!(Prela.lookup_field(ID{Lineitem}, Val(:order)),         id, ID{Order}(Int(df.l_orderkey[i])))
         _push_pair!(Prela.lookup_field(ID{Lineitem}, Val(:part)),          id, ID{Part}(Int(df.l_partkey[i])))
         _push_pair!(Prela.lookup_field(ID{Lineitem}, Val(:supplier)),      id, ID{Supplier}(Int(df.l_suppkey[i])))
-        _push_pair!(Prela.lookup_field(ID{Lineitem}, Val(:linenumber)),    id, _int(df.l_linenumber[i]))
+        _push_pair!(Prela.lookup_field(ID{Lineitem}, Val(:number)),        id, _int(df.l_linenumber[i]))
         _push_pair!(Prela.lookup_field(ID{Lineitem}, Val(:quantity)),      id, _f64(df.l_quantity[i]))
         _push_pair!(Prela.lookup_field(ID{Lineitem}, Val(:extendedprice)), id, _f64(df.l_extendedprice[i]))
         _push_pair!(Prela.lookup_field(ID{Lineitem}, Val(:discount)),      id, _f64(df.l_discount[i]))
         _push_pair!(Prela.lookup_field(ID{Lineitem}, Val(:tax)),           id, _f64(df.l_tax[i]))
         _push_pair!(Prela.lookup_field(ID{Lineitem}, Val(:returnflag)),    id, _str(df.l_returnflag[i]))
-        _push_pair!(Prela.lookup_field(ID{Lineitem}, Val(:linestatus)),    id, _str(df.l_linestatus[i]))
+        _push_pair!(Prela.lookup_field(ID{Lineitem}, Val(:status)),        id, _str(df.l_linestatus[i]))
         _push_pair!(Prela.lookup_field(ID{Lineitem}, Val(:shipdate)),      id, _date(df.l_shipdate[i]))
         _push_pair!(Prela.lookup_field(ID{Lineitem}, Val(:commitdate)),    id, _date(df.l_commitdate[i]))
         _push_pair!(Prela.lookup_field(ID{Lineitem}, Val(:receiptdate)),   id, _date(df.l_receiptdate[i]))

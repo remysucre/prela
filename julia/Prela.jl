@@ -817,12 +817,41 @@ macro declare(syms...)
 end
 export @declare
 
-macro expose(entity_sym)
-    entity_sym isa Symbol || error("@expose expects a symbol entity name")
+macro expose(arg)
+    # Two forms:
+    #   @expose Entity                       — bare-name all fields
+    #   @expose Entity : f1, f2, …           — bare-name only the listed fields
+    #
+    # `@expose Entity : f` parses as a single `:` call: `(:, Entity, f)`.
+    # `@expose Entity : f, g, h` parses as a tuple whose first element is
+    # `(:, Entity, f)` and remaining elements are bare symbols.
+    entity_sym = nothing
+    fields = nothing
+    if arg isa Symbol
+        entity_sym = arg
+    elseif arg isa Expr && arg.head === :call && arg.args[1] === :(:) &&
+           length(arg.args) == 3 && arg.args[2] isa Symbol && arg.args[3] isa Symbol
+        entity_sym = arg.args[2]
+        fields = Symbol[arg.args[3]]
+    elseif arg isa Expr && arg.head === :tuple &&
+           arg.args[1] isa Expr && arg.args[1].head === :call &&
+           arg.args[1].args[1] === :(:)
+        entity_sym = arg.args[1].args[2]
+        fields = Symbol[arg.args[1].args[3]]
+        for r in arg.args[2:end]
+            r isa Symbol || error("@expose: field-list entries must be symbols, got $r")
+            push!(fields, r)
+        end
+    else
+        error("@expose syntax: `@expose Entity` or `@expose Entity : f1, f2, …`")
+    end
     haskey(_ENTITY_FIELDS, entity_sym) ||
         error("@expose: no @entity declaration found for `$entity_sym`")
+    all_fields = _ENTITY_FIELDS[entity_sym]
+    chosen = fields === nothing ? all_fields : fields
     out = Expr(:block)
-    for f in _ENTITY_FIELDS[entity_sym]
+    for f in chosen
+        f in all_fields || error("@expose: $entity_sym has no field `$f`")
         qual_sym = Symbol("_", entity_sym, "_", f)
         push!(out.args, :(const $(esc(f)) = $(esc(qual_sym))))
     end
