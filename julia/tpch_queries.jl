@@ -347,13 +347,11 @@ _q_tpch("11", _ORACLE_Q11, _q11; sort_by = ((k, v),) -> -v)
 const _ORACLE_Q17 = read("/tmp/tpch_oracles/Q17.txt", String)
 
 function _q17()
-    # Inner agg: 0.2 * avg(quantity) per part across ALL lineitems.
-    sum_q = (Li.part ← quantity) ▷ ((a, q) -> a + q, 0.0)
-    cnt_q = (Li.part ← quantity) ▷ ((a, _) -> a + 1, 0)
-    threshold_per_part = !((sum_q ⊗ cnt_q) ↦ (((s, n),) -> 0.2 * s / n))
-
-    let live = lineitem → ((Li.part → brand == "Brand#23")
-                            ∧ (Li.part → container == "MED BOX")
+    # Inner agg: 0.2 * avg(quantity) per part across ALL lineitems —
+    # fused single fold producing (sum, count) in one pass.
+    threshold_per_part = ((Li.part ← quantity) ▷
+        (((s, n), q) -> (s + q, n + 1), (0.0, 0))) ↦ (((s, n),) -> 0.2 * s / n)
+    let live = lineitem → ((Li.part → (brand == "Brand#23") ∧ (container == "MED BOX"))
                             ∧ (quantity < (Li.part → threshold_per_part)))
         (live : extendedprice) ⊵ (+, 0.0) ↦ (s -> s / 7.0)
     end
@@ -369,8 +367,7 @@ const _ORACLE_Q13 = read("/tmp/tpch_oracles/Q13.txt", String)
 function _q13()
     let live_orders = orders ∧ (Ord.comment ≁ r"special.*requests"),
         # Per-customer order count (only for customers with at least one match)
-        count_per_cust = ((live_orders → Ord.customer) ←
-                          (live_orders → date)) ▷ ((a, _) -> a + 1, 0)
+        count_per_cust = (Ord.customer ← (live_orders → date)) ▷ ((a, _) -> a + 1, 0)
         # Build the c_count → custdist distribution. Customers with no matching
         # orders get c_count = 0 (LEFT JOIN semantic).
         dist = Dict{Int, Int}()
@@ -398,9 +395,8 @@ function _q7()
         is_de_fr = (snat == "GERMANY") ∧ (cnat == "FRANCE"),
         live = lineitem → ((shipdate in ("1995-01-01" .. "1996-12-31"))
                             ∧ (is_fr_de ∨ is_de_fr)),
-        year  = (live → shipdate) ↦ (d -> d[1:4]),
-        groups = !(((live → snat) ⊗ (live → cnat) ⊗ year)')
-        (groups → ((live → extendedprice) ⊗ (live → discount))) ▷ (
+        year  = shipdate ↦ (d -> d[1:4])
+        ((snat ⊗ cnat ⊗ year) ← live → (extendedprice ⊗ discount)) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
         )
