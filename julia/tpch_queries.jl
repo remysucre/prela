@@ -128,7 +128,7 @@ function _q6()
               ∧ (Li.discount in (0.05 .. 0.07))
               ∧ (Li.quantity <  24.0)
      : (Li.extendedprice ⊗ Li.discount)) ⊵ (
-        (a, (e, d)) -> a + e * d, 0.0
+        (c, (e, d)) -> c + e * d, 0.0
     )
 end
 _q_tpch("6", _ORACLE_Q6, _q6; row = _value_only)
@@ -167,10 +167,10 @@ const _ORACLE_Q3 = "2456423|406181.01|1995-03-05|0\n" *
                    "2300070|367371.15|1995-03-13|0"
 
 function _q3()
-    let item = ((lineitem → ((Li.shipdate > "1995-03-15")
-                  ∧ (Li.order → ((Order.orderdate < "1995-03-15") ∧
-                                 (Order.customer → (Customer.mktsegment == "BUILDING"))))))
-                : (Li.extendedprice ⊗ Li.discount)),
+    let item = (lineitem → ((Li.shipdate > "1995-03-15") ∧
+                            (Li.order → ((Order.orderdate < "1995-03-15") ∧
+                                         (Order.customer → (Customer.mktsegment == "BUILDING")))))
+                         : (Li.extendedprice ⊗ Li.discount)),
         revenue = (Li.order ← item) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
