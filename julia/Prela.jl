@@ -267,11 +267,14 @@ mutable struct MatSet{D, A} <: SetQ{D}
 end
 
 # `Inv(q)` — invert a relation. `q : A → B` becomes `Inv(q) : B → A`.
-# Surface syntax is postfix adjoint `q'`. Streaming-only: `drive(Inv, k)` flips
-# pairs from `drive(q, …)` without any materialization. For fast probe/member
-# access, wrap explicitly via `materialize(q')` (or `!q'`).
-struct Inv{B, A, Q} <: Query{B, A}
+# Surface syntax is postfix adjoint `q'`. `drive` is streaming (just flips
+# pairs, no allocation). `probe`/`member`/`drivekeys` lazy-build a
+# Dict{B, Vector{A}} on first call and reuse it thereafter — so using
+# `q'` on the rhs of a `→` (Compose) auto-materializes the inverse index
+# the first time the scan needs it.
+mutable struct Inv{B, A, Q} <: Query{B, A}
     q::Q
+    idx::Union{Nothing, Dict{B, Vector{A}}}
 end
 
 # `Fold(q, op, init)` — per-key foldl aggregation. `q : D → R`, the inner
@@ -348,7 +351,7 @@ materialize(q::Query{D, R}) where {D, R} = Materialized{D, R, typeof(q)}(q, noth
 materialize(s::SetQ{D}) where {D} = MatSet{D, typeof(s)}(s, nothing, nothing)
 
 # Adjoint = inverse: `q'` on a Query{A, B} returns Inv : Query{B, A}.
-Base.adjoint(q::Query{A, B}) where {A, B} = Inv{B, A, typeof(q)}(q)
+Base.adjoint(q::Query{A, B}) where {A, B} = Inv{B, A, typeof(q)}(q, nothing)
 
 # `▷` — per-key foldl. Pass `(op, init)` as a 2-tuple on the rhs.
 # `q ▷ (+, 0.0)` is sum; `q ▷ ((a, _) -> a + 1, 0)` is count; arbitrary
@@ -603,11 +606,24 @@ end
 end
 @inline probe(n::Materialized, x, k) = _idx_probe(_cidx(n), x, k)
 
-# ---- Inv: streaming-only. drive flips pairs; no probe/member without ! ----
-# `probe`/`member`/`drivekeys` are not directly supported — wrap the Inv in
-# `materialize(...)` (or use `!q'`) to get an indexed copy that supports
-# them. The default streaming path keeps Inv allocation-free.
+# ---- Inv: streaming drive; lazy-indexed probe/member/drivekeys ----
+# `drive` flips pairs streaming (no allocation). The first call to
+# `probe`/`member`/`drivekeys` lazy-builds a `Dict{B, Vector{A}}` and
+# caches it on the Inv, so subsequent probes are O(1).
 @inline drive(n::Inv, k) = drive(n.q, (a, b) -> k(b, a))
+function _inv_idx(n::Inv{B, A, Q}) where {B, A, Q}
+    n.idx === nothing || return n.idx::Dict{B, Vector{A}}
+    d = Dict{B, Vector{A}}()
+    drive(n.q, (a, b) -> push!(get!(() -> A[], d, b), a))
+    n.idx = d
+end
+@inline function probe(n::Inv{B, A, Q}, b, k) where {B, A, Q}
+    vs = get(_inv_idx(n), b, nothing)
+    vs === nothing && return
+    for a in vs; k(a); end
+end
+@inline drivekeys(n::Inv, k) = (for b in keys(_inv_idx(n)); k(b); end)
+@inline member(n::Inv, x) = haskey(_inv_idx(n), x)
 
 # ---- LeftCompose: drive s, probe r per row ----
 # `r ← s` semantically equals `r' ∘ s` but flips which side scans. Drives

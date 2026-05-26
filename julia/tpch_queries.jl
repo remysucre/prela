@@ -442,22 +442,13 @@ const _ORACLE_Q9 = let raw = read("/tmp/tpch_oracles/Q9.txt", String)
 end
 
 function _q9()
-    # Build a (part, supplier) → supplycost dict in Julia (no native 2-key
-    # index in Prela — we'd otherwise need a `inv(PS.part ⊗ PS.supplier)`).
-    sc_dict = let d = Dict{Tuple{Int, Int}, Float64}()
-        Prela.drive(
-            PS.part ⊗ PS.supplier ⊗ supplycost,
-            (ps, (pt, sp, sc)) -> (d[(pt.id, sp.id)] = sc))
-        d
-    end
     let live  = lineitem ∧ (Li.part → Part.name ~ r"green"),
         sname = live → Li.supplier → Su.nation → Na.name,
         year  = (live → order → date) ↦ (d -> d[1:4]),
-        groups = !((sname ⊗ year)'),
         scan  = live : (extendedprice ⊗ discount ⊗ quantity
-                                         ⊗ Li.part ⊗ Li.supplier)
-        (groups → scan) ▷ (
-            (a, (e, d, q, pt, sp)) -> a + e * (1 - d) - sc_dict[(pt.id, sp.id)] * q,
+                        ⊗ ((Li.part ⊗ Li.supplier) → (PS.part ⊗ PS.supplier)' → supplycost))
+        ((sname ⊗ year) ← scan) ▷ (
+            (a, (e, d, q, cost)) -> a + e * (1 - d) - cost * q,
             0.0
         )
     end
