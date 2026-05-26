@@ -429,11 +429,7 @@ fn q16(d: &TpchData) -> String {
         .and((&d.ps_supplier).o(&d.su_comment).nrx("Customer.*Complaints").k());
     let group = (&live_ps).o((&d.ps_part).o((&d.pa_brand).x(&d.pa_type).x(&d.pa_size)));
     let supp  = (&live_ps).o(&d.ps_supplier);
-    let counts = group.lc(supp).buf_fold(|vs: &[i64]| {
-        let mut s: HashSet<i64> = HashSet::new();
-        for &v in vs { s.insert(v); }
-        s.len() as i64
-    });
+    let counts = group.lc(supp).count_distinct();
     let mut rows: Vec<(((&str, &str), i64), i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|a, b| b.1.cmp(&a.1)
@@ -546,18 +542,13 @@ fn q21(d: &TpchData) -> String {
     //   only_late  = askeys(((late : order) ← (late : Li.supplier)) ▷ n_distinct == 1)
     //   qualifying = late ∧ (Li.supplier → saudi) ∧ (order → f_ords ∧ multi_supp ∧ only_late)
     //   (Li.supplier ← qualifying) ▷ ((a, _) -> a + 1, 0) ⊗ Su.name
-    let n_distinct = |vs: &[i64]| {
-        let mut s: HashSet<i64> = HashSet::new();
-        for &v in vs { s.insert(v); }
-        s.len() as i64
-    };
     let late = d.lineitem.and(
         (&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k()
     );
-    let multi_supp = (&d.li_order).lc(&d.li_supplier).buf_fold(n_distinct).gt(1).k();
+    let multi_supp = (&d.li_order).lc(&d.li_supplier).count_distinct().gt(1).k();
     let only_late = (&late).o(&d.li_order)
         .lc((&late).o(&d.li_supplier))
-        .buf_fold(n_distinct).eq(1).k();
+        .count_distinct().eq(1).k();
     let saudi = (&d.supplier).and(
         (&d.su_nation).o(&d.na_name).eq("SAUDI ARABIA").k()
     );
