@@ -13,6 +13,8 @@ We provide two implementations:
 
 ## Examples
 
+Prela programs are readable even to the untrained eye.
+
 Join Order Benchmark [22a](https://github.com/gregrahn/join-order-benchmark/blob/master/22a.sql):
 
 ```julia
