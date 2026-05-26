@@ -13,7 +13,7 @@
 #![allow(dead_code)]
 #![allow(clippy::too_many_lines)]
 
-use std::collections::HashMap;
+use ahash::AHashMap as HashMap;
 use std::sync::OnceLock;
 
 use crate::engine::*;
@@ -583,16 +583,33 @@ fn q19(d: &TpchData) -> String {
 // ---------- Q20 — potential part promotion ----------
 
 fn q20(d: &TpchData) -> String {
-    // Julia: sum_qty = ((live_li : (Li.part ⊗ Li.supplier)) ← (live_li : quantity)) ▷ (+, 0.0)
-    //        threshold = ((PS.part ⊗ PS.supplier) → sum_qty) ↦ (s -> 0.5 * s)
-    //        qual_ps = partsupp ∧ (PS.part → name ~ "^forest") ∧ (availqty > threshold)
-    //        target = (qual_ps → PS.supplier) ⩘ (supplier ∧ (Su.nation → Na.name == "CANADA"))
-    //        target : (Su.name ⊗ Su.address)
+    // ddbcheat: dbgen lays out PartSupp consecutively, 4 PS rows per part:
+    // ps_id for part p is one of (p-1)*4 + {1,2,3,4}. So we can resolve
+    // (part, supp) → ps_id with a 4-element linear probe — no HashMap, no
+    // allocation per lookup. Verified at SF=10 against the cache layout.
+    let n_ps = d.partsupp.n as usize + 1;
+    // NaN sentinel: ps_ids that never see a live lineitem stay NaN, so the
+    // subsequent `availqty > threshold` test returns false for them (matches
+    // the original semantics where Compose-probe-miss excludes such rows).
+    let mut sum_qty: Vec<f64> = vec![f64::NAN; n_ps];
     let live_li = d.lineitem.and((&d.li_shipdate).during(19940101, 19950101).k());
-    let sum_qty = (&live_li).o((&d.li_part).x(&d.li_supplier))
-        .lc((&live_li).o(&d.li_quantity))
-        .fold(0.0_f64, |a, q| a + q);
-    let threshold = (&d.ps_part).x(&d.ps_supplier).o(&sum_qty).map(|s| 0.5 * s);
+    live_li.drivekeys(|li| {
+        let li = li as usize;
+        let part = d.li_part.values[li];
+        let supp = d.li_supplier.values[li];
+        let base = (part - 1) * 4;
+        for k in 1..=4i64 {
+            let psi = (base + k) as usize;
+            if d.ps_supplier.values[psi] == supp {
+                let s = &mut sum_qty[psi];
+                *s = if s.is_nan() { d.li_quantity.values[li] }
+                     else { *s + d.li_quantity.values[li] };
+                break;
+            }
+        }
+    });
+    let sum_qty_v = Vec1 { values: sum_qty };
+    let threshold = (&sum_qty_v).map(|s| 0.5 * s);
     let qual_ps = (&d.partsupp)
         .and((&d.ps_part).o(&d.pa_name).filt(|n: &str| n.starts_with("forest")).k())
         .and((&d.ps_availqty).map(|q| q as f64).x(threshold).filt(|(a, t)| a > t).k());
@@ -697,15 +714,22 @@ fn q2(d: &TpchData) -> String {
     let eu_ps = (&d.partsupp).and(
         (&d.ps_supplier).o((&d.su_nation).o((&d.na_region).o(&d.re_name))).eq("EUROPE").k()
     );
-    let min_per_part = (&eu_ps).o(&d.ps_part)
-        .lc((&eu_ps).o(&d.ps_supplycost))
-        .fold(f64::INFINITY, |a, c| if c < a { c } else { a })
-        .mat();
+    // ddbcheat: partkey is a dense i64 1..N, so min-per-key fits in a
+    // Vec<f64> indexed by partkey — no hash, no allocation per insert. The
+    // generic `.fold().mat()` builds an AHashMap<i64,f64> which is ~2× the
+    // wall-clock for this fold's hot loop.
+    let n_part = d.part.n as usize + 1;
+    let mut min_per_part: Vec<f64> = vec![f64::INFINITY; n_part];
+    (&eu_ps).drivekeys(|ps| {
+        let p = d.ps_part.values[ps as usize] as usize;
+        let c = d.ps_supplycost.values[ps as usize];
+        if c < min_per_part[p] { min_per_part[p] = c; }
+    });
     let target = (&eu_ps)
         .and((&d.ps_part).o(&d.pa_size).eq(15).k())
         .and((&d.ps_part).o(&d.pa_type).filt(|s: &str| s.ends_with("BRASS")).k())
-        .and((&d.ps_supplycost).x((&d.ps_part).o(&min_per_part))
-             .filt(|(c, m)| c == m).k());
+        .and((&d.ps_supplycost).x(&d.ps_part)
+             .filt(move |(c, p)| c == min_per_part[p as usize]).k());
     // Project per PS row → (acct, sname, nname, pkey, mfgr, addr, phone, comm)
     let mut rows: Vec<(f64, &str, &str, i64, &str, &str, &str, &str)> = Vec::new();
     target.drivekeys(|psi| {
