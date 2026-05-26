@@ -2,11 +2,13 @@
 
 Prela is an embedded relational query language
  based on [Tarski's Algebra of Relations](https://en.wikipedia.org/wiki/Relation_algebra).
-Prela queries are concise, readable, and fast.
+Prela queries are concise, clear, and fast.
 The language is implemented by direct embedding 
  (a.k.a. [shallow embedding](https://decomposition.al/blog/2015/06/02/embedding-deep-and-shallow/))
  in a host programming language:
  Prela operators are implemented as regular functions in the host language.
+The implementation follows [continuation passing style](https://en.wikipedia.org/wiki/Continuation-passing_style),
+ which produces highly efficient code when combined with monomorphization and inlining.
 We provide two implementations:
  the Julia engine enjoys elegant syntax thanks to operator overloading and multiple dispatch,
  while the Rust engine gives you (slightly) ugly but fast code.
