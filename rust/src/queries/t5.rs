@@ -4,7 +4,7 @@ use crate::engine::*;
 use super::helpers::*;
 use super::sets::*;
 
-fn co_21<'d>(d: &'d Data) -> impl Query<R = i64> + 'd {
+fn co_21<'d>(d: &'d Data) -> impl Query<R = i64, D = i64> + 'd {
     (&d.movie_company).in_s(
         (&d.company_country).ne("[pl]").k()
             .and(
@@ -18,27 +18,27 @@ fn co_21<'d>(d: &'d Data) -> impl Query<R = i64> + 'd {
     )
 }
 
-fn lk_21<'d>(d: &'d Data) -> impl Query<R = i64> + 'd {
+fn lk_21<'d>(d: &'d Data) -> impl Query<R = i64, D = i64> + 'd {
     (&d.movie_link).in_s(
         (&d.movielink_type).o(&d.linktype_link).rx(r"follow").k()
     )
 }
 
-fn k_23ab<'d>(d: &'d Data) -> impl Query<R = &'static str> + 'd {
+fn k_23ab<'d>(d: &'d Data) -> impl Query<R = &'static str, D = i64> + 'd {
     (&d.movie_kind).o(&d.kind_kind).eq("movie")
 }
 
-fn k_23c<'d>(d: &'d Data) -> impl Query<R = &'static str> + 'd {
+fn k_23c<'d>(d: &'d Data) -> impl Query<R = &'static str, D = i64> + 'd {
     (&d.movie_kind).o(&d.kind_kind)
         .in_v(vec!["movie", "tv movie", "video movie", "video game"])
 }
 
-fn gf_25ab<'d>(d: &'d Data) -> impl SetQ + 'd {
+fn gf_25ab<'d>(d: &'d Data) -> impl SetQ<D = i64> + 'd {
     (&d.info_type).o(&d.infotype_info).eq("genres").k()
         .and((&d.info_info).eq("Horror").k())
 }
 
-fn gf_25c<'d>(d: &'d Data) -> impl SetQ + 'd {
+fn gf_25c<'d>(d: &'d Data) -> impl SetQ<D = i64> + 'd {
     (&d.info_type).o(&d.infotype_info).eq("genres").k()
         .and((&d.info_info).in_v(genre6()).k())
 }

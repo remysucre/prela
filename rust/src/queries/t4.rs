@@ -170,7 +170,7 @@ fn q17f(d: &Data) -> String {
     fmt1(m)
 }
 
-fn ib_18a<'d>(d: &'d Data) -> impl Query<R = &'static str> + 'd {
+fn ib_18a<'d>(d: &'d Data) -> impl Query<R = &'static str, D = i64> + 'd {
     (&d.movie_info).o(
         (&d.info_type).o(&d.infotype_info).eq("budget").k()
             .o(&d.info_info)
@@ -205,7 +205,7 @@ fn q18a(d: &Data) -> String {
     fmt3(m)
 }
 
-fn gf_18b<'d>(d: &'d Data) -> impl SetQ + 'd {
+fn gf_18b<'d>(d: &'d Data) -> impl SetQ<D = i64> + 'd {
     (&d.info_type).o(&d.infotype_info).eq("genres").k()
         .and((&d.info_info).in_v(vec!["Horror", "Thriller"]).k())
         .minus((&d.info_note).k())
@@ -239,7 +239,7 @@ fn q18b(d: &Data) -> String {
     fmt3(m)
 }
 
-fn gf_18c<'d>(d: &'d Data) -> impl SetQ + 'd {
+fn gf_18c<'d>(d: &'d Data) -> impl SetQ<D = i64> + 'd {
     (&d.info_type).o(&d.infotype_info).eq("genres").k()
         .and((&d.info_info).in_v(super::sets::genre6()).k())
 }

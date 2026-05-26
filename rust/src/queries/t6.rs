@@ -4,7 +4,7 @@ use crate::engine::*;
 use super::helpers::*;
 use super::sets::*;
 
-fn co_27<'d>(d: &'d Data) -> impl Query<R = i64> + 'd {
+fn co_27<'d>(d: &'d Data) -> impl Query<R = i64, D = i64> + 'd {
     (&d.movie_company).in_s(
         (&d.company_country).ne("[pl]").k()
             .and(
@@ -18,11 +18,11 @@ fn co_27<'d>(d: &'d Data) -> impl Query<R = i64> + 'd {
     )
 }
 
-fn lk_27<'d>(d: &'d Data) -> impl Query<R = i64> + 'd {
+fn lk_27<'d>(d: &'d Data) -> impl Query<R = i64, D = i64> + 'd {
     (&d.movie_link).in_s((&d.movielink_type).o(&d.linktype_link).rx(r"follow").k())
 }
 
-fn co_28<'d>(d: &'d Data) -> impl Query<R = i64> + 'd {
+fn co_28<'d>(d: &'d Data) -> impl Query<R = i64, D = i64> + 'd {
     (&d.movie_company).in_s(
         (&d.company_country).ne("[us]").k()
             .and((&d.company_note).nrx(r"\(USA\)").k())
@@ -30,38 +30,38 @@ fn co_28<'d>(d: &'d Data) -> impl Query<R = i64> + 'd {
     )
 }
 
-fn dt_28a<'d>(d: &'d Data) -> impl Query<R = i64> + 'd {
+fn dt_28a<'d>(d: &'d Data) -> impl Query<R = i64, D = i64> + 'd {
     (&d.movie_data).in_s(
         (&d.data_type).o(&d.infotype_info).eq("rating").k()
             .and((&d.data_data).lt("8.5").k())
     )
 }
 
-fn dt_28b<'d>(d: &'d Data) -> impl Query<R = i64> + 'd {
+fn dt_28b<'d>(d: &'d Data) -> impl Query<R = i64, D = i64> + 'd {
     (&d.movie_data).in_s(
         (&d.data_type).o(&d.infotype_info).eq("rating").k()
             .and((&d.data_data).gt("6.5").k())
     )
 }
 
-fn dt_28c<'d>(d: &'d Data) -> impl Query<R = i64> + 'd {
+fn dt_28c<'d>(d: &'d Data) -> impl Query<R = i64, D = i64> + 'd {
     (&d.movie_data).in_s(
         (&d.data_type).o(&d.infotype_info).eq("rating").k()
             .and((&d.data_data).lt("8.5").k())
     )
 }
 
-fn gf_horror<'d>(d: &'d Data) -> impl SetQ + 'd {
+fn gf_horror<'d>(d: &'d Data) -> impl SetQ<D = i64> + 'd {
     (&d.info_type).o(&d.infotype_info).eq("genres").k()
         .and((&d.info_info).in_v(vec!["Horror", "Thriller"]).k())
 }
 
-fn gf_genre6<'d>(d: &'d Data) -> impl SetQ + 'd {
+fn gf_genre6<'d>(d: &'d Data) -> impl SetQ<D = i64> + 'd {
     (&d.info_type).o(&d.infotype_info).eq("genres").k()
         .and((&d.info_info).in_v(genre6()).k())
 }
 
-fn qlink_33a<'d>(d: &'d Data) -> impl Query<R = i64> + 'd {
+fn qlink_33a<'d>(d: &'d Data) -> impl Query<R = i64, D = i64> + 'd {
     (&d.movie_link).in_s(
         (&d.movielink_type).o(&d.linktype_link).in_v(link3()).k()
             .and((&d.movielink_target).in_s(
@@ -77,7 +77,7 @@ fn qlink_33a<'d>(d: &'d Data) -> impl Query<R = i64> + 'd {
     )
 }
 
-fn qlink_33b<'d>(d: &'d Data) -> impl Query<R = i64> + 'd {
+fn qlink_33b<'d>(d: &'d Data) -> impl Query<R = i64, D = i64> + 'd {
     (&d.movie_link).in_s(
         (&d.movielink_type).o(&d.linktype_link).rx(r"follow").k()
             .and((&d.movielink_target).in_s(
@@ -92,7 +92,7 @@ fn qlink_33b<'d>(d: &'d Data) -> impl Query<R = i64> + 'd {
     )
 }
 
-fn qlink_33c<'d>(d: &'d Data) -> impl Query<R = i64> + 'd {
+fn qlink_33c<'d>(d: &'d Data) -> impl Query<R = i64, D = i64> + 'd {
     (&d.movie_link).in_s(
         (&d.movielink_type).o(&d.linktype_link).in_v(link3()).k()
             .and((&d.movielink_target).in_s(

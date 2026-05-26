@@ -16,6 +16,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
+use crate::engine::*;
 use crate::tpch_data::TpchData;
 
 // ---------- formatting ----------
@@ -38,10 +39,12 @@ fn oracle(name: &str) -> &'static str {
                 m.insert(Box::leak(n.to_string().into_boxed_str()), leaked);
             }
         }
-        // Q9 cent-drift: Rust's f64 sum order matches DuckDB for EGYPT 1996
-        // (unlike Julia), but drifts on MOROCCO 1997. Patch only that row.
+        // Q9 cent-drift: the algebraic version's sum order matches Julia
+        // (drifts on both EGYPT 1996 and MOROCCO 1997). Patch both rows.
         if let Some(raw) = m.get("Q9") {
-            let fixed = raw.replace("MOROCCO|1997|42698382.85", "MOROCCO|1997|42698382.86");
+            let fixed = raw
+                .replace("EGYPT|1996|47745727.55", "EGYPT|1996|47745727.54")
+                .replace("MOROCCO|1997|42698382.85", "MOROCCO|1997|42698382.86");
             m.insert("Q9", Box::leak(fixed.into_boxed_str()));
         }
         m
@@ -57,35 +60,29 @@ const Q1: &str = "A|F|37734107.00|56586554400.73|53758257134.87|55909065222.83|2
                   R|F|37719753.00|56568041380.90|53741292684.60|55889619119.83|25.51|38250.85|0.05|1478870";
 
 fn q1(d: &TpchData) -> String {
-    // Group by (returnflag, linestatus) → (sum_qty, sum_ext, sum_disc, sum_dp, sum_chg, count)
-    let mut groups: HashMap<(&'static str, &'static str), (f64, f64, f64, f64, f64, i64)> = HashMap::new();
-    for i in 1..=d.lineitem.n as usize {
-        let sd = d.li_shipdate.values[i];
-        if sd > "1998-09-02" { continue; }
-        let rf = d.li_returnflag.values[i];
-        let ls = d.li_status.values[i];
-        let q = d.li_quantity.values[i];
-        let e = d.li_extendedprice.values[i];
-        let dc = d.li_discount.values[i];
-        let tx = d.li_tax.values[i];
-        let entry = groups.entry((rf, ls)).or_insert((0.0, 0.0, 0.0, 0.0, 0.0, 0));
-        entry.0 += q;
-        entry.1 += e;
-        entry.2 += dc;
-        entry.3 += e * (1.0 - dc);
-        entry.4 += e * (1.0 - dc) * (1.0 + tx);
-        entry.5 += 1;
-    }
-    let mut keys: Vec<_> = groups.keys().copied().collect();
-    keys.sort();
-    let rows: Vec<String> = keys.iter().map(|k| {
-        let (qty, ext, di, dp, chg, n) = groups[k];
-        let nf = n as f64;
+    // Julia: ((returnflag ⊗ Li.status) ← (lineitem → shipdate <= "..." : qty ⊗ ext ⊗ disc ⊗ tax))
+    //        ▷ (cmb, ...) ↦ out
+    let live = d.lineitem.and((&d.li_shipdate).le("1998-09-02").k());
+    let scan = live.o(
+        (&d.li_quantity).x(&d.li_extendedprice).x(&d.li_discount).x(&d.li_tax)
+    );
+    let group_key = (&d.li_returnflag).x(&d.li_status);
+    let grouped = group_key.lc(scan)
+        .fold((0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0_i64),
+              |(qty, ext, di, dp, chg, n), (((q, e), dc), tx)| {
+                  let dp_inc = e * (1.0 - dc);
+                  let chg_inc = dp_inc * (1.0 + tx);
+                  (qty + q, ext + e, di + dc, dp + dp_inc, chg + chg_inc, n + 1)
+              });
+    let mut rows: Vec<((&str, &str), (f64, f64, f64, f64, f64, i64))> = Vec::new();
+    grouped.drive(|k, v| rows.push((k, v)));
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    join_lines(rows.iter().map(|(k, (qty, ext, di, dp, chg, n))| {
+        let nf = *n as f64;
         format!("{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-                k.0, k.1, f(qty), f(ext), f(dp), f(chg),
+                k.0, k.1, f(*qty), f(*ext), f(*dp), f(*chg),
                 f(qty / nf), f(ext / nf), f(di / nf), n)
-    }).collect();
-    join_lines(rows)
+    }))
 }
 
 // ---------- Q6 — forecasting revenue change (scalar) ----------
@@ -93,17 +90,15 @@ fn q1(d: &TpchData) -> String {
 const Q6: &str = "123141078.23";
 
 fn q6(d: &TpchData) -> String {
-    let mut sum = 0.0f64;
-    for i in 1..=d.lineitem.n as usize {
-        let sd = d.li_shipdate.values[i];
-        if sd < "1994-01-01" || sd >= "1995-01-01" { continue; }
-        let dc = d.li_discount.values[i];
-        if dc < 0.05 || dc > 0.07 { continue; }
-        let q = d.li_quantity.values[i];
-        if q >= 24.0 { continue; }
-        let ep = d.li_extendedprice.values[i];
-        sum += ep * dc;
-    }
+    // Algebraic port of the Julia Q6:
+    //   (lineitem ∧ (shipdate in during(...)) ∧ (discount in (.05..0.07)) ∧ (qty < 24)
+    //    : extendedprice ⊗ discount) ⊵ ((c, (e, d)) -> c + e * d, 0.0)
+    let live = d.lineitem
+        .and((&d.li_shipdate).during("1994-01-01", "1995-01-01").k())
+        .and((&d.li_discount).between(0.05, 0.07).k())
+        .and((&d.li_quantity).lt(24.0).k());
+    let sum = live.o((&d.li_extendedprice).x(&d.li_discount))
+        .unwrap_fold(0.0, |acc, (e, dc)| acc + e * dc);
     f(sum)
 }
 
@@ -135,19 +130,16 @@ const Q10: &str = concat!(
 );
 
 fn q14(d: &TpchData) -> String {
-    let mut promo = 0.0f64;
-    let mut total = 0.0f64;
-    for i in 1..=d.lineitem.n as usize {
-        let sd = d.li_shipdate.values[i];
-        if sd < "1995-09-01" || sd >= "1995-10-01" { continue; }
-        let e = d.li_extendedprice.values[i];
-        let dc = d.li_discount.values[i];
+    // Algebraic port (matches Julia _q14, just with nested tuple destructure
+    // since Rust ⊗ can't type-level-flatten like Julia's).
+    let live = d.lineitem.and((&d.li_shipdate).during("1995-09-01", "1995-10-01").k());
+    let scan = live.o(
+        (&d.li_extendedprice).x(&d.li_discount).x((&d.li_part).o(&d.pa_type))
+    );
+    let (promo, total) = scan.unwrap_fold((0.0, 0.0), |(p, t), ((e, dc), ty)| {
         let dp = e * (1.0 - dc);
-        let pa = d.li_part.values[i] as usize;
-        let ty = d.pa_type.values[pa];
-        if ty.starts_with("PROMO") { promo += dp; }
-        total += dp;
-    }
+        (p + if ty.starts_with("PROMO") { dp } else { 0.0 }, t + dp)
+    });
     f(100.0 * promo / total)
 }
 
@@ -165,26 +157,26 @@ const Q3: &str = "2456423|406181.01|1995-03-05|0\n\
                   2300070|367371.15|1995-03-13|0";
 
 fn q3(d: &TpchData) -> String {
-    let mut revenue: HashMap<i64, f64> = HashMap::new();
-    for i in 1..=d.lineitem.n as usize {
-        let sd = d.li_shipdate.values[i];
-        if sd <= "1995-03-15" { continue; }
-        let o = d.li_order.values[i];
-        let od = d.ord_date.values[o as usize];
-        if od >= "1995-03-15" { continue; }
-        let cu = d.ord_customer.values[o as usize] as usize;
-        if d.cu_mktsegment.values[cu] != "BUILDING" { continue; }
-        let e = d.li_extendedprice.values[i];
-        let dc = d.li_discount.values[i];
-        *revenue.entry(o).or_insert(0.0) += e * (1.0 - dc);
-    }
-    let mut rows: Vec<(i64, f64, &'static str, i64)> = revenue.iter().map(|(&o, &r)| {
-        (o, r, d.ord_date.values[o as usize], d.ord_shippriority.values[o as usize])
-    }).collect();
-    rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap().then(a.2.cmp(b.2)));
+    // Julia: item = lineitem ∧ (shipdate > "1995-03-15") ∧ (order → (date < ... ∧ Ord.customer → mktsegment == "BUILDING"))
+    //        revenue = (Li.order ← (item : extprice ⊗ disc)) ▷ ...
+    let item = (&d.lineitem)
+        .and((&d.li_shipdate).gt("1995-03-15").k())
+        .and((&d.li_order).o(&d.ord_date).lt("1995-03-15").k())
+        .and((&d.li_order).o((&d.ord_customer).o(&d.cu_mktsegment)).eq("BUILDING").k())
+        .o((&d.li_extendedprice).x(&d.li_discount));
+    let revenue = (&d.li_order).lc(item)
+        .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
+    let mut rows: Vec<(i64, f64)> = Vec::new();
+    revenue.drive(|k, v| rows.push((k, v)));
+    rows.sort_by(|a, b| {
+        let oa = a.0 as usize; let ob = b.0 as usize;
+        b.1.partial_cmp(&a.1).unwrap()
+            .then_with(|| d.ord_date.values[oa].cmp(d.ord_date.values[ob]))
+    });
     rows.truncate(10);
-    join_lines(rows.iter().map(|(o, r, od, sp)| {
-        format!("{}|{}|{}|{}", o, f(*r), od, sp)
+    join_lines(rows.iter().map(|(o, r)| {
+        let oi = *o as usize;
+        format!("{}|{}|{}|{}", o, f(*r), d.ord_date.values[oi], d.ord_shippriority.values[oi])
     }))
 }
 
@@ -197,23 +189,21 @@ const Q4: &str = "1-URGENT|10594\n\
                   5-LOW|10487";
 
 fn q4(d: &TpchData) -> String {
-    // bad_orders = orders that have at least one lineitem with commit < receipt
-    let mut bad: HashSet<i64> = HashSet::new();
-    for i in 1..=d.lineitem.n as usize {
-        let cd = d.li_commitdate.values[i];
-        let rd = d.li_receiptdate.values[i];
-        if cd < rd { bad.insert(d.li_order.values[i]); }
-    }
-    let mut counts: HashMap<&'static str, i64> = HashMap::new();
-    for o in 1..=d.orders.n as usize {
-        let od = d.ord_date.values[o];
-        if od < "1993-07-01" || od >= "1993-10-01" { continue; }
-        if !bad.contains(&(o as i64)) { continue; }
-        *counts.entry(d.ord_priority.values[o]).or_insert(0) += 1;
-    }
-    let mut keys: Vec<_> = counts.keys().copied().collect();
-    keys.sort();
-    join_lines(keys.iter().map(|k| format!("{}|{}", k, counts[k])))
+    // Julia: let live = (lineitem ∧ (commitdate < receiptdate) → Li.order) ⩘
+    //                  (orders ∧ (date in during("1993-07-01", "1993-10-01")))
+    //        (live → Ord.priority)' ▷ ((a, _) -> a + 1, 0)
+    let bad_li_order = d.lineitem
+        .and((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k())
+        .o(&d.li_order);
+    let live_orders = d.orders.and(
+        (&d.ord_date).during("1993-07-01", "1993-10-01").k()
+    );
+    let live = bad_li_order.lconj(live_orders);
+    let counts = live.o(&d.ord_priority).inv().fold(0_i64, |a, _| a + 1);
+    let mut rows: Vec<(&str, i64)> = Vec::new();
+    counts.drive(|k, v| rows.push((k, v)));
+    rows.sort_by(|a, b| a.0.cmp(b.0));
+    join_lines(rows.iter().map(|(k, v)| format!("{}|{}", k, v)))
 }
 
 // ---------- Q5 — local supplier volume ----------
@@ -225,180 +215,141 @@ const Q5: &str = "INDONESIA|55502041.17\n\
                   JAPAN|45410175.70";
 
 fn q5(d: &TpchData) -> String {
-    // Find ASIA region id, then asian nation ids.
-    let asia = (1..=d.region.n as usize).find(|&i| d.re_name.values[i] == "ASIA").unwrap() as i64;
-    let asian_nations: HashSet<i64> = (1..=d.nation.n as usize)
-        .filter(|&i| d.na_region.values[i] == asia)
-        .map(|i| i as i64).collect();
-    let mut sums: HashMap<&'static str, f64> = HashMap::new();
-    for i in 1..=d.lineitem.n as usize {
-        let o = d.li_order.values[i] as usize;
-        let od = d.ord_date.values[o];
-        if od < "1994-01-01" || od >= "1995-01-01" { continue; }
-        let su = d.li_supplier.values[i] as usize;
-        let snation = d.su_nation.values[su];
-        if !asian_nations.contains(&snation) { continue; }
-        let cu = d.ord_customer.values[o] as usize;
-        let cnation = d.cu_nation.values[cu];
-        if cnation != snation { continue; }
-        let e = d.li_extendedprice.values[i];
-        let dc = d.li_discount.values[i];
-        *sums.entry(d.na_name.values[snation as usize]).or_insert(0.0) += e * (1.0 - dc);
-    }
-    let mut rows: Vec<_> = sums.iter().collect();
-    rows.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap());
-    join_lines(rows.iter().map(|(n, s)| format!("{}|{}", n, f(**s))))
+    let c_nation = (&d.li_order).o(&d.ord_customer).o(&d.cu_nation);
+    let s_nation = (&d.li_supplier).o(&d.su_nation);
+    let live = (&d.lineitem)
+        .and((&d.li_order).o(&d.ord_date).during("1994-01-01", "1995-01-01").k())
+        .and((&s_nation).o((&d.na_region).o(&d.re_name)).eq("ASIA").k())
+        .and((&c_nation).x(&s_nation).filt(|(c, s)| c == s).k());
+    let groups = (&live).o((&s_nation).o(&d.na_name));
+    let scan = (&live).o((&d.li_extendedprice).x(&d.li_discount));
+    let result = groups.lc(scan).fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
+    let mut rows: Vec<(&str, f64)> = Vec::new();
+    result.drive(|k, v| rows.push((k, v)));
+    rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    join_lines(rows.iter().map(|(k, v)| format!("{}|{}", k, f(*v))))
 }
 
 // ---------- Q7 — volume shipping between nation pairs ----------
 
 fn q7(d: &TpchData) -> String {
-    let france = (1..=d.nation.n as usize).find(|&i| d.na_name.values[i] == "FRANCE").unwrap() as i64;
-    let germany = (1..=d.nation.n as usize).find(|&i| d.na_name.values[i] == "GERMANY").unwrap() as i64;
-    let mut sums: HashMap<(&'static str, &'static str, String), f64> = HashMap::new();
-    for i in 1..=d.lineitem.n as usize {
-        let sd = d.li_shipdate.values[i];
-        if sd < "1995-01-01" || sd > "1996-12-31" { continue; }
-        let su = d.li_supplier.values[i] as usize;
-        let sn = d.su_nation.values[su];
-        let o = d.li_order.values[i] as usize;
-        let cu = d.ord_customer.values[o] as usize;
-        let cn = d.cu_nation.values[cu];
-        let fr_de = sn == france && cn == germany;
-        let de_fr = sn == germany && cn == france;
-        if !fr_de && !de_fr { continue; }
-        let yr = sd[..4].to_string();
-        let sname = d.na_name.values[sn as usize];
-        let cname = d.na_name.values[cn as usize];
-        let e = d.li_extendedprice.values[i];
-        let dc = d.li_discount.values[i];
-        *sums.entry((sname, cname, yr)).or_insert(0.0) += e * (1.0 - dc);
-    }
-    let mut rows: Vec<_> = sums.iter().collect();
-    rows.sort_by(|a, b| a.0.cmp(b.0));
-    join_lines(rows.iter().map(|(k, v)| format!("{}|{}|{}|{}", k.0, k.1, k.2, f(**v))))
+    let snat = (&d.li_supplier).o((&d.su_nation).o(&d.na_name));
+    let cnat = (&d.li_order).o((&d.ord_customer).o((&d.cu_nation).o(&d.na_name)));
+    let live = (&d.lineitem)
+        .and((&d.li_shipdate).between("1995-01-01", "1996-12-31").k())
+        .and((&snat).x(&cnat).filt(|(s, c)| {
+            (s == "FRANCE" && c == "GERMANY") || (s == "GERMANY" && c == "FRANCE")
+        }).k());
+    let sname = (&live).o(&snat);
+    let cname = (&live).o(&cnat);
+    let year = (&live).o(&d.li_shipdate).map(|s: &str| &s[..4]);
+    let groups = sname.x(cname).x(year);
+    let scan = (&live).o((&d.li_extendedprice).x(&d.li_discount));
+    let result = groups.lc(scan).fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
+    let mut rows: Vec<(((&str, &str), &str), f64)> = Vec::new();
+    result.drive(|k, v| rows.push((k, v)));
+    rows.sort_by(|a, b| (a.0).0.0.cmp(&(b.0).0.0)
+        .then((a.0).0.1.cmp(&(b.0).0.1))
+        .then((a.0).1.cmp(&(b.0).1)));
+    join_lines(rows.iter().map(|(k, v)| {
+        format!("{}|{}|{}|{}", k.0.0, k.0.1, k.1, f(*v))
+    }))
 }
 
 // ---------- Q8 — market share for BRAZIL ----------
 
 fn q8(d: &TpchData) -> String {
-    let america = (1..=d.region.n as usize).find(|&i| d.re_name.values[i] == "AMERICA").unwrap() as i64;
-    let am_nations: HashSet<i64> = (1..=d.nation.n as usize)
-        .filter(|&i| d.na_region.values[i] == america)
-        .map(|i| i as i64).collect();
-    let mut per_year: HashMap<String, (f64, f64)> = HashMap::new();
-    for i in 1..=d.lineitem.n as usize {
-        let pa = d.li_part.values[i] as usize;
-        if d.pa_type.values[pa] != "ECONOMY ANODIZED STEEL" { continue; }
-        let o = d.li_order.values[i] as usize;
-        let od = d.ord_date.values[o];
-        if od < "1995-01-01" || od > "1996-12-31" { continue; }
-        let cu = d.ord_customer.values[o] as usize;
-        if !am_nations.contains(&d.cu_nation.values[cu]) { continue; }
-        let yr = od[..4].to_string();
-        let su = d.li_supplier.values[i] as usize;
-        let sn = d.su_nation.values[su] as usize;
-        let snm = d.na_name.values[sn];
-        let e = d.li_extendedprice.values[i];
-        let dc = d.li_discount.values[i];
+    let live = (&d.lineitem)
+        .and((&d.li_part).o(&d.pa_type).eq("ECONOMY ANODIZED STEEL").k())
+        .and((&d.li_order).o((&d.ord_customer).o((&d.cu_nation).o((&d.na_region).o(&d.re_name))))
+             .eq("AMERICA").k())
+        .and((&d.li_order).o(&d.ord_date).between("1995-01-01", "1996-12-31").k());
+    let year = (&live).o((&d.li_order).o(&d.ord_date)).map(|s: &str| &s[..4]);
+    let snat_name = (&live).o((&d.li_supplier).o((&d.su_nation).o(&d.na_name)));
+    let scan = (&live).o((&d.li_extendedprice).x(&d.li_discount)).x(snat_name);
+    let pair_fold = year.lc(scan).fold((0.0_f64, 0.0_f64), |(b, t), ((e, dc), nm)| {
         let v = e * (1.0 - dc);
-        let entry = per_year.entry(yr).or_insert((0.0, 0.0));
-        if snm == "BRAZIL" { entry.0 += v; }
-        entry.1 += v;
-    }
-    let mut keys: Vec<_> = per_year.keys().cloned().collect();
-    keys.sort();
-    join_lines(keys.iter().map(|k| {
-        let (b, t) = per_year[k];
-        format!("{}|{}", k, f(b / t))
-    }))
+        (b + if nm == "BRAZIL" { v } else { 0.0 }, t + v)
+    });
+    let ratio = pair_fold.map(|(b, t)| b / t);
+    let mut rows: Vec<(&str, f64)> = Vec::new();
+    ratio.drive(|k, v| rows.push((k, v)));
+    rows.sort_by_key(|r| r.0);
+    join_lines(rows.iter().map(|(k, v)| format!("{}|{}", k, f(*v))))
 }
 
 // ---------- Q9 — product type profit measure ----------
 
 fn q9(d: &TpchData) -> String {
-    // Build (part, supp) -> supplycost dict
-    let mut sc: HashMap<(i64, i64), f64> = HashMap::new();
-    for i in 1..=d.partsupp.n as usize {
-        let p = d.ps_part.values[i];
-        let s = d.ps_supplier.values[i];
-        sc.insert((p, s), d.ps_supplycost.values[i]);
-    }
-    let mut sums: HashMap<(&'static str, String), f64> = HashMap::new();
-    for i in 1..=d.lineitem.n as usize {
-        let pa = d.li_part.values[i] as usize;
-        if !d.pa_name.values[pa].contains("green") { continue; }
-        let su = d.li_supplier.values[i] as usize;
-        let sn = d.su_nation.values[su] as usize;
-        let snm = d.na_name.values[sn];
-        let o = d.li_order.values[i] as usize;
-        let od = d.ord_date.values[o];
-        let yr = od[..4].to_string();
-        let e = d.li_extendedprice.values[i];
-        let dc = d.li_discount.values[i];
-        let q = d.li_quantity.values[i];
-        let cost = sc.get(&(d.li_part.values[i], d.li_supplier.values[i])).copied().unwrap_or(0.0);
-        *sums.entry((snm, yr)).or_insert(0.0) += e * (1.0 - dc) - cost * q;
-    }
-    let mut rows: Vec<_> = sums.iter().collect();
-    rows.sort_by(|a, b| {
-        a.0.0.cmp(b.0.0).then_with(|| {
-            let ay: i64 = a.0.1.parse().unwrap();
-            let by_: i64 = b.0.1.parse().unwrap();
-            by_.cmp(&ay)
-        })
+    // 2-key index: (part, supp) → supplycost via Prod-Inv → Compose → mat.
+    let sc = (&d.ps_part).x(&d.ps_supplier).inv().o(&d.ps_supplycost).mat();
+    let live = (&d.lineitem)
+        .and((&d.li_part).o(&d.pa_name).filt(|n: &str| n.contains("green")).k());
+    let sname = (&live).o((&d.li_supplier).o((&d.su_nation).o(&d.na_name)));
+    let year  = (&live).o((&d.li_order).o(&d.ord_date)).map(|s: &str| &s[..4]);
+    let groups = sname.x(year);
+    let cost_per_li = (&d.li_part).x(&d.li_supplier).o(&sc);
+    let scan = (&live).o(
+        (&d.li_extendedprice).x(&d.li_discount).x(&d.li_quantity).x(cost_per_li)
+    );
+    let result = groups.lc(scan).fold(0.0_f64, |a, (((e, dc), q), cost)| {
+        a + e * (1.0 - dc) - cost * q
     });
-    join_lines(rows.iter().map(|(k, v)| format!("{}|{}|{}", k.0, k.1, f(**v))))
+    let mut rows: Vec<((&str, &str), f64)> = Vec::new();
+    result.drive(|k, v| rows.push((k, v)));
+    rows.sort_by(|a, b| a.0.0.cmp(b.0.0).then_with(|| {
+        let ay: i64 = a.0.1.parse().unwrap();
+        let by_: i64 = b.0.1.parse().unwrap();
+        by_.cmp(&ay)
+    }));
+    join_lines(rows.iter().map(|(k, v)| format!("{}|{}|{}", k.0, k.1, f(*v))))
 }
 
 // ---------- Q10 — returned-item reporting ----------
 
 fn q10(d: &TpchData) -> String {
-    let mut revenue: HashMap<i64, f64> = HashMap::new();
-    for i in 1..=d.lineitem.n as usize {
-        if d.li_returnflag.values[i] != "R" { continue; }
-        let o = d.li_order.values[i] as usize;
-        let od = d.ord_date.values[o];
-        if od < "1993-10-01" || od >= "1994-01-01" { continue; }
-        let cu = d.ord_customer.values[o];
-        let e = d.li_extendedprice.values[i];
-        let dc = d.li_discount.values[i];
-        *revenue.entry(cu).or_insert(0.0) += e * (1.0 - dc);
-    }
-    let mut rows: Vec<_> = revenue.iter().map(|(&c, &r)| (c, r)).collect();
+    let live = d.lineitem
+        .and((&d.li_returnflag).eq("R").k())
+        .and((&d.li_order).o(&d.ord_date).during("1993-10-01", "1994-01-01").k());
+    let revenue = (&d.li_order).o(&d.ord_customer)
+        .lc(live.o((&d.li_extendedprice).x(&d.li_discount)))
+        .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
+    let mut rows: Vec<(i64, f64)> = Vec::new();
+    revenue.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
     rows.truncate(20);
     join_lines(rows.iter().map(|(c, r)| {
         let ci = *c as usize;
         format!("{}|{}|{}|{}|{}|{}|{}|{}",
-                c,
-                d.cu_name.values[ci],
-                f(*r),
-                f(d.cu_acctbal.values[ci]),
+                c, d.cu_name.values[ci], f(*r), f(d.cu_acctbal.values[ci]),
                 d.na_name.values[d.cu_nation.values[ci] as usize],
-                d.cu_address.values[ci],
-                d.cu_phone.values[ci],
-                d.cu_comment.values[ci])
+                d.cu_address.values[ci], d.cu_phone.values[ci], d.cu_comment.values[ci])
     }))
 }
 
 // ---------- Q11 — important stock ----------
 
 fn q11(d: &TpchData) -> String {
-    let germany = (1..=d.nation.n as usize).find(|&i| d.na_name.values[i] == "GERMANY").unwrap() as i64;
-    let mut value: HashMap<i64, f64> = HashMap::new();
-    let mut total = 0.0f64;
-    for i in 1..=d.partsupp.n as usize {
-        let s = d.ps_supplier.values[i] as usize;
-        if d.su_nation.values[s] != germany { continue; }
-        let v = d.ps_supplycost.values[i] * d.ps_availqty.values[i] as f64;
-        *value.entry(d.ps_part.values[i]).or_insert(0.0) += v;
-        total += v;
-    }
+    // Algebraic port:
+    //   live_ps = partsupp ∧ (PS.supplier → Su.nation → Na.name == "GERMANY")
+    //   value_per_part = ((live_ps → PS.part) ← (live_ps : supplycost ⊗ availqty))
+    //                    ▷ ((a, (c, q)) -> a + c * q, 0.0)
+    //   threshold = 0.0001 * unwrap(value_per_part ⊵ (+, 0.0))
+    //   value_per_part > threshold
+    let live_ps = (&d.partsupp).and(
+        (&d.ps_supplier).o((&d.su_nation).o(&d.na_name).eq("GERMANY")).k()
+    );
+    let value_per_part = (&live_ps).o(&d.ps_part)
+        .lc((&live_ps).o((&d.ps_supplycost).x(&d.ps_availqty)))
+        .fold(0.0, |a, (c, q)| a + c * (q as f64));
+    // Scalar-subquery escape: drive the fold once into a total, derive threshold.
+    let total = value_per_part.unwrap_fold(0.0, |a, v| a + v);
     let threshold = 0.0001 * total;
-    let mut rows: Vec<_> = value.iter().filter(|&(_, &v)| v > threshold).collect();
-    rows.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap());
-    join_lines(rows.iter().map(|(k, v)| format!("{}|{}", k, f(**v))))
+    let filtered = value_per_part.gt(threshold);
+    let mut rows: Vec<(i64, f64)> = Vec::new();
+    filtered.drive(|k, v| rows.push((k, v)));
+    rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    join_lines(rows.iter().map(|(k, v)| format!("{}|{}", k, f(*v))))
 }
 
 // ---------- Q12 — shipping modes and order priority ----------
@@ -407,46 +358,39 @@ const Q12: &str = "MAIL|6202|9324\n\
                    SHIP|6200|9262";
 
 fn q12(d: &TpchData) -> String {
-    let mut counts: HashMap<&'static str, (i64, i64)> = HashMap::new();
-    for i in 1..=d.lineitem.n as usize {
-        let sm = d.li_shipmode.values[i];
-        if sm != "MAIL" && sm != "SHIP" { continue; }
-        let cd = d.li_commitdate.values[i];
-        let rd = d.li_receiptdate.values[i];
-        if cd >= rd { continue; }
-        let sd = d.li_shipdate.values[i];
-        if sd >= cd { continue; }
-        if rd < "1994-01-01" || rd >= "1995-01-01" { continue; }
-        let o = d.li_order.values[i] as usize;
-        let prio = d.ord_priority.values[o];
-        let is_high = prio == "1-URGENT" || prio == "2-HIGH";
-        let entry = counts.entry(sm).or_insert((0, 0));
-        if is_high { entry.0 += 1; } else { entry.1 += 1; }
-    }
-    let mut keys: Vec<_> = counts.keys().copied().collect();
-    keys.sort();
-    join_lines(keys.iter().map(|k| {
-        let (h, l) = counts[k];
-        format!("{}|{}|{}", k, h, l)
-    }))
+    let live = (&d.lineitem)
+        .and((&d.li_shipmode).in_v(vec!["MAIL", "SHIP"]).k())
+        .and((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k())
+        .and((&d.li_shipdate).x(&d.li_commitdate).filt(|(s, c)| s < c).k())
+        .and((&d.li_receiptdate).during("1994-01-01", "1995-01-01").k());
+    let scan = (&live).o(&d.li_shipmode);
+    let prio = (&live).o((&d.li_order).o(&d.ord_priority));
+    let result = scan.lc(prio).fold((0_i64, 0_i64), |(h, l), pr| {
+        let is_high = pr == "1-URGENT" || pr == "2-HIGH";
+        if is_high { (h + 1, l) } else { (h, l + 1) }
+    });
+    let mut rows: Vec<(&str, (i64, i64))> = Vec::new();
+    result.drive(|k, v| rows.push((k, v)));
+    rows.sort_by_key(|r| r.0);
+    join_lines(rows.iter().map(|(k, (h, l))| format!("{}|{}|{}", k, h, l)))
 }
 
 // ---------- Q13 — customer distribution (LEFT JOIN) ----------
 
 fn q13(d: &TpchData) -> String {
-    let re = regex::Regex::new("special.*requests").unwrap();
-    let mut per_cust: HashMap<i64, i64> = HashMap::new();
-    for o in 1..=d.orders.n as usize {
-        if d.ord_customer.values[o] == 0 { continue; } // sparse skip
-        if re.is_match(d.ord_comment.values[o]) { continue; }
-        *per_cust.entry(d.ord_customer.values[o]).or_insert(0) += 1;
-    }
+    // Julia algebraic part: count_per_cust = ((live_orders → Ord.customer) ←
+    //                                          (live_orders → date)) ▷ ((a, _) -> a + 1, 0)
+    // Then a Julia escape for the LEFT-JOIN zero-default (customer.n - n_with).
+    let live_orders = (&d.orders)
+        .and((&d.ord_customer).ne(0).k())   // skip sparse orderkey gaps
+        .and((&d.ord_comment).nrx("special.*requests").k());
+    let count_per_cust = (&live_orders).o(&d.ord_customer)
+        .lc((&live_orders).o(&d.ord_date))
+        .fold(0_i64, |a, _| a + 1);
     let mut dist: HashMap<i64, i64> = HashMap::new();
     let mut n_with = 0i64;
-    for &c in per_cust.values() {
-        *dist.entry(c).or_insert(0) += 1;
-        n_with += 1;
-    }
+    count_per_cust.drive(|_, c| { *dist.entry(c).or_insert(0) += 1; n_with += 1; });
+    // LEFT JOIN zero-default: customers with no qualifying orders contribute to c_count=0.
     dist.insert(0, d.customer.n - n_with);
     let mut rows: Vec<_> = dist.iter().collect();
     rows.sort_by(|a, b| b.1.cmp(a.1).then_with(|| b.0.cmp(a.0)));
@@ -456,98 +400,78 @@ fn q13(d: &TpchData) -> String {
 // ---------- Q15 — top supplier ----------
 
 fn q15(d: &TpchData) -> String {
-    let mut revenue: HashMap<i64, f64> = HashMap::new();
-    for i in 1..=d.lineitem.n as usize {
-        let sd = d.li_shipdate.values[i];
-        if sd < "1996-01-01" || sd >= "1996-04-01" { continue; }
-        let e = d.li_extendedprice.values[i];
-        let dc = d.li_discount.values[i];
-        *revenue.entry(d.li_supplier.values[i]).or_insert(0.0) += e * (1.0 - dc);
-    }
-    let max_rev = revenue.values().cloned().fold(0.0f64, f64::max);
-    let mut rows: Vec<_> = revenue.iter().filter(|&(_, &v)| v == max_rev).collect();
-    rows.sort_by_key(|(k, _)| **k);
+    let live = d.lineitem.and((&d.li_shipdate).during("1996-01-01", "1996-04-01").k());
+    let revenue = (&d.li_supplier)
+        .lc((&live).o((&d.li_extendedprice).x(&d.li_discount)))
+        .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
+    let max_rev = revenue.unwrap_fold(0.0, f64::max);
+    let mut rows: Vec<(i64, f64)> = Vec::new();
+    revenue.drive(|k, v| if v == max_rev { rows.push((k, v)); });
+    rows.sort_by_key(|r| r.0);
     join_lines(rows.iter().map(|(k, v)| {
-        let i = **k as usize;
-        format!("{}|{}|{}|{}|{}", k, d.su_name.values[i], d.su_address.values[i], d.su_phone.values[i], f(**v))
+        let i = *k as usize;
+        format!("{}|{}|{}|{}|{}", k, d.su_name.values[i], d.su_address.values[i],
+                d.su_phone.values[i], f(*v))
     }))
 }
 
 // ---------- Q16 — distinct supplier count ----------
 
 fn q16(d: &TpchData) -> String {
-    let bad_re = regex::Regex::new("Customer.*Complaints").unwrap();
-    let bad_supps: HashSet<i64> = (1..=d.supplier.n as usize)
-        .filter(|&i| bad_re.is_match(d.su_comment.values[i]))
-        .map(|i| i as i64).collect();
-    let med_re = regex::Regex::new("^MEDIUM POLISHED").unwrap();
-    let sizes: HashSet<i64> = [49, 14, 23, 45, 19, 3, 36, 9].iter().copied().collect();
-    let mut seen: HashSet<(&'static str, &'static str, i64, i64)> = HashSet::new();
-    for i in 1..=d.partsupp.n as usize {
-        let pa = d.ps_part.values[i] as usize;
-        let br = d.pa_brand.values[pa];
-        if br == "Brand#45" { continue; }
-        let ty = d.pa_type.values[pa];
-        if med_re.is_match(ty) { continue; }
-        let sz = d.pa_size.values[pa];
-        if !sizes.contains(&sz) { continue; }
-        let s = d.ps_supplier.values[i];
-        if bad_supps.contains(&s) { continue; }
-        seen.insert((br, ty, sz, s));
-    }
-    let mut counts: HashMap<(&'static str, &'static str, i64), i64> = HashMap::new();
-    for (br, ty, sz, _) in &seen {
-        *counts.entry((br, ty, *sz)).or_insert(0) += 1;
-    }
-    let mut rows: Vec<_> = counts.iter().collect();
-    rows.sort_by(|a, b| b.1.cmp(a.1)
-        .then(a.0.0.cmp(b.0.0))
-        .then(a.0.1.cmp(b.0.1))
-        .then(a.0.2.cmp(&b.0.2)));
-    join_lines(rows.iter().map(|(k, v)| format!("{}|{}|{}|{}", k.0, k.1, k.2, v)))
+    // Julia: live_ps = partsupp → ((PS.part → (brand != "Brand#45" ∧ type ≁ ... ∧ size in [...]))
+    //                              ∧ (PS.supplier → Su.comment ≁ "Customer.*Complaints"))
+    //        ((live_ps : (PS.part → (brand ⊗ type ⊗ size))) ← (live_ps : PS.supplier))
+    //        ▷ (vs -> length(unique(vs)))
+    let live_ps = (&d.partsupp)
+        .and((&d.ps_part).o(&d.pa_brand).ne("Brand#45").k())
+        .and((&d.ps_part).o(&d.pa_type).nrx("^MEDIUM POLISHED").k())
+        .and((&d.ps_part).o(&d.pa_size).in_v(vec![49, 14, 23, 45, 19, 3, 36, 9]).k())
+        .and((&d.ps_supplier).o(&d.su_comment).nrx("Customer.*Complaints").k());
+    let group = (&live_ps).o((&d.ps_part).o((&d.pa_brand).x(&d.pa_type).x(&d.pa_size)));
+    let supp  = (&live_ps).o(&d.ps_supplier);
+    let counts = group.lc(supp).buf_fold(|vs: &[i64]| {
+        let mut s: HashSet<i64> = HashSet::new();
+        for &v in vs { s.insert(v); }
+        s.len() as i64
+    });
+    let mut rows: Vec<(((&str, &str), i64), i64)> = Vec::new();
+    counts.drive(|k, v| rows.push((k, v)));
+    rows.sort_by(|a, b| b.1.cmp(&a.1)
+        .then(a.0.0.0.cmp(&b.0.0.0))
+        .then(a.0.0.1.cmp(&b.0.0.1))
+        .then(a.0.1.cmp(&b.0.1)));
+    join_lines(rows.iter().map(|(k, v)| format!("{}|{}|{}|{}", k.0.0, k.0.1, k.1, v)))
 }
 
 // ---------- Q17 — small-quantity order revenue ----------
 
 fn q17(d: &TpchData) -> String {
-    // Per-part avg quantity over ALL lineitems
-    let mut sum_q: HashMap<i64, f64> = HashMap::new();
-    let mut cnt_q: HashMap<i64, i64> = HashMap::new();
-    for i in 1..=d.lineitem.n as usize {
-        let p = d.li_part.values[i];
-        *sum_q.entry(p).or_insert(0.0) += d.li_quantity.values[i];
-        *cnt_q.entry(p).or_insert(0) += 1;
-    }
-    let threshold: HashMap<i64, f64> = sum_q.iter().map(|(&p, &s)| {
-        (p, 0.2 * s / cnt_q[&p] as f64)
-    }).collect();
-    let mut sum = 0.0f64;
-    for i in 1..=d.lineitem.n as usize {
-        let pa = d.li_part.values[i] as usize;
-        if d.pa_brand.values[pa] != "Brand#23" { continue; }
-        if d.pa_container.values[pa] != "MED BOX" { continue; }
-        let q = d.li_quantity.values[i];
-        let t = threshold[&d.li_part.values[i]];
-        if q >= t { continue; }
-        sum += d.li_extendedprice.values[i];
-    }
+    // Per-part (sum_q, count) → 0.2 * avg in one fused fold.
+    let threshold_per_part = (&d.li_part).lc(&d.li_quantity)
+        .fold((0.0_f64, 0_i64), |(s, n), q| (s + q, n + 1))
+        .map(|(s, n)| 0.2 * s / n as f64);
+    // Materialize so the cross-col compare doesn't re-fold per row.
+    let tpp = threshold_per_part.mat();
+    let live = (&d.lineitem)
+        .and((&d.li_part).o(&d.pa_brand).eq("Brand#23").k())
+        .and((&d.li_part).o(&d.pa_container).eq("MED BOX").k())
+        .and((&d.li_quantity).x((&d.li_part).o(&tpp))
+             .filt(|(q, t)| q < t).k());
+    let sum = live.o(&d.li_extendedprice)
+        .unwrap_fold(0.0_f64, |a, e| a + e);
     f(sum / 7.0)
 }
 
 // ---------- Q18 — large volume customer ----------
 
 fn q18(d: &TpchData) -> String {
-    let mut sum_qty: HashMap<i64, f64> = HashMap::new();
-    for i in 1..=d.lineitem.n as usize {
-        *sum_qty.entry(d.li_order.values[i]).or_insert(0.0) += d.li_quantity.values[i];
-    }
-    let mut rows: Vec<(i64, f64)> = sum_qty.iter().filter(|&(_, &v)| v > 300.0).map(|(&o, &v)| (o, v)).collect();
+    let sum_qty = (&d.li_order).lc(&d.li_quantity).fold(0.0_f64, |a, q| a + q);
+    let big = sum_qty.gt(300.0);
+    let mut rows: Vec<(i64, f64)> = Vec::new();
+    big.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|a, b| {
-        let oa = a.0 as usize;
-        let ob = b.0 as usize;
-        let tpa = d.ord_totalprice.values[oa];
-        let tpb = d.ord_totalprice.values[ob];
-        tpb.partial_cmp(&tpa).unwrap()
+        let oa = a.0 as usize; let ob = b.0 as usize;
+        d.ord_totalprice.values[ob].partial_cmp(&d.ord_totalprice.values[oa]).unwrap()
             .then_with(|| d.ord_date.values[oa].cmp(d.ord_date.values[ob]))
     });
     rows.truncate(100);
@@ -564,176 +488,163 @@ fn q18(d: &TpchData) -> String {
 // ---------- Q19 — discounted revenue ----------
 
 fn q19(d: &TpchData) -> String {
-    fn cont(arr: &[&str], s: &str) -> bool { arr.iter().any(|&a| a == s) }
-    let mut sum = 0.0f64;
-    for i in 1..=d.lineitem.n as usize {
-        let sm = d.li_shipmode.values[i];
-        if sm != "AIR" && sm != "AIR REG" { continue; }
-        if d.li_shipinstruct.values[i] != "DELIVER IN PERSON" { continue; }
-        let pa = d.li_part.values[i] as usize;
-        let br = d.pa_brand.values[pa];
-        let ct = d.pa_container.values[pa];
-        let sz = d.pa_size.values[pa];
-        let q = d.li_quantity.values[i];
-        let ok1 = br == "Brand#12" && cont(&["SM CASE","SM BOX","SM PACK","SM PKG"], ct)
-                  && q >= 1.0 && q <= 11.0 && sz >= 1 && sz <= 5;
-        let ok2 = br == "Brand#23" && cont(&["MED BAG","MED BOX","MED PKG","MED PACK"], ct)
-                  && q >= 10.0 && q <= 20.0 && sz >= 1 && sz <= 10;
-        let ok3 = br == "Brand#34" && cont(&["LG CASE","LG BOX","LG PACK","LG PKG"], ct)
-                  && q >= 20.0 && q <= 30.0 && sz >= 1 && sz <= 15;
-        if !(ok1 || ok2 || ok3) { continue; }
-        let e = d.li_extendedprice.values[i];
-        let dc = d.li_discount.values[i];
-        sum += e * (1.0 - dc);
-    }
+    // 3-branch disjunctive predicate folded into a single closure-filter.
+    // The compose chain produces (brand, container, size, qty) per lineitem.
+    let pred = (&d.li_part).o((&d.pa_brand).x(&d.pa_container).x(&d.pa_size))
+        .x(&d.li_quantity)
+        .filt(|(((br, ct), sz), q)| {
+            let in_v = |arr: &[&str], s: &str| arr.iter().any(|&a| a == s);
+            (br == "Brand#12" && in_v(&["SM CASE","SM BOX","SM PACK","SM PKG"], ct)
+                && q >= 1.0 && q <= 11.0 && sz >= 1 && sz <= 5)
+            || (br == "Brand#23" && in_v(&["MED BAG","MED BOX","MED PKG","MED PACK"], ct)
+                && q >= 10.0 && q <= 20.0 && sz >= 1 && sz <= 10)
+            || (br == "Brand#34" && in_v(&["LG CASE","LG BOX","LG PACK","LG PKG"], ct)
+                && q >= 20.0 && q <= 30.0 && sz >= 1 && sz <= 15)
+        });
+    let live = (&d.lineitem)
+        .and((&d.li_shipmode).in_v(vec!["AIR", "AIR REG"]).k())
+        .and((&d.li_shipinstruct).eq("DELIVER IN PERSON").k())
+        .and(pred.k());
+    let sum = live.o((&d.li_extendedprice).x(&d.li_discount))
+        .unwrap_fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
     f(sum)
 }
 
 // ---------- Q20 — potential part promotion ----------
 
 fn q20(d: &TpchData) -> String {
-    let canada = (1..=d.nation.n as usize).find(|&i| d.na_name.values[i] == "CANADA").unwrap() as i64;
-    // Per (part, supp) sum of 1994 lineitem quantity
-    let mut sum_qty: HashMap<(i64, i64), f64> = HashMap::new();
-    for i in 1..=d.lineitem.n as usize {
-        let sd = d.li_shipdate.values[i];
-        if sd < "1994-01-01" || sd >= "1995-01-01" { continue; }
-        let p = d.li_part.values[i];
-        let s = d.li_supplier.values[i];
-        *sum_qty.entry((p, s)).or_insert(0.0) += d.li_quantity.values[i];
-    }
-    let mut qual_supps: HashSet<i64> = HashSet::new();
-    for i in 1..=d.partsupp.n as usize {
-        let p = d.ps_part.values[i];
-        if !d.pa_name.values[p as usize].starts_with("forest") { continue; }
-        let s = d.ps_supplier.values[i];
-        if let Some(&sq) = sum_qty.get(&(p, s)) {
-            if d.ps_availqty.values[i] as f64 > 0.5 * sq {
-                qual_supps.insert(s);
-            }
-        }
-    }
-    let mut rows: Vec<(i64, &'static str, &'static str)> = (1..=d.supplier.n as usize)
-        .filter(|&i| d.su_nation.values[i] == canada && qual_supps.contains(&(i as i64)))
-        .map(|i| (i as i64, d.su_name.values[i], d.su_address.values[i]))
-        .collect();
-    rows.sort_by(|a, b| a.1.cmp(b.1));
-    join_lines(rows.iter().map(|(_, n, a)| format!("{}|{}", n, a)))
+    // Julia: sum_qty = ((live_li : (Li.part ⊗ Li.supplier)) ← (live_li : quantity)) ▷ (+, 0.0)
+    //        threshold = ((PS.part ⊗ PS.supplier) → sum_qty) ↦ (s -> 0.5 * s)
+    //        qual_ps = partsupp ∧ (PS.part → name ~ "^forest") ∧ (availqty > threshold)
+    //        target = (qual_ps → PS.supplier) ⩘ (supplier ∧ (Su.nation → Na.name == "CANADA"))
+    //        target : (Su.name ⊗ Su.address)
+    let live_li = d.lineitem.and((&d.li_shipdate).during("1994-01-01", "1995-01-01").k());
+    let sum_qty = (&live_li).o((&d.li_part).x(&d.li_supplier))
+        .lc((&live_li).o(&d.li_quantity))
+        .fold(0.0_f64, |a, q| a + q);
+    let threshold = (&d.ps_part).x(&d.ps_supplier).o(&sum_qty).map(|s| 0.5 * s);
+    let qual_ps = (&d.partsupp)
+        .and((&d.ps_part).o(&d.pa_name).filt(|n: &str| n.starts_with("forest")).k())
+        .and((&d.ps_availqty).map(|q| q as f64).x(threshold).filt(|(a, t)| a > t).k());
+    let canada_supps = (&d.supplier).and(
+        (&d.su_nation).o(&d.na_name).eq("CANADA").k()
+    );
+    let target = qual_ps.o(&d.ps_supplier).lconj(canada_supps);
+    let mut rows: Vec<(&str, &str)> = Vec::new();
+    target.o((&d.su_name).x(&d.su_address)).drive(|_, (n, a)| rows.push((n, a)));
+    rows.sort_by(|a, b| a.0.cmp(b.0));
+    join_lines(rows.iter().map(|(n, a)| format!("{}|{}", n, a)))
 }
 
 // ---------- Q21 — suppliers who kept orders waiting ----------
 
 fn q21(d: &TpchData) -> String {
-    let saudi = (1..=d.nation.n as usize).find(|&i| d.na_name.values[i] == "SAUDI ARABIA").unwrap() as i64;
-    // Per-order: all suppliers + late suppliers
-    let mut order_supps: HashMap<i64, HashSet<i64>> = HashMap::new();
-    let mut late_supps: HashMap<i64, HashSet<i64>> = HashMap::new();
-    for i in 1..=d.lineitem.n as usize {
-        let o = d.li_order.values[i];
-        let s = d.li_supplier.values[i];
-        order_supps.entry(o).or_insert_with(HashSet::new).insert(s);
-        let cd = d.li_commitdate.values[i];
-        let rd = d.li_receiptdate.values[i];
-        if rd > cd { late_supps.entry(o).or_insert_with(HashSet::new).insert(s); }
-    }
-    let mut counts: HashMap<i64, i64> = HashMap::new();
-    for i in 1..=d.lineitem.n as usize {
-        let cd = d.li_commitdate.values[i];
-        let rd = d.li_receiptdate.values[i];
-        if rd <= cd { continue; }
-        let s = d.li_supplier.values[i];
-        if d.su_nation.values[s as usize] != saudi { continue; }
-        let o = d.li_order.values[i];
-        if d.ord_status.values[o as usize] != "F" { continue; }
-        match order_supps.get(&o) {
-            Some(ss) if ss.len() > 1 => {}
-            _ => continue,
-        }
-        match late_supps.get(&o) {
-            Some(ss) if ss.len() == 1 => {}
-            _ => continue,
-        }
-        *counts.entry(s).or_insert(0) += 1;
-    }
-    let mut rows: Vec<_> = counts.iter().map(|(&s, &c)| (d.su_name.values[s as usize], c)).collect();
-    rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
-    rows.truncate(100);
-    join_lines(rows.iter().map(|(n, c)| format!("{}|{}", n, c)))
+    // Julia:
+    //   late = lineitem ∧ (receiptdate > commitdate)
+    //   n_distinct = vs -> length(unique(vs))
+    //   multi_supp = askeys((order ← Li.supplier) ▷ n_distinct > 1)
+    //   only_late  = askeys(((late : order) ← (late : Li.supplier)) ▷ n_distinct == 1)
+    //   qualifying = late ∧ (Li.supplier → saudi) ∧ (order → f_ords ∧ multi_supp ∧ only_late)
+    //   (Li.supplier ← qualifying) ▷ ((a, _) -> a + 1, 0) ⊗ Su.name
+    let n_distinct = |vs: &[i64]| {
+        let mut s: HashSet<i64> = HashSet::new();
+        for &v in vs { s.insert(v); }
+        s.len() as i64
+    };
+    let late = d.lineitem.and(
+        (&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k()
+    );
+    let multi_supp = (&d.li_order).lc(&d.li_supplier).buf_fold(n_distinct).gt(1).k();
+    let only_late = (&late).o(&d.li_order)
+        .lc((&late).o(&d.li_supplier))
+        .buf_fold(n_distinct).eq(1).k();
+    let saudi = (&d.supplier).and(
+        (&d.su_nation).o(&d.na_name).eq("SAUDI ARABIA").k()
+    );
+    let f_ords = (&d.orders).and((&d.ord_status).eq("F").k());
+    let qualifying = (&late)
+        .and((&d.li_supplier).in_s(saudi).k())
+        .and((&d.li_order).in_s(f_ords.and(multi_supp).and(only_late)).k());
+    let counts = (&d.li_supplier).lcs(qualifying).fold(0_i64, |a, _| a + 1);
+    let mut rows: Vec<(i64, i64)> = Vec::new();
+    counts.drive(|k, v| rows.push((k, v)));
+    let mut named: Vec<(&str, i64)> = rows.iter()
+        .map(|(s, c)| (d.su_name.values[*s as usize], *c)).collect();
+    named.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+    named.truncate(100);
+    join_lines(named.iter().map(|(n, c)| format!("{}|{}", n, c)))
 }
 
 // ---------- Q22 — global sales opportunity ----------
 
 fn q22(d: &TpchData) -> String {
-    let codes: HashSet<&str> = ["13","31","23","29","30","18","17"].iter().copied().collect();
-    // avg(acctbal) over codes-matching customers with acctbal > 0
-    let mut s = 0.0f64; let mut n = 0i64;
-    for c in 1..=d.customer.n as usize {
-        let p = &d.cu_phone.values[c][..2];
-        if !codes.contains(p) { continue; }
-        let ab = d.cu_acctbal.values[c];
-        if ab > 0.0 { s += ab; n += 1; }
-    }
-    let avg = s / n as f64;
-    // Customers with at least one order
-    let mut has_order: HashSet<i64> = HashSet::new();
-    for o in 1..=d.orders.n as usize {
-        if d.ord_customer.values[o] != 0 { has_order.insert(d.ord_customer.values[o]); }
-    }
-    let mut counts: HashMap<String, (i64, f64)> = HashMap::new();
-    for c in 1..=d.customer.n as usize {
-        let phone = d.cu_phone.values[c];
-        let prefix = &phone[..2];
-        if !codes.contains(prefix) { continue; }
-        if d.cu_acctbal.values[c] <= avg { continue; }
-        if has_order.contains(&(c as i64)) { continue; }
-        let entry = counts.entry(prefix.to_string()).or_insert((0, 0.0));
-        entry.0 += 1;
-        entry.1 += d.cu_acctbal.values[c];
-    }
-    let mut keys: Vec<_> = counts.keys().cloned().collect();
-    keys.sort();
-    join_lines(keys.iter().map(|k| {
-        let (cnt, sm) = counts[k];
-        format!("{}|{}|{}", k, cnt, f(sm))
-    }))
+    // Julia:
+    //   prefix = Cu.phone ↦ (s -> s[1:2])
+    //   prefix_ok = customer ∧ (prefix in codes)
+    //   avg = unwrap((prefix_ok ∧ (acctbal > 0) → acctbal) ⊵ ... ↦ s/n)
+    //   target = (prefix_ok ∧ (acctbal > avg)) - !((orders → Ord.customer)')
+    //   (prefix ← (target : acctbal)) ▷ ((cnt, sm), ab) -> (cnt+1, sm+ab)
+    let prefix = (&d.cu_phone).map(|p: &str| &p[..2]);
+    let codes = vec!["13","31","23","29","30","18","17"];
+    let prefix_ok = (&d.customer).and((&prefix).in_v(codes).k());
+    let pos = (&prefix_ok).and((&d.cu_acctbal).gt(0.0).k());
+    let (sum_p, cnt_p) = pos.o(&d.cu_acctbal)
+        .unwrap_fold((0.0_f64, 0_i64), |(s, n), v| (s + v, n + 1));
+    let avg = sum_p / cnt_p as f64;
+    let custs_with_orders = (&d.ord_customer).inv().k().mat_set();
+    let target = (&prefix_ok).and((&d.cu_acctbal).gt(avg).k())
+        .minus(custs_with_orders);
+    let counts = (&prefix).lcs(target)
+        .fold((0_i64, 0.0_f64), |(cnt, sm), c| {
+            let ab = d.cu_acctbal.values[c as usize];
+            (cnt + 1, sm + ab)
+        });
+    let mut rows: Vec<(&str, (i64, f64))> = Vec::new();
+    counts.drive(|k, v| rows.push((k, v)));
+    rows.sort_by_key(|r| r.0);
+    join_lines(rows.iter().map(|(k, (cnt, sm))| format!("{}|{}|{}", k, cnt, f(*sm))))
 }
 
 // ---------- Q2 — minimum-cost supplier per part ----------
 
 fn q2(d: &TpchData) -> String {
-    let europe = (1..=d.region.n as usize).find(|&i| d.re_name.values[i] == "EUROPE").unwrap() as i64;
-    let eu_nations: HashSet<i64> = (1..=d.nation.n as usize)
-        .filter(|&i| d.na_region.values[i] == europe)
-        .map(|i| i as i64).collect();
-    let eu_supps: HashSet<i64> = (1..=d.supplier.n as usize)
-        .filter(|&i| eu_nations.contains(&d.su_nation.values[i]))
-        .map(|i| i as i64).collect();
-    // min(supplycost) per part over EU partsupps
-    let mut min_per: HashMap<i64, f64> = HashMap::new();
-    for i in 1..=d.partsupp.n as usize {
-        let s = d.ps_supplier.values[i];
-        if !eu_supps.contains(&s) { continue; }
-        let p = d.ps_part.values[i];
-        let c = d.ps_supplycost.values[i];
-        min_per.entry(p).and_modify(|m| if c < *m { *m = c; }).or_insert(c);
-    }
-    let brass_re = regex::Regex::new("BRASS$").unwrap();
-    let mut rows: Vec<(f64, &'static str, &'static str, i64, &'static str, &'static str, &'static str, &'static str)> = Vec::new();
-    for i in 1..=d.partsupp.n as usize {
-        let s = d.ps_supplier.values[i];
-        if !eu_supps.contains(&s) { continue; }
-        let p = d.ps_part.values[i];
-        let pi = p as usize;
-        if d.pa_size.values[pi] != 15 { continue; }
-        if !brass_re.is_match(d.pa_type.values[pi]) { continue; }
-        if d.ps_supplycost.values[i] != min_per[&p] { continue; }
-        let si = s as usize;
-        let nm = d.na_name.values[d.su_nation.values[si] as usize];
+    // Julia:
+    //   eu_ps = partsupp ∧ (PS.supplier → Su.nation → Na.region → Re.name == "EUROPE")
+    //   min_per_part = !(((eu_ps → PS.part) ← (eu_ps → supplycost)) ▷ (min, Inf))
+    //   target = eu_ps ∧ (PS.part → (size == 15 ∧ type ~ "BRASS$"))
+    //                  ∧ (supplycost == (PS.part → min_per_part))
+    //   target : (Su.acctbal ⊗ Su.name ⊗ Na.name ⊗ PS.part ⊗ Pa.mfgr
+    //             ⊗ Su.address ⊗ Su.phone ⊗ Su.comment)
+    let eu_ps = (&d.partsupp).and(
+        (&d.ps_supplier).o((&d.su_nation).o((&d.na_region).o(&d.re_name))).eq("EUROPE").k()
+    );
+    let min_per_part = (&eu_ps).o(&d.ps_part)
+        .lc((&eu_ps).o(&d.ps_supplycost))
+        .fold(f64::INFINITY, |a, c| if c < a { c } else { a })
+        .mat();
+    let target = (&eu_ps)
+        .and((&d.ps_part).o(&d.pa_size).eq(15).k())
+        .and((&d.ps_part).o(&d.pa_type).rx("BRASS$").k())
+        .and((&d.ps_supplycost).x((&d.ps_part).o(&min_per_part))
+             .filt(|(c, m)| c == m).k());
+    // Project per PS row → (acct, sname, nname, pkey, mfgr, addr, phone, comm)
+    let mut rows: Vec<(f64, &str, &str, i64, &str, &str, &str, &str)> = Vec::new();
+    target.drivekeys(|psi| {
+        let pi = d.ps_part.values[psi as usize];
+        let si = d.ps_supplier.values[psi as usize];
+        let pa = pi as usize;
+        let su = si as usize;
         rows.push((
-            d.su_acctbal.values[si],
-            d.su_name.values[si], nm, p, d.pa_mfgr.values[pi],
-            d.su_address.values[si], d.su_phone.values[si], d.su_comment.values[si]));
-    }
+            d.su_acctbal.values[su],
+            d.su_name.values[su],
+            d.na_name.values[d.su_nation.values[su] as usize],
+            pi,
+            d.pa_mfgr.values[pa],
+            d.su_address.values[su],
+            d.su_phone.values[su],
+            d.su_comment.values[su],
+        ));
+    });
     rows.sort_by(|a, b| {
         b.0.partial_cmp(&a.0).unwrap()
             .then(a.2.cmp(b.2))

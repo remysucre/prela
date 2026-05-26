@@ -84,7 +84,7 @@ fn q7b(d: &Data) -> String {
     fmt2(m)
 }
 
-fn bio_filter_7c<'d>(d: &'d Data) -> impl SetQ + 'd {
+fn bio_filter_7c<'d>(d: &'d Data) -> impl SetQ<D = i64> + 'd {
     (&d.personinfo_type).o(&d.infotype_info).eq("mini biography").k()
         .and((&d.personinfo_note).k())
 }
