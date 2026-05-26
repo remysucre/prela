@@ -47,6 +47,41 @@ qualifying = (late
 counts = (Li.supplier ← qualifying) ▷ ((a, _) -> a + 1, 0)
 counts ⊗ Su.name
 ```
+
+In the examples, constructs like `movie`, `Info.type` are regular Julia variables of type
+ `Relation`, and operators like `→`, `∧`, and `in` are regular Julia functions overloaded
+ to operate on relations.
+Directly embedding Prela like this allows one to freely intermix queries with
+ code of the host language to extend the reach of Prela,
+ both in terms of expressiveness and performance.
+For example, the Prela version of [TPCH Q13](https://github.com/dragansah/tpch-dbgen/blob/master/tpch-queries/13.sql)
+ uses Julia code to implement `LEFT JOIN` semantics (Prela currently [has no `NULL`s](https://arxiv.org/abs/2307.15751)):
+
+```julia
+let live_orders = orders ∧ (Ord.comment ≁ r"special.*requests"),
+    # Per-customer order count (only for customers with at least one match)
+    count_per_cust = (Ord.customer ← (live_orders → date)) ▷ ((a, _) -> a + 1, 0)
+    # Build the c_count → custdist distribution. Customers with no matching
+    # orders get c_count = 0 (LEFT JOIN semantic).
+    dist = Dict{Int, Int}()
+    n_with = 0
+    Prela.drive(count_per_cust, (_, c) -> begin
+        dist[c] = get(dist, c, 0) + 1
+        n_with += 1
+    end)
+    dist[0] = customer.n - n_with
+    InlineRel{Int, Int}([k => v for (k, v) in dist])
+end
+```
+
+Unlike SQL's user-defined functions, Prela "UDF"s are inlined and compiled together with the outer query
+ without penalizing performance.
+User can also swap out parts of the query with custom kernels to squeeze out extra performance,
+ as exercised in the [Rust TPCH queries](./rust/src).
+
+See [julia/queries.jl](./julia/queries.jl) and [julia/tpch_queries.jl] for more examples,
+ or the corresponding Rust versions under [rust/src](./rust/src).
+
 ## Benchmark
 
 **Take performance numbers with a grain of salt, Prela is not (and doesn't want to be) a database**
