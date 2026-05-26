@@ -195,9 +195,9 @@ const _ORACLE_Q4 = "1-URGENT|10594\n" *
                    "5-LOW|10487"
 
 function _q4()
-    let corrupted = (lineitem → (commitdate < receiptdate) : order) ⩘
+    let late = (lineitem → (commitdate < receiptdate) : order) ⩘
                (orders ∧ (date in during("1993-07-01", "1993-10-01")))
-        (priority ← corrupted) ▷ ((a, _) -> a + 1, 0)
+        (priority ← late) ▷ ((a, _) -> a + 1, 0)
     end
 end
 _q_tpch("4", _ORACLE_Q4, _q4)
@@ -329,8 +329,7 @@ const _ORACLE_Q11 = read("/tmp/tpch_oracles/Q11.txt", String)
 function _q11()
     let live_ps = partsupp ∧ (PS.supplier → Su.nation → Na.name == "GERMANY"),
         # sum supplycost * availqty per partkey
-        value_per_part = ((live_ps → PS.part) ←
-                          (live_ps : (supplycost ⊗ availqty))) ▷ (
+        value_per_part = (PS.part ← (live_ps : (supplycost ⊗ availqty))) ▷ (
             (a, (c, q)) -> a + c * q, 0.0),
         # global total → unwrap to scalar so we can multiply by 0.0001
         threshold = 0.0001 * unwrap(value_per_part ⊵ (+, 0.0))
@@ -499,17 +498,9 @@ function _q16()
                                           ∧ (type ≁ r"^MEDIUM POLISHED")
                                           ∧ (size in (49, 14, 23, 45, 19, 3, 36, 9))))
                               ∧ (PS.supplier → Su.comment ≁ r"Customer.*Complaints"))
-        # count distinct (group, supplier) pairs in Julia (Prela has no native distinct fold)
-        seen = Set{Tuple{String, String, Int, Int}}()
-        Prela.drive(
-            live_ps : ((PS.part → (brand ⊗ type ⊗ size)) ⊗ PS.supplier),
-            (_, ((b, t, s), k)) -> push!(seen, (b, t, s, k.id)))
-        counts = Dict{Tuple{String, String, Int}, Int}()
-        for (b, t, s, _) in seen
-            key = (b, t, s)
-            counts[key] = get(counts, key, 0) + 1
-        end
-        InlineRel{Tuple{String, String, Int}, Int}([k => v for (k, v) in counts])
+        # Count distinct suppliers per (brand, type, size) via buffered ▷.
+        ((PS.part → (brand ⊗ type ⊗ size)) ←
+         (live_ps : PS.supplier)) ▷ (vs -> length(unique(vs)))
     end
 end
 _q_tpch("16", _ORACLE_Q16, _q16;
@@ -573,8 +564,7 @@ const _ORACLE_Q20 = read("/tmp/tpch_oracles/Q20.txt", String)
 function _q20()
     let live_li = lineitem ∧ (shipdate in during("1994-01-01", "1995-01-01")),
         # Per-(part, supp) sum of 1994 lineitem quantity — algebraic 2-key fold.
-        sum_qty = ((live_li : (Li.part ⊗ Li.supplier)) ←
-                   (live_li : quantity)) ▷ (+, 0.0),
+        sum_qty = ((Li.part ⊗ Li.supplier) ← (live_li : quantity)) ▷ (+, 0.0),
         # Per-PS half-of-sum threshold. Missing (part, supp) tuples (no 1994
         # lineitems) emit nothing, so the cross-col `availqty > threshold`
         # skips those rows — matches SQL "comparison against NULL is false".
