@@ -606,4 +606,5 @@ _q_tpch("21", _ORACLE_Q21, _q21;
 
 # Auto-run on include so workflow is: edit, `include("tpch_queries.jl")`,
 # results print. The upsert in _q_tpch makes re-includes idempotent.
-runall_tpch()
+# Skippable for the bench script via PRELA_SKIP_RUNALL=1.
+get(ENV, "PRELA_SKIP_RUNALL", "0") == "0" && runall_tpch()

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-# TPC-H SF=10 single-threaded — three scatter plots (idiomatic / optimized
-# / ddbcheat), each charting our query time (y) against DuckDB-ST (x). The
-# diagonal y=x marks parity; points below it are Rust wins.
+# TPC-H SF=1 single-threaded — scatter plots of our query time (y) against
+# DuckDB-ST (x). The diagonal y=x marks parity; points below it are wins.
+# Three Rust panels (idiomatic / optimized / ddbcheat), plus an optional
+# Julia panel if data/julia_tpch.txt is present.
 #
 # Reads warm run-2 timings from data/{idiomatic,optimized,ddbcheat}.txt
 # and DuckDB `.timer on` output from data/duckdb_st.txt.
@@ -35,6 +36,23 @@ def parse_duck(path):
         m = re.search(r"real ([\d.]+)", l)
         if m:
             out[i] = float(m.group(1))
+    return out
+
+
+def parse_julia(path):
+    """Parse `name<TAB>seconds` lines from julia/bench.jl output. Query
+    names look like 'q1', 'q2', etc.; we map to ints for joint plotting."""
+    out = {}
+    with open(path) as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) != 2:
+                continue
+            name = parts[0].lstrip("qQ")
+            try:
+                out[int(name)] = float(parts[1])
+            except ValueError:
+                pass
     return out
 
 
@@ -74,18 +92,29 @@ def draw_panel(ax, title, our_times, duck_times, color):
 
 
 def main():
-    ido  = parse_rust(DATA / "idiomatic.txt")
-    opt  = parse_rust(DATA / "optimized.txt")
-    ch   = parse_rust(DATA / "ddbcheat.txt")
-    duck = parse_duck(DATA / "duckdb_st.txt")
+    ido   = parse_rust(DATA / "idiomatic.txt")
+    opt   = parse_rust(DATA / "optimized.txt")
+    ch    = parse_rust(DATA / "ddbcheat.txt")
+    duck  = parse_duck(DATA / "duckdb_st.txt")
+    julia_path = DATA / "julia_tpch.txt"
+    julia = parse_julia(julia_path) if julia_path.exists() else {}
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-    draw_panel(axes[0], "idiomatic", ido, duck, "#888888")
-    draw_panel(axes[1], "optimized", opt, duck, "#4C8BC7")
-    draw_panel(axes[2], "ddbcheat",  ch,  duck, "#2BA84A")
+    panels = [
+        ("idiomatic (Rust)", ido, "#888888"),
+        ("optimized (Rust)", opt, "#4C8BC7"),
+        ("ddbcheat (Rust)",  ch,  "#2BA84A"),
+    ]
+    if julia and len(julia) >= 22:
+        panels.append(("Julia prela", julia, "#9461D9"))
 
-    fig.suptitle("TPC-H SF=10 — Rust variants vs DuckDB single-threaded "
-                 "(below diagonal = Rust wins)", fontsize=13)
+    fig, axes = plt.subplots(1, len(panels), figsize=(6 * len(panels), 6))
+    if len(panels) == 1:
+        axes = [axes]
+    for ax, (title, data, color) in zip(axes, panels):
+        draw_panel(ax, title, data, duck, color)
+
+    fig.suptitle("TPC-H SF=1 — prela vs DuckDB single-threaded "
+                 "(below diagonal = prela wins)", fontsize=13)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     out_path = Path(__file__).resolve().parent / "tpch_scatter.png"
     plt.savefig(out_path, dpi=130)
