@@ -37,16 +37,16 @@ fn run_job() {
         for (name, oracle, f) in &qs {
             let q_t = std::time::Instant::now();
             let got = f(&d);
-            let dt = q_t.elapsed().as_secs_f32();
+            let dt = q_t.elapsed().as_secs_f64();
             let pass = got == *oracle;
             if pass {
                 ok += 1;
                 if round == 2 || dt > 0.5 {
-                    println!("{:<5} ok  {:>6.2}s  {}", name, dt, got);
+                    println!("{:<5} ok  {:>8.4}s  {}", name, dt, got);
                 }
             } else {
                 bad.push((name, oracle, got.clone()));
-                println!("{:<5} DIFF {:>6.2}s  {}", name, dt, got);
+                println!("{:<5} DIFF {:>8.4}s  {}", name, dt, got);
                 println!("        oracle: {oracle}");
             }
         }
@@ -84,13 +84,13 @@ fn run_tpch() {
         for (name, oracle, f) in &qs {
             let q_t = std::time::Instant::now();
             let got = f(&d);
-            let dt = q_t.elapsed().as_secs_f32();
+            let dt = q_t.elapsed().as_secs_f64();
             let pass = got == *oracle;
             if pass {
                 ok += 1;
-                println!("{:<5} ok    {:>6.2}s", name, dt);
+                println!("{:<5} ok    {:>8.4}s", name, dt);
             } else {
-                println!("{:<5} DIFF  {:>6.2}s", name, dt);
+                println!("{:<5} DIFF  {:>8.4}s", name, dt);
                 // Write to /tmp for offline diff
                 let _ = std::fs::write(format!("/tmp/tpch_got_{name}.txt"), &got);
                 let _ = std::fs::write(format!("/tmp/tpch_oracle_{name}.txt"), oracle);
