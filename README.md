@@ -9,7 +9,7 @@ The language is implemented by direct embedding
  Prela operators are implemented as regular functions in the host language.
 We provide two implementations:
  the Julia engine enjoys elegant syntax thanks to operator overloading and multiple dispatch,
- while the (90% vibe-ported) Rust engine gives you (slightly) ugly but fast code.
+ while the Rust engine gives you (slightly) ugly but fast code.
 
 ## Examples
 
