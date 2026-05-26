@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 ahash    = "0.8"
+memchr   = "2"
 memmap2  = "0.9"
 regex    = "1.10"
 smallvec = "1"

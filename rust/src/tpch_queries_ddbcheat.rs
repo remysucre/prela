@@ -328,10 +328,22 @@ fn q7(d: &TpchData) -> String {
 // ---------- Q8 — market share for BRAZIL ----------
 
 fn q8(d: &TpchData) -> String {
+    // ddbcheat: hoist the 4-hop `li_order → ord_customer → cu_nation →
+    // na_region → re_name == "AMERICA"` chain into a Vec<bool> over the
+    // dense order domain. One bool index per lineitem instead of 4 array
+    // reads + a string compare.
+    let n_ord = d.orders.n as usize + 1;
+    let mut ord_is_america: Vec<bool> = vec![false; n_ord];
+    for o in 1..n_ord {
+        let cust = d.ord_customer.values[o];
+        if cust == 0 { continue; }
+        let nation = d.cu_nation.values[cust as usize];
+        let region = d.na_region.values[nation as usize];
+        ord_is_america[o] = d.re_name.values[region as usize] == "AMERICA";
+    }
     let live = (&d.lineitem)
         .and((&d.li_part).o(&d.pa_type).eq("ECONOMY ANODIZED STEEL").k())
-        .and((&d.li_order).o((&d.ord_customer).o((&d.cu_nation).o((&d.na_region).o(&d.re_name))))
-             .eq("AMERICA").k())
+        .and((&d.li_order).filt(move |o: i64| ord_is_america[o as usize]).k())
         .and((&d.li_order).o(&d.ord_date).between(19950101, 19961231).k());
     let year = (&live).o((&d.li_order).o(&d.ord_date)).map(|d: i64| d / 10000);
     let snat_name = (&live).o((&d.li_supplier).o((&d.su_nation).o(&d.na_name)));
@@ -466,19 +478,31 @@ fn q12(d: &TpchData) -> String {
 // ---------- Q13 — customer distribution (LEFT JOIN) ----------
 
 fn q13(d: &TpchData) -> String {
-    // Julia algebraic part: count_per_cust = ((live_orders → Ord.customer) ←
-    //                                          (live_orders → date)) ▷ ((a, _) -> a + 1, 0)
-    // Then a Julia escape for the LEFT-JOIN zero-default (customer.n - n_with).
-    let live_orders = (&d.orders)
-        .and((&d.ord_customer).ne(0).k())   // skip sparse orderkey gaps
-        .and((&d.ord_comment).nrx("special.*requests").k());
+    // ddbcheat: regex `special.*requests` runs ~100ns/call via DFA, ×15M
+    // orders = the bulk of Q13. Use memchr's Finder (built once, ~5–10ns/call
+    // via NEON SIMD) plus a precomputed BitsetSet over qualifying orders so
+    // the hot path is a single bit test, not a regex evaluation.
+    use memchr::memmem;
+    let f_special  = memmem::Finder::new("special");
+    let f_requests = memmem::Finder::new("requests");
+    const SPECIAL_LEN: usize = 7;
+    let mut not_special = BitsetSet::empty(d.orders.n);
+    for o in 1..=d.orders.n as usize {
+        if d.ord_customer.values[o] == 0 { continue; }   // skip sparse gaps
+        let bytes = d.ord_comment.values[o].as_bytes();
+        let has_pattern = if let Some(pos) = f_special.find(bytes) {
+            f_requests.find(&bytes[pos + SPECIAL_LEN..]).is_some()
+        } else { false };
+        if !has_pattern { not_special.set(o as i64); }
+    }
+
+    let live_orders = (&d.orders).and(not_special);
     let count_per_cust = (&live_orders).o(&d.ord_customer)
         .lc((&live_orders).o(&d.ord_date))
         .fold(0_i64, |a, _| a + 1);
     let mut dist: HashMap<i64, i64> = HashMap::new();
     let mut n_with = 0i64;
     count_per_cust.drive(|_, c| { *dist.entry(c).or_insert(0) += 1; n_with += 1; });
-    // LEFT JOIN zero-default: customers with no qualifying orders contribute to c_count=0.
     dist.insert(0, d.customer.n - n_with);
     let mut rows: Vec<_> = dist.iter().collect();
     rows.sort_by(|a, b| b.1.cmp(a.1).then_with(|| b.0.cmp(a.0)));
@@ -556,10 +580,21 @@ fn q17(d: &TpchData) -> String {
 // ---------- Q18 — large volume customer ----------
 
 fn q18(d: &TpchData) -> String {
-    let sum_qty = (&d.li_order).lc(&d.li_quantity).fold(0.0_f64, |a, q| a + q);
-    let big = sum_qty.gt(300.0);
+    // ddbcheat: replace `HashMap<order, f64>` fold with a dense `Vec<f32>`
+    // indexed by orderkey. n_orders ≈ 60M → 240MB; sums are ≤ ~350 per
+    // order (≤7 lineitems × ≤50 qty each) so f32's 7-digit precision is
+    // ample. Skips 60M HashMap upserts.
+    let n_ord = d.orders.n as usize + 1;
+    let mut sum_qty: Vec<f32> = vec![0.0; n_ord];
+    for li in 1..=d.lineitem.n as usize {
+        let o = d.li_order.values[li] as usize;
+        sum_qty[o] += d.li_quantity.values[li] as f32;
+    }
     let mut rows: Vec<(i64, f64)> = Vec::new();
-    big.drive(|k, v| rows.push((k, v)));
+    for o in 1..n_ord {
+        let s = sum_qty[o];
+        if s > 300.0 { rows.push((o as i64, s as f64)); }
+    }
     rows.sort_by(|a, b| {
         let oa = a.0 as usize; let ob = b.0 as usize;
         d.ord_totalprice.values[ob].partial_cmp(&d.ord_totalprice.values[oa]).unwrap()

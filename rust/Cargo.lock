@@ -865,6 +865,7 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "arrow",
+ "memchr",
  "memmap2",
  "parquet",
  "regex",
