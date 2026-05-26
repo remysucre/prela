@@ -79,7 +79,7 @@ Unlike SQL's user-defined functions, Prela "UDF"s are inlined and compiled toget
 User can also swap out parts of the query with custom kernels to squeeze out extra performance,
  as exercised in the [Rust TPCH queries](./rust/src).
 
-See [julia/queries.jl](./julia/queries.jl) and [julia/tpch_queries.jl] for more examples,
+See [julia/queries.jl](./julia/queries.jl) and [julia/tpch_queries.jl](./julia/tpch_queries.jl) for more examples,
  or the corresponding Rust versions under [rust/src](./rust/src).
 
 ## Benchmark
