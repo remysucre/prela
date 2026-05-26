@@ -1,8 +1,8 @@
 # Prela: Purely Algebraic Relational Combinators
 
-Prela is an embedded relational progamming language
+Prela is an embedded relational query language
  based on [Tarski's Algebra of Relations](https://en.wikipedia.org/wiki/Relation_algebra).
-Prela programs are concise, readable, and fast.
+Prela queries are concise, readable, and fast.
 The language is implemented by direct embedding 
  (a.k.a. [shallow embedding](https://decomposition.al/blog/2015/06/02/embedding-deep-and-shallow/))
  in a host programming language:
@@ -13,7 +13,7 @@ We provide two implementations:
 
 ## Examples
 
-Prela programs are readable even to the untrained eye.
+Prela queries are readable even to the untrained eye.
 
 Join Order Benchmark [22a](https://github.com/gregrahn/join-order-benchmark/blob/master/22a.sql):
 
