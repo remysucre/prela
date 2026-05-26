@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ahash    = "0.8"
 memmap2  = "0.9"
 regex    = "1.10"
 smallvec = "1"

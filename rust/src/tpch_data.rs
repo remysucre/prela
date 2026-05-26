@@ -61,6 +61,22 @@ fn max_src_str(p: &[(i64, &str)]) -> usize {
     (p[0], f64::from_bits(p[1] as u64))
 }
 
+/// "YYYY-MM-DD" → packed i64 YYYYMMDD (numeric compare preserves lexical
+/// order). Cheap inline digit pull; loader use only.
+#[inline] pub fn parse_yyyymmdd(s: &str) -> i64 {
+    let b = s.as_bytes();
+    debug_assert_eq!(b.len(), 10);
+    let d = |i: usize| (b[i] - b'0') as i64;
+    d(0)*10_000_000 + d(1)*1_000_000 + d(2)*100_000 + d(3)*10_000
+        + d(5)*1000 + d(6)*100
+        + d(8)*10  + d(9)
+}
+
+/// Inverse of parse_yyyymmdd — used for output formatting (Q3, Q10, Q18).
+#[inline] pub fn fmt_yyyymmdd(d: i64) -> String {
+    format!("{:04}-{:02}-{:02}", d / 10000, (d / 100) % 100, d % 100)
+}
+
 pub struct TpchData {
     // Universes
     pub region:   Universe,
@@ -119,7 +135,7 @@ pub struct TpchData {
     pub ord_customer: Vec1<i64>,
     pub ord_status: Vec1<&'static str>,
     pub ord_totalprice: Vec1<f64>,
-    pub ord_date: Vec1<&'static str>,
+    pub ord_date: Vec1<i64>,                      // YYYYMMDD
     pub ord_priority: Vec1<&'static str>,
     pub ord_clerk: Vec1<&'static str>,
     pub ord_shippriority: Vec1<i64>,
@@ -138,9 +154,9 @@ pub struct TpchData {
     pub li_tax: Vec1<f64>,
     pub li_returnflag: Vec1<&'static str>,
     pub li_status: Vec1<&'static str>,
-    pub li_shipdate: Vec1<&'static str>,
-    pub li_commitdate: Vec1<&'static str>,
-    pub li_receiptdate: Vec1<&'static str>,
+    pub li_shipdate: Vec1<i64>,                   // YYYYMMDD
+    pub li_commitdate: Vec1<i64>,                 // YYYYMMDD
+    pub li_receiptdate: Vec1<i64>,                // YYYYMMDD
     pub li_shipinstruct: Vec1<&'static str>,
     pub li_shipmode: Vec1<&'static str>,
     pub li_comment: Vec1<&'static str>,
@@ -277,7 +293,7 @@ impl TpchData {
             ord_customer: Vec1::from_pairs(n_orders, ord_customer_p.iter().map(|p| (p[0], p[1]))),
             ord_status: Vec1::from_pairs(n_orders, ord_status_p.iter().copied()),
             ord_totalprice: Vec1::from_pairs(n_orders, ord_totalprice_p.iter().map(f64_from_bits_pair)),
-            ord_date: Vec1::from_pairs(n_orders, ord_date_p.iter().copied()),
+            ord_date: Vec1::from_pairs(n_orders, ord_date_p.iter().map(|(k, s)| (*k, parse_yyyymmdd(s)))),
             ord_priority: Vec1::from_pairs(n_orders, ord_priority_p.iter().copied()),
             ord_clerk: Vec1::from_pairs(n_orders, ord_clerk_p.iter().copied()),
             ord_shippriority: Vec1::from_pairs(n_orders, ord_shippriority_p.iter().map(|p| (p[0], p[1]))),
@@ -293,9 +309,9 @@ impl TpchData {
             li_tax: Vec1::from_pairs(n_lineitem, li_tax_p.iter().map(f64_from_bits_pair)),
             li_returnflag: Vec1::from_pairs(n_lineitem, li_returnflag_p.iter().copied()),
             li_status: Vec1::from_pairs(n_lineitem, li_status_p.iter().copied()),
-            li_shipdate: Vec1::from_pairs(n_lineitem, li_shipdate_p.iter().copied()),
-            li_commitdate: Vec1::from_pairs(n_lineitem, li_commitdate_p.iter().copied()),
-            li_receiptdate: Vec1::from_pairs(n_lineitem, li_receiptdate_p.iter().copied()),
+            li_shipdate:    Vec1::from_pairs(n_lineitem, li_shipdate_p.iter().map(|(k, s)| (*k, parse_yyyymmdd(s)))),
+            li_commitdate:  Vec1::from_pairs(n_lineitem, li_commitdate_p.iter().map(|(k, s)| (*k, parse_yyyymmdd(s)))),
+            li_receiptdate: Vec1::from_pairs(n_lineitem, li_receiptdate_p.iter().map(|(k, s)| (*k, parse_yyyymmdd(s)))),
             li_shipinstruct: Vec1::from_pairs(n_lineitem, li_shipinstruct_p.iter().copied()),
             li_shipmode: Vec1::from_pairs(n_lineitem, li_shipmode_p.iter().copied()),
             li_comment: Vec1::from_pairs(n_lineitem, li_comment_p.iter().copied()),

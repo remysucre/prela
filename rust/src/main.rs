@@ -2,7 +2,8 @@ mod engine;
 mod data;
 mod queries;
 mod tpch_data;
-mod tpch_queries;
+mod tpch_queries_idiomatic;
+mod tpch_queries_optimized;
 
 use data::Data;
 use tpch_data::TpchData;
@@ -65,8 +66,14 @@ fn run_tpch() {
     eprintln!("load: {:.2}s  (li n={}, ord n={}, ps n={})",
               t.elapsed().as_secs_f32(), d.lineitem.n, d.orders.n, d.partsupp.n);
 
-    let qs = tpch_queries::all_queries();
-    eprintln!("{} TPC-H queries registered", qs.len());
+    // QS=idiomatic|optimized (default optimized)
+    let variant = std::env::var("QS").unwrap_or_else(|_| "optimized".to_string());
+    let qs = match variant.as_str() {
+        "idiomatic" => tpch_queries_idiomatic::all_queries(),
+        "optimized" => tpch_queries_optimized::all_queries(),
+        other => panic!("unknown QS variant: {other:?} (use idiomatic|optimized)"),
+    };
+    eprintln!("{} TPC-H queries registered ({} variant)", qs.len(), variant);
 
     for round in 1..=2 {
         eprintln!("--- run {round} ---");

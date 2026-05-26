@@ -15,10 +15,10 @@
 
 #![allow(dead_code)]
 
+use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use regex::Regex;
 use smallvec::SmallVec;
 use std::cell::OnceCell;
-use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
 /// Default inline capacity for the lazy probe-index caches. Most TPC-H
