@@ -49,7 +49,7 @@ counts ⊗ Su.name
 ```
 ## Benchmark
 
-**Take performance numbers with a grain of salt, Prela is not (and doesn't want to be) a database!**
+**Take performance numbers with a grain of salt, Prela is not (and doesn't want to be) a database**
 
 ![TPCH performance](./rust/bench/tpch_scatter.png)
 
