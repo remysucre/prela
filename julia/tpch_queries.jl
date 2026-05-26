@@ -332,9 +332,8 @@ function _q11()
         value_per_part = ((live_ps → PS.part) ←
                           (live_ps : (supplycost ⊗ availqty))) ▷ (
             (a, (c, q)) -> a + c * q, 0.0),
-        # global total → escape to scalar so we can multiply by 0.0001
-        threshold = 0.0001 * (let s = Ref(0.0)
-            Prela.drive(value_per_part, (_, v) -> s[] += v); s[] end)
+        # global total → unwrap to scalar so we can multiply by 0.0001
+        threshold = 0.0001 * unwrap(value_per_part ⊵ (+, 0.0))
         value_per_part > threshold
     end
 end
@@ -462,8 +461,7 @@ function _q18()
     sum_qty_per_order = (order ← quantity) ▷ ((a, q) -> a + q, 0.0)
     big_orders = sum_qty_per_order > 300.0   # Filter{Ord, Float64}
     # Decorate with the per-order fields. Value tuple: (sum_qty, c_name, c_custkey, date, totalprice)
-    big_orders ⊗ (Ord.customer → Cu.name) ⊗ Ord.customer ⊗
-        date ⊗ totalprice
+    big_orders ⊗ (Ord.customer → Cu.name) ⊗ Ord.customer ⊗ date ⊗ totalprice
 end
 _q_tpch("18", _ORACLE_Q18, _q18;
         sort_by = ((k, v),) -> (-v[5], v[4]),   # totalprice desc, date asc
@@ -477,13 +475,10 @@ function _q22()
     let prefix    = Cu.phone ↦ (s -> s[1:2]),
         prefix_ok = customer ∧ (prefix in ("13", "31", "23", "29", "30", "18", "17")),
         # avg(acctbal) over prefix_ok with acctbal > 0
-        avg = let s = Ref(0.0), c = Ref(0)
-                  Prela.drive((prefix_ok ∧ (Cu.acctbal > 0.0)) → Cu.acctbal,
-                              (_, v) -> (s[] += v; c[] += 1))
-                  s[] / c[]
-              end,
+        avg = unwrap((prefix_ok → (Cu.acctbal > 0.0)) ⊵
+                     (((s, n), v) -> (s + v, n + 1), (0.0, 0)) ↦ (((s, n),) -> s / n)),
         # prefix_ok ∧ acctbal > avg, then NOT EXISTS (no orders) via setdiff
-        target = (prefix_ok ∧ (Cu.acctbal > avg)) - !((orders → Ord.customer)')
+        target = (prefix_ok ∧ (Cu.acctbal > avg)) - (Ord.customer ← orders)
         # Group by prefix, accumulate (count, sum_acctbal)
         (prefix ← (target : Cu.acctbal)) ▷ (
             ((cnt, sm), ab) -> (cnt + 1, sm + ab),
@@ -500,16 +495,15 @@ _q_tpch("22", _ORACLE_Q22, _q22)
 const _ORACLE_Q16 = read("/tmp/tpch_oracles/Q16.txt", String)
 
 function _q16()
-    let live_ps = partsupp → ((PS.part → brand != "Brand#45")
-                              ∧ (PS.part → type ≁ r"^MEDIUM POLISHED")
-                              ∧ (PS.part → size in (49, 14, 23, 45, 19, 3, 36, 9))
+    let live_ps = partsupp → ((PS.part → ((brand != "Brand#45")
+                                          ∧ (type ≁ r"^MEDIUM POLISHED")
+                                          ∧ (size in (49, 14, 23, 45, 19, 3, 36, 9))))
                               ∧ (PS.supplier → Su.comment ≁ r"Customer.*Complaints"))
         # count distinct (group, supplier) pairs in Julia (Prela has no native distinct fold)
         seen = Set{Tuple{String, String, Int, Int}}()
         Prela.drive(
-            live_ps : ((PS.part → brand) ⊗ (PS.part → type)
-                       ⊗ (PS.part → size) ⊗ PS.supplier),
-            (_, (b, t, s, k)) -> push!(seen, (b, t, s, k.id)))
+            live_ps : ((PS.part → (brand ⊗ type ⊗ size)) ⊗ PS.supplier),
+            (_, ((b, t, s), k)) -> push!(seen, (b, t, s, k.id)))
         counts = Dict{Tuple{String, String, Int}, Int}()
         for (b, t, s, _) in seen
             key = (b, t, s)
@@ -529,14 +523,11 @@ const _ORACLE_Q15 = read("/tmp/tpch_oracles/Q15.txt", String)
 
 function _q15()
     let live = lineitem ∧ (shipdate in during("1996-01-01", "1996-04-01")),
-        revenue = ((live → Li.supplier) ← (live : (extendedprice ⊗ discount))) ▷ (
+        revenue = (Li.supplier ← (live → (extendedprice ⊗ discount))) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
         ),
-        max_rev = let m = Ref(0.0)
-            Prela.drive(revenue, (_, v) -> (v > m[] && (m[] = v)))
-            m[]
-        end
+        max_rev = unwrap(revenue ⊵ (max, 0.0))
         (revenue == max_rev) ⊗ Su.name ⊗ Su.address ⊗ Su.phone
     end
 end
@@ -554,26 +545,23 @@ const _ORACLE_Q2 = read("/tmp/tpch_oracles/Q2.txt", String)
 function _q2()
     let eu_ps = partsupp ∧ (PS.supplier → Su.nation → Na.region → Re.name == "EUROPE"),
         # min(supplycost) per part over European partsupps
-        min_per_part = !(((eu_ps → PS.part) ← (eu_ps → supplycost)) ▷ (
+        min_per_part = (PS.part ← (eu_ps → supplycost)) ▷ (
             (a, v) -> min(a, v), Inf
-        )),
+        ),
         target = (eu_ps ∧ (PS.part → ((size == 15) ∧ (type ~ r"BRASS$")))
                         ∧ (supplycost == (PS.part → min_per_part)))
-        # Output value tuple
-        target : ((PS.supplier → Su.acctbal) ⊗
-                  (PS.supplier → Su.name) ⊗
-                  (PS.supplier → Su.nation → Na.name) ⊗
-                  PS.part ⊗
-                  (PS.part → mfgr) ⊗
-                  (PS.supplier → Su.address) ⊗
-                  (PS.supplier → Su.phone) ⊗
-                  (PS.supplier → Su.comment))
+        # Output value tuple — supplier-side and part-side fields each
+        # factored under their respective navigation.
+        target : ((PS.supplier → (Su.acctbal ⊗ Su.name ⊗ (Su.nation → Na.name)
+                                  ⊗ Su.address ⊗ Su.phone ⊗ Su.comment))
+                  ⊗ PS.part ⊗ (PS.part → mfgr))
     end
 end
 _q_tpch("2", _ORACLE_Q2, _q2;
-        sort_by = ((k, v),) -> (-v[1], v[3], v[2], v[4].id),
+        sort_by = ((k, ((acct, sname, nname, _, _, _), pkey, _)),) ->
+                  (-acct, nname, sname, pkey.id),
         limit = 100,
-        row = (k, (acct, sname, nname, pkey, mfgr, addr, phone, comm)) ->
+        row = (k, ((acct, sname, nname, addr, phone, comm), pkey, mfgr)) ->
               [_fmt(acct), sname, nname, _fmt(pkey), mfgr, addr, phone, comm])
 
 # ============================================================================
@@ -583,34 +571,18 @@ _q_tpch("2", _ORACLE_Q2, _q2;
 const _ORACLE_Q20 = read("/tmp/tpch_oracles/Q20.txt", String)
 
 function _q20()
-    # Per (partkey, suppkey) sum of quantity from 1994 lineitems
-    sum_qty_pair = let d = Dict{Tuple{Int, Int}, Float64}()
-        live_li = lineitem ∧ (shipdate in during("1994-01-01", "1995-01-01"))
-        Prela.drive(
-            live_li : (Li.part ⊗ Li.supplier ⊗ quantity),
-            (_, (pt, sp, q)) -> begin
-                key = (pt.id, sp.id)
-                d[key] = get(d, key, 0.0) + q
-            end)
-        d
-    end
-    # Forest-name parts → qualifying partsupps → qualifying suppliers
-    qual_supps = let s = Set{Int}()
-        good_ps = partsupp ∧ (PS.part → Part.name ~ r"^forest")
-        Prela.drive(
-            good_ps : (PS.part ⊗ PS.supplier ⊗ availqty),
-            (_, (pt, sp, avail)) -> begin
-                # SQL: sum() of empty is NULL ⇒ comparison false ⇒ exclude
-                k = (pt.id, sp.id)
-                haskey(sum_qty_pair, k) || return
-                avail > 0.5 * sum_qty_pair[k] && push!(s, sp.id)
-            end)
-        s
-    end
-    qual_unary = Prela.Unary{Prela.ID{Su}}(
-        Prela.ID{Su}[Prela.ID{Su}(s) for s in qual_supps]
-    )
-    let target = supplier ∧ (Su.nation → Na.name == "CANADA") ∧ qual_unary
+    let live_li = lineitem ∧ (shipdate in during("1994-01-01", "1995-01-01")),
+        # Per-(part, supp) sum of 1994 lineitem quantity — algebraic 2-key fold.
+        sum_qty = ((live_li : (Li.part ⊗ Li.supplier)) ←
+                   (live_li : quantity)) ▷ (+, 0.0),
+        # Per-PS half-of-sum threshold. Missing (part, supp) tuples (no 1994
+        # lineitems) emit nothing, so the cross-col `availqty > threshold`
+        # skips those rows — matches SQL "comparison against NULL is false".
+        threshold = ((PS.part ⊗ PS.supplier) → sum_qty) ↦ (s -> 0.5 * s),
+        qual_ps = (partsupp ∧ (PS.part → Part.name ~ r"^forest")
+                           ∧ (availqty > threshold)),
+        target = (qual_ps → PS.supplier) ⩘
+                 (supplier ∧ (Su.nation → Na.name == "CANADA"))
         target : (Su.name ⊗ Su.address)
     end
 end
@@ -626,46 +598,21 @@ const _ORACLE_Q21 = read("/tmp/tpch_oracles/Q21.txt", String)
 
 function _q21()
     late = lineitem ∧ (receiptdate > commitdate)
-    # Per-order supplier sets (all and late)
-    order_supps = let d = Dict{Int, Set{Int}}()
-        Prela.drive(order ⊗ Li.supplier,
-            (_, (o, s)) -> (get!(() -> Set{Int}(), d, o.id); push!(d[o.id], s.id)))
-        d
-    end
-    late_supps = let d = Dict{Int, Set{Int}}()
-        Prela.drive(late : (order ⊗ Li.supplier),
-            (_, (o, s)) -> (get!(() -> Set{Int}(), d, o.id); push!(d[o.id], s.id)))
-        d
-    end
-    saudi_supps = let s = Set{Int}()
-        Prela.drivekeys(supplier ∧ (Su.nation → Na.name == "SAUDI ARABIA"),
-                        sp -> push!(s, sp.id))
-        s
-    end
-    f_orders = let s = Set{Int}()
-        Prela.drivekeys(orders ∧ (Ord.status == "F"), o -> push!(s, o.id))
-        s
-    end
-    # Count qualifying lineitems per Saudi supplier
-    counts = Dict{Int, Int}()
-    Prela.drive(late : (order ⊗ Li.supplier),
-        (_, (o, sp)) -> begin
-            sp.id in saudi_supps   || return
-            o.id  in f_orders      || return
-            haskey(order_supps, o.id) && length(order_supps[o.id]) > 1 || return
-            haskey(late_supps,  o.id) && length(late_supps[o.id])  == 1 || return
-            counts[sp.id] = get(counts, sp.id, 0) + 1
-        end)
-    name_dict = let d = Dict{Int, String}()
-        Prela.drive(Su.name, (sp, nm) -> d[sp.id] = nm)
-        d
-    end
-    InlineRel{Int, Tuple{String, Int}}([sp => (name_dict[sp], cnt) for (sp, cnt) in counts])
+    n_distinct = vs -> length(unique(vs))
+    qualifying = (late
+        ∧ (Li.supplier → supplier ∧ (Su.nation → Na.name == "SAUDI ARABIA"))
+        ∧ (order → (orders ∧ (Ord.status == "F"))
+                    # EXISTS another supplier on the order (across all lineitems)
+                    ∧ ((order ← Li.supplier) ▷ n_distinct > 1)
+                    # NOT EXISTS another LATE supplier (only L1 is late)
+                    ∧ ((order ← (late : Li.supplier)) ▷ n_distinct == 1)))
+    counts = (Li.supplier ← qualifying) ▷ ((a, _) -> a + 1, 0)
+    counts ⊗ Su.name
 end
 _q_tpch("21", _ORACLE_Q21, _q21;
-        sort_by = ((k, v),) -> (-v[2], v[1]),
+        sort_by = ((k, v),) -> (-v[1], v[2]),
         limit = 100,
-        row = (k, (name, cnt)) -> [name, _fmt(cnt)])
+        row = (k, (cnt, name)) -> [name, _fmt(cnt)])
 
 # Auto-run on include so workflow is: edit, `include("tpch_queries.jl")`,
 # results print. The upsert in _q_tpch makes re-includes idempotent.

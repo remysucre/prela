@@ -19,7 +19,7 @@ module Prela
 
 export Rel, MapRel, VecRel, Relation, Query, SetQ, Unary, Universe, Entity, ID,
        primary, lookup_field, →, ∧, ∨, ×, ≁, vectorize,
-       drive, probe, drivekeys, member, materialize
+       drive, probe, drivekeys, member, materialize, askeys
 
 abstract type Entity end
 
@@ -289,6 +289,16 @@ mutable struct Fold{D, R, S, Q, OP} <: Query{D, S}
     cache::Union{Nothing, Dict{D, S}}
 end
 
+# `BufFold(q, f)` — per-key buffered reduce. Per key, collect all values
+# into a `Vector{R}` then call `f(vs) → S`. Use when the reducer needs
+# the whole multiset (count-distinct, set construction, median, etc.) —
+# anything that doesn't fit foldl's `(S, R) → S` shape.
+mutable struct BufFold{D, R, S, Q, F} <: Query{D, S}
+    q::Q
+    f::F
+    cache::Union{Nothing, Dict{D, S}}
+end
+
 # `Map(q, f)` — generalized projection (per-row lambda). `q : D → R` with
 # `f : R → S` becomes `Map(q, f) : D → S`. The function `f` runs per emitted
 # row; no aggregation, no caching needed.
@@ -309,14 +319,15 @@ mutable struct Scalar{S, Q, OP} <: Query{Nothing, S}
 end
 
 # `LeftCompose(r, s)` — for `r : D → R` and `s : D → S` (same domain),
-# produces `Query{R, S}`. Surface syntax `r ← s`. Driven by walking `s`
-# and probing `r` per row — distinct from `r' → s` which walks `r` and
-# probes `s`. Use `←` when `s` is the "natural" thing to scan (e.g. a
-# filtered universe + measure projection in SQL-table-scan style) and
-# the group-key extractor `r` is cheap to probe per row.
-struct LeftCompose{D, RK, SV, QR, QS} <: Query{RK, SV}
+# produces `Query{R, S}`. Surface syntax `r ← s`. `drive` walks `s` and
+# probes `r` per row — distinct from `r' → s` which walks `r` and probes
+# `s`. `probe`/`member`/`drivekeys` lazy-build a `Dict{RK, Vector{SV}}`
+# on first call (same lazy-cache pattern as `Inv`/`Fold`), so using `←`
+# on the rhs of a `→` auto-materializes — no explicit `!` needed.
+mutable struct LeftCompose{D, RK, SV, QR, QS} <: Query{RK, SV}
     r::QR
     s::QS
+    idx::Union{Nothing, Dict{RK, Vector{SV}}}
 end
 
 # `LeftConj(l, r)` — left-driving conjunction. `l ⩓ r` materializes `l`
@@ -361,6 +372,15 @@ function ▷(q::Query{D, R}, opinit::Tuple{OP, S}) where {D, R, OP, S}
 end
 export ▷
 
+# `▷` with a single callable: buffered per-key reduce — collect values
+# into `Vector{R}` per key, apply `f`. Tuple-rhs (foldl) dispatch above
+# is preferred when the reduction fits a `(S, R) → S` shape.
+function ▷(q::Query{D, R}, f::Base.Callable) where {D, R}
+    S = Core.Compiler.return_type(f, Tuple{Vector{R}})
+    S === Union{} && (S = Any)
+    BufFold{D, R, S, typeof(q), typeof(f)}(q, f, nothing)
+end
+
 # `⊵` — no-group foldl. Folds every value of `q` into one scalar; result
 # is `Query{Nothing, S}` with a single row, so it still chains with `↦`.
 # Equivalent of synthesizing a singleton group key, but cheaper: skips the
@@ -371,6 +391,17 @@ function ⊵(q::Query{D, R}, opinit::Tuple{OP, S}) where {D, R, OP, S}
 end
 const ▶ = ⊵
 export ⊵, ▶
+
+# `unwrap(q::Query{Nothing, S}) → S` — eliminator for the one-row container
+# `⊵` (and `↦` on it) produces. Drives once, returns the single value as a
+# plain Julia scalar. Useful for scalar-subquery escapes: e.g.
+# `threshold = 0.0001 * unwrap(value_per_part ⊵ (+, 0.0))`.
+function unwrap(q::Query{Nothing, S}) where {S}
+    r = Ref{S}()
+    drive(q, (_, v) -> r[] = v)
+    r[]
+end
+export unwrap
 
 # `↦` — per-row Map (apply a Julia function to the value, key unchanged).
 # `q ↦ (v -> f(v))` produces `Map(q, f) : Query{D, S}` where `S` is the
@@ -389,13 +420,13 @@ export ↦
 # the source you want to scan is on the right (e.g. a filtered universe
 # with measures), and `r' → s` when the source is the left side.
 function ←(r::Query{D, RK}, s::Query{D, SV}) where {D, RK, SV}
-    LeftCompose{D, RK, SV, typeof(r), typeof(s)}(r, s)
+    LeftCompose{D, RK, SV, typeof(r), typeof(s)}(r, s, nothing)
 end
 # `←` with a SetQ on the right: drive its keys, probe r per key. The SetQ has
 # no values, so we re-emit the key itself as the value (preserving the domain
 # for downstream composition). Result Query{RK, D}.
 function ←(r::Query{D, RK}, s::SetQ{D}) where {D, RK}
-    LeftCompose{D, RK, D, typeof(r), typeof(s)}(r, s)
+    LeftCompose{D, RK, D, typeof(r), typeof(s)}(r, s, nothing)
 end
 export ←
 
@@ -625,23 +656,33 @@ end
 @inline drivekeys(n::Inv, k) = (for b in keys(_inv_idx(n)); k(b); end)
 @inline member(n::Inv, x) = haskey(_inv_idx(n), x)
 
-# ---- LeftCompose: drive s, probe r per row ----
+# ---- LeftCompose: streaming drive; lazy-indexed probe/member/drivekeys ----
 # `r ← s` semantically equals `r' ∘ s` but flips which side scans. Drives
 # `s` (the natural source — e.g. a filtered table scan) and probes `r` per
-# row to compute the would-be group key. Designed to feed `▷`.
+# row to compute the would-be group key. Designed to feed `▷`. For
+# probe/member access (e.g. when `←` ends up on the rhs of a `→` or used
+# in a SetDiff), lazy-builds a `Dict{RK, Vector{SV}}` on first call so
+# subsequent probes are O(1) — mirroring `Inv`.
 @inline function drive(n::LeftCompose, k)
     drive(n.s, (d, v) -> probe(n.r, d, rk -> k(rk, v)))
-end
-@inline function probe(n::LeftCompose{D, RK, SV}, rk, k) where {D, RK, SV}
-    drive(n.s, (d, v) -> probe(n.r, d, x -> isequal(x, rk) && k(v)))
 end
 # SetQ-on-right specialization: drivekeys instead of drive; emit the key as value.
 @inline function drive(n::LeftCompose{D, RK, SV, QR, QS}, k) where {D, RK, SV, QR, QS <: SetQ}
     drivekeys(n.s, d -> probe(n.r, d, rk -> k(rk, d)))
 end
-@inline function probe(n::LeftCompose{D, RK, SV, QR, QS}, rk, k) where {D, RK, SV, QR, QS <: SetQ}
-    drivekeys(n.s, d -> probe(n.r, d, x -> isequal(x, rk) && k(d)))
+function _lc_idx(n::LeftCompose{D, RK, SV, QR, QS}) where {D, RK, SV, QR, QS}
+    n.idx === nothing || return n.idx::Dict{RK, Vector{SV}}
+    d = Dict{RK, Vector{SV}}()
+    drive(n, (rk, sv) -> push!(get!(() -> SV[], d, rk), sv))
+    n.idx = d
 end
+@inline function probe(n::LeftCompose{D, RK, SV, QR, QS}, rk, k) where {D, RK, SV, QR, QS}
+    vs = get(_lc_idx(n), rk, nothing)
+    vs === nothing && return
+    for v in vs; k(v); end
+end
+@inline drivekeys(n::LeftCompose, k) = (for rk in keys(_lc_idx(n)); k(rk); end)
+@inline member(n::LeftCompose, x) = haskey(_lc_idx(n), x)
 
 # ---- LeftConj: drive r, member-check materialized l ----
 @inline drivekeys(n::LeftConj, k) = drivekeys(n.r, x -> member(n.l, x) && k(x))
@@ -661,6 +702,28 @@ end
 end
 @inline function probe(n::Fold{D, R, S, Q, OP}, d, k) where {D, R, S, Q, OP}
     s = get(_fold_cache(n), d, nothing)
+    s === nothing && return
+    k(s)
+end
+
+# ---- BufFold: per-key buffered reduce, lazy-cached ----
+function _buf_cache(n::BufFold{D, R, S, Q, F}) where {D, R, S, Q, F}
+    n.cache === nothing || return n.cache::Dict{D, S}
+    buf = Dict{D, Vector{R}}()
+    drive(n.q, (d, v) -> push!(get!(() -> R[], buf, d), v))
+    out = Dict{D, S}()
+    for (d, vs) in buf
+        out[d] = n.f(vs)
+    end
+    n.cache = out
+end
+@inline function drive(n::BufFold{D, R, S, Q, F}, k) where {D, R, S, Q, F}
+    for (d, s) in _buf_cache(n)
+        k(d, s)
+    end
+end
+@inline function probe(n::BufFold{D, R, S, Q, F}, d, k) where {D, R, S, Q, F}
+    s = get(_buf_cache(n), d, nothing)
     s === nothing && return
     k(s)
 end
