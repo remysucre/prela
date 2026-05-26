@@ -587,15 +587,26 @@ fn q20(d: &TpchData) -> String {
     // ps_id for part p is one of (p-1)*4 + {1,2,3,4}. So we can resolve
     // (part, supp) → ps_id with a 4-element linear probe — no HashMap, no
     // allocation per lookup. Verified at SF=10 against the cache layout.
+    //
+    // Pre-filter optimization: sum_qty is only consulted for ps_ids whose
+    // part passes the "forest" name filter (~5% of parts). Precompute the
+    // forest predicate per part as a dense Vec<bool> and skip non-forest
+    // lineitems in the drive — drops ~95% of the layout-probe work.
+    let n_part = d.part.n as usize + 1;
+    let mut pa_is_forest = vec![false; n_part];
+    for i in 1..n_part {
+        pa_is_forest[i] = d.pa_name.values[i].starts_with("forest");
+    }
     let n_ps = d.partsupp.n as usize + 1;
-    // NaN sentinel: ps_ids that never see a live lineitem stay NaN, so the
-    // subsequent `availqty > threshold` test returns false for them (matches
-    // the original semantics where Compose-probe-miss excludes such rows).
+    // NaN sentinel: ps_ids that never see a live forest lineitem stay NaN, so
+    // the subsequent `availqty > threshold` test returns false for them
+    // (matches the original Compose-probe-miss semantics).
     let mut sum_qty: Vec<f64> = vec![f64::NAN; n_ps];
     let live_li = d.lineitem.and((&d.li_shipdate).during(19940101, 19950101).k());
     live_li.drivekeys(|li| {
         let li = li as usize;
         let part = d.li_part.values[li];
+        if !pa_is_forest[part as usize] { return; }
         let supp = d.li_supplier.values[li];
         let base = (part - 1) * 4;
         for k in 1..=4i64 {
@@ -626,38 +637,60 @@ fn q20(d: &TpchData) -> String {
 // ---------- Q21 — suppliers who kept orders waiting ----------
 
 fn q21(d: &TpchData) -> String {
-    // ddbcheat: DuckDB's plan uses RIGHT_SEMI / RIGHT_ANTI joins for the two
-    // correlated subqueries — short-circuit "is there ≥1 row with same order
-    // and different supplier?" instead of materializing the full distinct-set
-    // per order. We replicate this by capturing the keyed relations
-    // (order→supp) and (late-order→late-supp) in closures and using
-    // probe_any, which exits on the first witness via the underlying
-    // SVec::iter().any short-circuit in LeftCompose::probe_any.
-    let late = d.lineitem.and(
-        (&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k()
-    );
-    // Build the keyed indexes once (LeftCompose lazy-caches HashMap<ord, SVec<supp>>).
-    let ord_to_supp = (&d.li_order).lc(&d.li_supplier);
-    let late_ord_to_supp = (&late).o(&d.li_order)
-        .lc((&late).o(&d.li_supplier));
-    let saudi = (&d.supplier).and(
-        (&d.su_nation).o(&d.na_name).eq("SAUDI ARABIA").k()
-    );
-    let f_ords = (&d.orders).and((&d.ord_status).eq("F").k());
+    // ddbcheat: replace the two LeftCompose lazy-HashMap builds
+    // (ord_to_supp + late_ord_to_supp, ~100M inserts of SVec<supp>) with
+    // dense per-order summary state computed in a single pass:
+    //   first_supp[o] / multi[o]            — for the EXISTS-other-supp test
+    //   late_first[o] / late_multi[o]       — for the NOT-EXISTS-other-late-supp test
+    // The bounded 2-state-per-order representation is sufficient: we only need
+    // "≥ 2 distinct suppliers" and "exactly one distinct late supp, and it's
+    // mine", neither of which requires enumerating the full set.
+    let n_ord  = d.orders.n   as usize + 1;
+    let n_supp = d.supplier.n as usize + 1;
+    let mut first_supp: Vec<i64>  = vec![0;     n_ord];
+    let mut multi:      Vec<bool> = vec![false; n_ord];
+    let mut late_first: Vec<i64>  = vec![0;     n_ord];
+    let mut late_multi: Vec<bool> = vec![false; n_ord];
+    for li in 1..=d.lineitem.n as usize {
+        let ord = d.li_order.values[li] as usize;
+        let sup = d.li_supplier.values[li];
+        if !multi[ord] {
+            let prev = first_supp[ord];
+            if prev == 0      { first_supp[ord] = sup; }
+            else if prev != sup { multi[ord] = true; }
+        }
+        let is_late = d.li_commitdate.values[li] < d.li_receiptdate.values[li];
+        if is_late && !late_multi[ord] {
+            let prev = late_first[ord];
+            if prev == 0      { late_first[ord] = sup; }
+            else if prev != sup { late_multi[ord] = true; }
+        }
+    }
 
-    let ord_to_supp_ref = &ord_to_supp;
-    let late_ord_to_supp_ref = &late_ord_to_supp;
-    let qualifying = (&late)
-        .and((&d.li_supplier).in_s(saudi).k())
-        .and((&d.li_order).in_s(f_ords).k())
-        // EXISTS another supp on this order — semi-join via probe_any.
-        .and((&d.li_order).x(&d.li_supplier).filt(
-            move |(o, s)| ord_to_supp_ref.probe_any(o, |other| other != s)
-        ).k())
-        // NOT EXISTS another LATE supp on this order — anti-join via probe_any.
-        .and((&d.li_order).x(&d.li_supplier).filt(
-            move |(o, s)| !late_ord_to_supp_ref.probe_any(o, |other| other != s)
-        ).k());
+    // Cheap membership checks via dense Vec<bool>, same trick as Q9's
+    // pa_is_green: one byte per supplier / order instead of multi-hop probe
+    // chains in the per-row qualifying loop.
+    let mut is_saudi: Vec<bool> = vec![false; n_supp];
+    for s in 1..n_supp {
+        let nation_id = d.su_nation.values[s] as usize;
+        is_saudi[s] = d.na_name.values[nation_id] == "SAUDI ARABIA";
+    }
+    let mut is_f_ord: Vec<bool> = vec![false; n_ord];
+    for o in 1..n_ord {
+        is_f_ord[o] = d.ord_status.values[o] == "F";
+    }
+
+    let qualifying = d.lineitem
+        // Order: late filter (cross-col) → Saudi (1 byte) → F-order (1 byte)
+        // → multi (1 byte) → only-late (2 reads). Cheap-and-selective first.
+        .and((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k())
+        .and((&d.li_supplier).filt(move |s: i64| is_saudi[s as usize]).k())
+        .and((&d.li_order).filt(move |o: i64| is_f_ord[o as usize]).k())
+        .and((&d.li_order).filt(move |o: i64| multi[o as usize]).k())
+        .and((&d.li_order).x(&d.li_supplier).filt(move |(o, s)| {
+            let o = o as usize;
+            !late_multi[o] && late_first[o] == s
+        }).k());
     let counts = (&d.li_supplier).lcs(qualifying).fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(i64, i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
