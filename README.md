@@ -96,30 +96,26 @@ want to be) a database.** Numbers below are SF=1 TPC-H (~6M lineitems)
 and JOB on the full IMDB dataset (~36M cast records), warm run, single
 thread on an Apple M-series laptop. DuckDB-ST is `SET threads = 1`.
 
-### TPC-H SF=1
+<p>
+  <img src="./rust/bench/tpch_scatter.png" width="49%" alt="TPC-H SF=1">
+  <img src="./rust/bench/job_scatter.png" width="49%" alt="JOB">
+</p>
 
-Four panels: three Rust variants of the same 22 queries — **idiomatic**
-(the algebra port of the Julia originals), **optimized** (engine-wide
-ahash + i64-date fixes plus a few per-query algorithmic rewrites), and
-**ddbcheat** (everything in `optimized` plus the choke-point tricks
-lifted from inspecting DuckDB's plans — array-bucket aggregates for
-small group keys, dense-Vec replacements for HashMap folds keyed by a
-dense dimension, layout-aware lookups, etc) — plus a Julia panel for
-reference. The Rust ddbcheat variant scaled up to SF=10 with the same
-algebra runs ~2× faster than DuckDB-ST; see `rust/bench/sf10/` for the
-earlier numbers if curious.
+**TPC-H SF=1** (left): same algebraic queries in Rust and Julia, against
+DuckDB-ST. Rust prela (gray) is within striking distance of DuckDB even
+at the *idiomatic* level — no per-query algorithmic rewriting. There are
+also `optimized` and `ddbcheat` Rust variants (sequence of broader
+engine fixes + DuckDB-plan-inspired tricks) that pull below the diagonal;
+the `ddbcheat` variant scaled to SF=10 lands ~2× faster than DuckDB-ST.
+See `rust/src/tpch_queries_{idiomatic,optimized,ddbcheat}.rs` for the
+sources.
 
-![TPC-H performance](./rust/bench/tpch_scatter.png)
-
-### JOB (Join Order Benchmark)
-
-113 queries against the IMDB dataset. The Rust algebra runs ~9× faster
-than single-threaded DuckDB; the Julia port is competitive too.
-
-<img src="./rust/bench/job_scatter.png" width="540" alt="JOB performance">
+**JOB** (right): all 113 queries on the full IMDB dataset. The Rust
+algebra is ~9× faster than DuckDB-ST; Julia, which uses the same algebra
+in its native form, comes in at ~1.8×.
 
 Reproduce: see `rust/bench/plot_{tpch,job}.py` and `julia/bench.jl`. The
-data files used by the plots live in `rust/bench/data/`.
+underlying data files live in `rust/bench/data/`.
 
 ## Prerequisites
 

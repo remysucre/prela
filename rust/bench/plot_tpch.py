@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-# TPC-H SF=1 single-threaded — scatter plots of our query time (y) against
-# DuckDB-ST (x). The diagonal y=x marks parity; points below it are wins.
-# Three Rust panels (idiomatic / optimized / ddbcheat), plus an optional
-# Julia panel if data/julia_tpch.txt is present.
+# TPC-H SF=1 single-threaded — single scatter overlay of "idiomatic" Rust
+# and Julia prela vs DuckDB-ST. The idiomatic Rust series is the honest
+# baseline (no per-query algorithmic rewriting; just the algebra-port of
+# the Julia originals); Julia uses the same algebra in its native form.
+# Diagonal y=x marks parity.
 #
 # Reads warm run-2 timings from data/{idiomatic,optimized,ddbcheat}.txt
 # and DuckDB `.timer on` output from data/duckdb_st.txt.
@@ -56,66 +57,47 @@ def parse_julia(path):
     return out
 
 
-def draw_panel(ax, title, our_times, duck_times, color):
-    """One scatter panel: per-query (duck, ours) with diagonal reference."""
-    qs = list(range(1, 23))
-    xs = [duck_times[q] for q in qs]
-    ys = [our_times[q]  for q in qs]
+def main():
+    ido   = parse_rust(DATA / "idiomatic.txt")
+    duck  = parse_duck(DATA / "duckdb_st.txt")
+    julia = parse_julia(DATA / "julia_tpch.txt")
 
-    # log-log y=x diagonal — covers the full plotted range
-    lo = min(min(xs), min(ys)) * 0.5
-    hi = max(max(xs), max(ys)) * 2.0
+    qs = list(range(1, 23))
+    xs = [duck[q]  for q in qs]
+    yr = [ido[q]   for q in qs]
+    yj = [julia[q] for q in qs]
+
+    lo = min(min(xs), min(yr), min(yj)) * 0.5
+    hi = max(max(xs), max(yr), max(yj)) * 2.0
+
+    fig, ax = plt.subplots(figsize=(8, 8))
     ax.plot([lo, hi], [lo, hi], color="#888", linestyle="--", linewidth=1,
             label="y = x (parity)")
-
-    ax.scatter(xs, ys, s=60, color=color, edgecolor="black",
-               linewidth=0.5, zorder=3)
-    for q, x, y in zip(qs, xs, ys):
-        # nudge label slightly NE of each point
-        ax.annotate(f"Q{q}", (x, y), xytext=(4, 4), textcoords="offset points",
-                    fontsize=8, color="#333")
+    ax.scatter(xs, yj, s=60, color="#9461D9", edgecolor="black",
+               linewidth=0.5, alpha=0.85, label="Julia prela", zorder=2)
+    ax.scatter(xs, yr, s=60, color="#888888", edgecolor="black",
+               linewidth=0.5, alpha=0.95, label="Rust prela (idiomatic)",
+               zorder=3)
+    for q, x, y in zip(qs, xs, yr):
+        ax.annotate(f"Q{q}", (x, y), xytext=(4, 4),
+                    textcoords="offset points", fontsize=8, color="#333")
 
     ax.set_xscale("log"); ax.set_yscale("log")
     ax.set_xlim(lo, hi);  ax.set_ylim(lo, hi)
     ax.set_aspect("equal")
     ax.grid(True, which="both", alpha=0.3, linestyle=":")
     ax.set_xlabel("DuckDB-ST time (s, log)")
-    ax.set_ylabel(f"{title} time (s, log)")
+    ax.set_ylabel("prela time (s, log)")
 
-    tot_x = sum(xs); tot_y = sum(ys)
-    wins = sum(1 for x, y in zip(xs, ys) if y < x)
+    tx = sum(xs); tr = sum(yr); tj = sum(yj)
     ax.set_title(
-        f"{title}   total {tot_y:.2f}s   ({tot_y/tot_x:.2f}× of DuckDB)"
-        f"   {wins}/22 wins"
+        f"TPC-H SF=1 — prela vs DuckDB single-threaded\n"
+        f"Rust  {tr:>5.2f}s  ({tr/tx:.2f}× of DuckDB)   "
+        f"Julia {tj:>5.2f}s  ({tj/tx:.2f}× of DuckDB)"
     )
-    ax.legend(loc="upper left", fontsize=9)
+    ax.legend(loc="upper left", fontsize=10)
 
-
-def main():
-    ido   = parse_rust(DATA / "idiomatic.txt")
-    opt   = parse_rust(DATA / "optimized.txt")
-    ch    = parse_rust(DATA / "ddbcheat.txt")
-    duck  = parse_duck(DATA / "duckdb_st.txt")
-    julia_path = DATA / "julia_tpch.txt"
-    julia = parse_julia(julia_path) if julia_path.exists() else {}
-
-    panels = [
-        ("idiomatic (Rust)", ido, "#888888"),
-        ("optimized (Rust)", opt, "#4C8BC7"),
-        ("ddbcheat (Rust)",  ch,  "#2BA84A"),
-    ]
-    if julia and len(julia) >= 22:
-        panels.append(("Julia prela", julia, "#9461D9"))
-
-    fig, axes = plt.subplots(1, len(panels), figsize=(6 * len(panels), 6))
-    if len(panels) == 1:
-        axes = [axes]
-    for ax, (title, data, color) in zip(axes, panels):
-        draw_panel(ax, title, data, duck, color)
-
-    fig.suptitle("TPC-H SF=1 — prela vs DuckDB single-threaded "
-                 "(below diagonal = prela wins)", fontsize=13)
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    plt.tight_layout()
     out_path = Path(__file__).resolve().parent / "tpch_scatter.png"
     plt.savefig(out_path, dpi=130)
     print(f"saved {out_path}")
