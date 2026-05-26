@@ -1,40 +1,49 @@
 # Prela
 
-A small navigational query language over typed, strictly-binary relations,
-with three reference implementations sharing the same algebraic engine:
+A purely algebraic relational prorgamming language
+ based on [Tarski's Algebra of Relations](https://en.wikipedia.org/wiki/Relation_algebra).
 
-- **`julia/`** — original prototype with infix surface syntax (`→ ∧ × :`),
-  top-down CPS, JIT-fused.
-- **`rust/`** — AOT port, generic monomorphization + `#[inline(always)]`.
-- **`zig/`** — AOT port, `comptime` monomorphization + sink-struct CPS.
+## Examples
 
-For the language design, see [`LANGUAGE.md`](LANGUAGE.md).
+Join Order Benchmark [22a](https://github.com/gregrahn/join-order-benchmark/blob/master/22a.sql):
 
-## Benchmark — JOB (Join Order Benchmark), 113 queries, single-threaded
-
-|  | total (warm) | per-query bench |
-|---|---|---|
-| **prela-zig** | **5.49 s** | full suite under [zig/](zig/) |
-| **prela-rs**  | **5.82 s** | full suite under [rust/](rust/) |
-| DuckDB        | 19 s       | reference column store |
-| **prela-julia** (steady) | 90 s | full suite under [julia/](julia/) |
-| Postgres (indexed) | 152 s | reference baseline |
-
-All three impls produce identical results — the same algebra emits the same
-fused loop nest in each target. The Rust and Zig builds beat DuckDB by ~3×;
-the Julia version with JIT trails but still beats indexed Postgres.
-
-## Repo layout
-
+```julia
+movie
+   → (info → (Info.type == "countries")
+           ∧ (Info.info in ("Germany", "German", "USA", "American")))
+   ∧ (keyword in ("murder", "murder-in-title", "blood", "violence"))
+   ∧ (production_year > 2008)
+   ∧ (kind in ("movie", "episode"))
+   : title
+   × ((data → (Data.data < "7.0") ∧ (Data.type == "rating")) → Data.data)
+   × ((company → (Company.note ≁ r"\(USA\)")
+              ∧ (Company.note ~ r"\(200.*\)")
+              ∧ (Company.country != "[us]")
+              ∧ (Company.type == "production companies")) → Company.name)
 ```
-prela/
-├── README.md            this file
-├── LANGUAGE.md          language design + operator reference
-├── cache/               JOB binary cache (gitignored; generated on first Julia run)
-├── julia/               original Julia implementation
-├── rust/                AOT Rust port
-└── zig/                 AOT Zig port
+
+TPCH [q21](https://github.com/dragansah/tpch-dbgen/blob/master/tpch-queries/21.sql):
+
+```julia
+late = lineitem ∧ (receiptdate > commitdate)
+n_distinct = vs -> length(unique(vs))
+qualifying = (late
+    ∧ (Li.supplier → supplier ∧ (Su.nation → Na.name == "SAUDI ARABIA"))
+    ∧ (order → (orders ∧ (Ord.status == "F"))
+                # EXISTS another supplier on the order (across all lineitems)
+                ∧ ((order ← Li.supplier) ▷ n_distinct > 1)
+                # NOT EXISTS another LATE supplier (only L1 is late)
+                ∧ ((order ← (late : Li.supplier)) ▷ n_distinct == 1)))
+counts = (Li.supplier ← qualifying) ▷ ((a, _) -> a + 1, 0)
+counts ⊗ Su.name
 ```
+## Benchmark
+
+**Take performance numbers with a grain of salt, Prela is not (and doesn't want to be) a database!**
+
+![TPCH performance](./rust/bench/tpch_scatter.png)
+
+![JOB performance](./rust/bench/job_scatter.png)
 
 ## Prerequisites
 
@@ -45,8 +54,6 @@ prela/
 - **Julia 1.11+** — only needed to populate the cache, then for the Julia
   benchmark.
 - **Rust 1.85+** (edition 2024).
-- **Zig 0.16+** — uses the new `std.process.Init` main signature + `Io`
-  vtable.
 
 ## First-time setup: populate the cache
 
@@ -88,60 +95,3 @@ cargo build --release
 Prints `load: …s`, runs the 113 queries twice (cold + warm), reports
 `N/N ok` plus per-query timing for slow queries. Build takes ~20 s clean
 (LLVM optimizing 113 generic monomorphizations); steady runs land at ~5.8 s.
-
-## Run the Zig suite
-
-```bash
-cd zig
-zig build -Doptimize=ReleaseFast
-./zig-out/bin/prela-zig
-```
-
-Same output shape as the Rust version. Build takes ~15 s clean; steady runs
-land at ~5.5 s.
-
-## Notes on the build numbers
-
-The ~15–20 s release-mode build is **almost entirely LLVM optimization** of
-the 113 deeply-nested monomorphizations (each query is a unique concrete
-instantiation of `Restrict<Universe, Restrict<Conj<…>, Prod<…>>>`). The
-engine itself (operator structs + CPS protocol) is generic and produces
-almost no code on its own — compile time scales with how many queries you
-register and how deeply they nest.
-
-Incremental builds:
-- **Zig**: ~12 s with a real edit, **~90 ms with `touch` only** (content-hash).
-- **Rust** (LTO=fat, codegen-units=1): ~17 s either way, since cargo rebuilds
-  the crate on any mtime change.
-
-## How the three impls share an algebra
-
-Every port has the same set of nodes and the same CPS protocol:
-
-| Node    | Role                                               |
-|---------|----------------------------------------------------|
-| `Vec1`  | total 1:1 dense leaf relation, `Vec<R>` by id      |
-| `Many`  | multi-valued or partial leaf, `Vec<Vec<R>>` by id  |
-| `Universe` | a `SetQ` over `[1, n]`                          |
-| `Compose<A, B>` | Query ∘ Query — bridge is value           |
-| `Restrict<S, Q>` | SetQ ∘ Query — bridge is key            |
-| `Filter<A, P>` | value-side predicate                       |
-| `Conj` / `Disj` / `SetDiff` | SetQ boolean algebra          |
-| `Prod`  | Cartesian product per key                          |
-| `Keys`  | Query → SetQ (forget value)                        |
-
-All three ports use a single method `.o` that picks compose vs restrict based
-on the receiver's kind, via:
-- Julia: multiple dispatch on operator `→`.
-- Rust: trait method on `QueryExt` vs `SetQExt`.
-- Zig: method lookup on the receiver's struct type (Query types vs SetQ
-  types define different `.o` methods).
-
-The result is one unified surface (`.o`, `.k`, `.and`, `.or`, `.minus`, `.x`,
-`.eq`, `.ne`, `.gt`, `.lt`, `.ge`, `.le`, `.in_v`, `.in_s`, `.rx`, `.nrx`)
-across all three.
-
-## License
-
-See [LICENSE](LICENSE) if present, otherwise treat as research code — no
-warranty.
