@@ -73,14 +73,11 @@ def main():
     fig, ax = plt.subplots(figsize=(8, 8))
     ax.plot([lo, hi], [lo, hi], color="#888", linestyle="--", linewidth=1,
             label="y = x (parity)")
-    ax.scatter(xs, yj, s=60, color="#9461D9", edgecolor="black",
-               linewidth=0.5, alpha=0.85, label="Julia prela", zorder=2)
-    ax.scatter(xs, yr, s=60, color="#888888", edgecolor="black",
-               linewidth=0.5, alpha=0.95, label="Rust prela (idiomatic)",
+    ax.scatter(xs, yj, s=40, color="#9461D9", edgecolor="black",
+               linewidth=0.4, alpha=0.7, label="Julia prela", zorder=2)
+    ax.scatter(xs, yr, s=40, color="#888888", edgecolor="black",
+               linewidth=0.4, alpha=0.85, label="Rust prela (idiomatic)",
                zorder=3)
-    for q, x, y in zip(qs, xs, yr):
-        ax.annotate(f"Q{q}", (x, y), xytext=(4, 4),
-                    textcoords="offset points", fontsize=8, color="#333")
 
     ax.set_xscale("log"); ax.set_yscale("log")
     ax.set_xlim(lo, hi);  ax.set_ylim(lo, hi)
