@@ -1,6 +1,6 @@
 # Prela: Purely Algebraic Relational Combinators
 
-Prela is an embedded relational query language
+Prela is an embedded query language
  based on [Tarski's Algebra of Relations](https://en.wikipedia.org/wiki/Relation_algebra).
 Prela queries are concise, clear, and fast.
 The language is implemented by direct embedding 
@@ -53,6 +53,11 @@ counts ⊗ Su.name
 In the examples, constructs like `movie`, `Info.type` are regular Julia variables of type
  `Relation`, and operators like `→`, `∧`, and `in` are regular Julia functions overloaded
  to operate on relations.
+Notably, tables are decomposed into [sixth normal form](https://en.wikipedia.org/wiki/Sixth_normal_form),
+ so `keyword` is a *relation* mapping each movie ID to a string.
+The overhead of "joining back together" the decomposed columns is eliminated by continuation passing style
+ which produces code that co-iterates the column tables.
+
 Directly embedding Prela like this allows one to freely intermix queries with
  code of the host language to extend the reach of Prela,
  both in terms of expressiveness and performance.
