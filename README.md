@@ -1,7 +1,15 @@
-# Prela
+# Prela: Purely Algebraic Relational Combinators
 
-Purely algebraic relation combinators
+Prela is an embedded relational progamming language
  based on [Tarski's Algebra of Relations](https://en.wikipedia.org/wiki/Relation_algebra).
+Prela programs are concise, readable, and fast.
+The language is implemented by direct embedding 
+ (a.k.a. [shallow embedding](https://decomposition.al/blog/2015/06/02/embedding-deep-and-shallow/))
+ in a host programming language:
+ Prela operators are implemented as regular functions in the host language.
+We provide two implementations:
+ the Julia engine enjoys elegant syntax thanks to operator overloading and multiple dispatch,
+ while the (90% vibe-ported) Rust engine gives you (slightly) ugly but fast code.
 
 ## Examples
 
