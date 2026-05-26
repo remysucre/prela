@@ -80,7 +80,7 @@ def main():
             label="y = x (parity)")
     ax.scatter(xs, yj, s=40, color="#9461D9", edgecolor="black",
                linewidth=0.4, alpha=0.7, label="Julia prela", zorder=2)
-    ax.scatter(xs, yr, s=40, color="#888888", edgecolor="black",
+    ax.scatter(xs, yr, s=40, color="#2BA84A", edgecolor="black",
                linewidth=0.4, alpha=0.85, label="Rust prela", zorder=3)
 
     ax.set_xscale("log"); ax.set_yscale("log")
