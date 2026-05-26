@@ -1,6 +1,6 @@
 # Prela
 
-A purely algebraic relational prorgamming language
+Purely algebraic relational combinators
  based on [Tarski's Algebra of Relations](https://en.wikipedia.org/wiki/Relation_algebra).
 
 ## Examples
