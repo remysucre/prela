@@ -4,6 +4,7 @@ mod queries;
 mod tpch_data;
 mod tpch_queries_idiomatic;
 mod tpch_queries_optimized;
+mod tpch_queries_ddbcheat;
 
 use data::Data;
 use tpch_data::TpchData;
@@ -66,12 +67,13 @@ fn run_tpch() {
     eprintln!("load: {:.2}s  (li n={}, ord n={}, ps n={})",
               t.elapsed().as_secs_f32(), d.lineitem.n, d.orders.n, d.partsupp.n);
 
-    // QS=idiomatic|optimized (default optimized)
+    // QS=idiomatic|optimized|ddbcheat (default optimized)
     let variant = std::env::var("QS").unwrap_or_else(|_| "optimized".to_string());
     let qs = match variant.as_str() {
         "idiomatic" => tpch_queries_idiomatic::all_queries(),
         "optimized" => tpch_queries_optimized::all_queries(),
-        other => panic!("unknown QS variant: {other:?} (use idiomatic|optimized)"),
+        "ddbcheat"  => tpch_queries_ddbcheat::all_queries(),
+        other => panic!("unknown QS variant: {other:?} (use idiomatic|optimized|ddbcheat)"),
     };
     eprintln!("{} TPC-H queries registered ({} variant)", qs.len(), variant);
 
