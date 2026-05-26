@@ -1,6 +1,6 @@
 # Prela
 
-Purely algebraic relational combinators
+Purely algebraic relation combinators
  based on [Tarski's Algebra of Relations](https://en.wikipedia.org/wiki/Relation_algebra).
 
 ## Examples
