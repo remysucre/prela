@@ -1,4 +1,4 @@
-# Prela: Purely Algebraic Relational Combinators
+# Prela: Purely Algebraic Relation Combinators
 
 Prela is an embedded query language
  based on [Tarski's Algebra of Relations](https://en.wikipedia.org/wiki/Relation_algebra).
@@ -6,12 +6,12 @@ Prela queries are concise, clear, and fast.
 The language is implemented by direct embedding 
  (a.k.a. [shallow embedding](https://decomposition.al/blog/2015/06/02/embedding-deep-and-shallow/))
  in a host programming language:
- Prela operators are implemented as regular functions in the host language.
-The implementation follows [continuation passing style](https://en.wikipedia.org/wiki/Continuation-passing_style),
+ its operators are regular functions in the host.
+The implementation follows [continuation-passing style](https://en.wikipedia.org/wiki/Continuation-passing_style),
  which produces highly efficient code when compiled.
-We provide two implementations:
+We provide two prototypes:
  the Julia engine enjoys elegant syntax thanks to operator overloading and multiple dispatch,
- while the Rust engine gives you (slightly) ugly but fast code.
+ while the Rust engine gives you (slightly) uglier but fast code.
 
 > [!NOTE]
 > Prela is a research prototype in early development. 
@@ -20,9 +20,8 @@ We provide two implementations:
 
 ## Example
 
-Prela queries are readable even to the untrained eye.
-
-Join Order Benchmark [22a](https://github.com/gregrahn/join-order-benchmark/blob/master/22a.sql):
+Prela queries are readable even to the untrained eye. 
+Consider Join Order Benchmark [22a](https://github.com/gregrahn/join-order-benchmark/blob/master/22a.sql):
 
 ```julia
 movie
@@ -48,17 +47,17 @@ Intuitively, the query looks for `movies` satisfying several conditions:
 
 Then, for each such movie, output the following attributes:
 
-- Its `title`
-- Its `data`, if satisfying further conditions (with rating < 7)
+- Its title
+- Its rating data, if lower than 7
 - The name of its production company, if satisfying further conditions
 
 In SQL's way of thinking, `movie` would be in the `FROM` clause (along with other tables involved),
  the predicates before `:` are in the `WHERE` clause,
- and what comes after `:` are `SELECTED`.
+ and what comes after `:` are `SELECT`ed.
 But unlike SQL, Prela can freely interleave predicates and outputs,
  resulting in more natural queries as shown above.
 And instead of explicit conditions,
- joins in Prela are reflected by the *structure* of the query.
+ joins in Prela are reflected by the *structure* of the query in a navigational style.
 
 ## Data Model
 
@@ -115,7 +114,7 @@ The key to understanding relational composition is to view relations as
 For this reason, we will abuse `X -> Y` to denote the type of a binary relation.
 
 From this perspective, it is then natural to see `→`
- as a generalization of function composition `∘`:
+ as a generalization of the function composition ($f \circ g$):
  `R → S` first "applies" `R` to each `x` to get a bunch of `y`,
  then for each `y`, apply `S` to get a bunch of `z`.
 In code:
