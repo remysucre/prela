@@ -8,7 +8,7 @@ The language is implemented by direct embedding
  in a host programming language:
  Prela operators are implemented as regular functions in the host language.
 The implementation follows [continuation passing style](https://en.wikipedia.org/wiki/Continuation-passing_style),
- which produces highly efficient code when combined with monomorphization and inlining.
+ which produces highly efficient code when compiled.
 We provide two implementations:
  the Julia engine enjoys elegant syntax thanks to operator overloading and multiple dispatch,
  while the Rust engine gives you (slightly) ugly but fast code.
