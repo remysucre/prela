@@ -13,6 +13,10 @@ We provide two implementations:
  the Julia engine enjoys elegant syntax thanks to operator overloading and multiple dispatch,
  while the Rust engine gives you (slightly) ugly but fast code.
 
+> [!NOTE]
+> Prela is a research prototype in early development. 
+> Expect constant and sweeping changes to both language design and implementation.
+
 ## Examples
 
 Prela queries are readable even to the untrained eye.
