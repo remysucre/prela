@@ -102,6 +102,8 @@ And because Prela's data model is based on binary relations,
 We've taken liberty refactoring the JOB schema to make Prela queries
  natural, but that also lead to stronger performance
  because the indexes turn out to suit the queries better.
+Overall, the main takeaway from the numbers is that 
+*the simplicity of Prela does not hold it back from running fast*.
 
 The plots below compare the run time of the Rust and Julia implementation
  against DuckDB (1 thread) as baseline,
