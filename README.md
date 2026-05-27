@@ -17,7 +17,8 @@ We provide two implementations:
 > Prela is a research prototype in early development. 
 > Expect constant and sweeping changes to both language design and implementation.
 
-## Examples
+
+## Example
 
 Prela queries are readable even to the untrained eye.
 
@@ -40,26 +41,26 @@ movie
 
 Intuitively, the query looks for `movies` satisfying several conditions:
 
-- Its `info` has `type` `"countries"` and value in one of `("Germany", "German", "USA", "American")`
-- Its `keyword` is one of `("murder", "murder-in-title", "blood", "violence")`
-- It is produced after 2008
-- Its `kind` is one of `"movie"` or `"episode"`
+- It's German or American
+- It's a thriller
+- It's produced after 2008
+- It's a movie or a TV series episode (which we'll also just call a "movie")
 
 Then, for each such movie, output the following attributes:
 
 - Its `title`
-- Its `data`, if satisfying further conditions (of `type` `"rating"` with value `< "7.0"`)
-- Its `company`, if satisfying further conditions
+- Its `data`, if satisfying further conditions (with rating < 7)
+- The name of its production company, if satisfying further conditions
 
-In the SQL way of thinking, `movie` would be in the `FROM` clause,
+In SQL's way of thinking, `movie` would be in the `FROM` clause (along with other tables involved),
  the predicates before `:` are in the `WHERE` clause,
  and what comes after `:` are `SELECTED`.
 But unlike SQL, Prela can freely interleave predicates and outputs,
  resulting in more natural queries as shown above.
 And instead of explicit conditions,
- joins in Prela are specified *structurally*.
+ joins in Prela are reflected by the *structure* of the query.
 
-### Data model
+## Data Model
 
 To understand what's going on under the hood, we should first clarify
  the data model used by Prela.
@@ -68,7 +69,7 @@ This is where Tarski's Algebra of Relations comes in:
  and a query is built up with operators
  that take in and produce binary relations,
  called *relation combinators*.
-One way to think about this is that we're doing a very extreme form
+One way to think about this is a very extreme form
  of normalization: every table with k columns
  is "shredded" into k binary tables, one per column.
 
@@ -81,7 +82,7 @@ movie : (production_year > 2008) → title
 Here, `title` and `production_year` are both attributes of
  the same table in the original schema,
  but in Prela, each of them becomes a binary relation,
- mapping every movie (ID) to its title and production_year, respectively.
+ mapping every movie (ID) to its title and production year, respectively.
 `movie` can be thought of as a unary relation storing all the movie IDs;
  but if we strictly following the "everything is a *binary* relation" doctrine,
  a unary relation of type `T` is just a (degenerate) binary relation of type `() -> T`
@@ -103,7 +104,7 @@ In this example, since `movie` is unary (we won't insist on the pedantry of bina
  produced after 2008.
 So `movie : (production_year > 2008)` is a unary relation over the IDs of all post-2008 movies.
 
-Finally, the `→` operator is *relational composition*.
+The `→` operator is *relational composition*.
 It is the workhorse of both Prela and Tarski's Algebra of Relations.
 The key to understanding relational composition is to view relations as 
  a generalization of functions:
@@ -165,7 +166,12 @@ This allows us to combine different columns in the output:
  `company : ... → Company.name` computes a relation of type `Movie -> String`
  mapping each movie to its company's name.
 
-
+Note that `×` does not exist in Tarski's algebra, as it somewhat "pollutes"
+ the "everything is binary" doctrine - we're now allowed to have tuples!
+On one hand, `×` is a practical convinience, as we often need to output multiple columns;
+ on the other hand, the pollution is contained, as tuples are
+ just opaque values stored in a column,
+ and all operators still behave as usual over relations containing tuples.
 
 TPCH [q21](https://github.com/dragansah/tpch-dbgen/blob/master/tpch-queries/21.sql):
 
