@@ -472,7 +472,11 @@ askeys(s::SetQ) = s
 # ∧ ∨ : - ⊗
 ∧(a, b) = Conj(askeys(a), askeys(b))
 ∨(a, b) = Disj(askeys(a), askeys(b))
-Base.:(:)(a, b::Query) = Restrict(askeys(a), b)
+Base.:(:)(a::SetQ{X},     b::SetQ{X})        where {X}       = Conj(a, b)
+Base.:(:)(a::SetQ{X},     b::Query{X, R})    where {X, R}    = Conj(a, askeys(b))
+Base.:(:)(a::Query{X, Y}, b::SetQ{Y})        where {X, Y}    = Filter(a, InSetP(b))
+Base.:(:)(a::Query{X, Y}, b::Query{Y, R})    where {X, Y, R} = Filter(a, InSetP(askeys(b)))
+Base.:(:)(a,              b::Query)                          = Restrict(askeys(a), b)
 Base.:-(a::Query{D, R}, b) where {D, R} = Diff(a, askeys(b))
 Base.:-(a::SetQ{D},     b) where {D}    = SetDiff(a, askeys(b))
 # Product — `⊗` is the canonical spelling (tensor-product convention from math).
