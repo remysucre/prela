@@ -175,9 +175,9 @@ _q("11a", "Churchill Films || followed by || Batman Beyond") do
         : (keyword == "sequel") ∧
           (production_year >= 1950) ∧
           (production_year <= 2000)
-        → (company : ((Company.country != "[pl]")
+        → (company : (Company.country != "[pl]")
                    ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner"))
-                   ∧ (Company.type == "production companies") - Company.note) → Company.name)
+                   ∧ (Company.type == "production companies") - Company.note → Company.name)
         × (link → (MovieLink.type ~ r"follow"))
         × title)
 end
@@ -298,9 +298,9 @@ _q("11b", "Filmlance International AB || follows || The Money Man") do
         : (keyword == "sequel") ∧
           (production_year == 1998) ∧
           (title ~ r"Money")
-        → (company : ((Company.country != "[pl]")
+        → (company : (Company.country != "[pl]")
                    ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner"))
-                   ∧ (Company.type == "production companies") - Company.note) → Company.name)
+                   ∧ (Company.type == "production companies") - Company.note → Company.name)
         × (link → (MovieLink.type ~ r"follows"))
         × title)
 end
@@ -457,7 +457,7 @@ _q("5b", "(empty)") do
                    ∧ (Company.note ~ r"\(VHS\)")
                    ∧ (Company.note ~ r"\(USA\)")
                    ∧ (Company.note ~ r"\(1994\)")) ∧
-          (info → (Info.info in ("USA", "America"))) ∧
+          (info → Info.info in ("USA", "America")) ∧
           (production_year > 2010)
         → title)
 end
@@ -467,9 +467,9 @@ _q("5c", "11,830,420") do
         : (company → (Company.type == "production companies")
                    ∧ (Company.note ≁ r"\(TV\)")
                    ∧ (Company.note ~ r"\(USA\)")) ∧
-          (info → (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
-                                 "Swedish", "Denish", "Norwegian", "German",
-                                 "USA", "American"))) ∧
+          (info → Info.info in ("Sweden", "Norway", "Germany", "Denmark",
+                                "Swedish", "Denish", "Norwegian", "German",
+                                "USA", "American")) ∧
           (production_year > 1990)
         → title)
 end
@@ -506,7 +506,7 @@ end
 
 _q("15c", "USA:1 April 2003 || 24: Day Six - Debrief") do
     (movie
-        : (company → (Company.country == "[us]")) ∧
+        : (company → Company.country == "[us]") ∧
           keyword ∧
           aka ∧
           (production_year > 1990)
@@ -518,7 +518,7 @@ end
 
 _q("15d", "(Not So) Instant Photo || 06/05") do
     (movie
-        : (company → (Company.country == "[us]")) ∧
+        : (company → Company.country == "[us]") ∧
           keyword ∧
           (info → (Info.type == "release dates") ∧ (Info.note ~ r"internet")) ∧
           (production_year > 1990)
@@ -534,7 +534,7 @@ _q("11c", "20th Century Fox Home Entertainment || (1997-2002) (worldwide) (all m
         → (company : (Company.country != "[pl]")
                     ∧ ((Company.name ~ r"^20th Century Fox") ∨ (Company.name ~ r"^Twentieth Century Fox"))
                     ∧ (Company.type != "production companies")
-                    ∧ Company.note → (Company.name × Company.note))
+                    ∧ Company.note → Company.name × Company.note)
         × title)
 end
 
@@ -545,14 +545,14 @@ _q("11d", "13th Street || (1954) (UK) (TV) || ...denn sie wissen nicht, was sie 
           link
         → (company : (Company.country != "[pl]")
                     ∧ (Company.type != "production companies")
-                    ∧ Company.note → (Company.name × Company.note))
+                    ∧ Company.note → Company.name × Company.note)
         × title)
 end
 
 _q("13d", "\"O\" Films || 1.0 || #54 Meets #47") do
     (movie
         : (kind == "movie") ∧
-          (info → (Info.type == "release dates"))
+          (info → Info.type == "release dates")
         → (company : (Company.country == "[us]") ∧ (Company.type == "production companies") → Company.name)
         × (data : (Data.type == "rating") → Data.data)
         × title)
@@ -564,7 +564,7 @@ _q("6a", "marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert") do
     let kw = keyword == "marvel-cinematic-universe"
         (movie
             : (production_year > 2010) ∧ kw
-            → kw × title × (cast → person → (Person.name ~ r"Downey.*Robert")))
+            → kw × title × (cast → person → Person.name ~ r"Downey.*Robert"))
     end
 end
 
@@ -572,7 +572,7 @@ _q("6b", "based-on-comic || The Avengers 2 || Downey Jr., Robert") do
     let kw = keyword in _KW8
         (movie
             : (production_year > 2014) ∧ kw
-            → kw × title × (cast → person → (Person.name ~ r"Downey.*Robert")))
+            → kw × title × (cast → person → Person.name ~ r"Downey.*Robert"))
     end
 end
 
@@ -580,7 +580,7 @@ _q("6c", "marvel-cinematic-universe || The Avengers 2 || Downey Jr., Robert") do
     let kw = keyword == "marvel-cinematic-universe"
         (movie
             : (production_year > 2014) ∧ kw
-            → kw × title × (cast → person → (Person.name ~ r"Downey.*Robert")))
+            → kw × title × (cast → person → Person.name ~ r"Downey.*Robert"))
     end
 end
 
@@ -588,7 +588,7 @@ _q("6d", "based-on-comic || 2008 MTV Movie Awards || Downey Jr., Robert") do
     let kw = keyword in _KW8
         (movie
             : (production_year > 2000) ∧ kw
-            → kw × title × (cast → person → (Person.name ~ r"Downey.*Robert")))
+            → kw × title × (cast → person → Person.name ~ r"Downey.*Robert"))
     end
 end
 
@@ -596,7 +596,7 @@ _q("6e", "marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert") do
     let kw = keyword == "marvel-cinematic-universe"
         (movie
             : (production_year > 2000) ∧ kw
-            → kw × title × (cast → person → (Person.name ~ r"Downey.*Robert")))
+            → kw × title × (cast → person → Person.name ~ r"Downey.*Robert"))
     end
 end
 
@@ -612,7 +612,7 @@ end
 _q("7a", "Antonioni, Michelangelo || Dressed to Kill") do
     (movie
         : (production_year >= 1980) ∧ (production_year <= 1995) ∧
-          (linked_by → (MovieLink.type == "features"))
+          (linked_by → MovieLink.type == "features")
         → (cast
             : (person → (Person.aka → AkaName.name ~ r"a")
                        ∧ (Person.name_pcode_cf >= "A") ∧ (Person.name_pcode_cf <= "F")
@@ -625,7 +625,7 @@ end
 _q("7b", "De Palma, Brian || Dressed to Kill") do
     (movie
         : (production_year >= 1980) ∧ (production_year <= 1984) ∧
-          (linked_by → (MovieLink.type == "features"))
+          (linked_by → MovieLink.type == "features")
         → (cast
             : (person → (Person.aka → AkaName.name ~ r"a") ∧ (Person.name_pcode_cf ~ r"^D") ∧ (Person.gender == "m")
                        ∧ (Person.info → (PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm")))
@@ -640,7 +640,7 @@ _q("7c", "50 Cent || \"Boo\" Arnold was born Earl Arnold in Hattiesburg, Mississ
             ∧ ((Person.gender == "m") ∨ ((Person.gender == "f") ∧ (Person.name ~ r"^A"))))
         (movie
             : (production_year >= 1980) ∧ (production_year <= 2010) ∧
-              (linked_by → (MovieLink.type in ("references", "referenced in", "features", "featured in")))
+              (linked_by → MovieLink.type in ("references", "referenced in", "features", "featured in"))
             → (cast
                 : (person → pf ∧ (Person.info → bio_filter))
                 → (person → Person.name)
@@ -675,14 +675,14 @@ end
 
 _q("8c", "\"A.J.\" || #1 Cheerleader Camp") do
     (movie
-        : (company → (Company.country == "[us]"))
+        : (company → Company.country == "[us]")
         → (cast : (role == "writer") → person → Person.aka → AkaName.name)
         × title)
 end
 
 _q("8d", "\"Jenny from the Block\" || #1 Cheerleader Camp") do
     (movie
-        : (company → (Company.country == "[us]"))
+        : (company → Company.country == "[us]")
         → (cast : (role == "costume designer") → person → Person.aka → AkaName.name)
         × title)
 end
@@ -717,7 +717,7 @@ end
 
 _q("9c", "'Annette' || 2nd Balladeer || Alborg, Ana Esther || (1975-01-20)") do
     (movie
-        : (company → (Company.country == "[us]"))
+        : (company → Company.country == "[us]")
         → (cast
             : (note in _VOICE4) ∧
               (role == "actress") ∧
@@ -730,11 +730,11 @@ end
 
 _q("9d", "!!!, Toy || Aaron, Caroline || \"Cockamamie's\" Salesgirl || \$15,000.00 Error") do
     (movie
-        : (company → (Company.country == "[us]"))
+        : (company → Company.country == "[us]")
         → (cast
             : (note in _VOICE4) ∧
               (role == "actress") ∧
-              (person → (Person.gender == "f"))
+              (person → Person.gender == "f")
             → (person → Person.aka → AkaName.name)
             × (person → Person.name)
             × (character → Character.name))
@@ -744,7 +744,7 @@ end
 # ===================================================================
 _q("10a", "Actor || 12 Rounds") do
     (movie
-        : (company → (Company.country == "[ru]")) ∧
+        : (company → Company.country == "[ru]") ∧
           (production_year > 2005)
         → (cast
             : (note ~ r"\(voice\)") ∧
@@ -809,37 +809,37 @@ end
 _q("17a", "B, Khaz") do
     (movie
         : (company → (Company.country == "[us]")) ∧ (keyword == "character-name-in-title")
-        → (cast → person → (Person.name ~ r"^B")))
+        → cast → person → (Person.name ~ r"^B"))
 end
 
 _q("17b", "Z'Dar, Robert") do
     (movie
         : company ∧ (keyword == "character-name-in-title")
-        → (cast → person → (Person.name ~ r"^Z")))
+        → cast → person → (Person.name ~ r"^Z"))
 end
 
 _q("17c", "X'Volaitis, John") do
     (movie
         : company ∧ (keyword == "character-name-in-title")
-        → (cast → person → (Person.name ~ r"^X")))
+        → cast → person → (Person.name ~ r"^X"))
 end
 
 _q("17d", "Abrahamsson, Bertil") do
     (movie
         : company ∧ (keyword == "character-name-in-title")
-        → (cast → person → (Person.name ~ r"Bert")))
+        → cast → person → (Person.name ~ r"Bert"))
 end
 
 _q("17e", "\$hort, Too") do
     (movie
         : (company → (Company.country == "[us]")) ∧ (keyword == "character-name-in-title")
-        → (cast → person → Person.name))
+        → cast → person → Person.name)
 end
 
 _q("17f", "'El Galgo PornoStar', Blanquito") do
     (movie
         : company ∧ (keyword == "character-name-in-title")
-        → (cast → person → (Person.name ~ r"B")))
+        → cast → person → (Person.name ~ r"B"))
 end
 
 # ===================================================================
@@ -1103,7 +1103,7 @@ _q("26a", "'Agua' Man || Acereda, Hermie || 7.1 || 3:10 to Yuma") do
         (movie
             : (complete_cast → (CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete")) ∧
               (keyword in _KW10) ∧ (kind == "movie") ∧ (production_year > 2000)
-            → (cast : (character → (Character.name ~ r"[Mm]an")) → ((character → Character.name) × (person → Person.name)))
+            → (cast : (character → (Character.name ~ r"[Mm]an")) → (character → Character.name) × (person → Person.name))
             × (rd → Data.data)
             × title)
     end
@@ -1343,7 +1343,7 @@ end
 _q("32a", "(empty)") do
     (movie
        : (keyword == "10,000-mile-club") ∧ link
-       → ((link → MovieLink.type) → LinkType.link)
+       → (link → MovieLink.type → LinkType.link)
        × title
        × (link → MovieLink.target → title))
 end
@@ -1351,7 +1351,7 @@ end
 _q("32b", "alternate language version of || 12 oz. Mouse || 'Angel': Season 2 Overview") do
     (movie
        : (keyword == "character-name-in-title") ∧ link
-       → ((link → MovieLink.type) → LinkType.link)
+       → (link → MovieLink.type → LinkType.link)
        × title
        × (link → MovieLink.target → title))
 end
