@@ -163,7 +163,7 @@ end
 
 _q("13a", "Afghanistan:24 June 2012 || 1.0 || &Me") do
     (movie
-        : (company → ((Company.country == "[de]") ∧ (Company.type == "production companies"))) ∧
+        : (company → (Company.country == "[de]") ∧ (Company.type == "production companies")) ∧
           (kind == "movie")
         → (info : (Info.type == "release dates") → Info.info)
         × (data : (Data.type == "rating") → Data.data)
@@ -184,8 +184,8 @@ end
 
 _q("22a", "(empty)") do
     (movie
-        : (info → ((Info.type == "countries")
-                ∧ (Info.info in ("Germany", "German", "USA", "American")))) ∧
+        : (info → (Info.type == "countries")
+                ∧ (Info.info in ("Germany", "German", "USA", "American"))) ∧
           (keyword in ("murder", "murder-in-title", "blood", "violence")) ∧
           (production_year > 2008) ∧
           (kind in ("movie", "episode"))
@@ -209,9 +209,9 @@ end
 
 _q("5a", "(empty)") do
     (movie
-        : (company → ((Company.type == "production companies")
+        : (company → (Company.type == "production companies")
                    ∧ (Company.note ~ r"\(theatrical\)")
-                   ∧ (Company.note ~ r"\(France\)"))) ∧
+                   ∧ (Company.note ~ r"\(France\)")) ∧
           (info → (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
                                  "Swedish", "Denish", "Norwegian", "German"))) ∧
           (production_year > 2005)
@@ -220,7 +220,7 @@ end
 
 _q("12a", "10th Grade Reunion Films || 8.1 || 3:20") do
     (movie
-        : (info → ((Info.type == "genres") ∧ (Info.info in ("Drama", "Horror")))) ∧
+        : (info → (Info.type == "genres") ∧ (Info.info in ("Drama", "Horror"))) ∧
           (production_year >= 2005) ∧
           (production_year <= 2008)
         → (company : (Company.country == "[us]") ∧ (Company.type == "production companies") → Company.name)
@@ -232,10 +232,10 @@ _q("14a", "1.0 || \$lowdown") do
     (movie
         : (keyword in ("murder", "murder-in-title", "blood", "violence")) ∧
           (kind == "movie") ∧
-          (info → ((Info.type == "countries")
+          (info → (Info.type == "countries")
                 ∧ (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
                                  "Swedish", "Denish", "Norwegian", "German",
-                                 "USA", "American")))) ∧
+                                 "USA", "American"))) ∧
           (production_year > 2010)
         → (data : (Data.type == "rating") ∧ (Data.data < "8.5") → Data.data)
         × title)
@@ -347,8 +347,8 @@ end
 
 _q("12b", "\$10,000 || Birdemic: Shock and Terror") do
     (movie
-        : (company → ((Company.country == "[us]")
-                   ∧ (Company.type in ("production companies", "distributors")))) ∧
+        : (company → (Company.country == "[us]")
+                   ∧ (Company.type in ("production companies", "distributors"))) ∧
           (data → (Data.type == "bottom 10 rank")) ∧
           (production_year > 2000) ∧
           ((title ~ r"^Birdemic") ∨ (title ~ r"Movie"))
@@ -358,8 +358,8 @@ end
 
 _q("12c", "\"Oh That Gus!\" || 7.1 || \$1.11") do
     (movie
-        : (info → ((Info.type == "genres")
-                ∧ (Info.info in ("Drama", "Horror", "Western", "Family")))) ∧
+        : (info → (Info.type == "genres")
+                ∧ (Info.info in ("Drama", "Horror", "Western", "Family"))) ∧
           (production_year >= 2000) ∧
           (production_year <= 2010)
         → (company : (Company.country == "[us]") ∧ (Company.type == "production companies") → Company.name)
@@ -382,10 +382,10 @@ _q("14b", "6.4 || Of Dolls and Murder") do
     (movie
         : (keyword in ("murder", "murder-in-title")) ∧
           (kind == "movie") ∧
-          (info → ((Info.type == "countries")
+          (info → (Info.type == "countries")
                 ∧ (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
                                  "Swedish", "Denish", "Norwegian", "German",
-                                 "USA", "American")))) ∧
+                                 "USA", "American"))) ∧
           (production_year > 2010) ∧
           ((title ~ r"murder") ∨ (title ~ r"Murder") ∨ (title ~ r"Mord"))
         → (data : (Data.type == "rating") ∧ (Data.data > "6.0") → Data.data)
@@ -396,10 +396,10 @@ _q("14c", "1.0 || \$lowdown") do
     (movie
         : (keyword in ("murder", "murder-in-title", "blood", "violence")) ∧
           (kind in ("movie", "episode")) ∧
-          (info → ((Info.type == "countries")
+          (info → (Info.type == "countries")
                 ∧ (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
                                  "Swedish", "Danish", "Norwegian", "German",
-                                 "USA", "American")))) ∧
+                                 "USA", "American"))) ∧
           (production_year > 2005)
         → (data : (Data.type == "rating") ∧ (Data.data < "8.5") → Data.data)
         × title)
@@ -407,8 +407,8 @@ end
 
 _q("22b", "(empty)") do
     (movie
-        : (info → ((Info.type == "countries")
-                ∧ (Info.info in ("Germany", "German", "USA", "American")))) ∧
+        : (info → (Info.type == "countries")
+                ∧ (Info.info in ("Germany", "German", "USA", "American"))) ∧
           (keyword in ("murder", "murder-in-title", "blood", "violence")) ∧
           (production_year > 2009) ∧
           (kind in ("movie", "episode"))
