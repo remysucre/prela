@@ -617,7 +617,7 @@ _q("7a", "Antonioni, Michelangelo || Dressed to Kill") do
             : (person : (((Person.aka → AkaName.name ~ r"a")
                        ∧ (Person.name_pcode_cf >= "A") ∧ (Person.name_pcode_cf <= "F")
                        ∧ ((Person.gender == "m") ∨ ((Person.gender == "f") ∧ (Person.name ~ r"^B")))
-                       ∧ (Person.info → ((PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm"))))))
+                       ∧ (Person.info : ((PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm"))))))
             → person → Person.name)
         × title)
 end
@@ -628,7 +628,7 @@ _q("7b", "De Palma, Brian || Dressed to Kill") do
         ∧ (linked_by → (MovieLink.type == "features"))
         → (cast
             : (person : (((Person.aka → AkaName.name ~ r"a") ∧ (Person.name_pcode_cf ~ r"^D") ∧ (Person.gender == "m")
-                       ∧ (Person.info → ((PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm"))))))
+                       ∧ (Person.info : ((PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm"))))))
             → person → Person.name)
         × title)
 end
@@ -642,7 +642,7 @@ _q("7c", "50 Cent || \"Boo\" Arnold was born Earl Arnold in Hattiesburg, Mississ
             : (production_year >= 1980) ∧ (production_year <= 2010)
             ∧ (linked_by → (MovieLink.type in ("references", "referenced in", "features", "featured in")))
             → (cast
-                : (person : ((pf ∧ (Person.info → bio_filter))))
+                : (person : ((pf ∧ (Person.info : bio_filter))))
                 → (person → Person.name)
                 × (person → Person.info : bio_filter → PersonInfo.info)))
     end
@@ -849,7 +849,7 @@ _q("18a", "\$1,000 || 10 || 40 Days and 40 Nights") do
         (movie
             : ib
             ∧ (cast : ((note in ("(producer)", "(executive producer)"))
-                    ∧ (person → ((Person.gender == "m") ∧ (Person.name ~ r"Tim")))))
+                    ∧ (person : ((Person.gender == "m") ∧ (Person.name ~ r"Tim")))))
             → ib × dv × title)
     end
 end
@@ -859,7 +859,7 @@ _q("18b", "Horror || 8.1 || Agorable") do
         ig = info : gf → Info.info,
         dr = data : ((Data.type == "rating") ∧ (Data.data > "8.0")) → Data.data
         (movie
-            : (info → gf) ∧ (production_year >= 2008) ∧ (production_year <= 2014)
+            : (info : gf) ∧ (production_year >= 2008) ∧ (production_year <= 2014)
             ∧ (cast : ((note in _WRITER5) ∧ (person → (Person.gender == "f"))))
             → ig × dr × title)
     end
@@ -870,7 +870,7 @@ _q("18c", "Action || 10 || #PostModem") do
         ig = info : gf → Info.info,
         dv = data : (Data.type == "votes") → Data.data
         (movie
-            : (info → gf)
+            : (info : gf)
             ∧ (cast : ((note in _WRITER5) ∧ (person → (Person.gender == "m"))))
             → ig × dv × title)
     end
@@ -939,7 +939,7 @@ _q("20a", "Disaster Movie") do
     (movie
         : (complete_cast : (((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete"))))
         ∧ (keyword in _KW8) ∧ (kind == "movie") ∧ (production_year > 1950)
-        ∧ (cast : ((character → ((Character.name ≁ r"Sherlock")
+        ∧ (cast : ((character : ((Character.name ≁ r"Sherlock")
                               ∧ ((Character.name ~ r"Tony.*Stark") ∨ (Character.name ~ r"Iron.*Man"))))))
         → title)
 end
@@ -948,7 +948,7 @@ _q("20b", "Iron Man") do
     (movie
         : (complete_cast : (((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete"))))
         ∧ (keyword in _KW8) ∧ (kind == "movie") ∧ (production_year > 2000)
-        ∧ (cast : ((character → ((Character.name ≁ r"Sherlock")
+        ∧ (cast : ((character : ((Character.name ≁ r"Sherlock")
                               ∧ ((Character.name ~ r"Tony.*Stark") ∨ (Character.name ~ r"Iron.*Man"))))
                 ∧ (person → (Person.name ~ r"Downey.*Robert"))))
         → title)
@@ -1066,7 +1066,7 @@ end
 _q("25a", "Horror || 10 || -- And Now the Screaming Starts! || Abdallah, Damon") do
     let gf = (Info.type == "genres") ∧ (Info.info == "Horror")
         (movie
-            : (info → gf) ∧ (keyword in ("murder", "blood", "gore", "death", "female-nudity"))
+            : (info : gf) ∧ (keyword in ("murder", "blood", "gore", "death", "female-nudity"))
             → (info : gf → Info.info)
             × (data : (Data.type == "votes") → Data.data)
             × title
@@ -1077,7 +1077,7 @@ end
 _q("25b", "Horror || 138 || Vampire Boys || Campbell, Jeremiah") do
     let gf = (Info.type == "genres") ∧ (Info.info == "Horror")
         (movie
-            : (info → gf) ∧ (keyword in ("murder", "blood", "gore", "death", "female-nudity"))
+            : (info : gf) ∧ (keyword in ("murder", "blood", "gore", "death", "female-nudity"))
             ∧ (production_year > 2010) ∧ (title ~ r"^Vampire")
             → (info : gf → Info.info)
             × (data : (Data.type == "votes") → Data.data)
@@ -1089,7 +1089,7 @@ end
 _q("25c", "Action || 10 || \$ || Aakeson, Kim Fupz") do
     let gf = (Info.type == "genres") ∧ (Info.info in _GENRE6)
         (movie
-            : (info → gf) ∧ (keyword in _KW7)
+            : (info : gf) ∧ (keyword in _KW7)
             → (info : gf → Info.info)
             × (data : (Data.type == "votes") → Data.data)
             × title
@@ -1268,7 +1268,7 @@ _q("30a", "Horror || 100356 || 16 Blocks || Abrams, J.J.") do
     let gf = (Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))
         (movie
             : (complete_cast : (((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete+verified"))))
-            ∧ (info → gf) ∧ (keyword in _KW7) ∧ (production_year > 2000)
+            ∧ (info : gf) ∧ (keyword in _KW7) ∧ (production_year > 2000)
             → (info : gf → Info.info)
             × (data : (Data.type == "votes") → Data.data)
             × title
@@ -1280,7 +1280,7 @@ _q("30b", "Horror || 194782 || Freddy vs. Jason || Shannon, Damian") do
     let gf = (Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))
         (movie
             : (complete_cast : (((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete+verified"))))
-            ∧ (info → gf) ∧ (keyword in _KW7) ∧ (production_year > 2000)
+            ∧ (info : gf) ∧ (keyword in _KW7) ∧ (production_year > 2000)
             ∧ ((title ~ r"Freddy") ∨ (title ~ r"Jason") ∨ (title ~ r"^Saw"))
             → (info : gf → Info.info)
             × (data : (Data.type == "votes") → Data.data)
@@ -1293,7 +1293,7 @@ _q("30c", "Action || 100356 || \$ || Abernathy, Lewis") do
     let gf = (Info.type == "genres") ∧ (Info.info in _GENRE6)
         (movie
             : (complete_cast : (((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete+verified"))))
-            ∧ (info → gf) ∧ (keyword in _KW7)
+            ∧ (info : gf) ∧ (keyword in _KW7)
             → (info : gf → Info.info)
             × (data : (Data.type == "votes") → Data.data)
             × title
@@ -1306,7 +1306,7 @@ _q("31a", "Horror || 1040 || 2001 Maniacs || Agnew, Jim") do
     let gf = (Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))
         (movie
             : (company → (Company.name ~ r"^Lionsgate"))
-            ∧ (info → gf) ∧ (keyword in _KW7)
+            ∧ (info : gf) ∧ (keyword in _KW7)
             → (info : gf → Info.info)
             × (data : (Data.type == "votes") → Data.data)
             × title
@@ -1318,7 +1318,7 @@ _q("31b", "Horror || 129755 || Saw || Bousman, Darren Lynn") do
     let gf = (Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))
         (movie
             : (company : (((Company.name ~ r"^Lionsgate") ∧ (Company.note ~ r"\(Blu-ray\)"))))
-            ∧ (info → gf) ∧ (keyword in _KW7) ∧ (production_year > 2000)
+            ∧ (info : gf) ∧ (keyword in _KW7) ∧ (production_year > 2000)
             ∧ ((title ~ r"Freddy") ∨ (title ~ r"Jason") ∨ (title ~ r"^Saw"))
             → (info : gf → Info.info)
             × (data : (Data.type == "votes") → Data.data)
@@ -1331,7 +1331,7 @@ _q("31c", "Action || 1008 || 11:14 || Abraham, Brad") do
     let gf = (Info.type == "genres") ∧ (Info.info in _GENRE6)
         (movie
             : (company → (Company.name ~ r"^Lionsgate"))
-            ∧ (info → gf) ∧ (keyword in _KW7)
+            ∧ (info : gf) ∧ (keyword in _KW7)
             → (info : gf → Info.info)
             × (data : (Data.type == "votes") → Data.data)
             × title
@@ -1367,7 +1367,7 @@ _q("33a", "495 Productions || 495 Productions || 3.3 || 2.7 || A Double Shot at 
         rdlt = data   : ((Data.type   == "rating") ∧ (Data.data < "3.0")) → Data.data,
         t2f = ((kind == "tv series") ∧ company ∧ rdlt
                                      ∧ (production_year >= 2005) ∧ (production_year <= 2008)),
-        qlk = link : ((MovieLink.type in _LINK3) ∧ (MovieLink.target → t2f)),
+        qlk = link : ((MovieLink.type in _LINK3) ∧ (MovieLink.target : t2f)),
         t2  = qlk → MovieLink.target
         (movie
             : (kind == "tv series") ∧ co ∧ qlk
@@ -1380,7 +1380,7 @@ _q("33b", "MTV Netherlands || 495 Productions || 3.3 || 2.7 || A Double Shot at 
         rd  = data : (Data.type    == "rating") → Data.data,
         rdlt = data   : ((Data.type   == "rating") ∧ (Data.data < "3.0")) → Data.data,
         t2f = (kind == "tv series") ∧ company ∧ rdlt ∧ (production_year == 2007),
-        qlk = link : ((MovieLink.type ~ r"follow") ∧ (MovieLink.target → t2f)),
+        qlk = link : ((MovieLink.type ~ r"follow") ∧ (MovieLink.target : t2f)),
         t2  = qlk → MovieLink.target
         (movie
             : (kind == "tv series") ∧ co ∧ qlk
@@ -1394,7 +1394,7 @@ _q("33c", "2BE || 495 Productions || 1.3 || 1.0 || A Double Shot at Love || A Do
         rdlt = data   : ((Data.type   == "rating") ∧ (Data.data < "3.5")) → Data.data,
         t2f = ((kind in ("tv series", "episode")) ∧ company ∧ rdlt
                                                   ∧ (production_year >= 2000) ∧ (production_year <= 2010)),
-        qlk = link : ((MovieLink.type in _LINK3) ∧ (MovieLink.target → t2f)),
+        qlk = link : ((MovieLink.type in _LINK3) ∧ (MovieLink.target : t2f)),
         t2  = qlk → MovieLink.target
         (movie
             : (kind in ("tv series", "episode")) ∧ co ∧ qlk

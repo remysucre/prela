@@ -17,7 +17,7 @@ module Prela
 #   →  composition  | ∨ union | ∧ intersection | ==,<,~,…  predicates
 #   ×  product (tightest) | -  difference | .field navigation
 
-export Rel, MapRel, VecRel, Relation, Query, Unary, Universe, Entity, ID,
+export Rel, MapRel, VecRel, Relation, Query, Unary, UnaryVec, Universe, Entity, ID,
        primary, lookup_field, →, ∧, ∨, ×, ≁, vectorize,
        drive, probe, drivekeys, member, materialize, askeys
 
@@ -43,28 +43,33 @@ function _declare_if_needed(mod::Module, sym::Symbol)
 end
 
 # ===== query-tree type hierarchy ========================================
-# `Query{D, R}` — a lazy binary relation D → R.
-#
-# A unary set is a degenerate binary relation: a "predicate" is `Query{T,
-# Tuple{}}` (membership-testable via `probe_any`), and a "universe" /
-# stream is `Query{Tuple{}, T}`. `q'` (Inv) flips between the two.
+# Two disjoint shapes:
+#   `Query{D, R}` — a lazy binary relation D → R.
+#   `Unary{D}`    — a lazy set of D's (no value side).
+# Operators dispatch on which one they see (`→`, `:`, `←`, `-` each split
+# binary vs unary lhs). `askeys` lifts any Query to a Unary; Unary's
+# `askeys` is identity.
 
 abstract type Query{D, R} end
+abstract type Unary{D}    end
 
 _domof(::Query{D, R}) where {D, R} = D
+_domof(::Unary{D})    where {D}    = D
 _rangeof(::Query{D, R}) where {D, R} = R
+_rangeof(::Unary)                    = Tuple{}
 
 # ===== leaf storage (also Query nodes) ==================================
 
-struct Unary{D} <: Query{D, Tuple{}}
+# Vector-backed unary set — the concrete leaf for `Unary{D}` literals.
+struct UnaryVec{D} <: Unary{D}
     values::Vector{D}
 end
-Unary(vs::Vector{D}) where D = Unary{D}(vs)
+UnaryVec(vs::Vector{D}) where D = UnaryVec{D}(vs)
 
 # A dense primary-key universe ID{E}(1)..ID{E}(n) — stored as just `n`. The
 # entity tables have contiguous PKs, so "scanning the universe" is iterating a
 # range, with no N-element vector to hold or chase.
-struct Universe{E} <: Query{ID{E}, Tuple{}}
+struct Universe{E} <: Unary{ID{E}}
     n::Int
 end
 
@@ -214,7 +219,7 @@ end
     false
 end
 
-_unary_set(u::Unary{D}) where D = get!(() -> Set(u.values), _UNARY_SETS, u)::Set{D}
+_unary_set(u::UnaryVec{D}) where D = get!(() -> Set(u.values), _UNARY_SETS, u)::Set{D}
 
 # ===== predicate payloads (typed so codegen branches statically) ========
 
@@ -242,10 +247,10 @@ struct Restrict{D, R, A, B}   <: Query{D, R};  a::A;  b::B;  end   # a:SetQ, b:Q
 struct Diff{D, R, A, B}       <: Query{D, R};  a::A;  b::B;  end   # a:Query, b:SetQ
 struct Prod{D, R, T<:Tuple}   <: Query{D, R};  ops::T;  end
 
-struct Keys{D, A}    <: Query{D, Tuple{}};  a::A;  end                       # any Query → predicate
-struct Conj{D, A, B} <: Query{D, Tuple{}};  a::A;  b::B;  end
-struct Disj{D, A, B} <: Query{D, Tuple{}};  a::A;  b::B;  end
-struct SetDiff{D, A, B} <: Query{D, Tuple{}};  a::A;  b::B;  end
+struct Keys{D, A}    <: Unary{D};  a::A;  end                       # any Query → Unary
+struct Conj{D, A, B} <: Unary{D};  a::A;  b::B;  end
+struct Disj{D, A, B} <: Unary{D};  a::A;  b::B;  end
+struct SetDiff{D, A, B} <: Unary{D};  a::A;  b::B;  end
 
 # `materialize(q)` — the one explicit "bang". Prela is top-down / non-
 # materialized by default: a shared subexpression is re-driven on every use.
@@ -261,7 +266,7 @@ mutable struct Materialized{D, R, A} <: Query{D, R}
 end
 
 # `materialize` on a set-query: evaluate once into a vector + membership set.
-mutable struct MatSet{D, A} <: Query{D, Tuple{}}
+mutable struct MatSet{D, A} <: Unary{D}
     a::A
     keys::Union{Nothing, Vector{D}}
     set::Union{Nothing, Set{D}}
@@ -336,7 +341,7 @@ end
 # and member-checks `l` per row. Lets a user-written `∧`-style expression
 # put a Query-shaped predicate (like an `Inv` for EXISTS) on the left
 # without needing an explicit `!` — the operator does the materialization.
-struct LeftConj{D, ML, R} <: Query{D, Tuple{}}
+struct LeftConj{D, ML, R} <: Unary{D}
     l::ML  # already materialized predicate (MatSet) — fast probe_any
     r::R   # predicate to drive
 end
@@ -346,20 +351,20 @@ Compose(a::Query{D, M}, b::Query{M, R}) where {D, M, R} =
     Compose{D, M, R, typeof(a), typeof(b)}(a, b)
 Filter(a::Query{D, R}, p::P) where {D, R, P} =
     Filter{D, R, typeof(a), P}(a, p)
-Restrict(a::Query{D, Tuple{}}, b::Query{D, R}) where {D, R} =
+Restrict(a::Unary{D}, b::Query{D, R}) where {D, R} =
     Restrict{D, R, typeof(a), typeof(b)}(a, b)
-Diff(a::Query{D, R}, b::Query{D, Tuple{}}) where {D, R} =
+Diff(a::Query{D, R}, b::Unary{D}) where {D, R} =
     Diff{D, R, typeof(a), typeof(b)}(a, b)
 Keys(a::Query{D, R}) where {D, R} = Keys{D, typeof(a)}(a)
-Conj(a::Query{D, Tuple{}}, b::Query{D, Tuple{}}) where D = Conj{D, typeof(a), typeof(b)}(a, b)
-Disj(a::Query{D, Tuple{}}, b::Query{D, Tuple{}}) where D = Disj{D, typeof(a), typeof(b)}(a, b)
-SetDiff(a::Query{D, Tuple{}}, b::Query{D, Tuple{}}) where D = SetDiff{D, typeof(a), typeof(b)}(a, b)
+Conj(a::Unary{D}, b::Unary{D}) where D = Conj{D, typeof(a), typeof(b)}(a, b)
+Disj(a::Unary{D}, b::Unary{D}) where D = Disj{D, typeof(a), typeof(b)}(a, b)
+SetDiff(a::Unary{D}, b::Unary{D}) where D = SetDiff{D, typeof(a), typeof(b)}(a, b)
 function Prod(ops::Tuple)
     D = _domof(ops[1])
     R = Tuple{map(_rangeof, ops)...}
     Prod{D, R, typeof(ops)}(ops)
 end
-materialize(s::Query{D, Tuple{}}) where {D} = MatSet{D, typeof(s)}(s, nothing, nothing)
+materialize(s::Unary{D}) where {D} = MatSet{D, typeof(s)}(s, nothing, nothing)
 materialize(q::Query{D, R}) where {D, R} = Materialized{D, R, typeof(q)}(q, nothing, nothing)
 
 # Adjoint = inverse: `q'` on a Query{A, B} returns Inv : Query{B, A}.
@@ -423,9 +428,9 @@ export ↦
 function ←(r::Query{D, RK}, s::Query{D, SV}) where {D, RK, SV}
     LeftCompose{D, RK, SV, typeof(r), typeof(s)}(r, s, nothing)
 end
-# Predicate-on-right (SV === Tuple{}): re-emit the key itself as the value,
-# so downstream composition keeps the domain. Result `Query{RK, D}`.
-function ←(r::Query{D, RK}, s::Query{D, Tuple{}}) where {D, RK}
+# Unary-on-right: re-emit the key itself as the value, so downstream
+# composition keeps the domain. Result `Query{RK, D}`.
+function ←(r::Query{D, RK}, s::Unary{D}) where {D, RK}
     LeftCompose{D, RK, D, typeof(r), typeof(s)}(r, s, nothing)
 end
 export ←
@@ -441,8 +446,8 @@ function ⩘(l::Query{D, R}, r) where {D, R}
     rs = askeys(r)
     LeftConj{_domof(rs), typeof(ml), typeof(rs)}(ml, rs)
 end
-# Predicate on the left: skip the Inv — materialize directly.
-function ⩘(l::Query{D, Tuple{}}, r) where {D}
+# Unary on the left: skip the Inv — materialize directly.
+function ⩘(l::Unary{D}, r) where {D}
     ml = materialize(l)
     rs = askeys(r)
     LeftConj{_domof(rs), typeof(ml), typeof(rs)}(ml, rs)
@@ -454,41 +459,35 @@ export ⩘, ⩓
 # Borrowed from Haskell's strictness bang; a query has no boolean-not, so `!`
 # is free to mean "force this leg".
 Base.:!(q::Query) = materialize(q)
+Base.:!(u::Unary) = materialize(u)
 
-# `askeys` lifts any Query to a predicate `Query{D, Tuple{}}` for use by
-# `∧`/`∨`/`-`/`InSetP`. Predicates are already keysets — no wrapping.
+# `askeys` lifts any Query to a `Unary{D}` (its keyset) for use by
+# `∧`/`∨`/`-`/`InSetP`. Unaries are already keysets — no wrapping.
 askeys(q::Query{D, R}) where {D, R} = Keys(q)
-askeys(q::Query{D, Tuple{}}) where {D} = q
+askeys(u::Unary)                     = u
 
 # ===== operators (build nodes) ==========================================
 # Navigation is `→` only — `q.field` overloads on Query/Unary were removed
 # (use `q → Type.field` instead). `Entity.field` (e.g. `Company.country`)
 # still works via the `@entity`-generated `Base.getproperty(::Type{E}, ...)`.
 
-# `→` is composition or domain-restriction (predicate lhs). Filter
-# (range-predicate rhs) lives on `:` exclusively.
-→(a::Query{X, Y}, b::Query{Y, Z})        where {X, Y, Z} = Compose(a, b)
-→(a::Query{X, Tuple{}}, b::Query{X, Z})  where {X, Z}    = Restrict(a, b)
-# Disambiguator for the `Query{(),()} → Query{(),Z}` corner.
-→(a::Query{Tuple{}, Tuple{}}, b::Query{Tuple{}, Z}) where {Z} = Restrict(a, b)
+# `→` composes binaries; `Unary{T} → Query{T, Z}` is domain-restriction.
+# Filter (range-predicate rhs) lives on `:` exclusively.
+→(a::Query{X, Y}, b::Query{Y, Z}) where {X, Y, Z} = Compose(a, b)
+→(a::Unary{T},    b::Query{T, Z}) where {T, Z}    = Restrict(a, b)
 
 # ∧ ∨ : - ⊗
 ∧(a, b) = Conj(askeys(a), askeys(b))
 ∨(a, b) = Disj(askeys(a), askeys(b))
 # `:` filters: lhs's range by an rhs-predicate.
-Base.:(:)(a::Query{X, Y}, b::Query{Y, R}) where {X, Y, R} =
-    Filter(a, InSetP(askeys(b)))
-# When lhs *is* a predicate (Y === Tuple{}), filtering reduces to predicate
-# intersection on the shared domain X — same as `∧`, but `:` syntax lets the
-# `entity : conds → outs` template parse naturally.
-Base.:(:)(a::Query{X, Tuple{}}, b::Query{X, R}) where {X, R} =
-    Conj(a, askeys(b))
-# Disambiguator for `Query{(), ()} : Query{(), R}` (matches both above).
-Base.:(:)(a::Query{Tuple{}, Tuple{}}, b::Query{Tuple{}, R}) where {R} =
-    Conj(a, askeys(b))
-# `-`: Diff for value-bearing lhs, SetDiff for predicate lhs.
+Base.:(:)(a::Query{X, Y}, b) where {X, Y} = Filter(a, InSetP(askeys(b)))
+# When lhs is a Unary, filtering reduces to predicate intersection on the
+# shared domain — same as `∧`, but `:` syntax lets the `entity : conds →
+# outs` template parse naturally.
+Base.:(:)(a::Unary{T}, b)    where {T}    = Conj(a, askeys(b))
+# `-`: Diff for value-bearing lhs, SetDiff for unary lhs.
 Base.:-(a::Query{D, R}, b) where {D, R} = Diff(a, askeys(b))
-Base.:-(a::Query{D, Tuple{}}, b) where {D} = SetDiff(a, askeys(b))
+Base.:-(a::Unary{D},    b) where {D}    = SetDiff(a, askeys(b))
 # Product — `⊗` is the canonical spelling (tensor-product convention from math).
 # `×` is a legacy alias; both build flat `Prod` nodes.
 ⊗(a::Query, b::Query) = Prod((a, b))
@@ -680,10 +679,10 @@ end
 @inline function drive(n::LeftCompose, k)
     drive(n.s, (d, v) -> probe(n.r, d, rk -> k(rk, v)))
 end
-# Predicate-on-right specialization (SV === D, set by the `←(r, s::Query{D,
-# Tuple{}})` constructor): re-emit the key as the value, since the rhs
-# carries no payload of its own.
-@inline function drive(n::LeftCompose{D, RK, D, QR, QS}, k) where {D, RK, QR, QS}
+# Unary-on-right specialization (SV === D, set by the `←(r, s::Unary{D})`
+# constructor): re-emit the key as the value, since the rhs carries no
+# payload of its own.
+@inline function drive(n::LeftCompose{D, RK, D, QR, QS}, k) where {D, RK, QR, QS<:Unary{D}}
     drive(n.s, (d, _) -> probe(n.r, d, rk -> k(rk, d)))
 end
 function _lc_idx(n::LeftCompose{D, RK, SV, QR, QS}) where {D, RK, SV, QR, QS}
@@ -780,9 +779,9 @@ end
 # Drive emits unit-range pairs; `drivekeys` is a back-compat 1-liner alias
 # defined alongside `member` below.
 
-@inline drive(u::Unary{D}, k) where {D} = (for v in u.values; k(v, ()); end)
-@inline probe(u::Unary, x, k) = (x in _unary_set(u)) && (k(()); nothing)
-@inline probe_any(u::Unary, x, k) = (x in _unary_set(u)) && k(())
+@inline drive(u::UnaryVec{D}, k) where {D} = (for v in u.values; k(v, ()); end)
+@inline probe(u::UnaryVec, x, k) = (x in _unary_set(u)) && (k(()); nothing)
+@inline probe_any(u::UnaryVec, x, k) = (x in _unary_set(u)) && k(())
 
 @inline drive(u::Universe{E}, k) where {E} = (for i in 1:u.n; k(ID{E}(i), ()); end)
 @inline probe(u::Universe{E}, x::ID{E}, k) where {E} =
@@ -844,11 +843,13 @@ function probe_any(q::Query, x, k)
     found[]
 end
 
-# member of a Query = "is x in its domain".
+# member of a Query/Unary = "is x in its domain".
 @inline member(q::Query, x) = probe_any(q, x, _ -> true)
+@inline member(u::Unary, x) = probe_any(u, x, _ -> true)
 
 # `drivekeys(q, k)` — emit each domain key. Back-compat alias over `drive`.
 @inline drivekeys(q::Query, k) = drive(q, (x, _) -> k(x))
+@inline drivekeys(u::Unary, k) = drive(u, (x, _) -> k(x))
 
 # ===== terminals ========================================================
 # Queries are consumed by `drive`/`drivekeys` with a folding continuation
@@ -860,10 +861,10 @@ function Base.collect(q::Query{D, R}) where {D, R}
     drive(q, (x, y) -> push!(out, x => y))
     MapRel{D, R}(out)
 end
-function Base.collect(s::Query{D, Tuple{}}) where D
+function Base.collect(s::Unary{D}) where D
     out = D[]
     drive(s, (x, _) -> push!(out, x))
-    Unary{D}(out)
+    UnaryVec{D}(out)
 end
 
 # ===== schema sugar (@entity / @declare / @expose) ======================

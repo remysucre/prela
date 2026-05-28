@@ -44,7 +44,7 @@ const company         = Prela.lookup_field(ID{Movie}, Val(:company))
 M(i) = ID{Movie}(i); K(i) = ID{Keyword}(i); C(i) = ID{Company}(i)
 I(i) = ID{Info}(i);  IT(i) = ID{InfoType}(i)
 
-const movie = Unary{ID{Movie}}(M.(1:5))
+const movie = UnaryVec{ID{Movie}}(M.(1:5))
 
 append!(title.pairs, [
     M(1) => "Shrek 2", M(2) => "Iron Man", M(3) => "Iron Man 2",

@@ -490,7 +490,7 @@ _q_tpch("22", _ORACLE_Q22, _q22)
 const _ORACLE_Q16 = read("/tmp/tpch_oracles/Q16.txt", String)
 
 function _q16()
-    let live_ps = partsupp : ((PS.part → ((brand != "Brand#45")
+    let live_ps = partsupp : ((PS.part : ((brand != "Brand#45")
                                           ∧ (type ≁ r"^MEDIUM POLISHED")
                                           ∧ (size in (49, 14, 23, 45, 19, 3, 36, 9))))
                               ∧ (PS.supplier → Su.comment ≁ r"Customer.*Complaints"))
@@ -535,7 +535,7 @@ function _q2()
         min_per_part = ((PS.part ← eu_ps) → supplycost) ▷ (
             (a, v) -> min(a, v), Inf
         ),
-        target = (eu_ps ∧ (PS.part → ((size == 15) ∧ (type ~ r"BRASS$")))
+        target = (eu_ps ∧ (PS.part : ((size == 15) ∧ (type ~ r"BRASS$")))
                         ∧ (supplycost == (PS.part → min_per_part)))
         # Output value tuple — supplier-side and part-side fields each
         # factored under their respective navigation.
@@ -586,7 +586,7 @@ function _q21()
     late = lineitem : (receiptdate > commitdate)
     n_distinct = vs -> length(unique(vs))
     qualifying = (late
-        ∧ (Li.supplier → supplier ∧ (Su.nation → Na.name == "SAUDI ARABIA"))
+        ∧ (Li.supplier : supplier ∧ (Su.nation → Na.name == "SAUDI ARABIA"))
         ∧ (order : (orders ∧ (Ord.status == "F"))
                     # EXISTS another supplier on the order (across all lineitems)
                     ∧ ((order ← Li.supplier) ▷ n_distinct > 1)
