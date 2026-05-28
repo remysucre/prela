@@ -36,6 +36,7 @@ end
 for (_, _, run) in qs
     try run() catch end
 end
+GC.gc(true)  # clear cold-pass garbage so the first warm query isn't penalized by it
 
 # Warm pass — wall-clock per query, written to stdout for the plot scripts.
 for (name, _oracle, run) in qs
