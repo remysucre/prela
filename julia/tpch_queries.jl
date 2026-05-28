@@ -47,11 +47,7 @@ end
 
 function _vals_tpch(q, sort_by, limit, row)
     rows = Tuple{Any, Any}[]
-    if q isa Prela.SetQ
-        Prela.drivekeys(q, x -> push!(rows, (x, ())))
-    else
-        Prela.drive(q, (x, y) -> push!(rows, (x, y)))
-    end
+    Prela.drive(q, (x, y) -> push!(rows, (x, y)))
     isempty(rows) && return "(empty)"
     sort!(rows; by = sort_by)
     limit !== nothing && length(rows) > limit && resize!(rows, limit)

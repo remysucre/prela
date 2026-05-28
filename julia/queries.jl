@@ -59,8 +59,8 @@ function _vals(q)
             end
         end
     end
-    if q isa Prela.SetQ
-        Prela.drivekeys(q, emit)
+    if Prela._rangeof(q) === Tuple{}
+        Prela.drive(q, (x, _) -> emit(x))
     else
         Prela.drive(q, (_, y) -> emit(y))
     end

@@ -17,7 +17,7 @@ module Prela
 #   →  composition  | ∨ union | ∧ intersection | ==,<,~,…  predicates
 #   ×  product (tightest) | -  difference | .field navigation
 
-export Rel, MapRel, VecRel, Relation, Query, SetQ, Unary, Universe, Entity, ID,
+export Rel, MapRel, VecRel, Relation, Query, Unary, Universe, Entity, ID,
        primary, lookup_field, →, ∧, ∨, ×, ≁, vectorize,
        drive, probe, drivekeys, member, materialize, askeys
 
@@ -44,18 +44,19 @@ end
 
 # ===== query-tree type hierarchy ========================================
 # `Query{D, R}` — a lazy binary relation D → R.
-# `SetQ{D}`     — a lazy unary set over D.
+#
+# A unary set is a degenerate binary relation: a "predicate" is `Query{T,
+# Tuple{}}` (membership-testable via `probe_any`), and a "universe" /
+# stream is `Query{Tuple{}, T}`. `q'` (Inv) flips between the two.
 
 abstract type Query{D, R} end
-abstract type SetQ{D} end
 
 _domof(::Query{D, R}) where {D, R} = D
-_domof(::SetQ{D}) where {D} = D
 _rangeof(::Query{D, R}) where {D, R} = R
 
 # ===== leaf storage (also Query nodes) ==================================
 
-struct Unary{D} <: SetQ{D}
+struct Unary{D} <: Query{D, Tuple{}}
     values::Vector{D}
 end
 Unary(vs::Vector{D}) where D = Unary{D}(vs)
@@ -63,7 +64,7 @@ Unary(vs::Vector{D}) where D = Unary{D}(vs)
 # A dense primary-key universe ID{E}(1)..ID{E}(n) — stored as just `n`. The
 # entity tables have contiguous PKs, so "scanning the universe" is iterating a
 # range, with no N-element vector to hold or chase.
-struct Universe{E} <: SetQ{ID{E}}
+struct Universe{E} <: Query{ID{E}, Tuple{}}
     n::Int
 end
 
@@ -241,10 +242,10 @@ struct Restrict{D, R, A, B}   <: Query{D, R};  a::A;  b::B;  end   # a:SetQ, b:Q
 struct Diff{D, R, A, B}       <: Query{D, R};  a::A;  b::B;  end   # a:Query, b:SetQ
 struct Prod{D, R, T<:Tuple}   <: Query{D, R};  ops::T;  end
 
-struct Keys{D, A}    <: SetQ{D};  a::A;  end                       # Query → SetQ
-struct Conj{D, A, B} <: SetQ{D};  a::A;  b::B;  end
-struct Disj{D, A, B} <: SetQ{D};  a::A;  b::B;  end
-struct SetDiff{D, A, B} <: SetQ{D};  a::A;  b::B;  end
+struct Keys{D, A}    <: Query{D, Tuple{}};  a::A;  end                       # any Query → predicate
+struct Conj{D, A, B} <: Query{D, Tuple{}};  a::A;  b::B;  end
+struct Disj{D, A, B} <: Query{D, Tuple{}};  a::A;  b::B;  end
+struct SetDiff{D, A, B} <: Query{D, Tuple{}};  a::A;  b::B;  end
 
 # `materialize(q)` — the one explicit "bang". Prela is top-down / non-
 # materialized by default: a shared subexpression is re-driven on every use.
@@ -260,7 +261,7 @@ mutable struct Materialized{D, R, A} <: Query{D, R}
 end
 
 # `materialize` on a set-query: evaluate once into a vector + membership set.
-mutable struct MatSet{D, A} <: SetQ{D}
+mutable struct MatSet{D, A} <: Query{D, Tuple{}}
     a::A
     keys::Union{Nothing, Vector{D}}
     set::Union{Nothing, Set{D}}
@@ -335,9 +336,9 @@ end
 # and member-checks `l` per row. Lets a user-written `∧`-style expression
 # put a Query-shaped predicate (like an `Inv` for EXISTS) on the left
 # without needing an explicit `!` — the operator does the materialization.
-struct LeftConj{D, ML, R} <: SetQ{D}
-    l::ML  # already materialized SetQ (MatSet) — fast member
-    r::R   # SetQ to drive
+struct LeftConj{D, ML, R} <: Query{D, Tuple{}}
+    l::ML  # already materialized predicate (MatSet) — fast probe_any
+    r::R   # predicate to drive
 end
 
 # constructors — extract D/M/R via dispatch
@@ -345,21 +346,21 @@ Compose(a::Query{D, M}, b::Query{M, R}) where {D, M, R} =
     Compose{D, M, R, typeof(a), typeof(b)}(a, b)
 Filter(a::Query{D, R}, p::P) where {D, R, P} =
     Filter{D, R, typeof(a), P}(a, p)
-Restrict(a::SetQ{D}, b::Query{D, R}) where {D, R} =
+Restrict(a::Query{D, Tuple{}}, b::Query{D, R}) where {D, R} =
     Restrict{D, R, typeof(a), typeof(b)}(a, b)
-Diff(a::Query{D, R}, b::SetQ{D}) where {D, R} =
+Diff(a::Query{D, R}, b::Query{D, Tuple{}}) where {D, R} =
     Diff{D, R, typeof(a), typeof(b)}(a, b)
 Keys(a::Query{D, R}) where {D, R} = Keys{D, typeof(a)}(a)
-Conj(a::SetQ{D}, b::SetQ{D}) where D = Conj{D, typeof(a), typeof(b)}(a, b)
-Disj(a::SetQ{D}, b::SetQ{D}) where D = Disj{D, typeof(a), typeof(b)}(a, b)
-SetDiff(a::SetQ{D}, b::SetQ{D}) where D = SetDiff{D, typeof(a), typeof(b)}(a, b)
+Conj(a::Query{D, Tuple{}}, b::Query{D, Tuple{}}) where D = Conj{D, typeof(a), typeof(b)}(a, b)
+Disj(a::Query{D, Tuple{}}, b::Query{D, Tuple{}}) where D = Disj{D, typeof(a), typeof(b)}(a, b)
+SetDiff(a::Query{D, Tuple{}}, b::Query{D, Tuple{}}) where D = SetDiff{D, typeof(a), typeof(b)}(a, b)
 function Prod(ops::Tuple)
     D = _domof(ops[1])
     R = Tuple{map(_rangeof, ops)...}
     Prod{D, R, typeof(ops)}(ops)
 end
+materialize(s::Query{D, Tuple{}}) where {D} = MatSet{D, typeof(s)}(s, nothing, nothing)
 materialize(q::Query{D, R}) where {D, R} = Materialized{D, R, typeof(q)}(q, nothing, nothing)
-materialize(s::SetQ{D}) where {D} = MatSet{D, typeof(s)}(s, nothing, nothing)
 
 # Adjoint = inverse: `q'` on a Query{A, B} returns Inv : Query{B, A}.
 Base.adjoint(q::Query{A, B}) where {A, B} = Inv{B, A, typeof(q)}(q, nothing)
@@ -422,10 +423,9 @@ export ↦
 function ←(r::Query{D, RK}, s::Query{D, SV}) where {D, RK, SV}
     LeftCompose{D, RK, SV, typeof(r), typeof(s)}(r, s, nothing)
 end
-# `←` with a SetQ on the right: drive its keys, probe r per key. The SetQ has
-# no values, so we re-emit the key itself as the value (preserving the domain
-# for downstream composition). Result Query{RK, D}.
-function ←(r::Query{D, RK}, s::SetQ{D}) where {D, RK}
+# Predicate-on-right (SV === Tuple{}): re-emit the key itself as the value,
+# so downstream composition keeps the domain. Result `Query{RK, D}`.
+function ←(r::Query{D, RK}, s::Query{D, Tuple{}}) where {D, RK}
     LeftCompose{D, RK, D, typeof(r), typeof(s)}(r, s, nothing)
 end
 export ←
@@ -436,12 +436,13 @@ export ←
 # `r : SetQ{B}` — no need to write `l'` manually. For `l : SetQ{B}` (no
 # values to invert), materializes l directly. `⩓` kept as a back-compat
 # alias.
-function ⩘(l::Query, r)
+function ⩘(l::Query{D, R}, r) where {D, R}
     ml = materialize(Keys(Base.adjoint(l)))   # MatSet over l's *value* type
     rs = askeys(r)
     LeftConj{_domof(rs), typeof(ml), typeof(rs)}(ml, rs)
 end
-function ⩘(l::SetQ, r)
+# Predicate on the left: skip the Inv — materialize directly.
+function ⩘(l::Query{D, Tuple{}}, r) where {D}
     ml = materialize(l)
     rs = askeys(r)
     LeftConj{_domof(rs), typeof(ml), typeof(rs)}(ml, rs)
@@ -453,31 +454,48 @@ export ⩘, ⩓
 # Borrowed from Haskell's strictness bang; a query has no boolean-not, so `!`
 # is free to mean "force this leg".
 Base.:!(q::Query) = materialize(q)
-Base.:!(s::SetQ) = materialize(s)
 
-askeys(q::Query) = Keys(q)
-askeys(s::SetQ) = s
+# `askeys` lifts any Query to a predicate `Query{D, Tuple{}}` for use by
+# `∧`/`∨`/`-`/`InSetP`. Predicates are already keysets — no wrapping.
+askeys(q::Query{D, R}) where {D, R} = Keys(q)
+askeys(q::Query{D, Tuple{}}) where {D} = q
 
 # ===== operators (build nodes) ==========================================
 # Navigation is `→` only — `q.field` overloads on Query/Unary were removed
 # (use `q → Type.field` instead). `Entity.field` (e.g. `Company.country`)
 # still works via the `@entity`-generated `Base.getproperty(::Type{E}, ...)`.
 
-# → composition / restriction / intersection
+# → has three role-distinguished overloads:
+#   • `Query{X, Y} → Query{Y, Z}` ⇒ `Compose` — drives the lhs, probes the
+#     rhs at each range value. The workhorse.
+#   • `Query{X, Y} → Query{Y, Tuple{}}` ⇒ `Filter` — rhs is a predicate on
+#     the lhs's range; filter the lhs by membership, preserving its shape.
+#   • `Query{X, Tuple{}} → Query{X, Z}` ⇒ `Restrict` — lhs is a predicate
+#     on a key type; restrict the rhs by that predicate.
 →(a::Query{X, Y}, b::Query{Y, Z}) where {X, Y, Z} = Compose(a, b)
-→(a::SetQ{X},     b::Query{X, Z}) where {X, Z}    = Restrict(a, b)
-→(a::SetQ{X},     b::SetQ{X})     where {X}       = Conj(a, b)
-→(a::Query{X, Y}, b::SetQ{Y})     where {X, Y}    = Filter(a, InSetP(b))
+→(a::Query{X, Y}, b::Query{Y, Tuple{}}) where {X, Y} = Filter(a, InSetP(b))
+→(a::Query{X, Tuple{}}, b::Query{X, Z}) where {X, Z} = Restrict(a, b)
+# Disambiguators for the `()/()` corner cases (where multiple methods match).
+→(a::Query{X, Tuple{}}, b::Query{Tuple{}, Tuple{}}) where {X} = Filter(a, InSetP(b))
+→(a::Query{Tuple{}, Tuple{}}, b::Query{Tuple{}, Z}) where {Z} = Restrict(a, b)
 
 # ∧ ∨ : - ⊗
 ∧(a, b) = Conj(askeys(a), askeys(b))
 ∨(a, b) = Disj(askeys(a), askeys(b))
-Base.:(:)(a::SetQ{X},     b::SetQ{X})        where {X}       = Conj(a, b)
-Base.:(:)(a::SetQ{X},     b::Query{X, R})    where {X, R}    = Conj(a, askeys(b))
-Base.:(:)(a::Query{X, Y}, b::SetQ{Y})        where {X, Y}    = Filter(a, InSetP(b))
-Base.:(:)(a::Query{X, Y}, b::Query{Y, R})    where {X, Y, R} = Filter(a, InSetP(askeys(b)))
+# `:` filters: lhs's range by an rhs-predicate.
+Base.:(:)(a::Query{X, Y}, b::Query{Y, R}) where {X, Y, R} =
+    Filter(a, InSetP(askeys(b)))
+# When lhs *is* a predicate (Y === Tuple{}), filtering reduces to predicate
+# intersection on the shared domain X — same as `∧`, but `:` syntax lets the
+# `entity : conds → outs` template parse naturally.
+Base.:(:)(a::Query{X, Tuple{}}, b::Query{X, R}) where {X, R} =
+    Conj(a, askeys(b))
+# Disambiguator for `Query{(), ()} : Query{(), R}` (matches both above).
+Base.:(:)(a::Query{Tuple{}, Tuple{}}, b::Query{Tuple{}, R}) where {R} =
+    Conj(a, askeys(b))
+# `-`: Diff for value-bearing lhs, SetDiff for predicate lhs.
 Base.:-(a::Query{D, R}, b) where {D, R} = Diff(a, askeys(b))
-Base.:-(a::SetQ{D},     b) where {D}    = SetDiff(a, askeys(b))
+Base.:-(a::Query{D, Tuple{}}, b) where {D} = SetDiff(a, askeys(b))
 # Product — `⊗` is the canonical spelling (tensor-product convention from math).
 # `×` is a legacy alias; both build flat `Prod` nodes.
 ⊗(a::Query, b::Query) = Prod((a, b))
@@ -589,13 +607,15 @@ end
 @inline drive(n::Filter{D,R,A,<:InSetP}, k) where {D,R,A} =
     drive(n.a, (x, y) -> member(n.pred.s, y) && k(x, y))
 
-# ---- Restrict (a:SetQ : b:Query) — drive the keys, probe the rel ----
-@inline drive(n::Restrict, k) = drivekeys(n.a, x -> probe(n.b, x, y -> k(x, y)))
-@inline probe(n::Restrict, x, k) = member(n.a, x) && probe(n.b, x, k)
+# ---- Restrict (a:predicate, b:Query) — drive a, probe b per key ----
+@inline drive(n::Restrict, k) = drive(n.a, (x, _) -> probe(n.b, x, y -> k(x, y)))
+@inline probe(n::Restrict, x, k) = probe_any(n.a, x, _ -> probe(n.b, x, k))
 
-# ---- Diff (a:Query - b:SetQ) ----
-@inline drive(n::Diff, k) = drive(n.a, (x, y) -> member(n.b, x) || k(x, y))
-@inline probe(n::Diff, x, k) = member(n.b, x) || probe(n.a, x, k)
+# ---- Diff (a:Query - b:predicate) ----
+@inline drive(n::Diff, k) =
+    drive(n.a, (x, y) -> probe_any(n.b, x, _ -> true) || k(x, y))
+@inline probe(n::Diff, x, k) =
+    probe_any(n.b, x, _ -> true) || probe(n.a, x, k)
 
 # ---- Prod (n-ary ×) ----
 @inline _pp(::Tuple{}, x, acc, k) = k(acc)
@@ -656,8 +676,6 @@ end
     vs === nothing && return
     for a in vs; k(a); end
 end
-@inline drivekeys(n::Inv, k) = (for b in keys(_inv_idx(n)); k(b); end)
-@inline member(n::Inv, x) = haskey(_inv_idx(n), x)
 
 # ---- LeftCompose: streaming drive; lazy-indexed probe/member/drivekeys ----
 # `r ← s` semantically equals `r' ∘ s` but flips which side scans. Drives
@@ -669,9 +687,11 @@ end
 @inline function drive(n::LeftCompose, k)
     drive(n.s, (d, v) -> probe(n.r, d, rk -> k(rk, v)))
 end
-# SetQ-on-right specialization: drivekeys instead of drive; emit the key as value.
-@inline function drive(n::LeftCompose{D, RK, SV, QR, QS}, k) where {D, RK, SV, QR, QS <: SetQ}
-    drivekeys(n.s, d -> probe(n.r, d, rk -> k(rk, d)))
+# Predicate-on-right specialization (SV === D, set by the `←(r, s::Query{D,
+# Tuple{}})` constructor): re-emit the key as the value, since the rhs
+# carries no payload of its own.
+@inline function drive(n::LeftCompose{D, RK, D, QR, QS}, k) where {D, RK, QR, QS}
+    drive(n.s, (d, _) -> probe(n.r, d, rk -> k(rk, d)))
 end
 function _lc_idx(n::LeftCompose{D, RK, SV, QR, QS}) where {D, RK, SV, QR, QS}
     n.idx === nothing || return n.idx::Dict{RK, Vector{SV}}
@@ -684,12 +704,13 @@ end
     vs === nothing && return
     for v in vs; k(v); end
 end
-@inline drivekeys(n::LeftCompose, k) = (for rk in keys(_lc_idx(n)); k(rk); end)
-@inline member(n::LeftCompose, x) = haskey(_lc_idx(n), x)
-
 # ---- LeftConj: drive r, member-check materialized l ----
-@inline drivekeys(n::LeftConj, k) = drivekeys(n.r, x -> member(n.l, x) && k(x))
-@inline member(n::LeftConj, x) = member(n.l, x) && member(n.r, x)
+@inline drive(n::LeftConj, k) =
+    drive(n.r, (x, _) -> probe_any(n.l, x, _ -> true) && k(x, ()))
+@inline probe(n::LeftConj, x, k) =
+    probe_any(n.l, x, _ -> true) && probe_any(n.r, x, _ -> true) && (k(()); nothing)
+@inline probe_any(n::LeftConj, x, k) =
+    probe_any(n.l, x, _ -> true) && probe_any(n.r, x, _ -> true) && k(())
 
 # ---- Fold: per-key foldl, lazy-cached ----
 function _fold_cache(n::Fold{D, R, S, Q, OP}) where {D, R, S, Q, OP}
@@ -749,7 +770,7 @@ end
 function _mkeys(n::MatSet{D}) where {D}
     if n.keys === nothing
         out = D[]
-        drivekeys(n.a, x -> push!(out, x))
+        drive(n.a, (x, _) -> push!(out, x))
         n.keys = out
     end
     n.keys
@@ -758,30 +779,50 @@ function _mset(n::MatSet{D}) where {D}
     n.set === nothing && (n.set = Set(_mkeys(n)))
     n.set
 end
-@inline drivekeys(n::MatSet, k) = (for x in _mkeys(n); k(x); end)
-@inline member(n::MatSet, x) = x in _mset(n)
+@inline drive(n::MatSet, k) = (for x in _mkeys(n); k(x, ()); end)
+@inline probe(n::MatSet, x, k) = (x in _mset(n)) && (k(()); nothing)
+@inline probe_any(n::MatSet, x, k) = (x in _mset(n)) && k(())
 
-# ---- SetQ: drivekeys + member ----
-@inline drivekeys(u::Unary, k) = (for v in u.values; k(v); end)
-@inline member(u::Unary, x) = x in _unary_set(u)
+# ---- former-SetQ types: drive emits (x, ()), probe_any tests membership ----
+# Drive emits unit-range pairs; `drivekeys` is a back-compat 1-liner alias
+# defined alongside `member` below.
 
-@inline drivekeys(u::Universe{E}, k) where {E} = (for i in 1:u.n; k(ID{E}(i)); end)
-@inline member(u::Universe{E}, x::ID{E}) where {E} = 1 <= x.id <= u.n
+@inline drive(u::Unary{D}, k) where {D} = (for v in u.values; k(v, ()); end)
+@inline probe(u::Unary, x, k) = (x in _unary_set(u)) && (k(()); nothing)
+@inline probe_any(u::Unary, x, k) = (x in _unary_set(u)) && k(())
 
-@inline drivekeys(s::Keys, k) = drive(s.a, (x, _) -> k(x))
-@inline member(s::Keys, x) = member(s.a, x)
+@inline drive(u::Universe{E}, k) where {E} = (for i in 1:u.n; k(ID{E}(i), ()); end)
+@inline probe(u::Universe{E}, x::ID{E}, k) where {E} =
+    (1 <= x.id <= u.n) && (k(()); nothing)
+@inline probe_any(u::Universe{E}, x::ID{E}, k) where {E} =
+    (1 <= x.id <= u.n) && k(())
 
-@inline drivekeys(s::Conj, k) = drivekeys(s.a, x -> member(s.b, x) && k(x))
-@inline member(s::Conj, x) = member(s.a, x) && member(s.b, x)
+@inline drive(s::Keys, k) = drive(s.a, (x, _) -> k(x, ()))
+@inline probe(s::Keys, x, k) = probe_any(s.a, x, _ -> true) && (k(()); nothing)
+@inline probe_any(s::Keys, x, k) = probe_any(s.a, x, _ -> true) && k(())
 
-@inline drivekeys(s::Disj, k) = begin
-    drivekeys(s.a, k)
-    drivekeys(s.b, x -> member(s.a, x) || k(x))
+@inline drive(s::Conj, k) =
+    drive(s.a, (x, _) -> probe_any(s.b, x, _ -> true) && k(x, ()))
+@inline probe(s::Conj, x, k) =
+    probe_any(s.a, x, _ -> true) && probe_any(s.b, x, _ -> true) && (k(()); nothing)
+@inline probe_any(s::Conj, x, k) =
+    probe_any(s.a, x, _ -> true) && probe_any(s.b, x, _ -> true) && k(())
+
+@inline function drive(s::Disj, k)
+    drive(s.a, (x, _) -> k(x, ()))
+    drive(s.b, (x, _) -> probe_any(s.a, x, _ -> true) || (k(x, ()); nothing))
 end
-@inline member(s::Disj, x) = member(s.a, x) || member(s.b, x)
+@inline probe(s::Disj, x, k) =
+    (probe_any(s.a, x, _ -> true) || probe_any(s.b, x, _ -> true)) && (k(()); nothing)
+@inline probe_any(s::Disj, x, k) =
+    (probe_any(s.a, x, _ -> true) || probe_any(s.b, x, _ -> true)) && k(())
 
-@inline drivekeys(s::SetDiff, k) = drivekeys(s.a, x -> member(s.b, x) || k(x))
-@inline member(s::SetDiff, x) = member(s.a, x) && !member(s.b, x)
+@inline drive(s::SetDiff, k) =
+    drive(s.a, (x, _) -> probe_any(s.b, x, _ -> true) || (k(x, ()); nothing))
+@inline probe(s::SetDiff, x, k) =
+    probe_any(s.a, x, _ -> true) && !probe_any(s.b, x, _ -> true) && (k(()); nothing)
+@inline probe_any(s::SetDiff, x, k) =
+    probe_any(s.a, x, _ -> true) && !probe_any(s.b, x, _ -> true) && k(())
 
 # `probe_any(q, x, k)` — like `probe`, but the continuation returns a Bool and
 # `probe_any` stops, returning true, as soon as `k` does. The Bool is threaded
@@ -799,8 +840,9 @@ end
     probe_any(n.a, x, y -> (y in n.pred.vs) && k(y))
 @inline probe_any(n::Filter{D,R,A,<:InSetP}, x, k) where {D,R,A} =
     probe_any(n.a, x, y -> member(n.pred.s, y) && k(y))
-@inline probe_any(n::Restrict, x, k) = member(n.a, x) && probe_any(n.b, x, k)
-@inline probe_any(n::Diff, x, k) = (!member(n.b, x)) && probe_any(n.a, x, k)
+@inline probe_any(n::Restrict, x, k) = probe_any(n.a, x, _ -> probe_any(n.b, x, k))
+@inline probe_any(n::Diff, x, k) =
+    (!probe_any(n.b, x, _ -> true)) && probe_any(n.a, x, k)
 @inline probe_any(n::Materialized, x, k) = _idx_probe_any(_cidx(n), x, k)
 # generic fallback (Prod and other shapes) — no early exit, rarely on hot paths
 function probe_any(q::Query, x, k)
@@ -812,6 +854,9 @@ end
 # member of a Query = "is x in its domain".
 @inline member(q::Query, x) = probe_any(q, x, _ -> true)
 
+# `drivekeys(q, k)` — emit each domain key. Back-compat alias over `drive`.
+@inline drivekeys(q::Query, k) = drive(q, (x, _) -> k(x))
+
 # ===== terminals ========================================================
 # Queries are consumed by `drive`/`drivekeys` with a folding continuation
 # (see `_vals` in queries.jl) — no result relation is ever built. `collect`
@@ -822,9 +867,9 @@ function Base.collect(q::Query{D, R}) where {D, R}
     drive(q, (x, y) -> push!(out, x => y))
     MapRel{D, R}(out)
 end
-function Base.collect(s::SetQ{D}) where D
+function Base.collect(s::Query{D, Tuple{}}) where D
     out = D[]
-    drivekeys(s, x -> push!(out, x))
+    drive(s, (x, _) -> push!(out, x))
     Unary{D}(out)
 end
 
