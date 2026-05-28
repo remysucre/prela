@@ -465,18 +465,11 @@ askeys(q::Query{D, Tuple{}}) where {D} = q
 # (use `q → Type.field` instead). `Entity.field` (e.g. `Company.country`)
 # still works via the `@entity`-generated `Base.getproperty(::Type{E}, ...)`.
 
-# → has three role-distinguished overloads:
-#   • `Query{X, Y} → Query{Y, Z}` ⇒ `Compose` — drives the lhs, probes the
-#     rhs at each range value. The workhorse.
-#   • `Query{X, Y} → Query{Y, Tuple{}}` ⇒ `Filter` — rhs is a predicate on
-#     the lhs's range; filter the lhs by membership, preserving its shape.
-#   • `Query{X, Tuple{}} → Query{X, Z}` ⇒ `Restrict` — lhs is a predicate
-#     on a key type; restrict the rhs by that predicate.
-→(a::Query{X, Y}, b::Query{Y, Z}) where {X, Y, Z} = Compose(a, b)
-→(a::Query{X, Y}, b::Query{Y, Tuple{}}) where {X, Y} = Filter(a, InSetP(b))
-→(a::Query{X, Tuple{}}, b::Query{X, Z}) where {X, Z} = Restrict(a, b)
-# Disambiguators for the `()/()` corner cases (where multiple methods match).
-→(a::Query{X, Tuple{}}, b::Query{Tuple{}, Tuple{}}) where {X} = Filter(a, InSetP(b))
+# `→` is composition or domain-restriction (predicate lhs). Filter
+# (range-predicate rhs) lives on `:` exclusively.
+→(a::Query{X, Y}, b::Query{Y, Z})        where {X, Y, Z} = Compose(a, b)
+→(a::Query{X, Tuple{}}, b::Query{X, Z})  where {X, Z}    = Restrict(a, b)
+# Disambiguator for the `Query{(),()} → Query{(),Z}` corner.
 →(a::Query{Tuple{}, Tuple{}}, b::Query{Tuple{}, Z}) where {Z} = Restrict(a, b)
 
 # ∧ ∨ : - ⊗

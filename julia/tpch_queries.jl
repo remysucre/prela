@@ -166,8 +166,8 @@ const _ORACLE_Q3 = "2456423|406181.01|1995-03-05|0\n" *
 
 function _q3()
     let item = (lineitem : ((shipdate > "1995-03-15") ∧
-                            (order → ((date < "1995-03-15") ∧
-                                         (Ord.customer → (mktsegment == "BUILDING")))))
+                            (order : ((date < "1995-03-15") ∧
+                                         (Ord.customer : (mktsegment == "BUILDING")))))
                          → (extendedprice ⊗ discount)),
         revenue = (order ← item) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
@@ -213,7 +213,7 @@ const _ORACLE_Q5 = "INDONESIA|55502041.17\n" *
 function _q5()
     let c_nation = order → Ord.customer → Cu.nation,
         s_nation = Li.supplier → Su.nation,
-        live = lineitem → ((order → date in during("1994-01-01", "1995-01-01"))
+        live = lineitem : ((order → date in during("1994-01-01", "1995-01-01"))
                             ∧ (s_nation → Na.region → Re.name == "ASIA")
                             ∧ (c_nation == s_nation))
         ((Na.name ← s_nation ← live) → (extendedprice ⊗ discount)) ▷ (
@@ -279,7 +279,7 @@ function _q12()
         is_high = prio == "1-URGENT" || prio == "2-HIGH"
         (high + (is_high ? 1 : 0), low + (is_high ? 0 : 1))
     end
-    let live = lineitem → ((shipmode in ("MAIL", "SHIP"))
+    let live = lineitem : ((shipmode in ("MAIL", "SHIP"))
                             ∧ (commitdate < receiptdate)
                             ∧ (shipdate   < commitdate)
                             ∧ (receiptdate in during("1994-01-01", "1995-01-01")))
@@ -308,7 +308,7 @@ function _q19()
         branch3 = ((brand == "Brand#34") ∧
                    (container in ("LG CASE", "LG BOX", "LG PACK", "LG PKG")) ∧
                    (qty in (20.0 .. 30.0)) ∧ (size in (1 .. 15))),
-        live    = lineitem → ((shipmode in ("AIR", "AIR REG"))
+        live    = lineitem : ((shipmode in ("AIR", "AIR REG"))
                               ∧ (shipinstruct == "DELIVER IN PERSON")
                               ∧ (branch1 ∨ branch2 ∨ branch3))
         (live → (extendedprice ⊗ discount)) ⊵ (
@@ -325,7 +325,7 @@ _q_tpch("19", _ORACLE_Q19, _q19; row = _value_only)
 const _ORACLE_Q11 = read("/tmp/tpch_oracles/Q11.txt", String)
 
 function _q11()
-    let live_ps = partsupp ∧ (PS.supplier → Su.nation → Na.name == "GERMANY"),
+    let live_ps = partsupp : (PS.supplier → Su.nation → Na.name == "GERMANY"),
         # sum supplycost * availqty per partkey
         value_per_part = (PS.part ← (live_ps → (supplycost ⊗ availqty))) ▷ (
             (a, (c, q)) -> a + c * q, 0.0),
@@ -347,7 +347,7 @@ function _q17()
     # fused single fold producing (sum, count) in one pass.
     threshold_per_part = ((Li.part ← quantity) ▷
         (((s, n), q) -> (s + q, n + 1), (0.0, 0))) ↦ (((s, n),) -> 0.2 * s / n)
-    let live = lineitem → ((Li.part → (brand == "Brand#23") ∧ (container == "MED BOX"))
+    let live = lineitem : ((Li.part : (brand == "Brand#23") ∧ (container == "MED BOX"))
                             ∧ (quantity < (Li.part → threshold_per_part)))
         (live → extendedprice) ⊵ (+, 0.0) ↦ (s -> s / 7.0)
     end
@@ -361,7 +361,7 @@ _q_tpch("17", _ORACLE_Q17, _q17; row = _value_only)
 const _ORACLE_Q13 = read("/tmp/tpch_oracles/Q13.txt", String)
 
 function _q13()
-    let live_orders = orders ∧ (Ord.comment ≁ r"special.*requests"),
+    let live_orders = orders : (Ord.comment ≁ r"special.*requests"),
         # Per-customer order count (only for customers with at least one match)
         count_per_cust = (Ord.customer ← (live_orders → date)) ▷ ((a, _) -> a + 1, 0)
         # Build the c_count → custdist distribution. Customers with no matching
@@ -389,7 +389,7 @@ function _q7()
         cnat = order → Ord.customer → Cu.nation → Na.name,
         is_fr_de = (snat == "FRANCE") ∧ (cnat == "GERMANY"),
         is_de_fr = (snat == "GERMANY") ∧ (cnat == "FRANCE"),
-        live = lineitem → ((shipdate in ("1995-01-01" .. "1996-12-31"))
+        live = lineitem : ((shipdate in ("1995-01-01" .. "1996-12-31"))
                             ∧ (is_fr_de ∨ is_de_fr)),
         year  = shipdate ↦ (d -> d[1:4])
         ((snat ⊗ cnat ⊗ year) ← live → (extendedprice ⊗ discount)) ▷ (
@@ -407,7 +407,7 @@ _q_tpch("7", _ORACLE_Q7, _q7)
 const _ORACLE_Q8 = read("/tmp/tpch_oracles/Q8.txt", String)
 
 function _q8()
-    let live = lineitem → ((order → ((Ord.customer → Cu.nation → Na.region → Re.name == "AMERICA")
+    let live = lineitem : ((order : ((Ord.customer → Cu.nation → Na.region → Re.name == "AMERICA")
                                      ∧ (date in ("1995-01-01" .. "1996-12-31"))))
                             ∧ (Li.part → type == "ECONOMY ANODIZED STEEL")),
         year = (live → order → date) ↦ (d -> d[1:4]),
@@ -438,7 +438,7 @@ const _ORACLE_Q9 = let raw = read("/tmp/tpch_oracles/Q9.txt", String)
 end
 
 function _q9()
-    let live  = lineitem ∧ (Li.part → Part.name ~ r"green"),
+    let live  = lineitem : (Li.part → Part.name ~ r"green"),
         sname = live → Li.supplier → Su.nation → Na.name,
         year  = (live → order → date) ↦ (d -> d[1:4]),
         scan  = live → (extendedprice ⊗ discount ⊗ quantity
@@ -470,7 +470,7 @@ const _ORACLE_Q22 = read("/tmp/tpch_oracles/Q22.txt", String)
 
 function _q22()
     let prefix    = Cu.phone ↦ (s -> s[1:2]),
-        prefix_ok = customer ∧ (prefix in ("13", "31", "23", "29", "30", "18", "17")),
+        prefix_ok = customer : (prefix in ("13", "31", "23", "29", "30", "18", "17")),
         # avg(acctbal) over prefix_ok with acctbal > 0
         avg = unwrap((prefix_ok → (Cu.acctbal > 0.0)) ⊵
                      (((s, n), v) -> (s + v, n + 1), (0.0, 0)) ↦ (((s, n),) -> s / n)),
@@ -492,7 +492,7 @@ _q_tpch("22", _ORACLE_Q22, _q22)
 const _ORACLE_Q16 = read("/tmp/tpch_oracles/Q16.txt", String)
 
 function _q16()
-    let live_ps = partsupp → ((PS.part → ((brand != "Brand#45")
+    let live_ps = partsupp : ((PS.part → ((brand != "Brand#45")
                                           ∧ (type ≁ r"^MEDIUM POLISHED")
                                           ∧ (size in (49, 14, 23, 45, 19, 3, 36, 9))))
                               ∧ (PS.supplier → Su.comment ≁ r"Customer.*Complaints"))
@@ -511,7 +511,7 @@ _q_tpch("16", _ORACLE_Q16, _q16;
 const _ORACLE_Q15 = read("/tmp/tpch_oracles/Q15.txt", String)
 
 function _q15()
-    let live = lineitem ∧ (shipdate in during("1996-01-01", "1996-04-01")),
+    let live = lineitem : (shipdate in during("1996-01-01", "1996-04-01")),
         revenue = (Li.supplier ← (live → (extendedprice ⊗ discount))) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
@@ -532,7 +532,7 @@ _q_tpch("15", _ORACLE_Q15, _q15;
 const _ORACLE_Q2 = read("/tmp/tpch_oracles/Q2.txt", String)
 
 function _q2()
-    let eu_ps = partsupp ∧ (PS.supplier → Su.nation → Na.region → Re.name == "EUROPE"),
+    let eu_ps = partsupp : (PS.supplier → Su.nation → Na.region → Re.name == "EUROPE"),
         # min(supplycost) per part over European partsupps
         min_per_part = (PS.part ← (eu_ps → supplycost)) ▷ (
             (a, v) -> min(a, v), Inf
@@ -560,7 +560,7 @@ _q_tpch("2", _ORACLE_Q2, _q2;
 const _ORACLE_Q20 = read("/tmp/tpch_oracles/Q20.txt", String)
 
 function _q20()
-    let live_li = lineitem ∧ (shipdate in during("1994-01-01", "1995-01-01")),
+    let live_li = lineitem : (shipdate in during("1994-01-01", "1995-01-01")),
         # Per-(part, supp) sum of 1994 lineitem quantity — algebraic 2-key fold.
         sum_qty = ((Li.part ⊗ Li.supplier) ← (live_li → quantity)) ▷ (+, 0.0),
         # Per-PS half-of-sum threshold. Missing (part, supp) tuples (no 1994
@@ -585,11 +585,11 @@ _q_tpch("20", _ORACLE_Q20, _q20;
 const _ORACLE_Q21 = read("/tmp/tpch_oracles/Q21.txt", String)
 
 function _q21()
-    late = lineitem ∧ (receiptdate > commitdate)
+    late = lineitem : (receiptdate > commitdate)
     n_distinct = vs -> length(unique(vs))
     qualifying = (late
         ∧ (Li.supplier → supplier ∧ (Su.nation → Na.name == "SAUDI ARABIA"))
-        ∧ (order → (orders ∧ (Ord.status == "F"))
+        ∧ (order : (orders ∧ (Ord.status == "F"))
                     # EXISTS another supplier on the order (across all lineitems)
                     ∧ ((order ← Li.supplier) ▷ n_distinct > 1)
                     # NOT EXISTS another LATE supplier (only L1 is late)
