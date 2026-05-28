@@ -336,12 +336,12 @@ _q("7a", "Antonioni, Michelangelo || Dressed to Kill") do
     (movie
         : (production_year >= 1980) ∧ (production_year <= 1995)
         ∧ (linked_by → MovieLink.type == "features")
-        → (cast
-            : (person → (Person.aka → AkaName.name ~ r"a")
-                      ∧ (Person.name_pcode_cf >= "A") ∧ (Person.name_pcode_cf <= "F")
-                      ∧ ((Person.gender == "m") ∨ ((Person.gender == "f") ∧ (Person.name ~ r"^B")))
-                      ∧ (Person.info → (PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm")))
-            → person → Person.name)
+        → (cast → person
+            : (Person.aka → AkaName.name ~ r"a")
+            ∧ (Person.name_pcode_cf >= "A") ∧ (Person.name_pcode_cf <= "F")
+            ∧ ((Person.gender == "m") ∨ ((Person.gender == "f") ∧ (Person.name ~ r"^B")))
+            ∧ (Person.info → (PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm"))
+            → Person.name)
         × title)
 end
 
@@ -349,10 +349,11 @@ _q("7b", "De Palma, Brian || Dressed to Kill") do
     (movie
         : (production_year >= 1980) ∧ (production_year <= 1984)
         ∧ (linked_by → MovieLink.type == "features")
-        → (cast
-            : (person → (Person.aka → AkaName.name ~ r"a") ∧ (Person.name_pcode_cf ~ r"^D") ∧ (Person.gender == "m")
-                      ∧ (Person.info → (PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm")))
-            → person → Person.name)
+        → (cast → person
+            : (Person.aka → AkaName.name ~ r"a")
+            ∧ (Person.name_pcode_cf ~ r"^D") ∧ (Person.gender == "m")
+            ∧ (Person.info → (PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm"))
+            → Person.name)
         × title)
 end
 
@@ -517,7 +518,7 @@ _q("11c", "20th Century Fox Home Entertainment || (1997-2002) (worldwide) (all m
         → (company : (Company.country != "[pl]")
                    ∧ ((Company.name ~ r"^20th Century Fox") ∨ (Company.name ~ r"^Twentieth Century Fox"))
                    ∧ (Company.type != "production companies")
-                   ∧ Company.note → Company.name × Company.note)
+                   → Company.name × Company.note)
         × title)
 end
 
@@ -528,7 +529,7 @@ _q("11d", "13th Street || (1954) (UK) (TV) || ...denn sie wissen nicht, was sie 
         ∧ link
         → (company : (Company.country != "[pl]")
                    ∧ (Company.type != "production companies")
-                   ∧ Company.note → Company.name × Company.note)
+                   → Company.name × Company.note)
         × title)
 end
 
@@ -855,8 +856,8 @@ _q("20a", "Disaster Movie") do
     (movie
         : (complete_cast → (CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete"))
         ∧ (keyword in _KW8) ∧ (kind == "movie") ∧ (production_year > 1950)
-        ∧ (cast → (character : (Character.name ≁ r"Sherlock")
-                              ∧ ((Character.name ~ r"Tony.*Stark") ∨ (Character.name ~ r"Iron.*Man"))))
+        ∧ (cast → character → (Character.name ≁ r"Sherlock")
+                             ∧ ((Character.name ~ r"Tony.*Stark") ∨ (Character.name ~ r"Iron.*Man")))
         → title)
 end
 
@@ -864,7 +865,7 @@ _q("20b", "Iron Man") do
     (movie
         : (complete_cast → (CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete"))
         ∧ (keyword in _KW8) ∧ (kind == "movie") ∧ (production_year > 2000)
-        ∧ (cast → (character : (Character.name ≁ r"Sherlock")
+        ∧ (cast → (character → (Character.name ≁ r"Sherlock")
                               ∧ ((Character.name ~ r"Tony.*Stark") ∨ (Character.name ~ r"Iron.*Man")))
                 ∧ (person → (Person.name ~ r"Downey.*Robert")))
         → title)
@@ -1060,7 +1061,7 @@ _q("26a", "'Agua' Man || Acereda, Hermie || 7.1 || 3:10 to Yuma") do
         : (complete_cast → (CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete"))
         ∧ (keyword in _KW10) ∧ (kind == "movie") ∧ (production_year > 2000)
         → (cast : (character → (Character.name ~ r"[Mm]an")) → (character → Character.name) × (person → Person.name))
-        × ((data : (Data.type == "rating") ∧ (Data.data > "7.0")) → Data.data)
+        × (data : (Data.type == "rating") ∧ (Data.data > "7.0") → Data.data)
         × title)
 end
 
@@ -1070,7 +1071,7 @@ _q("26b", "Bank Manager || 8.2 || Inception") do
         ∧ (keyword in ("superhero", "marvel-comics", "based-on-comic", "fight")) ∧ (kind == "movie")
         ∧ (production_year > 2005)
         → (cast : (character → (Character.name ~ r"[Mm]an")) → character → Character.name)
-        × ((data : (Data.type == "rating") ∧ (Data.data > "8.0")) → Data.data)
+        × (data : (Data.type == "rating") ∧ (Data.data > "8.0") → Data.data)
         × title)
 end
 
@@ -1266,59 +1267,61 @@ end
 
 _q("32a", "(empty)") do
     (movie
-       : (keyword == "10,000-mile-club") ∧ link
-       → (link → MovieLink.type → LinkType.link)
-       × title
-       × (link → MovieLink.target → title))
+       : (keyword == "10,000-mile-club")
+       → (link → (MovieLink.type → LinkType.link) × (MovieLink.target → title))
+       × title)
 end
 
-_q("32b", "alternate language version of || 12 oz. Mouse || 'Angel': Season 2 Overview") do
+_q("32b", "alternate language version of || 'Angel': Season 2 Overview || 12 oz. Mouse") do
     (movie
-       : (keyword == "character-name-in-title") ∧ link
-       → (link → MovieLink.type → LinkType.link)
-       × title
-       × (link → MovieLink.target → title))
+       : (keyword == "character-name-in-title")
+       → (link → (MovieLink.type → LinkType.link) × (MovieLink.target → title))
+       × title)
 end
 
-_q("33a", "495 Productions || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila") do
-    let co  = company : (Company.country == "[us]") → Company.name,
-        rd  = data : (Data.type    == "rating") → Data.data,
-        rdlt = data   : (Data.type   == "rating") ∧ (Data.data < "3.0") → Data.data,
-        t2f = ((kind == "tv series") ∧ company ∧ rdlt
-                                     ∧ (production_year >= 2005) ∧ (production_year <= 2008)),
-        qlk = link : (MovieLink.type in _LINK3) ∧ (MovieLink.target → t2f),
-        t2  = qlk → MovieLink.target
-        (movie
-            : (kind == "tv series")
-            → co × (t2 → company → Company.name) × rd × (t2 → rdlt) × title × (t2 → title))
-    end
+_q("33a", "495 Productions || 3.3 || A Double Shot at Love || 495 Productions || 2.7 || A Shot at Love with Tila Tequila") do
+    (movie
+        : (kind == "tv series")
+        → (company : (Company.country == "[us]") → Company.name)
+        × (data : (Data.type == "rating") → Data.data)
+        × title
+        × (link : (MovieLink.type in _LINK3)
+                → MovieLink.target
+                    : (kind == "tv series")
+                    ∧ (production_year >= 2005) ∧ (production_year <= 2008)
+                    → (company → Company.name)
+                    × (data : (Data.type == "rating") ∧ (Data.data < "3.0") → Data.data)
+                    × title))
 end
 
-_q("33b", "MTV Netherlands || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila") do
-    let co  = company : (Company.country == "[nl]") → Company.name,
-        rd  = data : (Data.type    == "rating") → Data.data,
-        rdlt = data   : (Data.type   == "rating") ∧ (Data.data < "3.0") → Data.data,
-        t2f = (kind == "tv series") ∧ company ∧ rdlt ∧ (production_year == 2007),
-        qlk = link : (MovieLink.type ~ r"follow") ∧ (MovieLink.target → t2f),
-        t2  = qlk → MovieLink.target
-        (movie
-            : (kind == "tv series")
-            → co × (t2 → company → Company.name) × rd × (t2 → rdlt) × title × (t2 → title))
-    end
+_q("33b", "MTV Netherlands || 3.3 || A Double Shot at Love || 495 Productions || 2.7 || A Shot at Love with Tila Tequila") do
+    (movie
+        : (kind == "tv series")
+        → (company : (Company.country == "[nl]") → Company.name)
+        × (data : (Data.type == "rating") → Data.data)
+        × title
+        × (link : (MovieLink.type ~ r"follow")
+                → MovieLink.target
+                    : (kind == "tv series")
+                    ∧ (production_year == 2007)
+                    → (company → Company.name)
+                    × (data : (Data.type == "rating") ∧ (Data.data < "3.0") → Data.data)
+                    × title))
 end
 
-_q("33c", "2BE || 495 Productions || 1.3 || 1.0 || A Double Shot at Love || A Double Shot at Love") do
-    let co  = company : (Company.country != "[us]") → Company.name,
-        rd  = data : (Data.type    == "rating") → Data.data,
-        rdlt = data   : (Data.type   == "rating") ∧ (Data.data < "3.5") → Data.data,
-        t2f = ((kind in ("tv series", "episode")) ∧ company ∧ rdlt
-                                                 ∧ (production_year >= 2000) ∧ (production_year <= 2010)),
-        qlk = link : (MovieLink.type in _LINK3) ∧ (MovieLink.target → t2f),
-        t2  = qlk → MovieLink.target
-        (movie
-            : (kind in ("tv series", "episode"))
-            → co × (t2 → company → Company.name) × rd × (t2 → rdlt) × title × (t2 → title))
-    end
+_q("33c", "2BE || 1.3 || A Double Shot at Love || 495 Productions || 1.0 || A Double Shot at Love") do
+    (movie
+        : (kind in ("tv series", "episode"))
+        → (company : (Company.country != "[us]") → Company.name)
+        × (data : (Data.type == "rating") → Data.data)
+        × title
+        × (link : (MovieLink.type in _LINK3)
+                → MovieLink.target
+                    : (kind in ("tv series", "episode"))
+                    ∧ (production_year >= 2000) ∧ (production_year <= 2010)
+                    → (company → Company.name)
+                    × (data : (Data.type == "rating") ∧ (Data.data < "3.5") → Data.data)
+                    × title))
 end
 
 get(ENV, "PRELA_SKIP_RUNALL", "0") == "0" && runall()
