@@ -617,7 +617,7 @@ _q("7a", "Antonioni, Michelangelo || Dressed to Kill") do
             : (person : (((Person.aka → AkaName.name ~ r"a")
                        ∧ (Person.name_pcode_cf >= "A") ∧ (Person.name_pcode_cf <= "F")
                        ∧ ((Person.gender == "m") ∨ ((Person.gender == "f") ∧ (Person.name ~ r"^B")))
-                       ∧ (Person.info : ((PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm"))))))
+                       ∧ (Person.info → ((PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm"))))))
             → person → Person.name)
         × title)
 end
@@ -628,7 +628,7 @@ _q("7b", "De Palma, Brian || Dressed to Kill") do
         ∧ (linked_by → (MovieLink.type == "features"))
         → (cast
             : (person : (((Person.aka → AkaName.name ~ r"a") ∧ (Person.name_pcode_cf ~ r"^D") ∧ (Person.gender == "m")
-                       ∧ (Person.info : ((PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm"))))))
+                       ∧ (Person.info → ((PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm"))))))
             → person → Person.name)
         × title)
 end
@@ -642,7 +642,7 @@ _q("7c", "50 Cent || \"Boo\" Arnold was born Earl Arnold in Hattiesburg, Mississ
             : (production_year >= 1980) ∧ (production_year <= 2010)
             ∧ (linked_by → (MovieLink.type in ("references", "referenced in", "features", "featured in")))
             → (cast
-                : (person : ((pf ∧ (Person.info : bio_filter))))
+                : (person : ((pf ∧ (Person.info → bio_filter))))
                 → (person → Person.name)
                 × (person → Person.info : bio_filter → PersonInfo.info)))
     end
@@ -1367,7 +1367,7 @@ _q("33a", "495 Productions || 495 Productions || 3.3 || 2.7 || A Double Shot at 
         rdlt = data   : ((Data.type   == "rating") ∧ (Data.data < "3.0")) → Data.data,
         t2f = ((kind == "tv series") ∧ company ∧ rdlt
                                      ∧ (production_year >= 2005) ∧ (production_year <= 2008)),
-        qlk = link : ((MovieLink.type in _LINK3) ∧ (MovieLink.target : t2f)),
+        qlk = link : ((MovieLink.type in _LINK3) ∧ (MovieLink.target → t2f)),
         t2  = qlk → MovieLink.target
         (movie
             : (kind == "tv series") ∧ co ∧ qlk
@@ -1380,7 +1380,7 @@ _q("33b", "MTV Netherlands || 495 Productions || 3.3 || 2.7 || A Double Shot at 
         rd  = data : (Data.type    == "rating") → Data.data,
         rdlt = data   : ((Data.type   == "rating") ∧ (Data.data < "3.0")) → Data.data,
         t2f = (kind == "tv series") ∧ company ∧ rdlt ∧ (production_year == 2007),
-        qlk = link : ((MovieLink.type ~ r"follow") ∧ (MovieLink.target : t2f)),
+        qlk = link : ((MovieLink.type ~ r"follow") ∧ (MovieLink.target → t2f)),
         t2  = qlk → MovieLink.target
         (movie
             : (kind == "tv series") ∧ co ∧ qlk
@@ -1394,7 +1394,7 @@ _q("33c", "2BE || 495 Productions || 1.3 || 1.0 || A Double Shot at Love || A Do
         rdlt = data   : ((Data.type   == "rating") ∧ (Data.data < "3.5")) → Data.data,
         t2f = ((kind in ("tv series", "episode")) ∧ company ∧ rdlt
                                                   ∧ (production_year >= 2000) ∧ (production_year <= 2010)),
-        qlk = link : ((MovieLink.type in _LINK3) ∧ (MovieLink.target : t2f)),
+        qlk = link : ((MovieLink.type in _LINK3) ∧ (MovieLink.target → t2f)),
         t2  = qlk → MovieLink.target
         (movie
             : (kind in ("tv series", "episode")) ∧ co ∧ qlk

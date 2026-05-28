@@ -248,9 +248,12 @@ struct Diff{D, R, A, B}       <: Query{D, R};  a::A;  b::B;  end   # a:Query, b:
 struct Prod{D, R, T<:Tuple}   <: Query{D, R};  ops::T;  end
 
 struct Keys{D, A}    <: Unary{D};  a::A;  end                       # any Query → Unary
-struct Conj{D, A, B} <: Unary{D};  a::A;  b::B;  end
+struct Conj{D, A, B} <: Unary{D};  a::A;  b::B;  end                # `∧`: symmetric intersection
 struct Disj{D, A, B} <: Unary{D};  a::A;  b::B;  end
 struct SetDiff{D, A, B} <: Unary{D};  a::A;  b::B;  end
+# `:` on Unary lhs — directional restriction. Same CPS behavior as Conj
+# (drive lhs, probe rhs), distinct type so source intent is legible.
+struct URestrict{D, A, B} <: Unary{D};  a::A;  b::B;  end
 
 # `materialize(q)` — the one explicit "bang". Prela is top-down / non-
 # materialized by default: a shared subexpression is re-driven on every use.
@@ -357,6 +360,7 @@ Diff(a::Query{D, R}, b::Unary{D}) where {D, R} =
     Diff{D, R, typeof(a), typeof(b)}(a, b)
 Keys(a::Query{D, R}) where {D, R} = Keys{D, typeof(a)}(a)
 Conj(a::Unary{D}, b::Unary{D}) where D = Conj{D, typeof(a), typeof(b)}(a, b)
+URestrict(a::Unary{D}, b::Unary{D}) where D = URestrict{D, typeof(a), typeof(b)}(a, b)
 Disj(a::Unary{D}, b::Unary{D}) where D = Disj{D, typeof(a), typeof(b)}(a, b)
 SetDiff(a::Unary{D}, b::Unary{D}) where D = SetDiff{D, typeof(a), typeof(b)}(a, b)
 function Prod(ops::Tuple)
@@ -471,9 +475,10 @@ askeys(u::Unary)                     = u
 # (use `q → Type.field` instead). `Entity.field` (e.g. `Company.country`)
 # still works via the `@entity`-generated `Base.getproperty(::Type{E}, ...)`.
 
-# `→` composes binaries; `Unary{T} → Query{T, Z}` is domain-restriction.
-# Filter (range-predicate rhs) lives on `:` exclusively.
+# `→` composes binaries; `Unary{T} → Query{T, Z}` is domain-restriction;
+# `Query{X, Y} → Unary{Y}` is Filter (navigate-with-membership-check).
 →(a::Query{X, Y}, b::Query{Y, Z}) where {X, Y, Z} = Compose(a, b)
+→(a::Query{X, Y}, b::Unary{Y})    where {X, Y}    = Filter(a, InSetP(askeys(b)))
 →(a::Unary{T},    b::Query{T, Z}) where {T, Z}    = Restrict(a, b)
 
 # ∧ ∨ : - ⊗
@@ -481,10 +486,9 @@ askeys(u::Unary)                     = u
 ∨(a, b) = Disj(askeys(a), askeys(b))
 # `:` filters: lhs's range by an rhs-predicate.
 Base.:(:)(a::Query{X, Y}, b) where {X, Y} = Filter(a, InSetP(askeys(b)))
-# When lhs is a Unary, filtering reduces to predicate intersection on the
-# shared domain — same as `∧`, but `:` syntax lets the `entity : conds →
-# outs` template parse naturally.
-Base.:(:)(a::Unary{T}, b)    where {T}    = Conj(a, askeys(b))
+# When lhs is a Unary, `:` is directional restriction (drive lhs, probe
+# rhs) — different intent from `∧` (symmetric). Lifts to `URestrict`.
+Base.:(:)(a::Unary{T}, b)    where {T}    = URestrict(a, askeys(b))
 # `-`: Diff for value-bearing lhs, SetDiff for unary lhs.
 Base.:-(a::Query{D, R}, b) where {D, R} = Diff(a, askeys(b))
 Base.:-(a::Unary{D},    b) where {D}    = SetDiff(a, askeys(b))
@@ -798,6 +802,13 @@ end
 @inline probe(s::Conj, x, k) =
     probe_any(s.a, x, _ -> true) && probe_any(s.b, x, _ -> true) && (k(()); nothing)
 @inline probe_any(s::Conj, x, k) =
+    probe_any(s.a, x, _ -> true) && probe_any(s.b, x, _ -> true) && k(())
+
+@inline drive(s::URestrict, k) =
+    drive(s.a, (x, _) -> probe_any(s.b, x, _ -> true) && k(x, ()))
+@inline probe(s::URestrict, x, k) =
+    probe_any(s.a, x, _ -> true) && probe_any(s.b, x, _ -> true) && (k(()); nothing)
+@inline probe_any(s::URestrict, x, k) =
     probe_any(s.a, x, _ -> true) && probe_any(s.b, x, _ -> true) && k(())
 
 @inline function drive(s::Disj, k)

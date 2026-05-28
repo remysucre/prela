@@ -345,7 +345,7 @@ function _q17()
     # fused single fold producing (sum, count) in one pass.
     threshold_per_part = ((Li.part ← quantity) ▷
         (((s, n), q) -> (s + q, n + 1), (0.0, 0))) ↦ (((s, n),) -> 0.2 * s / n)
-    let live = lineitem : ((Li.part : (brand == "Brand#23") ∧ (container == "MED BOX"))
+    let live = lineitem : ((Li.part → (brand == "Brand#23") ∧ (container == "MED BOX"))
                             ∧ (quantity < (Li.part → threshold_per_part)))
         (live → extendedprice) ⊵ (+, 0.0) ↦ (s -> s / 7.0)
     end
@@ -490,7 +490,7 @@ _q_tpch("22", _ORACLE_Q22, _q22)
 const _ORACLE_Q16 = read("/tmp/tpch_oracles/Q16.txt", String)
 
 function _q16()
-    let live_ps = partsupp : ((PS.part : ((brand != "Brand#45")
+    let live_ps = partsupp : ((PS.part → ((brand != "Brand#45")
                                           ∧ (type ≁ r"^MEDIUM POLISHED")
                                           ∧ (size in (49, 14, 23, 45, 19, 3, 36, 9))))
                               ∧ (PS.supplier → Su.comment ≁ r"Customer.*Complaints"))
@@ -535,7 +535,7 @@ function _q2()
         min_per_part = ((PS.part ← eu_ps) → supplycost) ▷ (
             (a, v) -> min(a, v), Inf
         ),
-        target = (eu_ps ∧ (PS.part : ((size == 15) ∧ (type ~ r"BRASS$")))
+        target = (eu_ps ∧ (PS.part → ((size == 15) ∧ (type ~ r"BRASS$")))
                         ∧ (supplycost == (PS.part → min_per_part)))
         # Output value tuple — supplier-side and part-side fields each
         # factored under their respective navigation.
@@ -585,13 +585,12 @@ const _ORACLE_Q21 = read("/tmp/tpch_oracles/Q21.txt", String)
 function _q21()
     late = lineitem : (receiptdate > commitdate)
     n_distinct = vs -> length(unique(vs))
-    qualifying = (late
-        ∧ (Li.supplier : supplier ∧ (Su.nation → Na.name == "SAUDI ARABIA"))
-        ∧ (order : (orders ∧ (Ord.status == "F"))
-                    # EXISTS another supplier on the order (across all lineitems)
-                    ∧ ((order ← Li.supplier) ▷ n_distinct > 1)
-                    # NOT EXISTS another LATE supplier (only L1 is late)
-                    ∧ (((order ← late) → Li.supplier) ▷ n_distinct == 1)))
+    qualifying = late : ((Li.supplier → supplier ∧ (Su.nation → Na.name == "SAUDI ARABIA"))
+                       ∧ (order → (orders ∧ (Ord.status == "F"))
+                                # EXISTS another supplier on the order (across all lineitems)
+                                ∧ ((order ← Li.supplier) ▷ n_distinct > 1)
+                                # NOT EXISTS another LATE supplier (only L1 is late)
+                                ∧ (((order ← late) → Li.supplier) ▷ n_distinct == 1)))
     counts = (Li.supplier ← qualifying) ▷ ((a, _) -> a + 1, 0)
     counts ⊗ Su.name
 end
