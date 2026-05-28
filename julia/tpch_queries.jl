@@ -106,9 +106,8 @@ function _q1()
     function out((qty, ext, di, dp, chg, n))
         (qty, ext, dp, chg, qty/n, ext/n, di/n, n)
     end
-    ((returnflag ⊗ Li.status) ←
-     (lineitem : (shipdate <= "1998-09-02")
-      → (quantity ⊗ extendedprice ⊗ discount ⊗ tax))) ▷
+    (((returnflag ⊗ Li.status) ← (lineitem : (shipdate <= "1998-09-02")))
+        → (quantity ⊗ extendedprice ⊗ discount ⊗ tax)) ▷
         (cmb, (0.0, 0.0, 0.0, 0.0, 0.0, 0)) ↦ out
 end
 _q_tpch("1", _ORACLE_Q1, _q1)
@@ -167,9 +166,8 @@ const _ORACLE_Q3 = "2456423|406181.01|1995-03-05|0\n" *
 function _q3()
     let item = (lineitem : ((shipdate > "1995-03-15") ∧
                             (order : ((date < "1995-03-15") ∧
-                                         (Ord.customer : (mktsegment == "BUILDING")))))
-                         → (extendedprice ⊗ discount)),
-        revenue = (order ← item) ▷ (
+                                         (Ord.customer : (mktsegment == "BUILDING")))))),
+        revenue = ((order ← item) → (extendedprice ⊗ discount)) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
         )
@@ -283,7 +281,7 @@ function _q12()
                             ∧ (commitdate < receiptdate)
                             ∧ (shipdate   < commitdate)
                             ∧ (receiptdate in during("1994-01-01", "1995-01-01")))
-        (shipmode ← (live → order → priority)) ▷ (step, (0, 0))
+        ((shipmode ← live) → order → priority) ▷ (step, (0, 0))
     end
 end
 _q_tpch("12", _ORACLE_Q12, _q12)
@@ -327,7 +325,7 @@ const _ORACLE_Q11 = read("/tmp/tpch_oracles/Q11.txt", String)
 function _q11()
     let live_ps = partsupp : (PS.supplier → Su.nation → Na.name == "GERMANY"),
         # sum supplycost * availqty per partkey
-        value_per_part = (PS.part ← (live_ps → (supplycost ⊗ availqty))) ▷ (
+        value_per_part = ((PS.part ← live_ps) → (supplycost ⊗ availqty)) ▷ (
             (a, (c, q)) -> a + c * q, 0.0),
         # global total → unwrap to scalar so we can multiply by 0.0001
         threshold = 0.0001 * unwrap(value_per_part ⊵ (+, 0.0))
@@ -363,7 +361,7 @@ const _ORACLE_Q13 = read("/tmp/tpch_oracles/Q13.txt", String)
 function _q13()
     let live_orders = orders : (Ord.comment ≁ r"special.*requests"),
         # Per-customer order count (only for customers with at least one match)
-        count_per_cust = (Ord.customer ← (live_orders → date)) ▷ ((a, _) -> a + 1, 0)
+        count_per_cust = ((Ord.customer ← live_orders) → date) ▷ ((a, _) -> a + 1, 0)
         # Build the c_count → custdist distribution. Customers with no matching
         # orders get c_count = 0 (LEFT JOIN semantic).
         dist = Dict{Int, Int}()
@@ -477,7 +475,7 @@ function _q22()
         # prefix_ok ∧ acctbal > avg, then NOT EXISTS (no orders) via setdiff
         target = (prefix_ok ∧ (Cu.acctbal > avg)) - (Ord.customer ← orders)
         # Group by prefix, accumulate (count, sum_acctbal)
-        (prefix ← (target → Cu.acctbal)) ▷ (
+        ((prefix ← target) → Cu.acctbal) ▷ (
             ((cnt, sm), ab) -> (cnt + 1, sm + ab),
             (0, 0.0)
         )
@@ -512,7 +510,7 @@ const _ORACLE_Q15 = read("/tmp/tpch_oracles/Q15.txt", String)
 
 function _q15()
     let live = lineitem : (shipdate in during("1996-01-01", "1996-04-01")),
-        revenue = (Li.supplier ← (live → (extendedprice ⊗ discount))) ▷ (
+        revenue = ((Li.supplier ← live) → (extendedprice ⊗ discount)) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
         ),
@@ -534,7 +532,7 @@ const _ORACLE_Q2 = read("/tmp/tpch_oracles/Q2.txt", String)
 function _q2()
     let eu_ps = partsupp : (PS.supplier → Su.nation → Na.region → Re.name == "EUROPE"),
         # min(supplycost) per part over European partsupps
-        min_per_part = (PS.part ← (eu_ps → supplycost)) ▷ (
+        min_per_part = ((PS.part ← eu_ps) → supplycost) ▷ (
             (a, v) -> min(a, v), Inf
         ),
         target = (eu_ps ∧ (PS.part → ((size == 15) ∧ (type ~ r"BRASS$")))
@@ -562,13 +560,13 @@ const _ORACLE_Q20 = read("/tmp/tpch_oracles/Q20.txt", String)
 function _q20()
     let live_li = lineitem : (shipdate in during("1994-01-01", "1995-01-01")),
         # Per-(part, supp) sum of 1994 lineitem quantity — algebraic 2-key fold.
-        sum_qty = ((Li.part ⊗ Li.supplier) ← (live_li → quantity)) ▷ (+, 0.0),
+        sum_qty = (((Li.part ⊗ Li.supplier) ← live_li) → quantity) ▷ (+, 0.0),
         # Per-PS half-of-sum threshold. Missing (part, supp) tuples (no 1994
         # lineitems) emit nothing, so the cross-col `availqty > threshold`
         # skips those rows — matches SQL "comparison against NULL is false".
         threshold = ((PS.part ⊗ PS.supplier) → sum_qty) ↦ (s -> 0.5 * s),
-        qual_ps = (partsupp ∧ (PS.part → Part.name ~ r"^forest")
-                           ∧ (availqty > threshold)),
+        qual_ps = (partsupp : (PS.part → Part.name ~ r"^forest")
+                            ∧ (availqty > threshold)),
         target = (qual_ps → PS.supplier) ⩘
                  (supplier ∧ (Su.nation → Na.name == "CANADA"))
         target → (Su.name ⊗ Su.address)
@@ -593,7 +591,7 @@ function _q21()
                     # EXISTS another supplier on the order (across all lineitems)
                     ∧ ((order ← Li.supplier) ▷ n_distinct > 1)
                     # NOT EXISTS another LATE supplier (only L1 is late)
-                    ∧ ((order ← (late → Li.supplier)) ▷ n_distinct == 1)))
+                    ∧ (((order ← late) → Li.supplier) ▷ n_distinct == 1)))
     counts = (Li.supplier ← qualifying) ▷ ((a, _) -> a + 1, 0)
     counts ⊗ Su.name
 end
