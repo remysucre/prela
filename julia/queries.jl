@@ -356,7 +356,7 @@ _q("7b", "De Palma, Brian || Dressed to Kill") do
         × title)
 end
 
-_q("7c", "50 Cent || \"Boo\" Arnold was born Earl Arnold in Hattiesburg, Mississippi in 1966. His father gave him the nickname 'Boo' early in life and it stuck through grade school, high school, and college. He is still known as \"Boo\" to family and friends.  Raised in central Texas, Arnold played baseball at Texas Tech University where he graduated with a BA in Advertising and Marketing. While at Texas Tech he was also a member of the Texas Epsilon chapter of Phi Delta Theta fraternity. After college he worked with Young Life, an outreach to high school students, in San Antonio, Texas.  While with Young Life Arnold began taking extension courses through Fuller Theological Seminary and ultimately went full-time to Gordon-Conwell Theological Seminary in Boston, Massachusetts. At Gordon-Conwell he completed a Master's Degree in Divinity studying Theology, Philosophy, Church History, Biblical Languages (Hebrew & Greek), and Exegetical Methods. Following seminary he was involved with reconciliation efforts in the former Yugoslavia shortly after the war ended there in1995.  Arnold started acting in his early thirties in Texas. After an encouraging visit to Los Angeles where he spent time with childhood friend George Eads (of CSI Las Vegas) he decided to move to Los Angeles in 2001 to pursue acting full-time. While in Los Angeles he has studied acting with Judith Weston at Judith Weston Studio for Actors and Directors.  Arnold's acting career has been one of steady development, booking co-star and guest-star roles in nighttime television. He guest-starred opposite of Jane Seymour on the night time television drama Justice. He played the lead, Michael Hollister, in the film The Seer, written and directed by Patrick Masset (Friday Night Lights).  He was nominated Best Actor in the168 Film Festival for the role of Phil Stevens in the short-film Useless. In Useless he played a US Marshal who must choose between mercy and justice as he confronts the man who murdered his father. Arnold's performance in Useless confirmed his ability to carry lead roles, and he continues to work toward solidifying himself as a male lead in film and television.  Arnold married fellow Texan Stacy Rudd of San Antonio in 2003 and they are now raising their three children in the Los Angeles area.") do
+_q("7c", "\"Boo\" Arnold was born Earl Arnold in Hattiesburg, Mississippi in 1966. His father gave him the nickname 'Boo' early in life and it stuck through grade school, high school, and college. He is still known as \"Boo\" to family and friends.  Raised in central Texas, Arnold played baseball at Texas Tech University where he graduated with a BA in Advertising and Marketing. While at Texas Tech he was also a member of the Texas Epsilon chapter of Phi Delta Theta fraternity. After college he worked with Young Life, an outreach to high school students, in San Antonio, Texas.  While with Young Life Arnold began taking extension courses through Fuller Theological Seminary and ultimately went full-time to Gordon-Conwell Theological Seminary in Boston, Massachusetts. At Gordon-Conwell he completed a Master's Degree in Divinity studying Theology, Philosophy, Church History, Biblical Languages (Hebrew & Greek), and Exegetical Methods. Following seminary he was involved with reconciliation efforts in the former Yugoslavia shortly after the war ended there in1995.  Arnold started acting in his early thirties in Texas. After an encouraging visit to Los Angeles where he spent time with childhood friend George Eads (of CSI Las Vegas) he decided to move to Los Angeles in 2001 to pursue acting full-time. While in Los Angeles he has studied acting with Judith Weston at Judith Weston Studio for Actors and Directors.  Arnold's acting career has been one of steady development, booking co-star and guest-star roles in nighttime television. He guest-starred opposite of Jane Seymour on the night time television drama Justice. He played the lead, Michael Hollister, in the film The Seer, written and directed by Patrick Masset (Friday Night Lights).  He was nominated Best Actor in the168 Film Festival for the role of Phil Stevens in the short-film Useless. In Useless he played a US Marshal who must choose between mercy and justice as he confronts the man who murdered his father. Arnold's performance in Useless confirmed his ability to carry lead roles, and he continues to work toward solidifying himself as a male lead in film and television.  Arnold married fellow Texan Stacy Rudd of San Antonio in 2003 and they are now raising their three children in the Los Angeles area. || 50 Cent") do
     let bio_filter = (PersonInfo.type == "mini biography") ∧ PersonInfo.note,
         pf = ((Person.aka → AkaName.name ~ r"a|^A")
             ∧ (Person.name_pcode_cf >= "A") ∧ (Person.name_pcode_cf <= "F")
@@ -364,10 +364,8 @@ _q("7c", "50 Cent || \"Boo\" Arnold was born Earl Arnold in Hattiesburg, Mississ
         (movie
             : (production_year >= 1980) ∧ (production_year <= 2010)
             ∧ (linked_by → MovieLink.type in ("references", "referenced in", "features", "featured in"))
-            → (cast
-                : (person → pf)
-                → (person → Person.name)
-                × (person → Person.info : bio_filter → PersonInfo.info)))
+            → (cast → person : pf
+                → (Person.info : bio_filter → PersonInfo.info) × Person.name))
     end
 end
 
@@ -377,8 +375,8 @@ _q("8a", "Chambers, Linda || .hack//Quantum") do
         → (cast
             : (note == "(voice: English version)")
             ∧ (role == "actress")
-            ∧ (person → (Person.name ~ r"Yo") ∧ (Person.name ≁ r"Yu"))
-            → person → Person.aka → AkaName.name)
+            → person : (Person.name ~ r"Yo") ∧ (Person.name ≁ r"Yu")
+            → Person.aka → AkaName.name)
         × title)
 end
 
@@ -390,8 +388,8 @@ _q("8b", "Chambers, Linda || Dragon Ball Z: Shin Budokai") do
         → (cast
             : (note == "(voice: English version)")
             ∧ (role == "actress")
-            ∧ (person → (Person.name ~ r"Yo") ∧ (Person.name ≁ r"Yu"))
-            → person → Person.aka → AkaName.name)
+            → person : (Person.name ~ r"Yo") ∧ (Person.name ≁ r"Yu")
+            → Person.aka → AkaName.name)
         × title)
 end
 
@@ -416,36 +414,32 @@ _q("9a", "AJ || Airport Announcer || Blue Harvest") do
         → (cast
             : (note in _VOICE4)
             ∧ (role == "actress")
-            ∧ (person → (Person.gender == "f") ∧ (Person.name ~ r"Ang"))
-            → (person → Person.aka → AkaName.name)
+            → (person : (Person.gender == "f") ∧ (Person.name ~ r"Ang")
+                → Person.aka → AkaName.name)
             × (character → Character.name))
         × title)
 end
 
-_q("9b", "AJ || Airport Announcer || Bassett, Angela || Blue Harvest") do
+_q("9b", "AJ || Bassett, Angela || Airport Announcer || Blue Harvest") do
     (movie
         : (company → (Company.country == "[us]") ∧ (Company.note ~ r"\(200.*\)") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)")))
         ∧ (production_year >= 2007) ∧ (production_year <= 2010)
         → (cast
-            : (note == "(voice)")
-            ∧ (role == "actress")
-            ∧ (person → (Person.gender == "f") ∧ (Person.name ~ r"Angel"))
-            → (person → Person.aka → AkaName.name)
-            × (character → Character.name)
-            × (person → Person.name))
+            : (note == "(voice)") ∧ (role == "actress")
+            → (person : (Person.gender == "f") ∧ (Person.name ~ r"Angel")
+                → (Person.aka → AkaName.name) × Person.name)
+            × (character → Character.name))
         × title)
 end
 
-_q("9c", "'Annette' || 2nd Balladeer || Alborg, Ana Esther || (1975-01-20)") do
+_q("9c", "'Annette' || Alborg, Ana Esther || 2nd Balladeer || (1975-01-20)") do
     (movie
         : (company → Company.country == "[us]")
         → (cast
-            : (note in _VOICE4)
-            ∧ (role == "actress")
-            ∧ (person → (Person.gender == "f") ∧ (Person.name ~ r"An"))
-            → (person → Person.aka → AkaName.name)
-            × (character → Character.name)
-            × (person → Person.name))
+            : (note in _VOICE4) ∧ (role == "actress")
+            → (person : (Person.gender == "f") ∧ (Person.name ~ r"An")
+                → (Person.aka → AkaName.name) × Person.name)
+            × (character → Character.name))
         × title)
 end
 
@@ -453,11 +447,9 @@ _q("9d", "!!!, Toy || Aaron, Caroline || \"Cockamamie's\" Salesgirl || \$15,000.
     (movie
         : (company → Company.country == "[us]")
         → (cast
-            : (note in _VOICE4)
-            ∧ (role == "actress")
-            ∧ (person → Person.gender == "f")
-            → (person → Person.aka → AkaName.name)
-            × (person → Person.name)
+            : (note in _VOICE4) ∧ (role == "actress")
+            → (person : (Person.gender == "f")
+                → (Person.aka → AkaName.name) × Person.name)
             × (character → Character.name))
         × title)
 end
@@ -811,8 +803,8 @@ _q("19a", "Angeline, Moriah || Blue Harvest") do
             : (note in _VOICE4)
             ∧ (role == "actress")
             ∧ character
-            ∧ (person → (Person.gender == "f") ∧ (Person.name ~ r"Ang") ∧ Person.aka)
-            → person → Person.name)
+            → person : (Person.gender == "f") ∧ (Person.name ~ r"Ang") ∧ Person.aka
+            → Person.name)
         × title)
 end
 
@@ -826,8 +818,8 @@ _q("19b", "Jolie, Angelina || Kung Fu Panda") do
             : (note == "(voice)")
             ∧ (role == "actress")
             ∧ character
-            ∧ (person → (Person.gender == "f") ∧ (Person.name ~ r"Angel") ∧ Person.aka)
-            → person → Person.name)
+            → person : (Person.gender == "f") ∧ (Person.name ~ r"Angel") ∧ Person.aka
+            → Person.name)
         × title)
 end
 
@@ -840,8 +832,8 @@ _q("19c", "Alborg, Ana Esther || .hack//Akusei heni vol. 2") do
             : (note in _VOICE4)
             ∧ (role == "actress")
             ∧ character
-            ∧ (person → (Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka)
-            → person → Person.name)
+            → person : (Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka
+            → Person.name)
         × title)
 end
 
@@ -854,8 +846,8 @@ _q("19d", "Aaron, Caroline || \$9.99") do
             : (note in _VOICE4)
             ∧ (role == "actress")
             ∧ character
-            ∧ (person → (Person.gender == "f") ∧ Person.aka)
-            → person → Person.name)
+            → person : (Person.gender == "f") ∧ Person.aka
+            → Person.name)
         × title)
 end
 
@@ -1008,7 +1000,7 @@ _q("23c", "movie || Dirt Merchant") do
         → (kind in ("movie", "tv movie", "video movie", "video game")) × title)
 end
 
-_q("24a", "Additional Voices || Baker, Andrea || Baiohazâdo 6") do
+_q("24a", "Baker, Andrea || Additional Voices || Baiohazâdo 6") do
     (movie
         : (company → (Company.country == "[us]"))
         ∧ (info → (Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*201") ∨ (Info.info ~ r"^USA:.*201")))
@@ -1016,13 +1008,12 @@ _q("24a", "Additional Voices || Baker, Andrea || Baiohazâdo 6") do
         → (cast
             : (note in _VOICE4)
             ∧ (role == "actress")
-            ∧ (person → (Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka)
-            → (character → Character.name)
-            × (person → Person.name))
+            → (person : (Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka → Person.name)
+            × (character → Character.name))
         × title)
 end
 
-_q("24b", "Tigress || Jolie, Angelina || Kung Fu Panda 2") do
+_q("24b", "Jolie, Angelina || Tigress || Kung Fu Panda 2") do
     (movie
         : (company → (Company.country == "[us]") ∧ (Company.name == "DreamWorks Animation"))
         ∧ (info → (Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*201") ∨ (Info.info ~ r"^USA:.*201")))
@@ -1031,9 +1022,8 @@ _q("24b", "Tigress || Jolie, Angelina || Kung Fu Panda 2") do
         → (cast
             : (note in _VOICE4)
             ∧ (role == "actress")
-            ∧ (person → (Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka)
-            → (character → Character.name)
-            × (person → Person.name))
+            → (person : (Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka → Person.name)
+            × (character → Character.name))
         × title)
 end
 
@@ -1043,7 +1033,7 @@ _q("25a", "Horror || 10 || -- And Now the Screaming Starts! || Abdallah, Damon")
         → (info : (Info.type == "genres") ∧ (Info.info == "Horror") → Info.info)
         × (data : (Data.type == "votes") → Data.data)
         × title
-        × (cast : (note in _WRITER5) ∧ (person → (Person.gender == "m")) → person → Person.name))
+        × (cast : (note in _WRITER5) → person : (Person.gender == "m") → Person.name))
 end
 
 _q("25b", "Horror || 138 || Vampire Boys || Campbell, Jeremiah") do
@@ -1053,7 +1043,7 @@ _q("25b", "Horror || 138 || Vampire Boys || Campbell, Jeremiah") do
         → (info : (Info.type == "genres") ∧ (Info.info == "Horror") → Info.info)
         × (data : (Data.type == "votes") → Data.data)
         × title
-        × (cast : (note in _WRITER5) ∧ (person → (Person.gender == "m")) → person → Person.name))
+        × (cast : (note in _WRITER5) → person : (Person.gender == "m") → Person.name))
 end
 
 _q("25c", "Action || 10 || \$ || Aakeson, Kim Fupz") do
@@ -1062,7 +1052,7 @@ _q("25c", "Action || 10 || \$ || Aakeson, Kim Fupz") do
         → (info : (Info.type == "genres") ∧ (Info.info in _GENRE6) → Info.info)
         × (data : (Data.type == "votes") → Data.data)
         × title
-        × (cast : (note in _WRITER5) ∧ (person → (Person.gender == "m")) → person → Person.name))
+        × (cast : (note in _WRITER5) → person : (Person.gender == "m") → Person.name))
 end
 
 _q("26a", "'Agua' Man || Acereda, Hermie || 7.1 || 3:10 to Yuma") do
@@ -1162,7 +1152,7 @@ _q("28c", "01 Distribuzione || 1.9 || (#1.1)") do
     end
 end
 
-_q("29a", "Queen || Andrews, Julie || Shrek 2") do
+_q("29a", "Andrews, Julie || Queen || Shrek 2") do
     (movie
         : (complete_cast → (CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete+verified"))
         ∧ (company → (Company.country == "[us]"))
@@ -1173,14 +1163,13 @@ _q("29a", "Queen || Andrews, Julie || Shrek 2") do
             : (note in _VOICE3)
             ∧ (role == "actress")
             ∧ (character → (Character.name == "Queen"))
-            ∧ (person → (Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka
-                      ∧ (Person.info → (PersonInfo.type == "trivia")))
-            → (character → Character.name)
-            × (person → Person.name))
+            → (person : (Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka
+                      ∧ (Person.info → (PersonInfo.type == "trivia")) → Person.name)
+            × (character → Character.name))
         × title)
 end
 
-_q("29b", "Queen || Andrews, Julie || Shrek 2") do
+_q("29b", "Andrews, Julie || Queen || Shrek 2") do
     (movie
         : (complete_cast → (CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete+verified"))
         ∧ (company → (Company.country == "[us]"))
@@ -1191,14 +1180,13 @@ _q("29b", "Queen || Andrews, Julie || Shrek 2") do
             : (note in _VOICE3)
             ∧ (role == "actress")
             ∧ (character → (Character.name == "Queen"))
-            ∧ (person → (Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka
-                      ∧ (Person.info → (PersonInfo.type == "height")))
-            → (character → Character.name)
-            × (person → Person.name))
+            → (person : (Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka
+                      ∧ (Person.info → (PersonInfo.type == "height")) → Person.name)
+            × (character → Character.name))
         × title)
 end
 
-_q("29c", "Lola || Andrews, Julie || Hoodwinked!") do
+_q("29c", "Andrews, Julie || Lola || Hoodwinked!") do
     (movie
         : (complete_cast → (CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete+verified"))
         ∧ (company → (Company.country == "[us]"))
@@ -1208,10 +1196,9 @@ _q("29c", "Lola || Andrews, Julie || Hoodwinked!") do
         → (cast
             : (note in _VOICE4)
             ∧ (role == "actress")
-            ∧ (person → (Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka
-                      ∧ (Person.info → (PersonInfo.type == "trivia")))
-            → (character → Character.name)
-            × (person → Person.name))
+            → (person : (Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka
+                      ∧ (Person.info → (PersonInfo.type == "trivia")) → Person.name)
+            × (character → Character.name))
         × title)
 end
 
@@ -1222,7 +1209,7 @@ _q("30a", "Horror || 100356 || 16 Blocks || Abrams, J.J.") do
         → (info : (Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller")) → Info.info)
         × (data : (Data.type == "votes") → Data.data)
         × title
-        × (cast : (note in _WRITER5) ∧ (person → (Person.gender == "m")) → person → Person.name))
+        × (cast : (note in _WRITER5) → person : (Person.gender == "m") → Person.name))
 end
 
 _q("30b", "Horror || 194782 || Freddy vs. Jason || Shannon, Damian") do
@@ -1233,7 +1220,7 @@ _q("30b", "Horror || 194782 || Freddy vs. Jason || Shannon, Damian") do
         → (info : (Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller")) → Info.info)
         × (data : (Data.type == "votes") → Data.data)
         × title
-        × (cast : (note in _WRITER5) ∧ (person → (Person.gender == "m")) → person → Person.name))
+        × (cast : (note in _WRITER5) → person : (Person.gender == "m") → Person.name))
 end
 
 _q("30c", "Action || 100356 || \$ || Abernathy, Lewis") do
@@ -1243,7 +1230,7 @@ _q("30c", "Action || 100356 || \$ || Abernathy, Lewis") do
         → (info : (Info.type == "genres") ∧ (Info.info in _GENRE6) → Info.info)
         × (data : (Data.type == "votes") → Data.data)
         × title
-        × (cast : (note in _WRITER5) ∧ (person → (Person.gender == "m")) → person → Person.name))
+        × (cast : (note in _WRITER5) → person : (Person.gender == "m") → Person.name))
 end
 
 _q("31a", "Horror || 1040 || 2001 Maniacs || Agnew, Jim") do
@@ -1253,7 +1240,7 @@ _q("31a", "Horror || 1040 || 2001 Maniacs || Agnew, Jim") do
         → (info : (Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller")) → Info.info)
         × (data : (Data.type == "votes") → Data.data)
         × title
-        × (cast : (note in _WRITER5) ∧ (person → (Person.gender == "m")) → person → Person.name))
+        × (cast : (note in _WRITER5) → person : (Person.gender == "m") → Person.name))
 end
 
 _q("31b", "Horror || 129755 || Saw || Bousman, Darren Lynn") do
@@ -1264,7 +1251,7 @@ _q("31b", "Horror || 129755 || Saw || Bousman, Darren Lynn") do
         → (info : (Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller")) → Info.info)
         × (data : (Data.type == "votes") → Data.data)
         × title
-        × (cast : (note in _WRITER5) ∧ (person → (Person.gender == "m")) → person → Person.name))
+        × (cast : (note in _WRITER5) → person : (Person.gender == "m") → Person.name))
 end
 
 _q("31c", "Action || 1008 || 11:14 || Abraham, Brad") do
