@@ -165,8 +165,8 @@ _q("13a", "Afghanistan:24 June 2012 || 1.0 || &Me") do
     (movie
         : (company → (Company.country == "[de]") ∧ (Company.type == "production companies"))
         ∧ (kind == "movie")
-        → (info → (Info.type == "release dates") : Info.info)
-        × (data → (Data.type == "rating") : Data.data)
+        → (info : (Info.type == "release dates") → Info.info)
+        × (data : (Data.type == "rating") → Data.data)
         × title)
 end
 
@@ -312,7 +312,7 @@ _q("13b", "501audio || 1.8 || 5 Time Champion") do
         ∧ (title != "")
         ∧ ((title ~ r"Champion") ∨ (title ~ r"Loser"))
         → ((company → (Company.country == "[us]") ∧ (Company.type == "production companies")) → Company.name)
-        × (data → (Data.type == "rating") : Data.data)
+        × (data : (Data.type == "rating") → Data.data)
         × title)
 end
 
@@ -352,7 +352,7 @@ _q("12b", "\$10,000 || Birdemic: Shock and Terror") do
         ∧ (data → (Data.type == "bottom 10 rank"))
         ∧ (production_year > 2000)
         ∧ ((title ~ r"^Birdemic") ∨ (title ~ r"Movie"))
-        → (info → (Info.type == "budget") : Info.info)
+        → (info : (Info.type == "budget") → Info.info)
         × title)
 end
 
@@ -374,7 +374,7 @@ _q("13c", "DL Sites || 1.8 || Champion") do
         ∧ (title != "")
         ∧ ((title ~ r"^Champion") ∨ (title ~ r"^Loser"))
         → ((company → (Company.country == "[us]") ∧ (Company.type == "production companies")) → Company.name)
-        × (data → (Data.type == "rating") : Data.data)
+        × (data : (Data.type == "rating") → Data.data)
         × title)
 end
 
@@ -554,7 +554,7 @@ _q("13d", "\"O\" Films || 1.0 || #54 Meets #47") do
         : (kind == "movie")
         ∧ (info → (Info.type == "release dates"))
         → ((company → (Company.country == "[us]") ∧ (Company.type == "production companies")) → Company.name)
-        × (data → (Data.type == "rating") : Data.data)
+        × (data : (Data.type == "rating") → Data.data)
         × title)
 end
 
@@ -676,14 +676,14 @@ end
 _q("8c", "\"A.J.\" || #1 Cheerleader Camp") do
     (movie
         : (company → (Company.country == "[us]"))
-        → (cast → (role == "writer") : person → Person.aka → AkaName.name)
+        → (cast : (role == "writer") → person → Person.aka → AkaName.name)
         × title)
 end
 
 _q("8d", "\"Jenny from the Block\" || #1 Cheerleader Camp") do
     (movie
         : (company → (Company.country == "[us]"))
-        → (cast → (role == "costume designer") : person → Person.aka → AkaName.name)
+        → (cast : (role == "costume designer") → person → Person.aka → AkaName.name)
         × title)
 end
 
@@ -769,7 +769,7 @@ _q("10c", "Himself || Evil Eyes: Behind the Scenes") do
     (movie
         : (company → (Company.country == "[us]"))
         ∧ (production_year > 1990)
-        → (cast → (note ~ r"\(producer\)") : character → Character.name)
+        → (cast : (note ~ r"\(producer\)") → character → Character.name)
         × title)
 end
 
@@ -844,8 +844,8 @@ end
 
 # ===================================================================
 _q("18a", "\$1,000 || 10 || 40 Days and 40 Nights") do
-    let ib = info → ((Info.type == "budget") : Info.info),
-        dv = data → ((Data.type == "votes") : Data.data)
+    let ib = info : (Info.type == "budget") → Info.info,
+        dv = data : (Data.type == "votes") → Data.data
         (movie
             : ib
             ∧ (cast → (note in ("(producer)", "(executive producer)"))
@@ -868,7 +868,7 @@ end
 _q("18c", "Action || 10 || #PostModem") do
     let gf = (Info.type == "genres") ∧ (Info.info in _GENRE6),
         ig = info → (gf → Info.info),
-        dv = data → ((Data.type == "votes") : Data.data)
+        dv = data : (Data.type == "votes") → Data.data
         (movie
             : (info → gf)
             ∧ (cast → (note in _WRITER5) ∧ (person → (Person.gender == "m")))
@@ -958,7 +958,7 @@ _q("20c", "Abell, Alistair || ...And Then I...") do
     (movie
         : (complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete")))
         ∧ (keyword in _KW10) ∧ (kind == "movie") ∧ (production_year > 2000)
-        → (cast → (character → (Character.name ~ r"[Mm]an")) : person → Person.name)
+        → (cast : (character → (Character.name ~ r"[Mm]an")) → person → Person.name)
         × title)
 end
 
@@ -1068,7 +1068,7 @@ _q("25a", "Horror || 10 || -- And Now the Screaming Starts! || Abdallah, Damon")
         (movie
             : (info → gf) ∧ (keyword in ("murder", "blood", "gore", "death", "female-nudity"))
             → (info → (gf → Info.info))
-            × (data → ((Data.type == "votes") : Data.data))
+            × (data : (Data.type == "votes") → Data.data)
             × title
             × (cast → (note in _WRITER5) ∧ (person → (Person.gender == "m")) → person → Person.name))
     end
@@ -1080,7 +1080,7 @@ _q("25b", "Horror || 138 || Vampire Boys || Campbell, Jeremiah") do
             : (info → gf) ∧ (keyword in ("murder", "blood", "gore", "death", "female-nudity"))
             ∧ (production_year > 2010) ∧ (title ~ r"^Vampire")
             → (info → (gf → Info.info))
-            × (data → ((Data.type == "votes") : Data.data))
+            × (data : (Data.type == "votes") → Data.data)
             × title
             × (cast → (note in _WRITER5) ∧ (person → (Person.gender == "m")) → person → Person.name))
     end
@@ -1091,7 +1091,7 @@ _q("25c", "Action || 10 || \$ || Aakeson, Kim Fupz") do
         (movie
             : (info → gf) ∧ (keyword in _KW7)
             → (info → (gf → Info.info))
-            × (data → ((Data.type == "votes") : Data.data))
+            × (data : (Data.type == "votes") → Data.data)
             × title
             × (cast → (note in _WRITER5) ∧ (person → (Person.gender == "m")) → person → Person.name))
     end
@@ -1103,7 +1103,7 @@ _q("26a", "'Agua' Man || Acereda, Hermie || 7.1 || 3:10 to Yuma") do
         (movie
             : (complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete")))
             ∧ (keyword in _KW10) ∧ (kind == "movie") ∧ (production_year > 2000)
-            → (cast → (character → (Character.name ~ r"[Mm]an")) : ((character → Character.name) × (person → Person.name)))
+            → (cast : (character → (Character.name ~ r"[Mm]an")) → ((character → Character.name) × (person → Person.name)))
             × (rd → Data.data)
             × title)
     end
@@ -1115,18 +1115,18 @@ _q("26b", "Bank Manager || 8.2 || Inception") do
             : (complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete")))
             ∧ (keyword in ("superhero", "marvel-comics", "based-on-comic", "fight")) ∧ (kind == "movie")
             ∧ (production_year > 2005)
-            → (cast → (character → (Character.name ~ r"[Mm]an")) : character → Character.name)
+            → (cast : (character → (Character.name ~ r"[Mm]an")) → character → Character.name)
             × (rd → Data.data)
             × title)
     end
 end
 
 _q("26c", "'Agua' Man || 1.9 || 12 Rounds") do
-    let rd = data → ((Data.type == "rating") : Data.data)
+    let rd = data : (Data.type == "rating") → Data.data
         (movie
             : (complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete")))
             ∧ (keyword in _KW10) ∧ (kind == "movie") ∧ (production_year > 2000)
-            → (cast → (character → (Character.name ~ r"[Mm]an")) : character → Character.name)
+            → (cast : (character → (Character.name ~ r"[Mm]an")) → character → Character.name)
             × rd
             × title)
     end
@@ -1270,7 +1270,7 @@ _q("30a", "Horror || 100356 || 16 Blocks || Abrams, J.J.") do
             : (complete_cast → ((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete+verified")))
             ∧ (info → gf) ∧ (keyword in _KW7) ∧ (production_year > 2000)
             → (info → (gf → Info.info))
-            × (data → ((Data.type == "votes") : Data.data))
+            × (data : (Data.type == "votes") → Data.data)
             × title
             × (cast → (note in _WRITER5) ∧ (person → (Person.gender == "m")) → person → Person.name))
     end
@@ -1283,7 +1283,7 @@ _q("30b", "Horror || 194782 || Freddy vs. Jason || Shannon, Damian") do
             ∧ (info → gf) ∧ (keyword in _KW7) ∧ (production_year > 2000)
             ∧ ((title ~ r"Freddy") ∨ (title ~ r"Jason") ∨ (title ~ r"^Saw"))
             → (info → (gf → Info.info))
-            × (data → ((Data.type == "votes") : Data.data))
+            × (data : (Data.type == "votes") → Data.data)
             × title
             × (cast → (note in _WRITER5) ∧ (person → (Person.gender == "m")) → person → Person.name))
     end
@@ -1295,7 +1295,7 @@ _q("30c", "Action || 100356 || \$ || Abernathy, Lewis") do
             : (complete_cast → ((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete+verified")))
             ∧ (info → gf) ∧ (keyword in _KW7)
             → (info → (gf → Info.info))
-            × (data → ((Data.type == "votes") : Data.data))
+            × (data : (Data.type == "votes") → Data.data)
             × title
             × (cast → (note in _WRITER5) ∧ (person → (Person.gender == "m")) → person → Person.name))
     end
@@ -1308,7 +1308,7 @@ _q("31a", "Horror || 1040 || 2001 Maniacs || Agnew, Jim") do
             : (company → (Company.name ~ r"^Lionsgate"))
             ∧ (info → gf) ∧ (keyword in _KW7)
             → (info → (gf → Info.info))
-            × (data → ((Data.type == "votes") : Data.data))
+            × (data : (Data.type == "votes") → Data.data)
             × title
             × (cast → (note in _WRITER5) ∧ (person → (Person.gender == "m")) → person → Person.name))
     end
@@ -1321,7 +1321,7 @@ _q("31b", "Horror || 129755 || Saw || Bousman, Darren Lynn") do
             ∧ (info → gf) ∧ (keyword in _KW7) ∧ (production_year > 2000)
             ∧ ((title ~ r"Freddy") ∨ (title ~ r"Jason") ∨ (title ~ r"^Saw"))
             → (info → (gf → Info.info))
-            × (data → ((Data.type == "votes") : Data.data))
+            × (data : (Data.type == "votes") → Data.data)
             × title
             × (cast → (note in _WRITER5) ∧ (person → (Person.gender == "m")) → person → Person.name))
     end
@@ -1333,9 +1333,9 @@ _q("31c", "Action || 1008 || 11:14 || Abraham, Brad") do
             : (company → (Company.name ~ r"^Lionsgate"))
             ∧ (info → gf) ∧ (keyword in _KW7)
             → (info → (gf → Info.info))
-            × (data → ((Data.type == "votes") : Data.data))
+            × (data : (Data.type == "votes") → Data.data)
             × title
-            × (cast → (note in _WRITER5) : person → Person.name))
+            × (cast : (note in _WRITER5) → person → Person.name))
     end
 end
 
@@ -1362,8 +1362,8 @@ end
 # source domain. Both t1- and t2-side projections restrict to those, so the
 # 6-way `×` runs over a few hundred rows, not the whole universe.
 _q("33a", "495 Productions || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila") do
-    let co  = company → ((Company.country == "[us]") : Company.name),
-        rd  = data    → ((Data.type    == "rating")  : Data.data),
+    let co  = company : (Company.country == "[us]") → Company.name,
+        rd  = data : (Data.type    == "rating") → Data.data,
         rdlt = data   → (((Data.type   == "rating") ∧ (Data.data < "3.0")) → Data.data),
         t2f = ((kind == "tv series") ∧ company ∧ rdlt
                                      ∧ (production_year >= 2005) ∧ (production_year <= 2008)),
@@ -1376,8 +1376,8 @@ _q("33a", "495 Productions || 495 Productions || 3.3 || 2.7 || A Double Shot at 
 end
 
 _q("33b", "MTV Netherlands || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila") do
-    let co  = company → ((Company.country == "[nl]") : Company.name),
-        rd  = data    → ((Data.type    == "rating")  : Data.data),
+    let co  = company : (Company.country == "[nl]") → Company.name,
+        rd  = data : (Data.type    == "rating") → Data.data,
         rdlt = data   → (((Data.type   == "rating") ∧ (Data.data < "3.0")) → Data.data),
         t2f = (kind == "tv series") ∧ company ∧ rdlt ∧ (production_year == 2007),
         qlk = link → ((MovieLink.type ~ r"follow") ∧ (MovieLink.target → t2f)),
@@ -1389,8 +1389,8 @@ _q("33b", "MTV Netherlands || 495 Productions || 3.3 || 2.7 || A Double Shot at 
 end
 
 _q("33c", "2BE || 495 Productions || 1.3 || 1.0 || A Double Shot at Love || A Double Shot at Love") do
-    let co  = company → ((Company.country != "[us]") : Company.name),
-        rd  = data    → ((Data.type    == "rating")  : Data.data),
+    let co  = company : (Company.country != "[us]") → Company.name,
+        rd  = data : (Data.type    == "rating") → Data.data,
         rdlt = data   → (((Data.type   == "rating") ∧ (Data.data < "3.5")) → Data.data),
         t2f = ((kind in ("tv series", "episode")) ∧ company ∧ rdlt
                                                   ∧ (production_year >= 2000) ∧ (production_year <= 2010)),

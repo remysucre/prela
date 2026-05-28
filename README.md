@@ -25,12 +25,12 @@ Consider Join Order Benchmark [22a](https://github.com/gregrahn/join-order-bench
 
 ```julia
 movie
-   → (info → (Info.type == "countries")
+   : (info → (Info.type == "countries")
            ∧ (Info.info in ("Germany", "German", "USA", "American")))
    ∧ (keyword in ("murder", "murder-in-title", "blood", "violence"))
    ∧ (production_year > 2008)
    ∧ (kind in ("movie", "episode"))
-   : title
+   → title
    × ((data → (Data.data < "7.0") ∧ (Data.type == "rating")) → Data.data)
    × ((company → (Company.note ≁ r"\(USA\)")
               ∧ (Company.note ~ r"\(200.*\)")
@@ -52,8 +52,8 @@ Then, for each such movie, output the following attributes:
 - The name of its production company, if satisfying further conditions
 
 In SQL's way of thinking, `movie` would be in the `FROM` clause (along with other tables involved),
- the predicates before `:` are in the `WHERE` clause,
- and what comes after `:` are `SELECT`ed.
+ the predicates between `:` and `→` are in the `WHERE` clause,
+ and what comes after `→` are `SELECT`ed.
 But unlike SQL, Prela can freely interleave predicates and outputs,
  resulting in more natural queries as shown above.
 And instead of explicit conditions,
@@ -183,7 +183,7 @@ qualifying = (late
                 # EXISTS another supplier on the order (across all lineitems)
                 ∧ ((order ← Li.supplier) ▷ n_distinct > 1)
                 # NOT EXISTS another LATE supplier (only L1 is late)
-                ∧ ((order ← (late : Li.supplier)) ▷ n_distinct == 1)))
+                ∧ ((order ← (late → Li.supplier)) ▷ n_distinct == 1)))
 counts = (Li.supplier ← qualifying) ▷ ((a, _) -> a + 1, 0)
 counts ⊗ Su.name
 ```
