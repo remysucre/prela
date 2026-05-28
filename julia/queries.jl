@@ -163,7 +163,7 @@ end
 
 _q("13a", "Afghanistan:24 June 2012 || 1.0 || &Me") do
     (movie
-        : (company : ((Company.country == "[de]") ∧ (Company.type == "production companies")))
+        : (company → ((Company.country == "[de]") ∧ (Company.type == "production companies")))
         ∧ (kind == "movie")
         → (info : (Info.type == "release dates") → Info.info)
         × (data : (Data.type == "rating") → Data.data)
@@ -184,7 +184,7 @@ end
 
 _q("22a", "(empty)") do
     (movie
-        : (info : ((Info.type == "countries")
+        : (info → ((Info.type == "countries")
                 ∧ (Info.info in ("Germany", "German", "USA", "American"))))
         ∧ (keyword in ("murder", "murder-in-title", "blood", "violence"))
         ∧ (production_year > 2008)
@@ -209,7 +209,7 @@ end
 
 _q("5a", "(empty)") do
     (movie
-        : (company : ((Company.type == "production companies")
+        : (company → ((Company.type == "production companies")
                    ∧ (Company.note ~ r"\(theatrical\)")
                    ∧ (Company.note ~ r"\(France\)")))
         ∧ (info → (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
@@ -220,7 +220,7 @@ end
 
 _q("12a", "10th Grade Reunion Films || 8.1 || 3:20") do
     (movie
-        : (info : ((Info.type == "genres") ∧ (Info.info in ("Drama", "Horror"))))
+        : (info → ((Info.type == "genres") ∧ (Info.info in ("Drama", "Horror"))))
         ∧ (production_year >= 2005)
         ∧ (production_year <= 2008)
         → ((company : ((Company.country == "[us]") ∧ (Company.type == "production companies"))) → Company.name)
@@ -232,7 +232,7 @@ _q("14a", "1.0 || \$lowdown") do
     (movie
         : (keyword in ("murder", "murder-in-title", "blood", "violence"))
         ∧ (kind == "movie")
-        ∧ (info : ((Info.type == "countries")
+        ∧ (info → ((Info.type == "countries")
                 ∧ (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
                                  "Swedish", "Denish", "Norwegian", "German",
                                  "USA", "American"))))
@@ -347,7 +347,7 @@ end
 
 _q("12b", "\$10,000 || Birdemic: Shock and Terror") do
     (movie
-        : (company : ((Company.country == "[us]")
+        : (company → ((Company.country == "[us]")
                    ∧ (Company.type in ("production companies", "distributors"))))
         ∧ (data → (Data.type == "bottom 10 rank"))
         ∧ (production_year > 2000)
@@ -358,7 +358,7 @@ end
 
 _q("12c", "\"Oh That Gus!\" || 7.1 || \$1.11") do
     (movie
-        : (info : ((Info.type == "genres")
+        : (info → ((Info.type == "genres")
                 ∧ (Info.info in ("Drama", "Horror", "Western", "Family"))))
         ∧ (production_year >= 2000)
         ∧ (production_year <= 2010)
@@ -382,7 +382,7 @@ _q("14b", "6.4 || Of Dolls and Murder") do
     (movie
         : (keyword in ("murder", "murder-in-title"))
         ∧ (kind == "movie")
-        ∧ (info : ((Info.type == "countries")
+        ∧ (info → ((Info.type == "countries")
                 ∧ (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
                                  "Swedish", "Denish", "Norwegian", "German",
                                  "USA", "American"))))
@@ -396,7 +396,7 @@ _q("14c", "1.0 || \$lowdown") do
     (movie
         : (keyword in ("murder", "murder-in-title", "blood", "violence"))
         ∧ (kind in ("movie", "episode"))
-        ∧ (info : ((Info.type == "countries")
+        ∧ (info → ((Info.type == "countries")
                 ∧ (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
                                  "Swedish", "Danish", "Norwegian", "German",
                                  "USA", "American"))))
@@ -407,7 +407,7 @@ end
 
 _q("22b", "(empty)") do
     (movie
-        : (info : ((Info.type == "countries")
+        : (info → ((Info.type == "countries")
                 ∧ (Info.info in ("Germany", "German", "USA", "American"))))
         ∧ (keyword in ("murder", "murder-in-title", "blood", "violence"))
         ∧ (production_year > 2009)
@@ -422,7 +422,7 @@ end
 
 _q("22c", "(empty)") do
     (movie
-        : (info : ((Info.type == "countries")
+        : (info → ((Info.type == "countries")
                 ∧ (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
                                  "Swedish", "Danish", "Norwegian", "German",
                                  "USA", "American"))))
@@ -439,7 +439,7 @@ end
 
 _q("22d", "(#1.1) || 2.0 || 13 Productions") do
     (movie
-        : (info : ((Info.type == "countries")
+        : (info → ((Info.type == "countries")
                 ∧ (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
                                  "Swedish", "Danish", "Norwegian", "German",
                                  "USA", "American"))))
@@ -453,7 +453,7 @@ end
 
 _q("5b", "(empty)") do
     (movie
-        : (company : ((Company.type == "production companies")
+        : (company → ((Company.type == "production companies")
                    ∧ (Company.note ~ r"\(VHS\)")
                    ∧ (Company.note ~ r"\(USA\)")
                    ∧ (Company.note ~ r"\(1994\)")))
@@ -464,7 +464,7 @@ end
 
 _q("5c", "11,830,420") do
     (movie
-        : (company : ((Company.type == "production companies")
+        : (company → ((Company.type == "production companies")
                    ∧ (Company.note ≁ r"\(TV\)")
                    ∧ (Company.note ~ r"\(USA\)")))
         ∧ (info → (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
@@ -477,7 +477,7 @@ end
 _q("15a", "USA:1 June 2007 || Battlestar Galactica: The Resistance") do
     (movie
         : (production_year > 2000)
-        ∧ (company : ((Company.country == "[us]")
+        ∧ (company → ((Company.country == "[us]")
                    ∧ (Company.note ~ r"\(200.*\)")
                    ∧ (Company.note ~ r"\(worldwide\)")))
         ∧ keyword
@@ -490,7 +490,7 @@ end
 
 _q("15b", "USA:27 April 2007 || RoboCop vs Terminator") do
     (movie
-        : (company : ((Company.country == "[us]")
+        : (company → ((Company.country == "[us]")
                    ∧ (Company.name == "YouTube")
                    ∧ (Company.note ~ r"\(200.*\)")
                    ∧ (Company.note ~ r"\(worldwide\)")))
@@ -520,7 +520,7 @@ _q("15d", "(Not So) Instant Photo || 06/05") do
     (movie
         : (company → (Company.country == "[us]"))
         ∧ keyword
-        ∧ (info : ((Info.type == "release dates") ∧ (Info.note ~ r"internet")))
+        ∧ (info → ((Info.type == "release dates") ∧ (Info.note ~ r"internet")))
         ∧ (production_year > 1990)
         → (aka → AkaTitle.title)
         × title)
@@ -614,7 +614,7 @@ _q("7a", "Antonioni, Michelangelo || Dressed to Kill") do
         : (production_year >= 1980) ∧ (production_year <= 1995)
         ∧ (linked_by → (MovieLink.type == "features"))
         → (cast
-            : (person : (((Person.aka → AkaName.name ~ r"a")
+            : (person → (((Person.aka → AkaName.name ~ r"a")
                        ∧ (Person.name_pcode_cf >= "A") ∧ (Person.name_pcode_cf <= "F")
                        ∧ ((Person.gender == "m") ∨ ((Person.gender == "f") ∧ (Person.name ~ r"^B")))
                        ∧ (Person.info → ((PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm"))))))
@@ -627,7 +627,7 @@ _q("7b", "De Palma, Brian || Dressed to Kill") do
         : (production_year >= 1980) ∧ (production_year <= 1984)
         ∧ (linked_by → (MovieLink.type == "features"))
         → (cast
-            : (person : (((Person.aka → AkaName.name ~ r"a") ∧ (Person.name_pcode_cf ~ r"^D") ∧ (Person.gender == "m")
+            : (person → (((Person.aka → AkaName.name ~ r"a") ∧ (Person.name_pcode_cf ~ r"^D") ∧ (Person.gender == "m")
                        ∧ (Person.info → ((PersonInfo.type == "mini biography") ∧ (PersonInfo.note == "Volker Boehm"))))))
             → person → Person.name)
         × title)
@@ -642,7 +642,7 @@ _q("7c", "50 Cent || \"Boo\" Arnold was born Earl Arnold in Hattiesburg, Mississ
             : (production_year >= 1980) ∧ (production_year <= 2010)
             ∧ (linked_by → (MovieLink.type in ("references", "referenced in", "features", "featured in")))
             → (cast
-                : (person : ((pf ∧ (Person.info → bio_filter))))
+                : (person → ((pf ∧ (Person.info → bio_filter))))
                 → (person → Person.name)
                 × (person → Person.info : bio_filter → PersonInfo.info)))
     end
@@ -651,24 +651,24 @@ end
 # ===================================================================
 _q("8a", "Chambers, Linda || .hack//Quantum") do
     (movie
-        : (company : (((Company.country == "[jp]") ∧ (Company.note ~ r"\(Japan\)") ∧ (Company.note ≁ r"\(USA\)"))))
+        : (company → (((Company.country == "[jp]") ∧ (Company.note ~ r"\(Japan\)") ∧ (Company.note ≁ r"\(USA\)"))))
         → (cast
             : (note == "(voice: English version)")
             ∧ (role == "actress")
-            ∧ (person : (((Person.name ~ r"Yo") ∧ (Person.name ≁ r"Yu"))))
+            ∧ (person → (((Person.name ~ r"Yo") ∧ (Person.name ≁ r"Yu"))))
             → person → Person.aka → AkaName.name)
         × title)
 end
 
 _q("8b", "Chambers, Linda || Dragon Ball Z: Shin Budokai") do
     (movie
-        : (company : (((Company.country == "[jp]") ∧ (Company.note ~ r"\(Japan\)") ∧ (Company.note ≁ r"\(USA\)") ∧ ((Company.note ~ r"\(2006\)") ∨ (Company.note ~ r"\(2007\)")))))
+        : (company → (((Company.country == "[jp]") ∧ (Company.note ~ r"\(Japan\)") ∧ (Company.note ≁ r"\(USA\)") ∧ ((Company.note ~ r"\(2006\)") ∨ (Company.note ~ r"\(2007\)")))))
         ∧ (production_year >= 2006) ∧ (production_year <= 2007)
         ∧ ((title ~ r"^One Piece") ∨ (title ~ r"^Dragon Ball Z"))
         → (cast
             : (note == "(voice: English version)")
             ∧ (role == "actress")
-            ∧ (person : (((Person.name ~ r"Yo") ∧ (Person.name ≁ r"Yu"))))
+            ∧ (person → (((Person.name ~ r"Yo") ∧ (Person.name ≁ r"Yu"))))
             → person → Person.aka → AkaName.name)
         × title)
 end
@@ -690,12 +690,12 @@ end
 # ===================================================================
 _q("9a", "AJ || Airport Announcer || Blue Harvest") do
     (movie
-        : (company : (((Company.country == "[us]") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)")))))
+        : (company → (((Company.country == "[us]") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)")))))
         ∧ (production_year >= 2005) ∧ (production_year <= 2015)
         → (cast
             : (note in _VOICE4)
             ∧ (role == "actress")
-            ∧ (person : (((Person.gender == "f") ∧ (Person.name ~ r"Ang"))))
+            ∧ (person → (((Person.gender == "f") ∧ (Person.name ~ r"Ang"))))
             → (person → Person.aka → AkaName.name)
             × (character → Character.name))
         × title)
@@ -703,12 +703,12 @@ end
 
 _q("9b", "AJ || Airport Announcer || Bassett, Angela || Blue Harvest") do
     (movie
-        : (company : (((Company.country == "[us]") ∧ (Company.note ~ r"\(200.*\)") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)")))))
+        : (company → (((Company.country == "[us]") ∧ (Company.note ~ r"\(200.*\)") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)")))))
         ∧ (production_year >= 2007) ∧ (production_year <= 2010)
         → (cast
             : (note == "(voice)")
             ∧ (role == "actress")
-            ∧ (person : (((Person.gender == "f") ∧ (Person.name ~ r"Angel"))))
+            ∧ (person → (((Person.gender == "f") ∧ (Person.name ~ r"Angel"))))
             → (person → Person.aka → AkaName.name)
             × (character → Character.name)
             × (person → Person.name))
@@ -721,7 +721,7 @@ _q("9c", "'Annette' || 2nd Balladeer || Alborg, Ana Esther || (1975-01-20)") do
         → (cast
             : (note in _VOICE4)
             ∧ (role == "actress")
-            ∧ (person : (((Person.gender == "f") ∧ (Person.name ~ r"An"))))
+            ∧ (person → (((Person.gender == "f") ∧ (Person.name ~ r"An"))))
             → (person → Person.aka → AkaName.name)
             × (character → Character.name)
             × (person → Person.name))
@@ -848,8 +848,8 @@ _q("18a", "\$1,000 || 10 || 40 Days and 40 Nights") do
         dv = data : (Data.type == "votes") → Data.data
         (movie
             : ib
-            ∧ (cast : ((note in ("(producer)", "(executive producer)"))
-                    ∧ (person : ((Person.gender == "m") ∧ (Person.name ~ r"Tim")))))
+            ∧ (cast → ((note in ("(producer)", "(executive producer)"))
+                    ∧ (person → ((Person.gender == "m") ∧ (Person.name ~ r"Tim")))))
             → ib × dv × title)
     end
 end
@@ -859,8 +859,8 @@ _q("18b", "Horror || 8.1 || Agorable") do
         ig = info : gf → Info.info,
         dr = data : ((Data.type == "rating") ∧ (Data.data > "8.0")) → Data.data
         (movie
-            : (info : gf) ∧ (production_year >= 2008) ∧ (production_year <= 2014)
-            ∧ (cast : ((note in _WRITER5) ∧ (person → (Person.gender == "f"))))
+            : (info → gf) ∧ (production_year >= 2008) ∧ (production_year <= 2014)
+            ∧ (cast → ((note in _WRITER5) ∧ (person → (Person.gender == "f"))))
             → ig × dr × title)
     end
 end
@@ -870,8 +870,8 @@ _q("18c", "Action || 10 || #PostModem") do
         ig = info : gf → Info.info,
         dv = data : (Data.type == "votes") → Data.data
         (movie
-            : (info : gf)
-            ∧ (cast : ((note in _WRITER5) ∧ (person → (Person.gender == "m"))))
+            : (info → gf)
+            ∧ (cast → ((note in _WRITER5) ∧ (person → (Person.gender == "m"))))
             → ig × dv × title)
     end
 end
@@ -879,29 +879,29 @@ end
 # ===================================================================
 _q("19a", "Angeline, Moriah || Blue Harvest") do
     (movie
-        : (company : (((Company.country == "[us]") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)")))))
-        ∧ (info : (((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*200") ∨ (Info.info ~ r"^USA:.*200")))))
+        : (company → (((Company.country == "[us]") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)")))))
+        ∧ (info → (((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*200") ∨ (Info.info ~ r"^USA:.*200")))))
         ∧ (production_year >= 2005) ∧ (production_year <= 2009)
         → (cast
             : (note in _VOICE4)
             ∧ (role == "actress")
             ∧ character
-            ∧ (person : (((Person.gender == "f") ∧ (Person.name ~ r"Ang") ∧ Person.aka)))
+            ∧ (person → (((Person.gender == "f") ∧ (Person.name ~ r"Ang") ∧ Person.aka)))
             → person → Person.name)
         × title)
 end
 
 _q("19b", "Jolie, Angelina || Kung Fu Panda") do
     (movie
-        : (company : (((Company.country == "[us]") ∧ (Company.note ~ r"\(200.*\)") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)")))))
-        ∧ (info : (((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*2007") ∨ (Info.info ~ r"^USA:.*2008")))))
+        : (company → (((Company.country == "[us]") ∧ (Company.note ~ r"\(200.*\)") ∧ ((Company.note ~ r"\(USA\)") ∨ (Company.note ~ r"\(worldwide\)")))))
+        ∧ (info → (((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*2007") ∨ (Info.info ~ r"^USA:.*2008")))))
         ∧ (production_year >= 2007) ∧ (production_year <= 2008)
         ∧ (title ~ r"Kung.*Fu.*Panda")
         → (cast
             : (note == "(voice)")
             ∧ (role == "actress")
             ∧ character
-            ∧ (person : (((Person.gender == "f") ∧ (Person.name ~ r"Angel") ∧ Person.aka)))
+            ∧ (person → (((Person.gender == "f") ∧ (Person.name ~ r"Angel") ∧ Person.aka)))
             → person → Person.name)
         × title)
 end
@@ -909,13 +909,13 @@ end
 _q("19c", "Alborg, Ana Esther || .hack//Akusei heni vol. 2") do
     (movie
         : (company → (Company.country == "[us]"))
-        ∧ (info : (((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*200") ∨ (Info.info ~ r"^USA:.*200")))))
+        ∧ (info → (((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*200") ∨ (Info.info ~ r"^USA:.*200")))))
         ∧ (production_year > 2000)
         → (cast
             : (note in _VOICE4)
             ∧ (role == "actress")
             ∧ character
-            ∧ (person : (((Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka)))
+            ∧ (person → (((Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka)))
             → person → Person.name)
         × title)
 end
@@ -929,7 +929,7 @@ _q("19d", "Aaron, Caroline || \$9.99") do
             : (note in _VOICE4)
             ∧ (role == "actress")
             ∧ character
-            ∧ (person : (((Person.gender == "f") ∧ Person.aka)))
+            ∧ (person → (((Person.gender == "f") ∧ Person.aka)))
             → person → Person.name)
         × title)
 end
@@ -937,18 +937,18 @@ end
 # ===================================================================
 _q("20a", "Disaster Movie") do
     (movie
-        : (complete_cast : (((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete"))))
+        : (complete_cast → (((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete"))))
         ∧ (keyword in _KW8) ∧ (kind == "movie") ∧ (production_year > 1950)
-        ∧ (cast : ((character : ((Character.name ≁ r"Sherlock")
+        ∧ (cast → ((character : ((Character.name ≁ r"Sherlock")
                               ∧ ((Character.name ~ r"Tony.*Stark") ∨ (Character.name ~ r"Iron.*Man"))))))
         → title)
 end
 
 _q("20b", "Iron Man") do
     (movie
-        : (complete_cast : (((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete"))))
+        : (complete_cast → (((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete"))))
         ∧ (keyword in _KW8) ∧ (kind == "movie") ∧ (production_year > 2000)
-        ∧ (cast : ((character : ((Character.name ≁ r"Sherlock")
+        ∧ (cast → ((character : ((Character.name ≁ r"Sherlock")
                               ∧ ((Character.name ~ r"Tony.*Stark") ∨ (Character.name ~ r"Iron.*Man"))))
                 ∧ (person → (Person.name ~ r"Downey.*Robert"))))
         → title)
@@ -956,7 +956,7 @@ end
 
 _q("20c", "Abell, Alistair || ...And Then I...") do
     (movie
-        : (complete_cast : (((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete"))))
+        : (complete_cast → (((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete"))))
         ∧ (keyword in _KW10) ∧ (kind == "movie") ∧ (production_year > 2000)
         → (cast : (character → (Character.name ~ r"[Mm]an")) → person → Person.name)
         × title)
@@ -1002,7 +1002,7 @@ _q("23a", "movie || The Analysts") do
         (movie
            : (complete_cast → (CompleteCast.status == "complete+verified"))
            ∧ (company → (Company.country == "[us]"))
-           ∧ (info : (((Info.type == "release dates") ∧ (Info.note ~ r"internet") ∧ ((Info.info ~ r"^USA:.* 199") ∨ (Info.info ~ r"^USA:.* 200")))))
+           ∧ (info → (((Info.type == "release dates") ∧ (Info.note ~ r"internet") ∧ ((Info.info ~ r"^USA:.* 199") ∨ (Info.info ~ r"^USA:.* 200")))))
            ∧ k ∧ keyword ∧ (production_year > 2000)
            → k × title)
     end
@@ -1013,7 +1013,7 @@ _q("23b", "movie || The Big Mope") do
         (movie
            : (complete_cast → (CompleteCast.status == "complete+verified"))
            ∧ (company → (Company.country == "[us]"))
-           ∧ (info : (((Info.type == "release dates") ∧ (Info.note ~ r"internet") ∧ (Info.info ~ r"^USA:.* 200"))))
+           ∧ (info → (((Info.type == "release dates") ∧ (Info.note ~ r"internet") ∧ (Info.info ~ r"^USA:.* 200"))))
            ∧ k
            ∧ (keyword in ("nerd", "loner", "alienation", "dignity"))
            ∧ (production_year > 2000)
@@ -1026,7 +1026,7 @@ _q("23c", "movie || Dirt Merchant") do
         (movie
            : (complete_cast → (CompleteCast.status == "complete+verified"))
            ∧ (company → (Company.country == "[us]"))
-           ∧ (info : (((Info.type == "release dates") ∧ (Info.note ~ r"internet") ∧ ((Info.info ~ r"^USA:.* 199") ∨ (Info.info ~ r"^USA:.* 200")))))
+           ∧ (info → (((Info.type == "release dates") ∧ (Info.note ~ r"internet") ∧ ((Info.info ~ r"^USA:.* 199") ∨ (Info.info ~ r"^USA:.* 200")))))
            ∧ k ∧ keyword ∧ (production_year > 1990)
            → k × title)
     end
@@ -1036,12 +1036,12 @@ end
 _q("24a", "Additional Voices || Baker, Andrea || Baiohazâdo 6") do
     (movie
         : (company → (Company.country == "[us]"))
-        ∧ (info : (((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*201") ∨ (Info.info ~ r"^USA:.*201")))))
+        ∧ (info → (((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*201") ∨ (Info.info ~ r"^USA:.*201")))))
         ∧ (keyword in ("hero", "martial-arts", "hand-to-hand-combat")) ∧ (production_year > 2010)
         → (cast
             : (note in _VOICE4)
             ∧ (role == "actress")
-            ∧ (person : (((Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka)))
+            ∧ (person → (((Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka)))
             → (character → Character.name)
             × (person → Person.name))
         × title)
@@ -1049,14 +1049,14 @@ end
 
 _q("24b", "Tigress || Jolie, Angelina || Kung Fu Panda 2") do
     (movie
-        : (company : (((Company.country == "[us]") ∧ (Company.name == "DreamWorks Animation"))))
-        ∧ (info : (((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*201") ∨ (Info.info ~ r"^USA:.*201")))))
+        : (company → (((Company.country == "[us]") ∧ (Company.name == "DreamWorks Animation"))))
+        ∧ (info → (((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*201") ∨ (Info.info ~ r"^USA:.*201")))))
         ∧ (keyword in ("hero", "martial-arts", "hand-to-hand-combat", "computer-animated-movie"))
         ∧ (production_year > 2010) ∧ (title ~ r"^Kung Fu Panda")
         → (cast
             : (note in _VOICE4)
             ∧ (role == "actress")
-            ∧ (person : (((Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka)))
+            ∧ (person → (((Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka)))
             → (character → Character.name)
             × (person → Person.name))
         × title)
@@ -1066,7 +1066,7 @@ end
 _q("25a", "Horror || 10 || -- And Now the Screaming Starts! || Abdallah, Damon") do
     let gf = (Info.type == "genres") ∧ (Info.info == "Horror")
         (movie
-            : (info : gf) ∧ (keyword in ("murder", "blood", "gore", "death", "female-nudity"))
+            : (info → gf) ∧ (keyword in ("murder", "blood", "gore", "death", "female-nudity"))
             → (info : gf → Info.info)
             × (data : (Data.type == "votes") → Data.data)
             × title
@@ -1077,7 +1077,7 @@ end
 _q("25b", "Horror || 138 || Vampire Boys || Campbell, Jeremiah") do
     let gf = (Info.type == "genres") ∧ (Info.info == "Horror")
         (movie
-            : (info : gf) ∧ (keyword in ("murder", "blood", "gore", "death", "female-nudity"))
+            : (info → gf) ∧ (keyword in ("murder", "blood", "gore", "death", "female-nudity"))
             ∧ (production_year > 2010) ∧ (title ~ r"^Vampire")
             → (info : gf → Info.info)
             × (data : (Data.type == "votes") → Data.data)
@@ -1089,7 +1089,7 @@ end
 _q("25c", "Action || 10 || \$ || Aakeson, Kim Fupz") do
     let gf = (Info.type == "genres") ∧ (Info.info in _GENRE6)
         (movie
-            : (info : gf) ∧ (keyword in _KW7)
+            : (info → gf) ∧ (keyword in _KW7)
             → (info : gf → Info.info)
             × (data : (Data.type == "votes") → Data.data)
             × title
@@ -1101,7 +1101,7 @@ end
 _q("26a", "'Agua' Man || Acereda, Hermie || 7.1 || 3:10 to Yuma") do
     let rd = data : ((Data.type == "rating") ∧ (Data.data > "7.0"))
         (movie
-            : (complete_cast : (((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete"))))
+            : (complete_cast → (((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete"))))
             ∧ (keyword in _KW10) ∧ (kind == "movie") ∧ (production_year > 2000)
             → (cast : (character → (Character.name ~ r"[Mm]an")) → ((character → Character.name) × (person → Person.name)))
             × (rd → Data.data)
@@ -1112,7 +1112,7 @@ end
 _q("26b", "Bank Manager || 8.2 || Inception") do
     let rd = data : ((Data.type == "rating") ∧ (Data.data > "8.0"))
         (movie
-            : (complete_cast : (((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete"))))
+            : (complete_cast → (((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete"))))
             ∧ (keyword in ("superhero", "marvel-comics", "based-on-comic", "fight")) ∧ (kind == "movie")
             ∧ (production_year > 2005)
             → (cast : (character → (Character.name ~ r"[Mm]an")) → character → Character.name)
@@ -1124,7 +1124,7 @@ end
 _q("26c", "'Agua' Man || 1.9 || 12 Rounds") do
     let rd = data : (Data.type == "rating") → Data.data
         (movie
-            : (complete_cast : (((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete"))))
+            : (complete_cast → (((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"complete"))))
             ∧ (keyword in _KW10) ∧ (kind == "movie") ∧ (production_year > 2000)
             → (cast : (character → (Character.name ~ r"[Mm]an")) → character → Character.name)
             × rd
@@ -1137,7 +1137,7 @@ _q("27a", "Det Danske Filminstitut || followed by || Spår i mörker") do
     let co = (company : (((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note)))),
         lk = (link → (MovieLink.type ~ r"follow"))
         (movie
-           : (complete_cast : (((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete"))))
+           : (complete_cast → (((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete"))))
            ∧ co ∧ (keyword == "sequel") ∧ lk
            ∧ (info → (Info.info in ("Sweden", "Germany", "Swedish", "German")))
            ∧ (production_year >= 1950) ∧ (production_year <= 2000)
@@ -1149,7 +1149,7 @@ _q("27b", "Filmlance International AB || followed by || Vita nätter") do
     let co = (company : (((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note)))),
         lk = (link → (MovieLink.type ~ r"follow"))
         (movie
-           : (complete_cast : (((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete"))))
+           : (complete_cast → (((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete"))))
            ∧ co ∧ (keyword == "sequel") ∧ lk
            ∧ (info → (Info.info in ("Sweden", "Germany", "Swedish", "German")))
            ∧ (production_year == 1998)
@@ -1161,7 +1161,7 @@ _q("27c", "Det Danske Filminstitut || followed by || Spår i mörker") do
     let co = (company : (((Company.country != "[pl]") ∧ ((Company.name ~ r"Film") ∨ (Company.name ~ r"Warner")) ∧ ((Company.type == "production companies") - Company.note)))),
         lk = (link → (MovieLink.type ~ r"follow"))
         (movie
-           : (complete_cast : (((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"^complete"))))
+           : (complete_cast → (((CompleteCast.subject == "cast") ∧ (CompleteCast.status ~ r"^complete"))))
            ∧ co ∧ (keyword == "sequel") ∧ lk
            ∧ (info → (Info.info in _NORDIC9))
            ∧ (production_year >= 1950) ∧ (production_year <= 2010)
@@ -1174,9 +1174,9 @@ _q("28a", "01 Distribuzione || 2.9 || (#1.1)") do
     let co = (company : (((Company.country != "[us]") ∧ (Company.note ≁ r"\(USA\)") ∧ (Company.note ~ r"\(200.*\)")))),
         dt = (data : (((Data.type == "rating") ∧ (Data.data < "8.5"))))
         (movie
-           : (complete_cast : (((CompleteCast.subject == "crew") ∧ (CompleteCast.status != "complete+verified"))))
+           : (complete_cast → (((CompleteCast.subject == "crew") ∧ (CompleteCast.status != "complete+verified"))))
            ∧ co
-           ∧ (info : (((Info.type == "countries") ∧ (Info.info in _NORDIC10))))
+           ∧ (info → (((Info.type == "countries") ∧ (Info.info in _NORDIC10))))
            ∧ dt
            ∧ (keyword in _MURDER4) ∧ (kind in ("movie", "episode")) ∧ (production_year > 2000)
            → (co → Company.name) × (dt → Data.data) × title)
@@ -1187,9 +1187,9 @@ _q("28b", "20th Century Fox || 6.6 || (#1.1)") do
     let co = (company : (((Company.country != "[us]") ∧ (Company.note ≁ r"\(USA\)") ∧ (Company.note ~ r"\(200.*\)")))),
         dt = (data : (((Data.type == "rating") ∧ (Data.data > "6.5"))))
         (movie
-           : (complete_cast : (((CompleteCast.subject == "crew") ∧ (CompleteCast.status != "complete+verified"))))
+           : (complete_cast → (((CompleteCast.subject == "crew") ∧ (CompleteCast.status != "complete+verified"))))
            ∧ co
-           ∧ (info : (((Info.type == "countries") ∧ (Info.info in ("Sweden", "Germany", "Swedish", "German")))))
+           ∧ (info → (((Info.type == "countries") ∧ (Info.info in ("Sweden", "Germany", "Swedish", "German")))))
            ∧ dt
            ∧ (keyword in _MURDER4) ∧ (kind in ("movie", "episode")) ∧ (production_year > 2005)
            → (co → Company.name) × (dt → Data.data) × title)
@@ -1200,9 +1200,9 @@ _q("28c", "01 Distribuzione || 1.9 || (#1.1)") do
     let co = (company : (((Company.country != "[us]") ∧ (Company.note ≁ r"\(USA\)") ∧ (Company.note ~ r"\(200.*\)")))),
         dt = (data : (((Data.type == "rating") ∧ (Data.data < "8.5"))))
         (movie
-           : (complete_cast : (((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete"))))
+           : (complete_cast → (((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete"))))
            ∧ co
-           ∧ (info : (((Info.type == "countries") ∧ (Info.info in _NORDIC10))))
+           ∧ (info → (((Info.type == "countries") ∧ (Info.info in _NORDIC10))))
            ∧ dt
            ∧ (keyword in _MURDER4) ∧ (kind in ("movie", "episode")) ∧ (production_year > 2005)
            → (co → Company.name) × (dt → Data.data) × title)
@@ -1212,16 +1212,16 @@ end
 # ===================================================================
 _q("29a", "Queen || Andrews, Julie || Shrek 2") do
     (movie
-        : (complete_cast : (((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete+verified"))))
+        : (complete_cast → (((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete+verified"))))
         ∧ (company → (Company.country == "[us]"))
-        ∧ (info : (((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*200") ∨ (Info.info ~ r"^USA:.*200")))))
+        ∧ (info → (((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*200") ∨ (Info.info ~ r"^USA:.*200")))))
         ∧ (keyword == "computer-animation") ∧ (title == "Shrek 2")
         ∧ (production_year >= 2000) ∧ (production_year <= 2010)
         → (cast
             : (note in _VOICE3)
             ∧ (role == "actress")
             ∧ (character → (Character.name == "Queen"))
-            ∧ (person : (((Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka
+            ∧ (person → (((Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka
                        ∧ (Person.info → (PersonInfo.type == "trivia")))))
             → (character → Character.name)
             × (person → Person.name))
@@ -1230,16 +1230,16 @@ end
 
 _q("29b", "Queen || Andrews, Julie || Shrek 2") do
     (movie
-        : (complete_cast : (((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete+verified"))))
+        : (complete_cast → (((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete+verified"))))
         ∧ (company → (Company.country == "[us]"))
-        ∧ (info : (((Info.type == "release dates") ∧ (Info.info ~ r"^USA:.*200"))))
+        ∧ (info → (((Info.type == "release dates") ∧ (Info.info ~ r"^USA:.*200"))))
         ∧ (keyword == "computer-animation") ∧ (title == "Shrek 2")
         ∧ (production_year >= 2000) ∧ (production_year <= 2005)
         → (cast
             : (note in _VOICE3)
             ∧ (role == "actress")
             ∧ (character → (Character.name == "Queen"))
-            ∧ (person : (((Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka
+            ∧ (person → (((Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka
                        ∧ (Person.info → (PersonInfo.type == "height")))))
             → (character → Character.name)
             × (person → Person.name))
@@ -1248,15 +1248,15 @@ end
 
 _q("29c", "Lola || Andrews, Julie || Hoodwinked!") do
     (movie
-        : (complete_cast : (((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete+verified"))))
+        : (complete_cast → (((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete+verified"))))
         ∧ (company → (Company.country == "[us]"))
-        ∧ (info : (((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*200") ∨ (Info.info ~ r"^USA:.*200")))))
+        ∧ (info → (((Info.type == "release dates") ∧ ((Info.info ~ r"^Japan:.*200") ∨ (Info.info ~ r"^USA:.*200")))))
         ∧ (keyword == "computer-animation")
         ∧ (production_year >= 2000) ∧ (production_year <= 2010)
         → (cast
             : (note in _VOICE4)
             ∧ (role == "actress")
-            ∧ (person : (((Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka
+            ∧ (person → (((Person.gender == "f") ∧ (Person.name ~ r"An") ∧ Person.aka
                        ∧ (Person.info → (PersonInfo.type == "trivia")))))
             → (character → Character.name)
             × (person → Person.name))
@@ -1267,8 +1267,8 @@ end
 _q("30a", "Horror || 100356 || 16 Blocks || Abrams, J.J.") do
     let gf = (Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))
         (movie
-            : (complete_cast : (((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete+verified"))))
-            ∧ (info : gf) ∧ (keyword in _KW7) ∧ (production_year > 2000)
+            : (complete_cast → (((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete+verified"))))
+            ∧ (info → gf) ∧ (keyword in _KW7) ∧ (production_year > 2000)
             → (info : gf → Info.info)
             × (data : (Data.type == "votes") → Data.data)
             × title
@@ -1279,8 +1279,8 @@ end
 _q("30b", "Horror || 194782 || Freddy vs. Jason || Shannon, Damian") do
     let gf = (Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))
         (movie
-            : (complete_cast : (((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete+verified"))))
-            ∧ (info : gf) ∧ (keyword in _KW7) ∧ (production_year > 2000)
+            : (complete_cast → (((CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete+verified"))))
+            ∧ (info → gf) ∧ (keyword in _KW7) ∧ (production_year > 2000)
             ∧ ((title ~ r"Freddy") ∨ (title ~ r"Jason") ∨ (title ~ r"^Saw"))
             → (info : gf → Info.info)
             × (data : (Data.type == "votes") → Data.data)
@@ -1292,8 +1292,8 @@ end
 _q("30c", "Action || 100356 || \$ || Abernathy, Lewis") do
     let gf = (Info.type == "genres") ∧ (Info.info in _GENRE6)
         (movie
-            : (complete_cast : (((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete+verified"))))
-            ∧ (info : gf) ∧ (keyword in _KW7)
+            : (complete_cast → (((CompleteCast.subject == "cast") ∧ (CompleteCast.status == "complete+verified"))))
+            ∧ (info → gf) ∧ (keyword in _KW7)
             → (info : gf → Info.info)
             × (data : (Data.type == "votes") → Data.data)
             × title
@@ -1306,7 +1306,7 @@ _q("31a", "Horror || 1040 || 2001 Maniacs || Agnew, Jim") do
     let gf = (Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))
         (movie
             : (company → (Company.name ~ r"^Lionsgate"))
-            ∧ (info : gf) ∧ (keyword in _KW7)
+            ∧ (info → gf) ∧ (keyword in _KW7)
             → (info : gf → Info.info)
             × (data : (Data.type == "votes") → Data.data)
             × title
@@ -1317,8 +1317,8 @@ end
 _q("31b", "Horror || 129755 || Saw || Bousman, Darren Lynn") do
     let gf = (Info.type == "genres") ∧ (Info.info in ("Horror", "Thriller"))
         (movie
-            : (company : (((Company.name ~ r"^Lionsgate") ∧ (Company.note ~ r"\(Blu-ray\)"))))
-            ∧ (info : gf) ∧ (keyword in _KW7) ∧ (production_year > 2000)
+            : (company → (((Company.name ~ r"^Lionsgate") ∧ (Company.note ~ r"\(Blu-ray\)"))))
+            ∧ (info → gf) ∧ (keyword in _KW7) ∧ (production_year > 2000)
             ∧ ((title ~ r"Freddy") ∨ (title ~ r"Jason") ∨ (title ~ r"^Saw"))
             → (info : gf → Info.info)
             × (data : (Data.type == "votes") → Data.data)
@@ -1331,7 +1331,7 @@ _q("31c", "Action || 1008 || 11:14 || Abraham, Brad") do
     let gf = (Info.type == "genres") ∧ (Info.info in _GENRE6)
         (movie
             : (company → (Company.name ~ r"^Lionsgate"))
-            ∧ (info : gf) ∧ (keyword in _KW7)
+            ∧ (info → gf) ∧ (keyword in _KW7)
             → (info : gf → Info.info)
             × (data : (Data.type == "votes") → Data.data)
             × title

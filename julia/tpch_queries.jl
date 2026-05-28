@@ -166,7 +166,7 @@ const _ORACLE_Q3 = "2456423|406181.01|1995-03-05|0\n" *
 function _q3()
     let item = (lineitem : ((shipdate > "1995-03-15") ∧
                             (order : ((date < "1995-03-15") ∧
-                                         (Ord.customer : (mktsegment == "BUILDING")))))),
+                                         (Ord.customer → (mktsegment == "BUILDING")))))),
         revenue = ((order ← item) → (extendedprice ⊗ discount)) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
