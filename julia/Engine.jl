@@ -484,10 +484,58 @@ end
 #   Probes Q at x_sym, binds the value to y_sym, runs body.
 # =====================================================================
 
-function _probe_body(::Type{MapRel{ID, R}}, q_expr, x_sym, y_sym, body) where {ID, R}
+function _probe_body(::Type{<:MapRel{D, R}}, q_expr, x_sym, y_sym, body) where {D, R}
+    # Mirrors `Prela.probe(::MapRel)`. Fast path: `values` populated by
+    # `vectorize!` (TPCH always does this). Fallback: `fwd_index` returns
+    # `Vector{Vector{R}}` when D is an entity ID (JOB's 1:N MapRels) or
+    # `Dict` otherwise.
+    #
+    # Every "not-found" branch returns `false`, every for-loop OR's the
+    # body's truthiness, and the whole block's value is a Bool. When
+    # used as a Statement (drive context), the Bool result is discarded.
+    # When used as a Bool (probe_any context, e.g. via Compose.probe_any),
+    # we get a proper Bool with no `Nothing` leakage.
+    fallback = if D <: Prela.ID
+        quote
+            let _mrp_idx = Prela.fwd_index(_mrp_r), _mrp_i = ($x_sym).id, _mrp_acc = false
+                if 1 <= _mrp_i <= length(_mrp_idx)
+                    for $y_sym in @inbounds _mrp_idx[_mrp_i]
+                        _mrp_acc = ($body) || _mrp_acc
+                    end
+                end
+                _mrp_acc
+            end
+        end
+    else
+        quote
+            let _mrp_idx = Prela.fwd_index(_mrp_r),
+                _mrp_vs  = get(_mrp_idx, $x_sym, nothing),
+                _mrp_acc = false
+                if _mrp_vs !== nothing
+                    for $y_sym in _mrp_vs
+                        _mrp_acc = ($body) || _mrp_acc
+                    end
+                end
+                _mrp_acc
+            end
+        end
+    end
     quote
-        let $y_sym = @inbounds ($q_expr).values[($x_sym).id]
-            $body
+        let _mrp_r = $q_expr
+            if !isempty(_mrp_r.values)
+                let _mrp_i = ($x_sym).id, _mrp_s = _mrp_r.seen
+                    if 1 <= _mrp_i <= length(_mrp_r.values) &&
+                       (_mrp_s === nothing || _mrp_s[_mrp_i])
+                        let $y_sym = @inbounds _mrp_r.values[_mrp_i]
+                            $body
+                        end
+                    else
+                        false
+                    end
+                end
+            else
+                $fallback
+            end
         end
     end
 end
@@ -503,11 +551,15 @@ end
 # Map probe: probe(q, x, k) = probe(inner, x, v -> k(f(v)))
 # Filter probe (when a Filter appears on the rhs of a `→` and we need to
 # fetch the filtered value at a key). Probe inner, test pred, run body.
+# `else false` is required so the expression evaluates to Bool when used
+# in a probe_any chain.
 function _probe_body(::Type{<:Filter{D, R, A, FnP{F}}}, q_expr, x_sym, y_sym, body) where {D, R, A, F}
     a_expr = :(($q_expr).a)
     wrap = quote
         if ($q_expr).pred.f($y_sym)
             $body
+        else
+            false
         end
     end
     _probe_body(A, a_expr, x_sym, y_sym, wrap)
@@ -517,6 +569,8 @@ function _probe_body(::Type{<:Filter{D, R, A, EqP{V}}}, q_expr, x_sym, y_sym, bo
     wrap = quote
         if isequal($y_sym, ($q_expr).pred.v)
             $body
+        else
+            false
         end
     end
     _probe_body(A, a_expr, x_sym, y_sym, wrap)
@@ -526,6 +580,8 @@ function _probe_body(::Type{<:Filter{D, R, A, InP{T}}}, q_expr, x_sym, y_sym, bo
     wrap = quote
         if $y_sym in ($q_expr).pred.vs
             $body
+        else
+            false
         end
     end
     _probe_body(A, a_expr, x_sym, y_sym, wrap)
@@ -535,6 +591,8 @@ function _probe_body(::Type{<:Filter{D, R, A, InSetP{S}}}, q_expr, x_sym, y_sym,
     wrap = quote
         if member(($q_expr).pred.s, $y_sym)
             $body
+        else
+            false
         end
     end
     _probe_body(A, a_expr, x_sym, y_sym, wrap)
@@ -558,6 +616,8 @@ function _probe_body(::Type{<:Fold{D, R, S, Q, OP}}, q_expr, x_sym, y_sym, body)
                     let $y_sym = _g
                         $body
                     end
+                else
+                    false
                 end
             end
         end
@@ -573,30 +633,38 @@ function _probe_body(::Type{<:DenseFold{D, R, S, Q, OP}}, q_expr, x_sym, y_sym, 
                     let $y_sym = @inbounds _vals[_i]
                         $body
                     end
+                else
+                    false
                 end
             end
         end
     end
 end
 
-# Materialized probe: through cached idx
+# Materialized probe: through cached idx. Accumulate Bool over multi-valued matches.
 function _probe_body(::Type{<:Materialized{D, R, A}}, q_expr, x_sym, y_sym, body) where {D, R, A}
     quote
-        for _r in Prela._cidx($q_expr)[$x_sym]
-            let $y_sym = _r
-                $body
+        let _mat_idx = Prela._cidx($q_expr), _mat_vs = get(_mat_idx, $x_sym, nothing), _mat_acc = false
+            if _mat_vs !== nothing
+                for $y_sym in _mat_vs
+                    _mat_acc = ($body) || _mat_acc
+                end
             end
+            _mat_acc
         end
     end
 end
 
-# Inv probe: lazy reverse index lookup
+# Inv probe: lazy reverse index lookup. Accumulate Bool over multi-valued matches.
 function _probe_body(::Type{<:Inv{B, A, Q}}, q_expr, x_sym, y_sym, body) where {B, A, Q}
     quote
-        for _r in get(Prela._inv_index($q_expr), $x_sym, ())
-            let $y_sym = _r
-                $body
+        let _inv_idx = Prela._inv_index($q_expr), _inv_vs = get(_inv_idx, $x_sym, nothing), _inv_acc = false
+            if _inv_vs !== nothing
+                for $y_sym in _inv_vs
+                    _inv_acc = ($body) || _inv_acc
+                end
             end
+            _inv_acc
         end
     end
 end
