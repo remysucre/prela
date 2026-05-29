@@ -120,12 +120,12 @@ if isdefined(Main, :InlineRel)
     end
 end
 
-# Runtime fallback for any unhandled Query/Unary type. Note: using a
-# lambda in the returned AST trips Julia's @generated purity check, so
-# this fallback only works for types where it's never actually invoked
-# — it exists as a method to satisfy MethodError-avoidance but emits
-# code that won't compile. Adding an explicit emitter (like the
-# InlineRel one above) is the right fix for any type that hits this.
+# Runtime fallback for any unhandled Query/Unary type. Emits a
+# `Prela.drive` call wrapping a lambda. NOTE: the lambda in the returned
+# AST trips Julia's @generated purity check, so this fallback isn't
+# actually usable — adding an explicit emitter is required for any type
+# that hits it. We keep it as a method (instead of an `error`) so
+# experimenters can read the error message Julia prints.
 function _drive_body(::Type{Q}, q_expr, body) where {Q}
     quote
         Prela.drive($q_expr, (_x, _v) -> $body)
@@ -501,6 +501,45 @@ function _probe_body(::Type{VecRel{E, R}}, q_expr, x_sym, y_sym, body) where {E,
 end
 
 # Map probe: probe(q, x, k) = probe(inner, x, v -> k(f(v)))
+# Filter probe (when a Filter appears on the rhs of a `→` and we need to
+# fetch the filtered value at a key). Probe inner, test pred, run body.
+function _probe_body(::Type{<:Filter{D, R, A, FnP{F}}}, q_expr, x_sym, y_sym, body) where {D, R, A, F}
+    a_expr = :(($q_expr).a)
+    wrap = quote
+        if ($q_expr).pred.f($y_sym)
+            $body
+        end
+    end
+    _probe_body(A, a_expr, x_sym, y_sym, wrap)
+end
+function _probe_body(::Type{<:Filter{D, R, A, EqP{V}}}, q_expr, x_sym, y_sym, body) where {D, R, A, V}
+    a_expr = :(($q_expr).a)
+    wrap = quote
+        if isequal($y_sym, ($q_expr).pred.v)
+            $body
+        end
+    end
+    _probe_body(A, a_expr, x_sym, y_sym, wrap)
+end
+function _probe_body(::Type{<:Filter{D, R, A, InP{T}}}, q_expr, x_sym, y_sym, body) where {D, R, A, T}
+    a_expr = :(($q_expr).a)
+    wrap = quote
+        if $y_sym in ($q_expr).pred.vs
+            $body
+        end
+    end
+    _probe_body(A, a_expr, x_sym, y_sym, wrap)
+end
+function _probe_body(::Type{<:Filter{D, R, A, InSetP{S}}}, q_expr, x_sym, y_sym, body) where {D, R, A, S}
+    a_expr = :(($q_expr).a)
+    wrap = quote
+        if member(($q_expr).pred.s, $y_sym)
+            $body
+        end
+    end
+    _probe_body(A, a_expr, x_sym, y_sym, wrap)
+end
+
 # Compose probe (when Compose appears on the rhs of a → ): probe through chain
 function _probe_body(::Type{<:Compose{D, M, R, A, B}}, q_expr, x_sym, y_sym, body) where {D, M, R, A, B}
     a_expr = :(($q_expr).a)
@@ -745,7 +784,7 @@ function _probe_any_body(::Type{<:VecRel{E, R}}, q_expr, x_sym) where {E, R}
     :(let _r = $q_expr, _i = ($x_sym).id; 1 <= _i <= length(_r.values); end)
 end
 
-# Runtime fallback (silent — see _drive_body fallback above for rationale)
+# Runtime fallbacks — same caveat as _drive_body fallback above.
 function _probe_any_body(::Type{Q}, q_expr, x_sym) where {Q}
     :(Prela.probe_any($q_expr, $x_sym, _ -> true))
 end
@@ -796,5 +835,33 @@ end
     quote
         $drive
         nothing
+    end
+end
+
+# Drop-in override: if `_vals_tpch` (or `_vals` for JOB) is already
+# defined in Main from a prior include, redefine it to use execute_drive.
+# Lets `runall_tpch()` / `runall()` take the engine path without the user
+# needing to change `tpch_queries_*.jl` or `queries.jl`.
+if isdefined(Main, :_vals_tpch)
+    function Main._vals_tpch(q, sort_by, limit, row)
+        rows = Tuple{Any, Any}[]
+        execute_drive(q, (x, y) -> push!(rows, (x, y)))
+        isempty(rows) && return "(empty)"
+        sort!(rows; by = sort_by)
+        limit !== nothing && length(rows) > limit && resize!(rows, limit)
+        lines = String[]
+        for (k, v) in rows
+            push!(lines, join(row(k, v), "|"))
+        end
+        join(lines, "\n")
+    end
+end
+if isdefined(Main, :_vals)
+    function Main._vals(q)
+        rows = Tuple{Any, Any}[]
+        execute_drive(q, (x, y) -> push!(rows, (x, y)))
+        isempty(rows) && return "(empty)"
+        sort!(rows; by = x -> x[1])
+        join([string(k) for (k, _) in rows], " || ")
     end
 end
