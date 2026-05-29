@@ -485,19 +485,42 @@ end
 # =====================================================================
 
 function _probe_body(::Type{<:MapRel{D, R}}, q_expr, x_sym, y_sym, body) where {D, R}
-    # Mirrors `Prela.probe(::MapRel)`. Fast path: `values` populated by
-    # `vectorize!` (TPCH always does this). Fallback: `fwd_index` returns
-    # `Vector{Vector{R}}` when D is an entity ID (JOB's 1:N MapRels) or
-    # `Dict` otherwise.
-    #
-    # Every "not-found" branch returns `false`, every for-loop OR's the
-    # body's truthiness, and the whole block's value is a Bool. When
-    # used as a Statement (drive context), the Bool result is discarded.
-    # When used as a Bool (probe_any context, e.g. via Compose.probe_any),
-    # we get a proper Bool with no `Nothing` leakage.
-    fallback = if D <: Prela.ID
+    # Emits ONLY the fwd_index fallback path — `$body` is interpolated
+    # exactly once per call site. The earlier dual-path version blew up
+    # AST by 2^N for N nested probes (Q33a hit 131k copies). `body` is
+    # a statement here (drive context); the for-loop runs it per match
+    # and returns nothing. For probe_any (Bool) context, the caller
+    # should use `_probe_body_test` (below).
+    if D <: Prela.ID
         quote
-            let _mrp_idx = Prela.fwd_index(_mrp_r), _mrp_i = ($x_sym).id, _mrp_acc = false
+            let _mrp_idx = Prela.fwd_index($q_expr), _mrp_i = ($x_sym).id
+                if 1 <= _mrp_i <= length(_mrp_idx)
+                    for $y_sym in @inbounds _mrp_idx[_mrp_i]
+                        $body
+                    end
+                end
+            end
+        end
+    else
+        quote
+            let _mrp_idx = Prela.fwd_index($q_expr),
+                _mrp_vs  = get(_mrp_idx, $x_sym, nothing)
+                if _mrp_vs !== nothing
+                    for $y_sym in _mrp_vs
+                        $body
+                    end
+                end
+            end
+        end
+    end
+end
+
+# `_probe_body_test` — for probe_any chains. `body` must be a Bool.
+# Returns true iff any matched y makes body true. No body duplication.
+function _probe_body_test(::Type{<:MapRel{D, R}}, q_expr, x_sym, y_sym, body) where {D, R}
+    if D <: Prela.ID
+        quote
+            let _mrp_idx = Prela.fwd_index($q_expr), _mrp_i = ($x_sym).id, _mrp_acc = false
                 if 1 <= _mrp_i <= length(_mrp_idx)
                     for $y_sym in @inbounds _mrp_idx[_mrp_i]
                         _mrp_acc = ($body) || _mrp_acc
@@ -508,7 +531,7 @@ function _probe_body(::Type{<:MapRel{D, R}}, q_expr, x_sym, y_sym, body) where {
         end
     else
         quote
-            let _mrp_idx = Prela.fwd_index(_mrp_r),
+            let _mrp_idx = Prela.fwd_index($q_expr),
                 _mrp_vs  = get(_mrp_idx, $x_sym, nothing),
                 _mrp_acc = false
                 if _mrp_vs !== nothing
@@ -520,25 +543,103 @@ function _probe_body(::Type{<:MapRel{D, R}}, q_expr, x_sym, y_sym, body) where {
             end
         end
     end
+end
+# Test-context recursive helpers — propagate `_probe_body_test` calls so
+# the Bool-accumulating MapRel path is used even when reached through
+# intermediates (Compose/Filter/Map/Prod) in a probe_any chain.
+
+function _probe_body_test(::Type{<:Compose{D, M, R, A, B}}, q_expr, x_sym, y_sym, body) where {D, M, R, A, B}
+    a_expr = :(($q_expr).a)
+    b_expr = :(($q_expr).b)
+    m_sym = gensym(:_mpt)
+    inner = _probe_body_test(B, b_expr, m_sym, y_sym, body)
+    _probe_body_test(A, a_expr, x_sym, m_sym, inner)
+end
+
+function _probe_body_test(::Type{<:Map{D, R, S, Q, F}}, q_expr, x_sym, y_sym, body) where {D, R, S, Q, F}
+    inner_y = gensym(:_ymt)
+    inner_body = quote
+        let $y_sym = ($q_expr).f($inner_y)
+            $body
+        end
+    end
+    _probe_body_test(Q, :(($q_expr).q), x_sym, inner_y, inner_body)
+end
+
+function _probe_body_test(::Type{<:Filter{D, R, A, FnP{F}}}, q_expr, x_sym, y_sym, body) where {D, R, A, F}
+    a_expr = :(($q_expr).a)
+    wrap = quote
+        if ($q_expr).pred.f($y_sym)
+            $body
+        else
+            false
+        end
+    end
+    _probe_body_test(A, a_expr, x_sym, y_sym, wrap)
+end
+function _probe_body_test(::Type{<:Filter{D, R, A, EqP{V}}}, q_expr, x_sym, y_sym, body) where {D, R, A, V}
+    a_expr = :(($q_expr).a)
+    wrap = quote
+        if isequal($y_sym, ($q_expr).pred.v)
+            $body
+        else
+            false
+        end
+    end
+    _probe_body_test(A, a_expr, x_sym, y_sym, wrap)
+end
+function _probe_body_test(::Type{<:Filter{D, R, A, InP{T}}}, q_expr, x_sym, y_sym, body) where {D, R, A, T}
+    a_expr = :(($q_expr).a)
+    wrap = quote
+        if $y_sym in ($q_expr).pred.vs
+            $body
+        else
+            false
+        end
+    end
+    _probe_body_test(A, a_expr, x_sym, y_sym, wrap)
+end
+function _probe_body_test(::Type{<:Filter{D, R, A, InSetP{S}}}, q_expr, x_sym, y_sym, body) where {D, R, A, S}
+    a_expr = :(($q_expr).a)
+    wrap = quote
+        if member(($q_expr).pred.s, $y_sym)
+            $body
+        else
+            false
+        end
+    end
+    _probe_body_test(A, a_expr, x_sym, y_sym, wrap)
+end
+
+function _probe_body_test(::Type{<:Prod{D, R, OPS}}, q_expr, x_sym, y_sym, body) where {D, R, OPS}
+    op_types = OPS.parameters
+    N = length(op_types)
+    sub_ys = Vector{Symbol}(undef, N)
+    for k in 1:N; sub_ys[k] = gensym(:_ypt); end
+    inner = quote
+        let $y_sym = ($(sub_ys...),)
+            $body
+        end
+    end
+    for i in N:-1:1
+        op_expr = :(($q_expr).ops[$i])
+        inner = _probe_body_test(op_types[i], op_expr, x_sym, sub_ys[i], inner)
+    end
+    inner
+end
+
+# VecRel and other leaves that always return a single value: body propagates.
+function _probe_body_test(::Type{VecRel{E, R}}, q_expr, x_sym, y_sym, body) where {E, R}
     quote
-        let _mrp_r = $q_expr
-            if !isempty(_mrp_r.values)
-                let _mrp_i = ($x_sym).id, _mrp_s = _mrp_r.seen
-                    if 1 <= _mrp_i <= length(_mrp_r.values) &&
-                       (_mrp_s === nothing || _mrp_s[_mrp_i])
-                        let $y_sym = @inbounds _mrp_r.values[_mrp_i]
-                            $body
-                        end
-                    else
-                        false
-                    end
-                end
-            else
-                $fallback
-            end
+        let $y_sym = @inbounds ($q_expr).values[($x_sym).id]
+            $body
         end
     end
 end
+
+# Fallback for any other type — same as _probe_body (body return discarded
+# when used in drive context; if used in test context, may leak Nothing).
+_probe_body_test(T::Type, q_expr, x_sym, y_sym, body) = _probe_body(T, q_expr, x_sym, y_sym, body)
 
 function _probe_body(::Type{VecRel{E, R}}, q_expr, x_sym, y_sym, body) where {E, R}
     quote
@@ -721,21 +822,21 @@ function _probe_any_body(::Type{<:Filter{D, R, A, FnP{F}}}, q_expr, x_sym) where
     a_expr = :(($q_expr).a)
     y_sym = gensym(:_yf)
     val_test = :(($q_expr).pred.f($y_sym))
-    _probe_body(A, a_expr, x_sym, y_sym, val_test)
+    _probe_body_test(A, a_expr, x_sym, y_sym, val_test)
 end
 
 function _probe_any_body(::Type{<:Filter{D, R, A, EqP{V}}}, q_expr, x_sym) where {D, R, A, V}
     a_expr = :(($q_expr).a)
     y_sym = gensym(:_ye)
     test = :(isequal($y_sym, ($q_expr).pred.v))
-    _probe_body(A, a_expr, x_sym, y_sym, test)
+    _probe_body_test(A, a_expr, x_sym, y_sym, test)
 end
 
 function _probe_any_body(::Type{<:Filter{D, R, A, InP{T}}}, q_expr, x_sym) where {D, R, A, T}
     a_expr = :(($q_expr).a)
     y_sym = gensym(:_yi)
     test = :($y_sym in ($q_expr).pred.vs)
-    _probe_body(A, a_expr, x_sym, y_sym, test)
+    _probe_body_test(A, a_expr, x_sym, y_sym, test)
 end
 
 # Filter with InSetP{S} — value must be a member of the set S.
@@ -746,7 +847,7 @@ function _probe_any_body(::Type{<:Filter{D, R, A, InSetP{S}}}, q_expr, x_sym) wh
     # we could emit specialized code, but the fallback is fine because `member`
     # itself is @inline and goes to probe_any.
     test = :(member(($q_expr).pred.s, $y_sym))
-    _probe_body(A, a_expr, x_sym, y_sym, test)
+    _probe_body_test(A, a_expr, x_sym, y_sym, test)
 end
 
 # Bitset.probe_any — direct bit-test in the @generated codegen so the bit
@@ -803,7 +904,7 @@ function _probe_any_body(::Type{<:Compose{D, M, R, A, B}}, q_expr, x_sym) where 
     # Alternative: probe_body emits binding then runs body; if A is a 1:1
     # leaf like MapRel/VecRel/Map of a leaf, the probe yields exactly one m,
     # so body runs at most once. We can wrap in a `let` that returns body.
-    probe_let = _probe_body(A, a_expr, x_sym, m_sym, b_check)
+    probe_let = _probe_body_test(A, a_expr, x_sym, m_sym, b_check)
     probe_let
 end
 
