@@ -8,7 +8,7 @@ import Main.Prela: Query, Unary, Universe, URestrict, Restrict, Diff, Compose,
                    Filter, Conj, Disj, SetDiff, URestrict, Keys, Prod, MapRel,
                    VecRel, UnaryVec, Scalar, FnP, EqP, InP, InSetP, Map,
                    LeftCompose, LeftConj, DenseFold, Fold, BufFold, Inv,
-                   Bitset, Materialized, MatSet, _denseidx,
+                   Bitset, Materialized, MatSet, _denseidx, _densebox,
                    member, drive, probe, probe_any, askeys
 
 # =====================================================================
@@ -50,27 +50,29 @@ function _drive_body(::Type{<:Restrict{D, R, A, B}}, q_expr, body) where {D, R, 
     _drive_body(A, a_expr, inner)
 end
 
-# MapRel drive (entity-keyed dense values fast path)
+# MapRel drive (entity-keyed dense values fast path). Locals prefixed
+# `_mr_` to avoid collision with DenseFold's `_seen`/`_vals` when the
+# MapRel.drive is the cache-build inner of a DenseFold (Q18 shape).
 function _drive_body(::Type{<:MapRel{ID_TYPE, R}}, q_expr, body) where {ID_TYPE, R}
     quote
-        let _vals = ($q_expr).values, _seen = ($q_expr).seen, _pairs = ($q_expr).pairs
-            if !isempty(_vals) && _seen === nothing
-                @inbounds for _i in eachindex(_vals)
-                    let _x = $ID_TYPE(_i), _v = _vals[_i]
+        let _mr_vals = ($q_expr).values, _mr_seen = ($q_expr).seen, _mr_pairs = ($q_expr).pairs
+            if !isempty(_mr_vals) && _mr_seen === nothing
+                @inbounds for _mr_i in eachindex(_mr_vals)
+                    let _x = $ID_TYPE(_mr_i), _v = _mr_vals[_mr_i]
                         $body
                     end
                 end
-            elseif !isempty(_vals)
-                @inbounds for _i in eachindex(_vals)
-                    if _seen[_i]
-                        let _x = $ID_TYPE(_i), _v = _vals[_i]
+            elseif !isempty(_mr_vals)
+                @inbounds for _mr_i in eachindex(_mr_vals)
+                    if _mr_seen[_mr_i]
+                        let _x = $ID_TYPE(_mr_i), _v = _mr_vals[_mr_i]
                             $body
                         end
                     end
                 end
             else
-                for _p in _pairs
-                    let _x = _p.first, _v = _p.second
+                for _mr_p in _mr_pairs
+                    let _x = _mr_p.first, _v = _mr_p.second
                         $body
                     end
                 end
@@ -103,10 +105,27 @@ function _drive_body(::Type{<:UnaryVec{D}}, q_expr, body) where {D}
     end
 end
 
-# Runtime fallback for any unhandled Query/Unary type: dispatch through the
-# existing Prela.drive. Loses inlining for that subtree but preserves
-# correctness. (No warning — `@warn $(Q)` would stringify multi-MB nested
-# types and explode codegen memory.)
+# InlineRel handler — Main.InlineRel is a custom type in `tpch_queries_*.jl`
+# that wraps a Vector{Pair}. Direct field access; no lambda needed (which
+# would trip the @generated purity check).
+if isdefined(Main, :InlineRel)
+    function _drive_body(::Type{<:Main.InlineRel{D, R}}, q_expr, body) where {D, R}
+        quote
+            for _ir_p in ($q_expr).pairs
+                let _x = _ir_p.first, _v = _ir_p.second
+                    $body
+                end
+            end
+        end
+    end
+end
+
+# Runtime fallback for any unhandled Query/Unary type. Note: using a
+# lambda in the returned AST trips Julia's @generated purity check, so
+# this fallback only works for types where it's never actually invoked
+# — it exists as a method to satisfy MethodError-avoidance but emits
+# code that won't compile. Adding an explicit emitter (like the
+# InlineRel one above) is the right fix for any type that hits this.
 function _drive_body(::Type{Q}, q_expr, body) where {Q}
     quote
         Prela.drive($q_expr, (_x, _v) -> $body)
@@ -201,7 +220,10 @@ function _drive_body(::Type{<:Prod{D, R, OPS}}, q_expr, body) where {D, R, OPS}
             end
         end)
     end
-    sub_ys = [gensym(:_yp) for _ in 1:N]
+    sub_ys = Vector{Symbol}(undef, N)
+    for k in 1:N
+        sub_ys[k] = gensym(:_yp)
+    end
     # Innermost: bind _v = (sub_ys...,); body
     inner = quote
         let _v = ($(sub_ys...),)
@@ -347,32 +369,37 @@ function _drive_body(::Type{<:Bitset{D}}, q_expr, body) where {D}
     end
 end
 
-# Fold drive: build the HashMap cache (calling Prela.drive), then iterate.
-# The cache build still goes through dispatching drive — we'd need to
-# emit a fresh dict + populate loop to fully inline. For now, lean on the
-# existing _fold_cache helper and just iterate.
+# Pipeline-breaker drive emitters.
+#
+# Conceptually we wanted `_engine_fold_drive(@nospecialize(q), sink::F)` so
+# the wrapper compiles once across all query types, with `Prela._fold_cache(q)`
+# inside dynamically dispatching at runtime — sharing the existing engine's
+# specialization. BUT: emitting `_engine_fold_drive($q_expr, (_x, _v) -> $body)`
+# puts an `Expr(:->, …)` (a lambda) into the returned AST, which trips
+# Julia's `@generated` purity check ("function body AST is not pure").
+#
+# So we inline the for-loop directly, accepting that `Prela._fold_cache(q)`
+# specializes per typeof(q) at this call site (same as the algebra path).
+# The pipeline-breaker call cost is a single dispatch per query, not per
+# row — invisible next to the cache-build work.
 function _drive_body(::Type{<:Fold{D, R, S, Q, OP}}, q_expr, body) where {D, R, S, Q, OP}
     quote
-        let _cache = Prela._fold_cache($q_expr)
-            for (_x, _v) in _cache
-                $body
-            end
+        for (_x, _v) in Prela._fold_cache($q_expr)
+            $body
         end
     end
 end
 
-# BufFold drive: same fallback as Fold — iterate the cached dict.
 function _drive_body(::Type{<:BufFold{D, R, S, Q, F}}, q_expr, body) where {D, R, S, Q, F}
     quote
-        let _cache = Prela._buf_cache($q_expr)
-            for (_x, _v) in _cache
-                $body
-            end
+        for (_x, _v) in Prela._buf_cache($q_expr)
+            $body
         end
     end
 end
 
-# Inv drive: flips pairs. The inner q emits (d, r); we want (r, d).
+# Inv drive: flips pairs. Streaming operator, not a pipeline-breaker —
+# keep the per-row specialization by recursing into the inner Q's drive.
 function _drive_body(::Type{<:Inv{B, A, Q}}, q_expr, body) where {B, A, Q}
     q_inner = :(($q_expr).q)
     inner_x = gensym(:_xinv)
@@ -384,27 +411,21 @@ function _drive_body(::Type{<:Inv{B, A, Q}}, q_expr, body) where {B, A, Q}
     _drive_body(Q, q_inner, flip)
 end
 
-# Materialized drive: rebuild cache (or trust runtime), then iterate pairs.
 function _drive_body(::Type{<:Materialized{D, R, A}}, q_expr, body) where {D, R, A}
     quote
-        let _pairs = Prela._cmat($q_expr)
-            for _p in _pairs
-                let _x = _p.first, _v = _p.second
-                    $body
-                end
+        for _p in Prela._cmat($q_expr)
+            let _x = _p.first, _v = _p.second
+                $body
             end
         end
     end
 end
 
-# MatSet drive (Unary): iterate cached keys.
 function _drive_body(::Type{<:MatSet{D, A}}, q_expr, body) where {D, A}
     quote
-        let _keys = Prela._mkeys($q_expr)
-            for _x in _keys
-                let _v = ()
-                    $body
-                end
+        for _x in Prela._mkeys($q_expr)
+            let _v = ()
+                $body
             end
         end
     end
@@ -423,33 +444,36 @@ function _drive_body(::Type{<:LeftConj{D, ML, R}}, q_expr, body) where {D, ML, R
     _drive_body(R, r_expr, wrap)
 end
 
-# DenseFold drive: build the cache, then iterate it
+# DenseFold drive: build the cache, then iterate it.
+# Locals are prefixed `_df_` to avoid name collisions with nested emitters
+# that need their own `_vals`/`_seen` (e.g. MapRel.drive used in the inner
+# query). Iter binds `_x` back to D via `_densebox` so downstream probes
+# get the right wrapped key (ID{E} or Int).
 function _drive_body(::Type{<:DenseFold{D, R, S, Q, OP}}, q_expr, body) where {D, R, S, Q, OP}
     q_inner = :(($q_expr).q)
-    # Per-row body: i = _denseidx(_x) + 1; if in range; vals[i] = op(vals[i], _v); seen[i] = true
     inner = quote
-        let _i = _denseidx(_x) + 1
-            if 1 <= _i <= _sz
-                @inbounds _vals[_i] = _op(_vals[_i], _v)
-                @inbounds _seen[_i] = true
+        let _df_i = _denseidx(_x) + 1
+            if 1 <= _df_i <= _df_sz
+                @inbounds _df_vals[_df_i] = _df_op(_df_vals[_df_i], _v)
+                @inbounds _df_seen[_df_i] = true
             end
         end
     end
     cache_build = _drive_body(Q, q_inner, inner)
     iter_body = quote
-        @inbounds for _idx in eachindex(_vals)
-            if _seen[_idx]
-                let _x = _idx - 1, _v = _vals[_idx]
+        @inbounds for _df_idx in eachindex(_df_vals)
+            if _df_seen[_df_idx]
+                let _x = _densebox($D, _df_idx - 1), _v = _df_vals[_df_idx]
                     $body
                 end
             end
         end
     end
     quote
-        _sz   = ($q_expr).n + 1
-        _vals = fill(($q_expr).init, _sz)
-        _seen = falses(_sz)
-        _op   = ($q_expr).op
+        _df_sz   = ($q_expr).n + 1
+        _df_vals = fill(($q_expr).init, _df_sz)
+        _df_seen = falses(_df_sz)
+        _df_op   = ($q_expr).op
         $cache_build
         $iter_body
     end
@@ -551,7 +575,10 @@ end
 function _probe_body(::Type{<:Prod{D, R, OPS}}, q_expr, x_sym, y_sym, body) where {D, R, OPS}
     op_types = OPS.parameters
     N = length(op_types)
-    sub_ys = [gensym(:_yp) for _ in 1:N]
+    sub_ys = Vector{Symbol}(undef, N)
+    for i in 1:N
+        sub_ys[i] = gensym(:_yp)
+    end
     inner = quote
         let $y_sym = ($(sub_ys...),)
             $body
