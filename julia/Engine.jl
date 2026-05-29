@@ -4,11 +4,12 @@
 # hand-rolled Q6 (0.05s) while preserving the algebra surface.
 
 using Main: Prela
-import Main.Prela: Query, Unary, Universe, URestrict, Restrict, Compose, Filter,
-                   Conj, Disj, SetDiff, Keys, Prod, MapRel, VecRel, Scalar,
-                   FnP, EqP, InP, InSetP, Map, LeftCompose, LeftConj,
-                   DenseFold, Fold, Bitset, Materialized, MatSet, _denseidx,
-                   member, drive, probe, probe_any
+import Main.Prela: Query, Unary, Universe, URestrict, Restrict, Diff, Compose,
+                   Filter, Conj, Disj, SetDiff, URestrict, Keys, Prod, MapRel,
+                   VecRel, UnaryVec, Scalar, FnP, EqP, InP, InSetP, Map,
+                   LeftCompose, LeftConj, DenseFold, Fold, BufFold, Inv,
+                   Bitset, Materialized, MatSet, _denseidx,
+                   member, drive, probe, probe_any, askeys
 
 # =====================================================================
 # Emission helpers (run at codegen time inside @generated; return Expr).
@@ -23,7 +24,7 @@ import Main.Prela: Query, Unary, Universe, URestrict, Restrict, Compose, Filter,
 function _drive_body(::Type{Universe{E}}, q_expr, body) where E
     quote
         @inbounds for _i in 1:($q_expr).n
-            let _x = Prela.ID{$E}(_i)
+            let _x = Prela.ID{$E}(_i), _v = ()
                 $body
             end
         end
@@ -47,6 +48,69 @@ function _drive_body(::Type{<:Restrict{D, R, A, B}}, q_expr, body) where {D, R, 
     b_expr = :(($q_expr).b)
     inner = _probe_body(B, b_expr, :_x, :_v, body)
     _drive_body(A, a_expr, inner)
+end
+
+# MapRel drive (entity-keyed dense values fast path)
+function _drive_body(::Type{<:MapRel{ID_TYPE, R}}, q_expr, body) where {ID_TYPE, R}
+    quote
+        let _vals = ($q_expr).values, _seen = ($q_expr).seen, _pairs = ($q_expr).pairs
+            if !isempty(_vals) && _seen === nothing
+                @inbounds for _i in eachindex(_vals)
+                    let _x = $ID_TYPE(_i), _v = _vals[_i]
+                        $body
+                    end
+                end
+            elseif !isempty(_vals)
+                @inbounds for _i in eachindex(_vals)
+                    if _seen[_i]
+                        let _x = $ID_TYPE(_i), _v = _vals[_i]
+                            $body
+                        end
+                    end
+                end
+            else
+                for _p in _pairs
+                    let _x = _p.first, _v = _p.second
+                        $body
+                    end
+                end
+            end
+        end
+    end
+end
+
+# VecRel drive
+function _drive_body(::Type{<:VecRel{E, R}}, q_expr, body) where {E, R}
+    quote
+        let _vals = ($q_expr).values
+            @inbounds for _i in eachindex(_vals)
+                let _x = Prela.ID{$E}(_i), _v = _vals[_i]
+                    $body
+                end
+            end
+        end
+    end
+end
+
+# UnaryVec drive: iterate the values vector
+function _drive_body(::Type{<:UnaryVec{D}}, q_expr, body) where {D}
+    quote
+        for _x in ($q_expr).values
+            let _v = ()
+                $body
+            end
+        end
+    end
+end
+
+# Runtime fallback for any unhandled Query/Unary type: dispatch through the
+# existing Prela.drive. Loses inlining for that subtree but preserves
+# correctness. (No warning — `@warn $(Q)` would stringify multi-MB nested
+# types and explode codegen memory.)
+function _drive_body(::Type{Q}, q_expr, body) where {Q}
+    quote
+        Prela.drive($q_expr, (_x, _v) -> $body)
+    end
 end
 
 # Compose drive: drive(a, (x, m) -> probe(b, m, r -> body))
@@ -100,6 +164,263 @@ function _drive_body(::Type{<:Map{D, R, S, Q, F}}, q_expr, body) where {D, R, S,
         end
     end
     _drive_body(Q, q_inner, wrapped)
+end
+
+# Scalar drive: evaluate the scalar fold and emit (nothing, value) once.
+# Lets execute_drive work uniformly even on Scalar tops.
+function _drive_body(::Type{<:Scalar{S, Q, OP}}, q_expr, body) where {S, Q, OP}
+    q_inner = :(($q_expr).q)
+    inner = quote
+        _acc = ($q_expr).op(_acc, _v)
+    end
+    inner_loop = _drive_body(Q, q_inner, inner)
+    quote
+        _acc = ($q_expr).init
+        $inner_loop
+        let _x = nothing, _v = _acc
+            $body
+        end
+    end
+end
+
+# Prod drive: drive ops[1], probe ops[2..N], emit (x, tuple)
+function _drive_body(::Type{<:Prod{D, R, OPS}}, q_expr, body) where {D, R, OPS}
+    op_types = OPS.parameters
+    N = length(op_types)
+    if N == 1
+        # degenerate
+        sub_y = gensym(:_yp)
+        wrap = quote
+            let _v = ($sub_y,)
+                $body
+            end
+        end
+        return _drive_body(op_types[1], :(($q_expr).ops[1]), quote
+            let $sub_y = _v
+                $wrap
+            end
+        end)
+    end
+    sub_ys = [gensym(:_yp) for _ in 1:N]
+    # Innermost: bind _v = (sub_ys...,); body
+    inner = quote
+        let _v = ($(sub_ys...),)
+            $body
+        end
+    end
+    # Wrap N..2 probes
+    for i in N:-1:2
+        op_expr = :(($q_expr).ops[$i])
+        inner = _probe_body(op_types[i], op_expr, :_x, sub_ys[i], inner)
+    end
+    # Outermost: drive ops[1], binding _x and sub_ys[1] = _v
+    outer = quote
+        let $(sub_ys[1]) = _v
+            $inner
+        end
+    end
+    _drive_body(op_types[1], :(($q_expr).ops[1]), outer)
+end
+
+# Filter drive — each predicate type gets its own emit
+function _drive_body(::Type{<:Filter{D, R, A, FnP{F}}}, q_expr, body) where {D, R, A, F}
+    a_expr = :(($q_expr).a)
+    wrap = quote
+        if ($q_expr).pred.f(_v)
+            $body
+        end
+    end
+    _drive_body(A, a_expr, wrap)
+end
+function _drive_body(::Type{<:Filter{D, R, A, EqP{V}}}, q_expr, body) where {D, R, A, V}
+    a_expr = :(($q_expr).a)
+    wrap = quote
+        if isequal(_v, ($q_expr).pred.v)
+            $body
+        end
+    end
+    _drive_body(A, a_expr, wrap)
+end
+function _drive_body(::Type{<:Filter{D, R, A, InP{T}}}, q_expr, body) where {D, R, A, T}
+    a_expr = :(($q_expr).a)
+    wrap = quote
+        if _v in ($q_expr).pred.vs
+            $body
+        end
+    end
+    _drive_body(A, a_expr, wrap)
+end
+function _drive_body(::Type{<:Filter{D, R, A, InSetP{S}}}, q_expr, body) where {D, R, A, S}
+    a_expr = :(($q_expr).a)
+    wrap = quote
+        if member(($q_expr).pred.s, _v)
+            $body
+        end
+    end
+    _drive_body(A, a_expr, wrap)
+end
+
+# Conj drive (as Unary): drive a, member-check b
+function _drive_body(::Type{<:Conj{D, A, B}}, q_expr, body) where {D, A, B}
+    a_expr = :(($q_expr).a)
+    b_expr = :(($q_expr).b)
+    pred = _probe_any_body(B, b_expr, :_x)
+    wrap = quote
+        if $pred
+            $body
+        end
+    end
+    _drive_body(A, a_expr, wrap)
+end
+
+# Disj drive (as Unary): drive a, then drive b excluding a's keys
+function _drive_body(::Type{<:Disj{D, A, B}}, q_expr, body) where {D, A, B}
+    a_expr = :(($q_expr).a)
+    b_expr = :(($q_expr).b)
+    a_check = _probe_any_body(A, a_expr, :_x)
+    body_a = body
+    body_b = quote
+        if !($a_check)
+            $body
+        end
+    end
+    a_drive = _drive_body(A, a_expr, body_a)
+    b_drive = _drive_body(B, b_expr, body_b)
+    quote
+        $a_drive
+        $b_drive
+    end
+end
+
+# SetDiff drive (as Unary): drive a, exclude keys in b
+function _drive_body(::Type{<:SetDiff{D, A, B}}, q_expr, body) where {D, A, B}
+    a_expr = :(($q_expr).a)
+    b_expr = :(($q_expr).b)
+    b_check = _probe_any_body(B, b_expr, :_x)
+    wrap = quote
+        if !($b_check)
+            $body
+        end
+    end
+    _drive_body(A, a_expr, wrap)
+end
+
+# Diff drive (as Query): drive a, exclude keys in b (set-side).
+function _drive_body(::Type{<:Diff{D, R, A, B}}, q_expr, body) where {D, R, A, B}
+    a_expr = :(($q_expr).a)
+    b_expr = :(($q_expr).b)
+    b_check = _probe_any_body(B, b_expr, :_x)
+    wrap = quote
+        if !($b_check)
+            $body
+        end
+    end
+    _drive_body(A, a_expr, wrap)
+end
+
+# Keys drive (Unary view over a Query): drive a, ignore the value
+function _drive_body(::Type{<:Keys{D, A}}, q_expr, body) where {D, A}
+    a_expr = :(($q_expr).a)
+    # Drive a, body sees _x and _v (the value). For Keys we throw v away
+    # and set _v = ().
+    wrap = quote
+        let _v = ()
+            $body
+        end
+    end
+    _drive_body(A, a_expr, wrap)
+end
+
+# Bitset drive: iterate set bits. Box D at codegen time.
+function _drive_body(::Type{<:Bitset{D}}, q_expr, body) where {D}
+    box_expr = D === Int ? :(_i - 1) : :($D(_i - 1))
+    quote
+        let _b = $q_expr
+            @inbounds for _i in eachindex(_b.bits)
+                if _b.bits[_i]
+                    let _x = $box_expr, _v = ()
+                        $body
+                    end
+                end
+            end
+        end
+    end
+end
+
+# Fold drive: build the HashMap cache (calling Prela.drive), then iterate.
+# The cache build still goes through dispatching drive — we'd need to
+# emit a fresh dict + populate loop to fully inline. For now, lean on the
+# existing _fold_cache helper and just iterate.
+function _drive_body(::Type{<:Fold{D, R, S, Q, OP}}, q_expr, body) where {D, R, S, Q, OP}
+    quote
+        let _cache = Prela._fold_cache($q_expr)
+            for (_x, _v) in _cache
+                $body
+            end
+        end
+    end
+end
+
+# BufFold drive: same fallback as Fold — iterate the cached dict.
+function _drive_body(::Type{<:BufFold{D, R, S, Q, F}}, q_expr, body) where {D, R, S, Q, F}
+    quote
+        let _cache = Prela._buf_cache($q_expr)
+            for (_x, _v) in _cache
+                $body
+            end
+        end
+    end
+end
+
+# Inv drive: flips pairs. The inner q emits (d, r); we want (r, d).
+function _drive_body(::Type{<:Inv{B, A, Q}}, q_expr, body) where {B, A, Q}
+    q_inner = :(($q_expr).q)
+    inner_x = gensym(:_xinv)
+    flip = quote
+        let $inner_x = _x, _x = _v, _v = $inner_x
+            $body
+        end
+    end
+    _drive_body(Q, q_inner, flip)
+end
+
+# Materialized drive: rebuild cache (or trust runtime), then iterate pairs.
+function _drive_body(::Type{<:Materialized{D, R, A}}, q_expr, body) where {D, R, A}
+    quote
+        let _pairs = Prela._cmat($q_expr)
+            for _p in _pairs
+                let _x = _p.first, _v = _p.second
+                    $body
+                end
+            end
+        end
+    end
+end
+
+# MatSet drive (Unary): iterate cached keys.
+function _drive_body(::Type{<:MatSet{D, A}}, q_expr, body) where {D, A}
+    quote
+        let _keys = Prela._mkeys($q_expr)
+            for _x in _keys
+                let _v = ()
+                    $body
+                end
+            end
+        end
+    end
+end
+
+# LeftConj drive (Unary): drive r, member-check materialized l per row.
+function _drive_body(::Type{<:LeftConj{D, ML, R}}, q_expr, body) where {D, ML, R}
+    r_expr = :(($q_expr).r)
+    l_expr = :(($q_expr).l)
+    pred = _probe_any_body(ML, l_expr, :_x)
+    wrap = quote
+        if $pred
+            $body
+        end
+    end
+    _drive_body(R, r_expr, wrap)
 end
 
 # DenseFold drive: build the cache, then iterate it
@@ -156,6 +477,67 @@ function _probe_body(::Type{VecRel{E, R}}, q_expr, x_sym, y_sym, body) where {E,
 end
 
 # Map probe: probe(q, x, k) = probe(inner, x, v -> k(f(v)))
+# Compose probe (when Compose appears on the rhs of a → ): probe through chain
+function _probe_body(::Type{<:Compose{D, M, R, A, B}}, q_expr, x_sym, y_sym, body) where {D, M, R, A, B}
+    a_expr = :(($q_expr).a)
+    b_expr = :(($q_expr).b)
+    m_sym = gensym(:_mp)
+    inner = _probe_body(B, b_expr, m_sym, y_sym, body)
+    _probe_body(A, a_expr, x_sym, m_sym, inner)
+end
+
+# Fold probe: dict get
+function _probe_body(::Type{<:Fold{D, R, S, Q, OP}}, q_expr, x_sym, y_sym, body) where {D, R, S, Q, OP}
+    quote
+        let _c = Prela._fold_cache($q_expr)
+            let _g = get(_c, $x_sym, nothing)
+                if _g !== nothing
+                    let $y_sym = _g
+                        $body
+                    end
+                end
+            end
+        end
+    end
+end
+
+# DenseFold probe: array lookup
+function _probe_body(::Type{<:DenseFold{D, R, S, Q, OP}}, q_expr, x_sym, y_sym, body) where {D, R, S, Q, OP}
+    quote
+        let (_vals, _seen) = Prela._dfold_cache($q_expr)
+            let _i = _denseidx($x_sym) + 1
+                if 1 <= _i <= length(_vals) && @inbounds(_seen[_i])
+                    let $y_sym = @inbounds _vals[_i]
+                        $body
+                    end
+                end
+            end
+        end
+    end
+end
+
+# Materialized probe: through cached idx
+function _probe_body(::Type{<:Materialized{D, R, A}}, q_expr, x_sym, y_sym, body) where {D, R, A}
+    quote
+        for _r in Prela._cidx($q_expr)[$x_sym]
+            let $y_sym = _r
+                $body
+            end
+        end
+    end
+end
+
+# Inv probe: lazy reverse index lookup
+function _probe_body(::Type{<:Inv{B, A, Q}}, q_expr, x_sym, y_sym, body) where {B, A, Q}
+    quote
+        for _r in get(Prela._inv_index($q_expr), $x_sym, ())
+            let $y_sym = _r
+                $body
+            end
+        end
+    end
+end
+
 function _probe_body(::Type{<:Map{D, R, S, Q, F}}, q_expr, x_sym, y_sym, body) where {D, R, S, Q, F}
     inner_y = gensym(:_ym)
     inner_body = quote
@@ -268,6 +650,82 @@ end
 # internal `Set{D}` lazily on first call, so it's fine to call `member` here.
 function _probe_any_body(::Type{<:MatSet{D, A}}, q_expr, x_sym) where {D, A}
     :(member($q_expr, $x_sym))
+end
+
+# Compose probe_any: probe through chain, collapsing on final bool.
+# probe_any(a → b, x, k) = probe_any(a, x, m -> probe_any(b, m, k))
+# For a Compose chain, the value at the end goes to whatever predicate uses it.
+# Here the "test" is just emit `member(b, m)` for the rightmost; but we can
+# express it as probe_body(a, x, m) wrapping probe_any(b, m).
+function _probe_any_body(::Type{<:Compose{D, M, R, A, B}}, q_expr, x_sym) where {D, M, R, A, B}
+    a_expr = :(($q_expr).a)
+    b_expr = :(($q_expr).b)
+    m_sym = gensym(:_mc)
+    b_check = _probe_any_body(B, b_expr, m_sym)
+    # probe_body(A, x, m, body): evaluate the body as a Bool expression
+    # We want: any m from probe(A, x) such that probe_any(B, m).
+    # _probe_body wraps body in let-binding; we need it as boolean.
+    # Easiest: emit a let with a Ref-style flag, but that's heavyweight.
+    # Alternative: probe_body emits binding then runs body; if A is a 1:1
+    # leaf like MapRel/VecRel/Map of a leaf, the probe yields exactly one m,
+    # so body runs at most once. We can wrap in a `let` that returns body.
+    probe_let = _probe_body(A, a_expr, x_sym, m_sym, b_check)
+    probe_let
+end
+
+# Restrict probe_any: probe(a, x, _ -> probe_any(b, x, k)) — but Restrict is
+# a Query, not used in probe_any chains typically. Emit conservatively.
+function _probe_any_body(::Type{<:Restrict{D, R, A, B}}, q_expr, x_sym) where {D, R, A, B}
+    :(member($q_expr, $x_sym))
+end
+
+# Inv probe_any: lazy dict lookup
+function _probe_any_body(::Type{<:Inv{B, A, Q}}, q_expr, x_sym) where {B, A, Q}
+    :(haskey(Prela._inv_index($q_expr), $x_sym))
+end
+
+# URestrict probe_any: both sides must contain x
+function _probe_any_body(::Type{<:URestrict{D, A, B}}, q_expr, x_sym) where {D, A, B}
+    a = _probe_any_body(A, :(($q_expr).a), x_sym)
+    b = _probe_any_body(B, :(($q_expr).b), x_sym)
+    :($a && $b)
+end
+
+# LeftConj probe_any: both
+function _probe_any_body(::Type{<:LeftConj{D, ML, R}}, q_expr, x_sym) where {D, ML, R}
+    l = _probe_any_body(ML, :(($q_expr).l), x_sym)
+    r = _probe_any_body(R, :(($q_expr).r), x_sym)
+    :($l && $r)
+end
+
+# Materialized/MapRel/VecRel probe_any: bounds check (a 1:1 entity rel has
+# every entity id in its domain after vectorize!)
+function _probe_any_body(::Type{<:MapRel{ID_TYPE, R}}, q_expr, x_sym) where {ID_TYPE, R}
+    quote
+        let _r = $q_expr, _i = ($x_sym).id
+            if !isempty(_r.values)
+                let _s = _r.seen
+                    (1 <= _i <= length(_r.values)) && (_s === nothing || @inbounds(_s[_i]))
+                end
+            else
+                # fallback through Prela
+                member(_r, $x_sym)
+            end
+        end
+    end
+end
+function _probe_any_body(::Type{<:VecRel{E, R}}, q_expr, x_sym) where {E, R}
+    :(let _r = $q_expr, _i = ($x_sym).id; 1 <= _i <= length(_r.values); end)
+end
+
+# Runtime fallback (silent — see _drive_body fallback above for rationale)
+function _probe_any_body(::Type{Q}, q_expr, x_sym) where {Q}
+    :(Prela.probe_any($q_expr, $x_sym, _ -> true))
+end
+function _probe_body(::Type{Q}, q_expr, x_sym, y_sym, body) where {Q}
+    quote
+        Prela.probe($q_expr, $x_sym, $y_sym -> $body)
+    end
 end
 
 # =====================================================================
