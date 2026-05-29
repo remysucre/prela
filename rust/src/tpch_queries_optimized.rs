@@ -30,39 +30,6 @@ fn join_lines(rows: impl IntoIterator<Item = String>) -> String {
     rows.into_iter().collect::<Vec<_>>().join("\n")
 }
 
-// ---------- packed bitset (Q22 customers-with-orders) ----------
-
-struct BitsetSet { bs: Vec<u64>, n: i64 }
-
-impl BitsetSet {
-    fn from_drive<Q: Query<R = i64>>(n: i64, q: &Q) -> Self {
-        let words = (n as usize / 64) + 1;
-        let mut bs = vec![0u64; words];
-        q.drive(|_, c| {
-            let c = c as usize;
-            if c >= 1 && c <= n as usize { bs[c / 64] |= 1u64 << (c % 64); }
-        });
-        BitsetSet { bs, n }
-    }
-}
-
-impl SetQ for BitsetSet {
-    type D = i64;
-    #[inline]
-    fn drivekeys<K: FnMut(i64)>(&self, mut k: K) {
-        for c in 1..=self.n {
-            let cu = c as usize;
-            if (self.bs[cu / 64] >> (cu % 64)) & 1 == 1 { k(c); }
-        }
-    }
-    #[inline]
-    fn member(&self, x: i64) -> bool {
-        let c = x as usize;
-        c >= 1 && c <= self.n as usize
-            && (self.bs[c / 64] >> (c % 64)) & 1 == 1
-    }
-}
-
 // ---------- oracle loading ----------
 
 fn oracle(name: &str) -> &'static str {
@@ -103,21 +70,32 @@ fn q1(d: &TpchData) -> String {
     let scan = live.o(
         (&d.li_quantity).x(&d.li_extendedprice).x(&d.li_discount).x(&d.li_tax)
     );
-    let group_key = (&d.li_returnflag).x(&d.li_status);
+    // Pack (returnflag, status) single-byte values into a small i64 index
+    // so `dense_fold` can use a `[Acc; 288]`-equivalent dense cache. The
+    // packed order `(rf-'A') << 4 | (ls-'F')` preserves the (rf, ls)
+    // ascii-pair sort order under i64 comparison: rf ∈ {A=0, N=13, R=17},
+    // ls ∈ {F=0, O=9} → max 281, bound 288.
+    let group_key = (&d.li_returnflag).x(&d.li_status)
+        .map(|(rf, ls): (&str, &str)| {
+            (((rf.as_bytes()[0].wrapping_sub(b'A')) as i64) << 4)
+                | ((ls.as_bytes()[0].wrapping_sub(b'F')) as i64)
+        });
     let grouped = group_key.lc(scan)
-        .fold((0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0_i64),
+        .dense_fold(288, (0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0_i64),
               |(qty, ext, di, dp, chg, n), (((q, e), dc), tx)| {
                   let dp_inc = e * (1.0 - dc);
                   let chg_inc = dp_inc * (1.0 + tx);
                   (qty + q, ext + e, di + dc, dp + dp_inc, chg + chg_inc, n + 1)
               });
-    let mut rows: Vec<((&str, &str), (f64, f64, f64, f64, f64, i64))> = Vec::new();
+    let mut rows: Vec<(i64, (f64, f64, f64, f64, f64, i64))> = Vec::new();
     grouped.drive(|k, v| rows.push((k, v)));
-    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    rows.sort_by_key(|r| r.0);
     join_lines(rows.iter().map(|(k, (qty, ext, di, dp, chg, n))| {
+        let rf = (((*k >> 4) as u8).wrapping_add(b'A')) as char;
+        let ls = (((*k & 0xF) as u8).wrapping_add(b'F')) as char;
         let nf = *n as f64;
         format!("{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-                k.0, k.1, f(*qty), f(*ext), f(*dp), f(*chg),
+                rf, ls, f(*qty), f(*ext), f(*dp), f(*chg),
                 f(qty / nf), f(ext / nf), f(di / nf), n)
     }))
 }
@@ -229,13 +207,15 @@ fn q4(d: &TpchData) -> String {
     // Julia: let live = (lineitem ∧ (commitdate < receiptdate) → Li.order) ⩘
     //                  (orders ∧ (date in during("1993-07-01", "1993-10-01")))
     //        (live → Ord.priority)' ▷ ((a, _) -> a + 1, 0)
+    // Dense `Bitset` of orderkeys with a late lineitem replaces the lconj
+    // path that lazy-built a HashSet from ~14M late-lineitem orderkeys.
     let bad_li_order = d.lineitem
         .and((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k())
         .o(&d.li_order);
-    let live_orders = d.orders.and(
-        (&d.ord_date).during(19930701, 19931001).k()
-    );
-    let live = bad_li_order.lconj(live_orders);
+    let is_late = Bitset::from_drive(d.orders.n, &bad_li_order);
+    let live = d.orders
+        .and((&d.ord_date).during(19930701, 19931001).k())
+        .and(is_late);
     let counts = live.o(&d.ord_priority).inv().fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(&str, i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
@@ -322,8 +302,14 @@ fn q9(d: &TpchData) -> String {
     // integer hash key, not (&str, i64) which costs a string hash + memcmp
     // per collision. Nation name is FD'd by nation_id, looked up at output.
     let sc = (&d.ps_part).x(&d.ps_supplier).inv().o(&d.ps_supplycost).mat();
-    let live = (&d.lineitem)
-        .and((&d.li_part).o(&d.pa_name).filt(|n: &str| n.contains("green")).k());
+    // Hoist the `Part.name ~ "green"` predicate out of the 60M-row
+    // lineitem scan by materializing the matching part-ids into a `Bitset`
+    // (~200K Part rows scanned once). Per lineitem becomes one bit-test.
+    let green_parts = Bitset::from_setq(
+        d.part.n,
+        &(&d.pa_name).filt(|n: &str| n.contains("green")).k(),
+    );
+    let live = (&d.lineitem).and((&d.li_part).in_s(&green_parts).k());
     let nation_id = (&live).o((&d.li_supplier).o(&d.su_nation));
     let year      = (&live).o((&d.li_order).o(&d.ord_date)).map(|d: i64| d / 10000);
     let groups = nation_id.x(year);
@@ -422,9 +408,19 @@ fn q13(d: &TpchData) -> String {
     // Julia algebraic part: count_per_cust = ((live_orders → Ord.customer) ←
     //                                          (live_orders → date)) ▷ ((a, _) -> a + 1, 0)
     // Then a Julia escape for the LEFT-JOIN zero-default (customer.n - n_with).
+    // `nrx("special.*requests")` is regex DFA per row (~100ns × 1.5M).
+    // memmem::Finder for "special" is SIMD-backed (~5-10ns); then probe
+    // the suffix for "requests" with stdlib `.contains` (also SIMD).
+    use memchr::memmem;
+    let f_special = memmem::Finder::new("special");
     let live_orders = (&d.orders)
         .and((&d.ord_customer).ne(0).k())   // skip sparse orderkey gaps
-        .and((&d.ord_comment).nrx("special.*requests").k());
+        .and((&d.ord_comment).filt(move |c: &str| {
+            match f_special.find(c.as_bytes()) {
+                Some(p) => !c[p + "special".len()..].contains("requests"),
+                None => true,
+            }
+        }).k());
     let count_per_cust = (&live_orders).o(&d.ord_customer)
         .lc((&live_orders).o(&d.ord_date))
         .fold(0_i64, |a, _| a + 1);
@@ -509,7 +505,7 @@ fn q17(d: &TpchData) -> String {
 // ---------- Q18 — large volume customer ----------
 
 fn q18(d: &TpchData) -> String {
-    let sum_qty = (&d.li_order).lc(&d.li_quantity).fold(0.0_f64, |a, q| a + q);
+    let sum_qty = (&d.li_order).lc(&d.li_quantity).dense_fold(d.orders.n, 0.0_f64, |a, q| a + q);
     let big = sum_qty.gt(300.0);
     let mut rows: Vec<(i64, f64)> = Vec::new();
     big.drive(|k, v| rows.push((k, v)));
@@ -593,17 +589,43 @@ fn q21(d: &TpchData) -> String {
     let late = d.lineitem.and(
         (&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k()
     );
-    let multi_supp = (&d.li_order).lc(&d.li_supplier).count_distinct().gt(1).k();
-    let only_late = (&late).o(&d.li_order)
+    // `multi_supp`/`only_late` are SET-membership predicates over orderkeys
+    // ("more than one distinct supplier" / "exactly one distinct supplier").
+    // The Julia `count_distinct() > 1` form materializes a `SVec` of suppliers
+    // per group then sort-dedups — needless when we only care whether the
+    // count is 0/1/>1. Replace with a constant-state fold tracking
+    // `(first_supplier, saw_a_second)` per orderkey; `multi` ⇔ `saw_second`
+    // and `only_one` ⇔ `first != 0 && !saw_second`.
+    let supp_state = (&d.li_order).lc(&d.li_supplier)
+        .dense_fold(d.orders.n, (0_i64, false), |(first, multi), s| {
+            if first == 0 { (s, multi) }
+            else if first != s { (first, true) }
+            else { (first, multi) }
+        });
+    let multi_supp = supp_state.filt(|(_, m): (i64, bool)| m).k();
+    let late_supp_state = (&late).o(&d.li_order)
         .lc((&late).o(&d.li_supplier))
-        .count_distinct().eq(1).k();
+        .dense_fold(d.orders.n, (0_i64, false), |(first, multi), s| {
+            if first == 0 { (s, multi) }
+            else if first != s { (first, true) }
+            else { (first, multi) }
+        });
+    let only_late = late_supp_state.filt(|(first, multi): (i64, bool)| first != 0 && !multi).k();
     let saudi = (&d.supplier).and(
         (&d.su_nation).o(&d.na_name).eq("SAUDI ARABIA").k()
     );
     let f_ords = (&d.orders).and((&d.ord_status).eq("F").k());
+    // Hoist each per-row membership probe into a dense `Bitset` over its
+    // domain — collapses the 5-deep Conj chain on `qualifying` to ~5 ALU ops.
+    let saudi_bs      = Bitset::from_setq(d.supplier.n, &saudi);
+    let f_ords_bs     = Bitset::from_setq(d.orders.n,   &f_ords);
+    let multi_supp_bs = Bitset::from_setq(d.orders.n,   &multi_supp);
+    let only_late_bs  = Bitset::from_setq(d.orders.n,   &only_late);
     let qualifying = (&late)
-        .and((&d.li_supplier).in_s(saudi).k())
-        .and((&d.li_order).in_s(f_ords.and(multi_supp).and(only_late)).k());
+        .and((&d.li_supplier).in_s(&saudi_bs).k())
+        .and((&d.li_order).in_s(&f_ords_bs).k())
+        .and((&d.li_order).in_s(&multi_supp_bs).k())
+        .and((&d.li_order).in_s(&only_late_bs).k());
     let counts = (&d.li_supplier).lcs(qualifying).fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(i64, i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
@@ -633,7 +655,7 @@ fn q22(d: &TpchData) -> String {
     // Packed bitset over the dense customer universe — replaces the
     // Inv → Keys → MatSet chain (which builds a HashMap<i64, SVec<i64>>
     // of 60M order_customer pairs just to grab the unique keys).
-    let custs_with_orders = BitsetSet::from_drive(d.customer.n, &d.ord_customer);
+    let custs_with_orders = Bitset::from_drive(d.customer.n, &d.ord_customer);
     let target = (&prefix_ok).and((&d.cu_acctbal).gt(avg).k())
         .minus(custs_with_orders);
     let counts = (&prefix).lcs(target)
@@ -662,8 +684,7 @@ fn q2(d: &TpchData) -> String {
     );
     let min_per_part = (&eu_ps).o(&d.ps_part)
         .lc((&eu_ps).o(&d.ps_supplycost))
-        .fold(f64::INFINITY, |a, c| if c < a { c } else { a })
-        .mat();
+        .dense_fold(d.part.n, f64::INFINITY, |a, c| if c < a { c } else { a });
     let target = (&eu_ps)
         .and((&d.ps_part).o(&d.pa_size).eq(15).k())
         .and((&d.ps_part).o(&d.pa_type).filt(|s: &str| s.ends_with("BRASS")).k())
