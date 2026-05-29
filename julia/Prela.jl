@@ -275,6 +275,45 @@ mutable struct MatSet{D, A} <: Unary{D}
     set::Union{Nothing, Set{D}}
 end
 
+# `Bitset(n)` — dense `BitVector`-backed `Unary{D}`. Drop-in replacement
+# for `MatSet` when D coerces to ints `0..n` (the only TPCH shapes are
+# `Int` and `ID{E}`): `member` becomes one bit-test, `drive` is a bit scan.
+# Use to hoist a per-row predicate (regex, multi-hop nav, expensive
+# compare) out of the big-side scan: precompute it once into a `Bitset`
+# over the small domain, then `Li.part in green_parts` per lineitem is
+# `O(1)` bit-test instead of re-evaluating the predicate.
+mutable struct Bitset{D} <: Unary{D}
+    bits::BitVector  # length n+1; bit i means member at int slot (i-1)
+    n::Int
+end
+Bitset{D}(n::Int) where {D} = Bitset{D}(falses(n + 1), n)
+
+# `bitset(s, n)` — materialize a `Unary{D}` into a `Bitset{D}`.
+function bitset(s::Unary{D}, n::Int) where {D}
+    b = Bitset{D}(n)
+    drivekeys(s, x -> begin
+        i = _denseidx(x) + 1
+        if 1 <= i <= n + 1
+            @inbounds b.bits[i] = true
+        end
+    end)
+    b
+end
+# `bitset(q, n)` — materialize a `Query{D, R}` value-side `R` into a
+# `Bitset{R}`. Useful for "set of Rs that this Query emits", mirroring the
+# Rust port's `Bitset::from_drive` for late-orderkey scans.
+function bitset(q::Query{D, R}, n::Int) where {D, R}
+    b = Bitset{R}(n)
+    drive(q, (_, x) -> begin
+        i = _denseidx(x) + 1
+        if 1 <= i <= n + 1
+            @inbounds b.bits[i] = true
+        end
+    end)
+    b
+end
+export bitset, Bitset
+
 # `Inv(q)` — invert a relation. `q : A → B` becomes `Inv(q) : B → A`.
 # Surface syntax is postfix adjoint `q'`. `drive` is streaming (just flips
 # pairs, no allocation). `probe`/`member`/`drivekeys` lazy-build a
@@ -297,6 +336,27 @@ mutable struct Fold{D, R, S, Q, OP} <: Query{D, S}
     init::S
     cache::Union{Nothing, Dict{D, S}}
 end
+
+# `DenseFold(q, op, init, n)` — `Fold` variant that caches into a
+# `Vector{S}` of length `n+1` (plus a parallel `BitVector` presence map)
+# instead of a `Dict{D, S}`. Use when D coerces to `0..n` ints (entity
+# IDs, or a packed-byte index like Q1's `(rf, ls)`). Avoids hash + entry
+# alloc per reduce step. Surface syntax: `q ▷ (op, init, n)` — adding a
+# trailing `n::Int` to the existing 2-tuple opts in to the dense form.
+mutable struct DenseFold{D, R, S, Q, OP} <: Query{D, S}
+    q::Q
+    op::OP
+    init::S
+    n::Int
+    cache::Union{Nothing, Tuple{Vector{S}, BitVector}}
+end
+
+# coerce/unbox between a DenseFold's D type and its int slot index. D must
+# be `Int` or `ID{E}` — the only two domain shapes used by TPC-H.
+@inline _denseidx(d::Int)   = d
+@inline _denseidx(d::ID)    = d.id
+@inline _densebox(::Type{Int}, i::Int) = i
+@inline _densebox(::Type{ID{E}}, i::Int) where E = ID{E}(i)
 
 # `BufFold(q, f)` — per-key buffered reduce. Per key, collect all values
 # into a `Vector{R}` then call `f(vs) → S`. Use when the reducer needs
@@ -379,6 +439,13 @@ Base.adjoint(q::Query{A, B}) where {A, B} = Inv{B, A, typeof(q)}(q, nothing)
 # `(S, R) → S` reductions supported. Free function, no getproperty overload.
 function ▷(q::Query{D, R}, opinit::Tuple{OP, S}) where {D, R, OP, S}
     Fold{D, R, S, typeof(q), OP}(q, opinit[1], opinit[2], nothing)
+end
+
+# `▷` with a 3-tuple `(op, init, n)` opts in to `DenseFold` — `Vector{S}`-
+# backed group cache over the dense int domain `0..n`. The user explicitly
+# states the bound; no heuristic dense-vs-hash selection.
+function ▷(q::Query{D, R}, opinitn::Tuple{OP, S, Int}) where {D, R, OP, S}
+    DenseFold{D, R, S, typeof(q), OP}(q, opinitn[1], opinitn[2], opinitn[3], nothing)
 end
 export ▷
 
@@ -726,6 +793,37 @@ end
     k(s)
 end
 
+# ---- DenseFold: per-key foldl with `Vector{S}` cache over `0..n` ----
+function _dfold_cache(n::DenseFold{D, R, S, Q, OP}) where {D, R, S, Q, OP}
+    n.cache === nothing || return n.cache::Tuple{Vector{S}, BitVector}
+    sz   = n.n + 1
+    vals = fill(n.init, sz)
+    seen = falses(sz)
+    op   = n.op
+    init = n.init
+    drive(n.q, (d, v) -> begin
+        i = _denseidx(d) + 1
+        if 1 <= i <= sz
+            vals[i] = op(seen[i] ? vals[i] : init, v)
+            seen[i] = true
+        end
+    end)
+    n.cache = (vals, seen)
+end
+@inline function drive(n::DenseFold{D, R, S, Q, OP}, k) where {D, R, S, Q, OP}
+    (vals, seen) = _dfold_cache(n)
+    @inbounds for i in eachindex(vals)
+        seen[i] && k(_densebox(D, i - 1), vals[i])
+    end
+end
+@inline function probe(n::DenseFold{D, R, S, Q, OP}, d, k) where {D, R, S, Q, OP}
+    (vals, seen) = _dfold_cache(n)
+    i = _denseidx(d) + 1
+    @inbounds if 1 <= i <= length(vals) && seen[i]
+        k(vals[i])
+    end
+end
+
 # ---- BufFold: per-key buffered reduce, lazy-cached ----
 function _buf_cache(n::BufFold{D, R, S, Q, F}) where {D, R, S, Q, F}
     n.cache === nothing || return n.cache::Dict{D, S}
@@ -793,6 +891,21 @@ end
 @inline probe_any(u::Universe{E}, x::ID{E}, k) where {E} =
     (1 <= x.id <= u.n) && k(())
 
+# ---- Bitset: BitVector-backed dense Unary{D}; member is one bit-test ----
+@inline function drive(b::Bitset{D}, k) where {D}
+    @inbounds for i in eachindex(b.bits)
+        b.bits[i] && k(_densebox(D, i - 1), ())
+    end
+end
+@inline function probe(b::Bitset{D}, x, k) where {D}
+    i = _denseidx(x) + 1
+    @inbounds (1 <= i <= length(b.bits) && b.bits[i]) && (k(()); nothing)
+end
+@inline function probe_any(b::Bitset{D}, x, k) where {D}
+    i = _denseidx(x) + 1
+    @inbounds (1 <= i <= length(b.bits) && b.bits[i]) && k(())
+end
+
 @inline drive(s::Keys, k) = drive(s.a, (x, _) -> k(x, ()))
 @inline probe(s::Keys, x, k) = probe_any(s.a, x, _ -> true) && (k(()); nothing)
 @inline probe_any(s::Keys, x, k) = probe_any(s.a, x, _ -> true) && k(())
@@ -847,6 +960,11 @@ end
 @inline probe_any(n::Diff, x, k) =
     (!probe_any(n.b, x, _ -> true)) && probe_any(n.a, x, k)
 @inline probe_any(n::Materialized, x, k) = _idx_probe_any(_cidx(n), x, k)
+@inline function probe_any(n::DenseFold{D, R, S, Q, OP}, d, k) where {D, R, S, Q, OP}
+    (vals, seen) = _dfold_cache(n)
+    i = _denseidx(d) + 1
+    @inbounds (1 <= i <= length(vals) && seen[i]) && k(vals[i])
+end
 # generic fallback (Prod and other shapes) — no early exit, rarely on hot paths
 function probe_any(q::Query, x, k)
     found = Ref(false)

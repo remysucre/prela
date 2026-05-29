@@ -19,7 +19,10 @@ if suite == "job"
     qs = [(name, oracle, () -> eval_fn(f)) for (name, oracle, f) in Main._Q]
 elseif suite == "tpch"
     include("TPCH.jl")
-    include("tpch_queries.jl")
+    variant = get(ENV, "QS", "idiomatic")
+    variant in ("idiomatic", "optimized") ||
+        error("QS must be \"idiomatic\" or \"optimized\", got $(repr(variant))")
+    include("tpch_queries_$(variant).jl")
     # TPC-H entries: (name, oracle, f, sort_by, limit, row).
     qs = Tuple{String, String, Function}[]
     for (name, oracle, f, sort_by, limit, row) in Main._QT
