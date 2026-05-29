@@ -59,16 +59,18 @@ def parse_julia(path):
 
 def main():
     ido   = parse_rust(DATA / "idiomatic.txt")
+    opt   = parse_rust(DATA / "optimized.txt")
     duck  = parse_duck(DATA / "duckdb_st.txt")
     julia = parse_julia(DATA / "julia_tpch.txt")
 
     qs = list(range(1, 23))
     xs = [duck[q]  for q in qs]
     yr = [ido[q]   for q in qs]
+    yo = [opt[q]   for q in qs]
     yj = [julia[q] for q in qs]
 
-    lo = min(min(xs), min(yr), min(yj)) * 0.5
-    hi = max(max(xs), max(yr), max(yj)) * 2.0
+    lo = min(min(xs), min(yr), min(yo), min(yj)) * 0.5
+    hi = max(max(xs), max(yr), max(yo), max(yj)) * 2.0
 
     fig, ax = plt.subplots(figsize=(8, 8))
     ax.plot([lo, hi], [lo, hi], color="#888", linestyle="--", linewidth=1,
@@ -78,6 +80,9 @@ def main():
     ax.scatter(xs, yr, s=40, color="#2BA84A", edgecolor="black",
                linewidth=0.4, alpha=0.85, label="Rust prela (idiomatic)",
                zorder=3)
+    ax.scatter(xs, yo, s=40, color="#E07B1C", edgecolor="black",
+               linewidth=0.4, alpha=0.85, label="Rust prela (optimized)",
+               zorder=4, marker="D")
 
     ax.set_xscale("log"); ax.set_yscale("log")
     ax.set_xlim(lo, hi);  ax.set_ylim(lo, hi)
@@ -86,11 +91,12 @@ def main():
     ax.set_xlabel("DuckDB-ST time (s, log)")
     ax.set_ylabel("prela time (s, log)")
 
-    tx = sum(xs); tr = sum(yr); tj = sum(yj)
+    tx = sum(xs); tr = sum(yr); to = sum(yo); tj = sum(yj)
     ax.set_title(
         f"TPC-H SF=1 — prela vs DuckDB single-threaded\n"
-        f"Rust  {tr:>5.2f}s  ({tr/tx:.2f}× of DuckDB)   "
-        f"Julia {tj:>5.2f}s  ({tj/tx:.2f}× of DuckDB)"
+        f"Rust ido  {tr:>5.2f}s ({tr/tx:.2f}×)   "
+        f"Rust opt {to:>5.2f}s ({to/tx:.2f}×)   "
+        f"Julia {tj:>5.2f}s ({tj/tx:.2f}×)"
     )
     ax.legend(loc="upper left", fontsize=10)
 
