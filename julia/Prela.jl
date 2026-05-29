@@ -765,12 +765,44 @@ end
     probe_any(n.b, x, _ -> true) || probe(n.a, x, k)
 
 # ---- Prod (n-ary ×) ----
-@inline _pp(::Tuple{}, x, acc, k) = k(acc)
-@inline _pp(ops::Tuple, x, acc, k) =
-    probe(ops[1], x, y -> _pp(Base.tail(ops), x, (acc..., y), k))
-@inline probe(n::Prod, x, k) = _pp(n.ops, x, (), k)
-@inline drive(n::Prod, k) =
-    drive(n.ops[1], (x, y1) -> _pp(Base.tail(n.ops), x, (y1,), t -> k(x, t)))
+# Generated drive/probe — per-arity unroll. The previous recursive `_pp`
+# (`probe(ops[1], x, y -> _pp(tail(ops), x, (acc..., y), k))`) wouldn't
+# unroll at compile time, so each level built a closure capture on the
+# growing `acc` tuple. The result was ~3 heap allocations per produced
+# row (visible in `Profile.Allocs` as the `_pp` closure). A `@generated`
+# function emits a flat nest specialized to the concrete tuple length,
+# so the closure chain is just N straight-line `probe(..., y -> probe(...))`
+# calls — fully inlinable, no recursion.
+# `@generated` bodies must be pure — Julia checks for allocations/closures
+# in the generator itself, not the returned AST. We build the per-arity AST
+# in a helper called from a normal function, then `@eval` per-arity
+# specializations at module-load time. The same effect as @generated.
+_prod_yvar(i::Int) = Symbol("y_", i)
+function _prod_probe_body(N::Int)
+    yvars = ntuple(_prod_yvar, N)
+    body = Expr(:call, :k, Expr(:tuple, yvars...))
+    for i in N:-1:1
+        body = Expr(:call, :probe, :(ops[$i]), :x, Expr(:->, yvars[i], body))
+    end
+    body
+end
+function _prod_drive_body(N::Int)
+    yvars = ntuple(_prod_yvar, N)
+    body = Expr(:call, :k, :x, Expr(:tuple, yvars...))
+    for i in N:-1:2
+        body = Expr(:call, :probe, :(ops[$i]), :x, Expr(:->, yvars[i], body))
+    end
+    body = Expr(:call, :drive, :(ops[1]),
+                Expr(:->, Expr(:tuple, :x, yvars[1]), body))
+    body
+end
+# Emit per-arity methods up to N=8 (Q1 has 4, Q2 has 6, no TPCH query is wider).
+for N in 1:8
+    @eval @inline _prod_probe(ops::NTuple{$N, Any}, x, k) = $(_prod_probe_body(N))
+    @eval @inline _prod_drive(ops::NTuple{$N, Any}, k)    = $(_prod_drive_body(N))
+end
+@inline probe(n::Prod, x, k) = _prod_probe(n.ops, x, k)
+@inline drive(n::Prod, k)    = _prod_drive(n.ops, k)
 
 # ---- Materialized: materialize once, then serve from vector + hash index ----
 # `A` (the inner query type) is named explicitly so the method specializes on
