@@ -17,7 +17,7 @@ module Prela
 #   →  composition  | ∨ union | ∧ intersection | ==,<,~,…  predicates
 #   ×  product (tightest) | -  difference | .field navigation
 
-export Rel, MapRel, VecRel, Relation, Query, SetQ, Unary, Universe, Entity, ID,
+export Rel, MapRel, VecRel, Relation, Query, Unary, UnaryVec, Universe, Entity, ID,
        primary, lookup_field, →, ∧, ∨, ×, ≁, vectorize,
        drive, probe, drivekeys, member, materialize, askeys
 
@@ -43,39 +43,57 @@ function _declare_if_needed(mod::Module, sym::Symbol)
 end
 
 # ===== query-tree type hierarchy ========================================
-# `Query{D, R}` — a lazy binary relation D → R.
-# `SetQ{D}`     — a lazy unary set over D.
+# Two disjoint shapes:
+#   `Query{D, R}` — a lazy binary relation D → R.
+#   `Unary{D}`    — a lazy set of D's (no value side).
+# Operators dispatch on which one they see (`→`, `:`, `←`, `-` each split
+# binary vs unary lhs). `askeys` lifts any Query to a Unary; Unary's
+# `askeys` is identity.
 
 abstract type Query{D, R} end
-abstract type SetQ{D} end
+abstract type Unary{D}    end
 
 _domof(::Query{D, R}) where {D, R} = D
-_domof(::SetQ{D}) where {D} = D
+_domof(::Unary{D})    where {D}    = D
 _rangeof(::Query{D, R}) where {D, R} = R
+_rangeof(::Unary)                    = Tuple{}
 
 # ===== leaf storage (also Query nodes) ==================================
 
-struct Unary{D} <: SetQ{D}
+# Vector-backed unary set — the concrete leaf for `Unary{D}` literals.
+struct UnaryVec{D} <: Unary{D}
     values::Vector{D}
 end
-Unary(vs::Vector{D}) where D = Unary{D}(vs)
+UnaryVec(vs::Vector{D}) where D = UnaryVec{D}(vs)
 
 # A dense primary-key universe ID{E}(1)..ID{E}(n) — stored as just `n`. The
 # entity tables have contiguous PKs, so "scanning the universe" is iterating a
 # range, with no N-element vector to hold or chase.
-struct Universe{E} <: SetQ{ID{E}}
+struct Universe{E} <: Unary{ID{E}}
     n::Int
 end
 
 mutable struct MapRel{D, R} <: Query{D, R}
     pairs::Vector{Pair{D, R}}
+    # Dense value array, indexed directly by `.id` when `D <: ID`. When
+    # non-empty (populated by `vectorize!`), drive/probe take the
+    # array-index fast path — physically equivalent to a column store.
+    # When empty, drive/probe fall back to the pairs/Dict path (the
+    # pre-`vectorize!` state).
+    values::Vector{R}
+    # `nothing` means values is fully populated (1:1 with the universe);
+    # a BitVector means `seen[i]` indicates whether slot `i` is real —
+    # used for sparse-PK entities (e.g. TPC-H Order: 1.5M rows, max-id 6M).
+    # drive/probe skip slots where `seen[i] == false`.
+    seen::Union{Nothing, BitVector}
     # forward index: dense Vector{Vector{R}} keyed by .id when D is ID{E}
     # (entity PKs are contiguous → array access, not a hash), else a Dict.
+    # Only built when `values` is empty (i.e. the rel isn't 1:1 dense).
     fwd::Union{Nothing, Vector{Vector{R}}, Dict{D, Vector{R}}}
     inv::Union{Nothing, Dict{R, Vector{D}}}   # inverse index, built lazily
 end
-MapRel{D, R}(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps, nothing, nothing)
-MapRel(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps, nothing, nothing)
+MapRel{D, R}(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps, R[], nothing, nothing, nothing)
+MapRel(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps, R[], nothing, nothing, nothing)
 
 struct VecRel{E, R} <: Query{ID{E}, R}
     values::Vector{R}
@@ -106,6 +124,44 @@ function vectorize(r::MapRel{ID{E}, R}, n::Int) where {E, R}
     all(seen) || error("MapRel is sparse over 1..$n: only $(count(seen))/$n filled")
     VecRel{E, R}(vals)
 end
+
+# `vectorize!(r, n)` — populate `r.values` in place from `r.pairs` so the
+# subsequent drive/probe calls take the dense-array fast path. No-op if
+# already vectorized. For 1:1 entity-keyed rels (the bulk of TPCH/JOB
+# columns) this replaces a `Vector{Vector{R}}` probe with a direct
+# `values[i]` load and removes the per-row Pair iteration in `drive`.
+# For sparse-PK rels (e.g. TPC-H Order's PK density is 25%), the same
+# dense `Vector{R}` is allocated and a `BitVector` records which slots
+# are real; drive skips the empty ones.
+function vectorize!(r::MapRel{ID{E}, R}, n::Int) where {E, R}
+    isempty(r.values) || return r
+    vals = Vector{R}(undef, n)
+    seen = falses(n)
+    for p in r.pairs
+        i = p.first.id
+        (1 <= i <= n) || error("$E ID $i out of dense range 1..$n")
+        seen[i] && error("$E duplicate ID $i — not 1:1")
+        @inbounds vals[i] = p.second
+        @inbounds seen[i] = true
+    end
+    r.values = vals
+    r.seen   = all(seen) ? nothing : seen
+    r.fwd    = nothing   # invalidate; values is the source of truth now
+    r
+end
+
+# Walk every entity-leaf relation registered via @entity and `vectorize!`
+# it, given a callback that returns the universe size for each entity.
+function vectorize_entities!(universe_size::Function)
+    for (E_sym, fields) in _ENTITY_FIELDS
+        E = getfield(parentmodule(@__MODULE__).Main, E_sym)   # caller's Main
+        n = universe_size(E_sym)
+        for f in fields
+            vectorize!(lookup_field(ID{E}, Val(f)), n)
+        end
+    end
+end
+export vectorize!, vectorize_entities!
 
 # ===== leaf indexes =====================================================
 # Each leaf carries its own forward/inverse index, built lazily on first use
@@ -213,7 +269,7 @@ end
     false
 end
 
-_unary_set(u::Unary{D}) where D = get!(() -> Set(u.values), _UNARY_SETS, u)::Set{D}
+_unary_set(u::UnaryVec{D}) where D = get!(() -> Set(u.values), _UNARY_SETS, u)::Set{D}
 
 # ===== predicate payloads (typed so codegen branches statically) ========
 
@@ -241,10 +297,13 @@ struct Restrict{D, R, A, B}   <: Query{D, R};  a::A;  b::B;  end   # a:SetQ, b:Q
 struct Diff{D, R, A, B}       <: Query{D, R};  a::A;  b::B;  end   # a:Query, b:SetQ
 struct Prod{D, R, T<:Tuple}   <: Query{D, R};  ops::T;  end
 
-struct Keys{D, A}    <: SetQ{D};  a::A;  end                       # Query → SetQ
-struct Conj{D, A, B} <: SetQ{D};  a::A;  b::B;  end
-struct Disj{D, A, B} <: SetQ{D};  a::A;  b::B;  end
-struct SetDiff{D, A, B} <: SetQ{D};  a::A;  b::B;  end
+struct Keys{D, A}    <: Unary{D};  a::A;  end                       # any Query → Unary
+struct Conj{D, A, B} <: Unary{D};  a::A;  b::B;  end                # `∧`: symmetric intersection
+struct Disj{D, A, B} <: Unary{D};  a::A;  b::B;  end
+struct SetDiff{D, A, B} <: Unary{D};  a::A;  b::B;  end
+# `:` on Unary lhs — directional restriction. Same CPS behavior as Conj
+# (drive lhs, probe rhs), distinct type so source intent is legible.
+struct URestrict{D, A, B} <: Unary{D};  a::A;  b::B;  end
 
 # `materialize(q)` — the one explicit "bang". Prela is top-down / non-
 # materialized by default: a shared subexpression is re-driven on every use.
@@ -260,11 +319,50 @@ mutable struct Materialized{D, R, A} <: Query{D, R}
 end
 
 # `materialize` on a set-query: evaluate once into a vector + membership set.
-mutable struct MatSet{D, A} <: SetQ{D}
+mutable struct MatSet{D, A} <: Unary{D}
     a::A
     keys::Union{Nothing, Vector{D}}
     set::Union{Nothing, Set{D}}
 end
+
+# `Bitset(n)` — dense `BitVector`-backed `Unary{D}`. Drop-in replacement
+# for `MatSet` when D coerces to ints `0..n` (the only TPCH shapes are
+# `Int` and `ID{E}`): `member` becomes one bit-test, `drive` is a bit scan.
+# Use to hoist a per-row predicate (regex, multi-hop nav, expensive
+# compare) out of the big-side scan: precompute it once into a `Bitset`
+# over the small domain, then `Li.part in green_parts` per lineitem is
+# `O(1)` bit-test instead of re-evaluating the predicate.
+mutable struct Bitset{D} <: Unary{D}
+    bits::BitVector  # length n+1; bit i means member at int slot (i-1)
+    n::Int
+end
+Bitset{D}(n::Int) where {D} = Bitset{D}(falses(n + 1), n)
+
+# `bitset(s, n)` — materialize a `Unary{D}` into a `Bitset{D}`.
+function bitset(s::Unary{D}, n::Int) where {D}
+    b = Bitset{D}(n)
+    drivekeys(s, x -> begin
+        i = _denseidx(x) + 1
+        if 1 <= i <= n + 1
+            @inbounds b.bits[i] = true
+        end
+    end)
+    b
+end
+# `bitset(q, n)` — materialize a `Query{D, R}` value-side `R` into a
+# `Bitset{R}`. Useful for "set of Rs that this Query emits", mirroring the
+# Rust port's `Bitset::from_drive` for late-orderkey scans.
+function bitset(q::Query{D, R}, n::Int) where {D, R}
+    b = Bitset{R}(n)
+    drive(q, (_, x) -> begin
+        i = _denseidx(x) + 1
+        if 1 <= i <= n + 1
+            @inbounds b.bits[i] = true
+        end
+    end)
+    b
+end
+export bitset, Bitset
 
 # `Inv(q)` — invert a relation. `q : A → B` becomes `Inv(q) : B → A`.
 # Surface syntax is postfix adjoint `q'`. `drive` is streaming (just flips
@@ -288,6 +386,27 @@ mutable struct Fold{D, R, S, Q, OP} <: Query{D, S}
     init::S
     cache::Union{Nothing, Dict{D, S}}
 end
+
+# `DenseFold(q, op, init, n)` — `Fold` variant that caches into a
+# `Vector{S}` of length `n+1` (plus a parallel `BitVector` presence map)
+# instead of a `Dict{D, S}`. Use when D coerces to `0..n` ints (entity
+# IDs, or a packed-byte index like Q1's `(rf, ls)`). Avoids hash + entry
+# alloc per reduce step. Surface syntax: `q ▷ (op, init, n)` — adding a
+# trailing `n::Int` to the existing 2-tuple opts in to the dense form.
+mutable struct DenseFold{D, R, S, Q, OP} <: Query{D, S}
+    q::Q
+    op::OP
+    init::S
+    n::Int
+    cache::Union{Nothing, Tuple{Vector{S}, BitVector}}
+end
+
+# coerce/unbox between a DenseFold's D type and its int slot index. D must
+# be `Int` or `ID{E}` — the only two domain shapes used by TPC-H.
+@inline _denseidx(d::Int)   = d
+@inline _denseidx(d::ID)    = d.id
+@inline _densebox(::Type{Int}, i::Int) = i
+@inline _densebox(::Type{ID{E}}, i::Int) where E = ID{E}(i)
 
 # `BufFold(q, f)` — per-key buffered reduce. Per key, collect all values
 # into a `Vector{R}` then call `f(vs) → S`. Use when the reducer needs
@@ -335,9 +454,9 @@ end
 # and member-checks `l` per row. Lets a user-written `∧`-style expression
 # put a Query-shaped predicate (like an `Inv` for EXISTS) on the left
 # without needing an explicit `!` — the operator does the materialization.
-struct LeftConj{D, ML, R} <: SetQ{D}
-    l::ML  # already materialized SetQ (MatSet) — fast member
-    r::R   # SetQ to drive
+struct LeftConj{D, ML, R} <: Unary{D}
+    l::ML  # already materialized predicate (MatSet) — fast probe_any
+    r::R   # predicate to drive
 end
 
 # constructors — extract D/M/R via dispatch
@@ -345,21 +464,22 @@ Compose(a::Query{D, M}, b::Query{M, R}) where {D, M, R} =
     Compose{D, M, R, typeof(a), typeof(b)}(a, b)
 Filter(a::Query{D, R}, p::P) where {D, R, P} =
     Filter{D, R, typeof(a), P}(a, p)
-Restrict(a::SetQ{D}, b::Query{D, R}) where {D, R} =
+Restrict(a::Unary{D}, b::Query{D, R}) where {D, R} =
     Restrict{D, R, typeof(a), typeof(b)}(a, b)
-Diff(a::Query{D, R}, b::SetQ{D}) where {D, R} =
+Diff(a::Query{D, R}, b::Unary{D}) where {D, R} =
     Diff{D, R, typeof(a), typeof(b)}(a, b)
 Keys(a::Query{D, R}) where {D, R} = Keys{D, typeof(a)}(a)
-Conj(a::SetQ{D}, b::SetQ{D}) where D = Conj{D, typeof(a), typeof(b)}(a, b)
-Disj(a::SetQ{D}, b::SetQ{D}) where D = Disj{D, typeof(a), typeof(b)}(a, b)
-SetDiff(a::SetQ{D}, b::SetQ{D}) where D = SetDiff{D, typeof(a), typeof(b)}(a, b)
+Conj(a::Unary{D}, b::Unary{D}) where D = Conj{D, typeof(a), typeof(b)}(a, b)
+URestrict(a::Unary{D}, b::Unary{D}) where D = URestrict{D, typeof(a), typeof(b)}(a, b)
+Disj(a::Unary{D}, b::Unary{D}) where D = Disj{D, typeof(a), typeof(b)}(a, b)
+SetDiff(a::Unary{D}, b::Unary{D}) where D = SetDiff{D, typeof(a), typeof(b)}(a, b)
 function Prod(ops::Tuple)
     D = _domof(ops[1])
     R = Tuple{map(_rangeof, ops)...}
     Prod{D, R, typeof(ops)}(ops)
 end
+materialize(s::Unary{D}) where {D} = MatSet{D, typeof(s)}(s, nothing, nothing)
 materialize(q::Query{D, R}) where {D, R} = Materialized{D, R, typeof(q)}(q, nothing, nothing)
-materialize(s::SetQ{D}) where {D} = MatSet{D, typeof(s)}(s, nothing, nothing)
 
 # Adjoint = inverse: `q'` on a Query{A, B} returns Inv : Query{B, A}.
 Base.adjoint(q::Query{A, B}) where {A, B} = Inv{B, A, typeof(q)}(q, nothing)
@@ -369,6 +489,13 @@ Base.adjoint(q::Query{A, B}) where {A, B} = Inv{B, A, typeof(q)}(q, nothing)
 # `(S, R) → S` reductions supported. Free function, no getproperty overload.
 function ▷(q::Query{D, R}, opinit::Tuple{OP, S}) where {D, R, OP, S}
     Fold{D, R, S, typeof(q), OP}(q, opinit[1], opinit[2], nothing)
+end
+
+# `▷` with a 3-tuple `(op, init, n)` opts in to `DenseFold` — `Vector{S}`-
+# backed group cache over the dense int domain `0..n`. The user explicitly
+# states the bound; no heuristic dense-vs-hash selection.
+function ▷(q::Query{D, R}, opinitn::Tuple{OP, S, Int}) where {D, R, OP, S}
+    DenseFold{D, R, S, typeof(q), OP}(q, opinitn[1], opinitn[2], opinitn[3], nothing)
 end
 export ▷
 
@@ -422,10 +549,9 @@ export ↦
 function ←(r::Query{D, RK}, s::Query{D, SV}) where {D, RK, SV}
     LeftCompose{D, RK, SV, typeof(r), typeof(s)}(r, s, nothing)
 end
-# `←` with a SetQ on the right: drive its keys, probe r per key. The SetQ has
-# no values, so we re-emit the key itself as the value (preserving the domain
-# for downstream composition). Result Query{RK, D}.
-function ←(r::Query{D, RK}, s::SetQ{D}) where {D, RK}
+# Unary-on-right: re-emit the key itself as the value, so downstream
+# composition keeps the domain. Result `Query{RK, D}`.
+function ←(r::Query{D, RK}, s::Unary{D}) where {D, RK}
     LeftCompose{D, RK, D, typeof(r), typeof(s)}(r, s, nothing)
 end
 export ←
@@ -436,12 +562,13 @@ export ←
 # `r : SetQ{B}` — no need to write `l'` manually. For `l : SetQ{B}` (no
 # values to invert), materializes l directly. `⩓` kept as a back-compat
 # alias.
-function ⩘(l::Query, r)
+function ⩘(l::Query{D, R}, r) where {D, R}
     ml = materialize(Keys(Base.adjoint(l)))   # MatSet over l's *value* type
     rs = askeys(r)
     LeftConj{_domof(rs), typeof(ml), typeof(rs)}(ml, rs)
 end
-function ⩘(l::SetQ, r)
+# Unary on the left: skip the Inv — materialize directly.
+function ⩘(l::Unary{D}, r) where {D}
     ml = materialize(l)
     rs = askeys(r)
     LeftConj{_domof(rs), typeof(ml), typeof(rs)}(ml, rs)
@@ -453,31 +580,35 @@ export ⩘, ⩓
 # Borrowed from Haskell's strictness bang; a query has no boolean-not, so `!`
 # is free to mean "force this leg".
 Base.:!(q::Query) = materialize(q)
-Base.:!(s::SetQ) = materialize(s)
+Base.:!(u::Unary) = materialize(u)
 
-askeys(q::Query) = Keys(q)
-askeys(s::SetQ) = s
+# `askeys` lifts any Query to a `Unary{D}` (its keyset) for use by
+# `∧`/`∨`/`-`/`InSetP`. Unaries are already keysets — no wrapping.
+askeys(q::Query{D, R}) where {D, R} = Keys(q)
+askeys(u::Unary)                     = u
 
 # ===== operators (build nodes) ==========================================
 # Navigation is `→` only — `q.field` overloads on Query/Unary were removed
 # (use `q → Type.field` instead). `Entity.field` (e.g. `Company.country`)
 # still works via the `@entity`-generated `Base.getproperty(::Type{E}, ...)`.
 
-# → composition / restriction / intersection
+# `→` composes binaries; `Unary{T} → Query{T, Z}` is domain-restriction;
+# `Query{X, Y} → Unary{Y}` is Filter (navigate-with-membership-check).
 →(a::Query{X, Y}, b::Query{Y, Z}) where {X, Y, Z} = Compose(a, b)
-→(a::SetQ{X},     b::Query{X, Z}) where {X, Z}    = Restrict(a, b)
-→(a::SetQ{X},     b::SetQ{X})     where {X}       = Conj(a, b)
-→(a::Query{X, Y}, b::SetQ{Y})     where {X, Y}    = Filter(a, InSetP(b))
+→(a::Query{X, Y}, b::Unary{Y})    where {X, Y}    = Filter(a, InSetP(askeys(b)))
+→(a::Unary{T},    b::Query{T, Z}) where {T, Z}    = Restrict(a, b)
 
 # ∧ ∨ : - ⊗
 ∧(a, b) = Conj(askeys(a), askeys(b))
 ∨(a, b) = Disj(askeys(a), askeys(b))
-Base.:(:)(a::SetQ{X},     b::SetQ{X})        where {X}       = Conj(a, b)
-Base.:(:)(a::SetQ{X},     b::Query{X, R})    where {X, R}    = Conj(a, askeys(b))
-Base.:(:)(a::Query{X, Y}, b::SetQ{Y})        where {X, Y}    = Filter(a, InSetP(b))
-Base.:(:)(a::Query{X, Y}, b::Query{Y, R})    where {X, Y, R} = Filter(a, InSetP(askeys(b)))
+# `:` filters: lhs's range by an rhs-predicate.
+Base.:(:)(a::Query{X, Y}, b) where {X, Y} = Filter(a, InSetP(askeys(b)))
+# When lhs is a Unary, `:` is directional restriction (drive lhs, probe
+# rhs) — different intent from `∧` (symmetric). Lifts to `URestrict`.
+Base.:(:)(a::Unary{T}, b)    where {T}    = URestrict(a, askeys(b))
+# `-`: Diff for value-bearing lhs, SetDiff for unary lhs.
 Base.:-(a::Query{D, R}, b) where {D, R} = Diff(a, askeys(b))
-Base.:-(a::SetQ{D},     b) where {D}    = SetDiff(a, askeys(b))
+Base.:-(a::Unary{D},    b) where {D}    = SetDiff(a, askeys(b))
 # Product — `⊗` is the canonical spelling (tensor-product convention from math).
 # `×` is a legacy alias; both build flat `Prod` nodes.
 ⊗(a::Query, b::Query) = Prod((a, b))
@@ -543,7 +674,41 @@ Base.:~(q::Query{D, ID{E}}, re::Regex) where {D, E} = Compose(q, primary(E)) ~ r
         k(p.first, p.second)
     end
 end
+# Entity-keyed MapRel: dense-Vec fast path when `values` is populated
+# (post-`vectorize!`). Iterates `1..n` and emits `(ID{E}(i), values[i])` —
+# a tight loop with no per-row Pair construction and no Vector{Vector{R}}
+# indirection. Falls back to the generic pairs-iteration when not yet
+# vectorized.
+@inline function drive(r::MapRel{ID{E}, R}, k) where {E, R}
+    v = r.values
+    if !isempty(v)
+        s = r.seen
+        if s === nothing
+            @inbounds for i in eachindex(v)
+                k(ID{E}(i), v[i])
+            end
+        else
+            @inbounds for i in eachindex(v)
+                s[i] && k(ID{E}(i), v[i])
+            end
+        end
+    else
+        for p in r.pairs
+            k(p.first, p.second)
+        end
+    end
+end
 @inline probe(r::MapRel, x, k) = _idx_probe(fwd_index(r), x, k)
+@inline function probe(r::MapRel{ID{E}, R}, x::ID{E}, k) where {E, R}
+    v = r.values
+    if !isempty(v)
+        s = r.seen
+        i = x.id
+        @inbounds (1 <= i <= length(v) && (s === nothing || s[i])) && (k(v[i]); nothing)
+    else
+        _idx_probe(fwd_index(r), x, k)
+    end
+end
 @inline function drive(r::VecRel{E, R}, k) where {E, R}
     v = r.values
     @inbounds for i in eachindex(v)
@@ -589,21 +754,55 @@ end
 @inline drive(n::Filter{D,R,A,<:InSetP}, k) where {D,R,A} =
     drive(n.a, (x, y) -> member(n.pred.s, y) && k(x, y))
 
-# ---- Restrict (a:SetQ : b:Query) — drive the keys, probe the rel ----
-@inline drive(n::Restrict, k) = drivekeys(n.a, x -> probe(n.b, x, y -> k(x, y)))
-@inline probe(n::Restrict, x, k) = member(n.a, x) && probe(n.b, x, k)
+# ---- Restrict (a:predicate, b:Query) — drive a, probe b per key ----
+@inline drive(n::Restrict, k) = drive(n.a, (x, _) -> probe(n.b, x, y -> k(x, y)))
+@inline probe(n::Restrict, x, k) = probe_any(n.a, x, _ -> probe(n.b, x, k))
 
-# ---- Diff (a:Query - b:SetQ) ----
-@inline drive(n::Diff, k) = drive(n.a, (x, y) -> member(n.b, x) || k(x, y))
-@inline probe(n::Diff, x, k) = member(n.b, x) || probe(n.a, x, k)
+# ---- Diff (a:Query - b:predicate) ----
+@inline drive(n::Diff, k) =
+    drive(n.a, (x, y) -> probe_any(n.b, x, _ -> true) || k(x, y))
+@inline probe(n::Diff, x, k) =
+    probe_any(n.b, x, _ -> true) || probe(n.a, x, k)
 
 # ---- Prod (n-ary ×) ----
-@inline _pp(::Tuple{}, x, acc, k) = k(acc)
-@inline _pp(ops::Tuple, x, acc, k) =
-    probe(ops[1], x, y -> _pp(Base.tail(ops), x, (acc..., y), k))
-@inline probe(n::Prod, x, k) = _pp(n.ops, x, (), k)
-@inline drive(n::Prod, k) =
-    drive(n.ops[1], (x, y1) -> _pp(Base.tail(n.ops), x, (y1,), t -> k(x, t)))
+# Generated drive/probe — per-arity unroll. The previous recursive `_pp`
+# (`probe(ops[1], x, y -> _pp(tail(ops), x, (acc..., y), k))`) wouldn't
+# unroll at compile time, so each level built a closure capture on the
+# growing `acc` tuple. The result was ~3 heap allocations per produced
+# row (visible in `Profile.Allocs` as the `_pp` closure). A `@generated`
+# function emits a flat nest specialized to the concrete tuple length,
+# so the closure chain is just N straight-line `probe(..., y -> probe(...))`
+# calls — fully inlinable, no recursion.
+# `@generated` bodies must be pure — Julia checks for allocations/closures
+# in the generator itself, not the returned AST. We build the per-arity AST
+# in a helper called from a normal function, then `@eval` per-arity
+# specializations at module-load time. The same effect as @generated.
+_prod_yvar(i::Int) = Symbol("y_", i)
+function _prod_probe_body(N::Int)
+    yvars = ntuple(_prod_yvar, N)
+    body = Expr(:call, :k, Expr(:tuple, yvars...))
+    for i in N:-1:1
+        body = Expr(:call, :probe, :(ops[$i]), :x, Expr(:->, yvars[i], body))
+    end
+    body
+end
+function _prod_drive_body(N::Int)
+    yvars = ntuple(_prod_yvar, N)
+    body = Expr(:call, :k, :x, Expr(:tuple, yvars...))
+    for i in N:-1:2
+        body = Expr(:call, :probe, :(ops[$i]), :x, Expr(:->, yvars[i], body))
+    end
+    body = Expr(:call, :drive, :(ops[1]),
+                Expr(:->, Expr(:tuple, :x, yvars[1]), body))
+    body
+end
+# Emit per-arity methods up to N=8 (Q1 has 4, Q2 has 6, no TPCH query is wider).
+for N in 1:8
+    @eval @inline _prod_probe(ops::NTuple{$N, Any}, x, k) = $(_prod_probe_body(N))
+    @eval @inline _prod_drive(ops::NTuple{$N, Any}, k)    = $(_prod_drive_body(N))
+end
+@inline probe(n::Prod, x, k) = _prod_probe(n.ops, x, k)
+@inline drive(n::Prod, k)    = _prod_drive(n.ops, k)
 
 # ---- Materialized: materialize once, then serve from vector + hash index ----
 # `A` (the inner query type) is named explicitly so the method specializes on
@@ -656,8 +855,6 @@ end
     vs === nothing && return
     for a in vs; k(a); end
 end
-@inline drivekeys(n::Inv, k) = (for b in keys(_inv_idx(n)); k(b); end)
-@inline member(n::Inv, x) = haskey(_inv_idx(n), x)
 
 # ---- LeftCompose: streaming drive; lazy-indexed probe/member/drivekeys ----
 # `r ← s` semantically equals `r' ∘ s` but flips which side scans. Drives
@@ -669,9 +866,11 @@ end
 @inline function drive(n::LeftCompose, k)
     drive(n.s, (d, v) -> probe(n.r, d, rk -> k(rk, v)))
 end
-# SetQ-on-right specialization: drivekeys instead of drive; emit the key as value.
-@inline function drive(n::LeftCompose{D, RK, SV, QR, QS}, k) where {D, RK, SV, QR, QS <: SetQ}
-    drivekeys(n.s, d -> probe(n.r, d, rk -> k(rk, d)))
+# Unary-on-right specialization (SV === D, set by the `←(r, s::Unary{D})`
+# constructor): re-emit the key as the value, since the rhs carries no
+# payload of its own.
+@inline function drive(n::LeftCompose{D, RK, D, QR, QS}, k) where {D, RK, QR, QS<:Unary{D}}
+    drive(n.s, (d, _) -> probe(n.r, d, rk -> k(rk, d)))
 end
 function _lc_idx(n::LeftCompose{D, RK, SV, QR, QS}) where {D, RK, SV, QR, QS}
     n.idx === nothing || return n.idx::Dict{RK, Vector{SV}}
@@ -684,12 +883,13 @@ end
     vs === nothing && return
     for v in vs; k(v); end
 end
-@inline drivekeys(n::LeftCompose, k) = (for rk in keys(_lc_idx(n)); k(rk); end)
-@inline member(n::LeftCompose, x) = haskey(_lc_idx(n), x)
-
 # ---- LeftConj: drive r, member-check materialized l ----
-@inline drivekeys(n::LeftConj, k) = drivekeys(n.r, x -> member(n.l, x) && k(x))
-@inline member(n::LeftConj, x) = member(n.l, x) && member(n.r, x)
+@inline drive(n::LeftConj, k) =
+    drive(n.r, (x, _) -> probe_any(n.l, x, _ -> true) && k(x, ()))
+@inline probe(n::LeftConj, x, k) =
+    probe_any(n.l, x, _ -> true) && probe_any(n.r, x, _ -> true) && (k(()); nothing)
+@inline probe_any(n::LeftConj, x, k) =
+    probe_any(n.l, x, _ -> true) && probe_any(n.r, x, _ -> true) && k(())
 
 # ---- Fold: per-key foldl, lazy-cached ----
 function _fold_cache(n::Fold{D, R, S, Q, OP}) where {D, R, S, Q, OP}
@@ -707,6 +907,36 @@ end
     s = get(_fold_cache(n), d, nothing)
     s === nothing && return
     k(s)
+end
+
+# ---- DenseFold: per-key foldl with `Vector{S}` cache over `0..n` ----
+function _dfold_cache(n::DenseFold{D, R, S, Q, OP}) where {D, R, S, Q, OP}
+    n.cache === nothing || return n.cache::Tuple{Vector{S}, BitVector}
+    sz   = n.n + 1
+    vals = fill(n.init, sz)   # pre-init means `vals[i]` IS the right operand
+    seen = falses(sz)         # whether slot has been touched (for drive enum)
+    op   = n.op
+    drive(n.q, (d, v) -> begin
+        i = _denseidx(d) + 1
+        if 1 <= i <= sz
+            @inbounds vals[i] = op(vals[i], v)
+            @inbounds seen[i] = true
+        end
+    end)
+    n.cache = (vals, seen)
+end
+@inline function drive(n::DenseFold{D, R, S, Q, OP}, k) where {D, R, S, Q, OP}
+    (vals, seen) = _dfold_cache(n)
+    @inbounds for i in eachindex(vals)
+        seen[i] && k(_densebox(D, i - 1), vals[i])
+    end
+end
+@inline function probe(n::DenseFold{D, R, S, Q, OP}, d, k) where {D, R, S, Q, OP}
+    (vals, seen) = _dfold_cache(n)
+    i = _denseidx(d) + 1
+    @inbounds if 1 <= i <= length(vals) && seen[i]
+        k(vals[i])
+    end
 end
 
 # ---- BufFold: per-key buffered reduce, lazy-cached ----
@@ -749,7 +979,7 @@ end
 function _mkeys(n::MatSet{D}) where {D}
     if n.keys === nothing
         out = D[]
-        drivekeys(n.a, x -> push!(out, x))
+        drive(n.a, (x, _) -> push!(out, x))
         n.keys = out
     end
     n.keys
@@ -758,36 +988,88 @@ function _mset(n::MatSet{D}) where {D}
     n.set === nothing && (n.set = Set(_mkeys(n)))
     n.set
 end
-@inline drivekeys(n::MatSet, k) = (for x in _mkeys(n); k(x); end)
-@inline member(n::MatSet, x) = x in _mset(n)
+@inline drive(n::MatSet, k) = (for x in _mkeys(n); k(x, ()); end)
+@inline probe(n::MatSet, x, k) = (x in _mset(n)) && (k(()); nothing)
+@inline probe_any(n::MatSet, x, k) = (x in _mset(n)) && k(())
 
-# ---- SetQ: drivekeys + member ----
-@inline drivekeys(u::Unary, k) = (for v in u.values; k(v); end)
-@inline member(u::Unary, x) = x in _unary_set(u)
+# ---- former-SetQ types: drive emits (x, ()), probe_any tests membership ----
+# Drive emits unit-range pairs; `drivekeys` is a back-compat 1-liner alias
+# defined alongside `member` below.
 
-@inline drivekeys(u::Universe{E}, k) where {E} = (for i in 1:u.n; k(ID{E}(i)); end)
-@inline member(u::Universe{E}, x::ID{E}) where {E} = 1 <= x.id <= u.n
+@inline drive(u::UnaryVec{D}, k) where {D} = (for v in u.values; k(v, ()); end)
+@inline probe(u::UnaryVec, x, k) = (x in _unary_set(u)) && (k(()); nothing)
+@inline probe_any(u::UnaryVec, x, k) = (x in _unary_set(u)) && k(())
 
-@inline drivekeys(s::Keys, k) = drive(s.a, (x, _) -> k(x))
-@inline member(s::Keys, x) = member(s.a, x)
+@inline drive(u::Universe{E}, k) where {E} = (for i in 1:u.n; k(ID{E}(i), ()); end)
+@inline probe(u::Universe{E}, x::ID{E}, k) where {E} =
+    (1 <= x.id <= u.n) && (k(()); nothing)
+@inline probe_any(u::Universe{E}, x::ID{E}, k) where {E} =
+    (1 <= x.id <= u.n) && k(())
 
-@inline drivekeys(s::Conj, k) = drivekeys(s.a, x -> member(s.b, x) && k(x))
-@inline member(s::Conj, x) = member(s.a, x) && member(s.b, x)
-
-@inline drivekeys(s::Disj, k) = begin
-    drivekeys(s.a, k)
-    drivekeys(s.b, x -> member(s.a, x) || k(x))
+# ---- Bitset: BitVector-backed dense Unary{D}; member is one bit-test ----
+@inline function drive(b::Bitset{D}, k) where {D}
+    @inbounds for i in eachindex(b.bits)
+        b.bits[i] && k(_densebox(D, i - 1), ())
+    end
 end
-@inline member(s::Disj, x) = member(s.a, x) || member(s.b, x)
+@inline function probe(b::Bitset{D}, x, k) where {D}
+    i = _denseidx(x) + 1
+    @inbounds (1 <= i <= length(b.bits) && b.bits[i]) && (k(()); nothing)
+end
+@inline function probe_any(b::Bitset{D}, x, k) where {D}
+    i = _denseidx(x) + 1
+    @inbounds (1 <= i <= length(b.bits) && b.bits[i]) && k(())
+end
 
-@inline drivekeys(s::SetDiff, k) = drivekeys(s.a, x -> member(s.b, x) || k(x))
-@inline member(s::SetDiff, x) = member(s.a, x) && !member(s.b, x)
+@inline drive(s::Keys, k) = drive(s.a, (x, _) -> k(x, ()))
+@inline probe(s::Keys, x, k) = probe_any(s.a, x, _ -> true) && (k(()); nothing)
+@inline probe_any(s::Keys, x, k) = probe_any(s.a, x, _ -> true) && k(())
+
+@inline drive(s::Conj, k) =
+    drive(s.a, (x, _) -> probe_any(s.b, x, _ -> true) && k(x, ()))
+@inline probe(s::Conj, x, k) =
+    probe_any(s.a, x, _ -> true) && probe_any(s.b, x, _ -> true) && (k(()); nothing)
+@inline probe_any(s::Conj, x, k) =
+    probe_any(s.a, x, _ -> true) && probe_any(s.b, x, _ -> true) && k(())
+
+@inline drive(s::URestrict, k) =
+    drive(s.a, (x, _) -> probe_any(s.b, x, _ -> true) && k(x, ()))
+@inline probe(s::URestrict, x, k) =
+    probe_any(s.a, x, _ -> true) && probe_any(s.b, x, _ -> true) && (k(()); nothing)
+@inline probe_any(s::URestrict, x, k) =
+    probe_any(s.a, x, _ -> true) && probe_any(s.b, x, _ -> true) && k(())
+
+@inline function drive(s::Disj, k)
+    drive(s.a, (x, _) -> k(x, ()))
+    drive(s.b, (x, _) -> probe_any(s.a, x, _ -> true) || (k(x, ()); nothing))
+end
+@inline probe(s::Disj, x, k) =
+    (probe_any(s.a, x, _ -> true) || probe_any(s.b, x, _ -> true)) && (k(()); nothing)
+@inline probe_any(s::Disj, x, k) =
+    (probe_any(s.a, x, _ -> true) || probe_any(s.b, x, _ -> true)) && k(())
+
+@inline drive(s::SetDiff, k) =
+    drive(s.a, (x, _) -> probe_any(s.b, x, _ -> true) || (k(x, ()); nothing))
+@inline probe(s::SetDiff, x, k) =
+    probe_any(s.a, x, _ -> true) && !probe_any(s.b, x, _ -> true) && (k(()); nothing)
+@inline probe_any(s::SetDiff, x, k) =
+    probe_any(s.a, x, _ -> true) && !probe_any(s.b, x, _ -> true) && k(())
 
 # `probe_any(q, x, k)` — like `probe`, but the continuation returns a Bool and
 # `probe_any` stops, returning true, as soon as `k` does. The Bool is threaded
 # through return values (no mutable cell) so the whole chain is allocation-free
 # when inlined — this is the hot path for `member` on a driven stream.
 @inline probe_any(r::MapRel, x, k) = _idx_probe_any(fwd_index(r), x, k)
+@inline function probe_any(r::MapRel{ID{E}, R}, x::ID{E}, k) where {E, R}
+    v = r.values
+    if !isempty(v)
+        s = r.seen
+        i = x.id
+        @inbounds (1 <= i <= length(v) && (s === nothing || s[i])) && k(v[i])
+    else
+        _idx_probe_any(fwd_index(r), x, k)
+    end
+end
 @inline probe_any(r::VecRel{E, R}, x::ID{E}, k) where {E, R} =
     k(@inbounds r.values[x.id])
 @inline probe_any(n::Compose, x, k) = probe_any(n.a, x, m -> probe_any(n.b, m, k))
@@ -799,9 +1081,15 @@ end
     probe_any(n.a, x, y -> (y in n.pred.vs) && k(y))
 @inline probe_any(n::Filter{D,R,A,<:InSetP}, x, k) where {D,R,A} =
     probe_any(n.a, x, y -> member(n.pred.s, y) && k(y))
-@inline probe_any(n::Restrict, x, k) = member(n.a, x) && probe_any(n.b, x, k)
-@inline probe_any(n::Diff, x, k) = (!member(n.b, x)) && probe_any(n.a, x, k)
+@inline probe_any(n::Restrict, x, k) = probe_any(n.a, x, _ -> probe_any(n.b, x, k))
+@inline probe_any(n::Diff, x, k) =
+    (!probe_any(n.b, x, _ -> true)) && probe_any(n.a, x, k)
 @inline probe_any(n::Materialized, x, k) = _idx_probe_any(_cidx(n), x, k)
+@inline function probe_any(n::DenseFold{D, R, S, Q, OP}, d, k) where {D, R, S, Q, OP}
+    (vals, seen) = _dfold_cache(n)
+    i = _denseidx(d) + 1
+    @inbounds (1 <= i <= length(vals) && seen[i]) && k(vals[i])
+end
 # generic fallback (Prod and other shapes) — no early exit, rarely on hot paths
 function probe_any(q::Query, x, k)
     found = Ref(false)
@@ -809,8 +1097,13 @@ function probe_any(q::Query, x, k)
     found[]
 end
 
-# member of a Query = "is x in its domain".
+# member of a Query/Unary = "is x in its domain".
 @inline member(q::Query, x) = probe_any(q, x, _ -> true)
+@inline member(u::Unary, x) = probe_any(u, x, _ -> true)
+
+# `drivekeys(q, k)` — emit each domain key. Back-compat alias over `drive`.
+@inline drivekeys(q::Query, k) = drive(q, (x, _) -> k(x))
+@inline drivekeys(u::Unary, k) = drive(u, (x, _) -> k(x))
 
 # ===== terminals ========================================================
 # Queries are consumed by `drive`/`drivekeys` with a folding continuation
@@ -822,10 +1115,10 @@ function Base.collect(q::Query{D, R}) where {D, R}
     drive(q, (x, y) -> push!(out, x => y))
     MapRel{D, R}(out)
 end
-function Base.collect(s::SetQ{D}) where D
+function Base.collect(s::Unary{D}) where D
     out = D[]
-    drivekeys(s, x -> push!(out, x))
-    Unary{D}(out)
+    drive(s, (x, _) -> push!(out, x))
+    UnaryVec{D}(out)
 end
 
 # ===== schema sugar (@entity / @declare / @expose) ======================

@@ -235,3 +235,15 @@ const region   = Universe{Region}(length(_Region_name.pairs))
 println("Universes: lineitem=$(lineitem.n)  orders=$(orders.n)  customer=$(customer.n)  " *
         "supplier=$(supplier.n)  part=$(part.n)  partsupp=$(partsupp.n)  nation=$(nation.n)  " *
         "region=$(region.n)")
+
+# Vectorize every entity-leaf relation. After this, `Li.quantity` etc. take
+# the dense `values[i]` fast path in drive/probe — physically equivalent
+# to a column store, no `Vector{Vector{R}}` indirection per row.
+let t = time(), _u = Dict(
+        :Lineitem => lineitem.n, :Order => orders.n, :Customer => customer.n,
+        :Supplier => supplier.n, :Part => part.n, :PartSupp => partsupp.n,
+        :Nation => nation.n,     :Region => region.n,
+    )
+    Prela.vectorize_entities!(sym -> _u[sym])
+    println("Vectorized entity leaves in $(round(time()-t; digits=2))s")
+end

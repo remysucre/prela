@@ -168,3 +168,23 @@ python3 plot_job.py    # → job_scatter.png
 
 Both scripts read from `data/` and write the PNG next to themselves. The
 data files are captured from the bench runs above.
+
+### Regenerate the DuckDB baseline + TPCH oracles
+
+```bash
+cd rust/bench
+./run_job_duck.sh         # → data/job_duck.txt (canonical JOB, ST DuckDB)
+./regen_tpch_oracles.sh   # → /tmp/tpch_oracles/Q{2,7,8,...}.txt
+```
+
+`run_job_duck.sh` runs each canonical JOB query (from `../../join-order-benchmark/`)
+against a single-threaded DuckDB instance built from `~/projects/jobdata/parquet/`,
+captures cold/warm timings, and writes them in the `Run Time (s): real …`
+format that `plot_job.py` expects.
+
+`regen_tpch_oracles.sh` rebuilds the 14 file-loaded TPCH oracles that
+`julia/tpch_queries.jl` reads from `/tmp/tpch_oracles/` (the ones not
+inlined as string constants). It runs each canonical TPCH SQL against
+`cache/tpch/*.parquet` with `PRAGMA threads=1` (so Float64 sums are
+deterministic and the Q15 self-equality holds) and formats every decimal
+field to `%.2f` to match Julia's `_fmt(Float64)`.

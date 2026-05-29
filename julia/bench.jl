@@ -19,7 +19,10 @@ if suite == "job"
     qs = [(name, oracle, () -> eval_fn(f)) for (name, oracle, f) in Main._Q]
 elseif suite == "tpch"
     include("TPCH.jl")
-    include("tpch_queries.jl")
+    variant = get(ENV, "QS", "idiomatic")
+    variant in ("idiomatic", "optimized") ||
+        error("QS must be \"idiomatic\" or \"optimized\", got $(repr(variant))")
+    include("tpch_queries_$(variant).jl")
     # TPC-H entries: (name, oracle, f, sort_by, limit, row).
     qs = Tuple{String, String, Function}[]
     for (name, oracle, f, sort_by, limit, row) in Main._QT
@@ -36,6 +39,7 @@ end
 for (_, _, run) in qs
     try run() catch end
 end
+GC.gc(true)  # clear cold-pass garbage so the first warm query isn't penalized by it
 
 # Warm pass — wall-clock per query, written to stdout for the plot scripts.
 for (name, _oracle, run) in qs
