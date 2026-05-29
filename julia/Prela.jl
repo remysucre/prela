@@ -913,15 +913,14 @@ end
 function _dfold_cache(n::DenseFold{D, R, S, Q, OP}) where {D, R, S, Q, OP}
     n.cache === nothing || return n.cache::Tuple{Vector{S}, BitVector}
     sz   = n.n + 1
-    vals = fill(n.init, sz)
-    seen = falses(sz)
+    vals = fill(n.init, sz)   # pre-init means `vals[i]` IS the right operand
+    seen = falses(sz)         # whether slot has been touched (for drive enum)
     op   = n.op
-    init = n.init
     drive(n.q, (d, v) -> begin
         i = _denseidx(d) + 1
         if 1 <= i <= sz
-            vals[i] = op(seen[i] ? vals[i] : init, v)
-            seen[i] = true
+            @inbounds vals[i] = op(vals[i], v)
+            @inbounds seen[i] = true
         end
     end)
     n.cache = (vals, seen)
