@@ -75,13 +75,25 @@ end
 
 mutable struct MapRel{D, R} <: Query{D, R}
     pairs::Vector{Pair{D, R}}
+    # Dense value array, indexed directly by `.id` when `D <: ID`. When
+    # non-empty (populated by `vectorize!`), drive/probe take the
+    # array-index fast path — physically equivalent to a column store.
+    # When empty, drive/probe fall back to the pairs/Dict path (the
+    # pre-`vectorize!` state).
+    values::Vector{R}
+    # `nothing` means values is fully populated (1:1 with the universe);
+    # a BitVector means `seen[i]` indicates whether slot `i` is real —
+    # used for sparse-PK entities (e.g. TPC-H Order: 1.5M rows, max-id 6M).
+    # drive/probe skip slots where `seen[i] == false`.
+    seen::Union{Nothing, BitVector}
     # forward index: dense Vector{Vector{R}} keyed by .id when D is ID{E}
     # (entity PKs are contiguous → array access, not a hash), else a Dict.
+    # Only built when `values` is empty (i.e. the rel isn't 1:1 dense).
     fwd::Union{Nothing, Vector{Vector{R}}, Dict{D, Vector{R}}}
     inv::Union{Nothing, Dict{R, Vector{D}}}   # inverse index, built lazily
 end
-MapRel{D, R}(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps, nothing, nothing)
-MapRel(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps, nothing, nothing)
+MapRel{D, R}(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps, R[], nothing, nothing, nothing)
+MapRel(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps, R[], nothing, nothing, nothing)
 
 struct VecRel{E, R} <: Query{ID{E}, R}
     values::Vector{R}
@@ -112,6 +124,44 @@ function vectorize(r::MapRel{ID{E}, R}, n::Int) where {E, R}
     all(seen) || error("MapRel is sparse over 1..$n: only $(count(seen))/$n filled")
     VecRel{E, R}(vals)
 end
+
+# `vectorize!(r, n)` — populate `r.values` in place from `r.pairs` so the
+# subsequent drive/probe calls take the dense-array fast path. No-op if
+# already vectorized. For 1:1 entity-keyed rels (the bulk of TPCH/JOB
+# columns) this replaces a `Vector{Vector{R}}` probe with a direct
+# `values[i]` load and removes the per-row Pair iteration in `drive`.
+# For sparse-PK rels (e.g. TPC-H Order's PK density is 25%), the same
+# dense `Vector{R}` is allocated and a `BitVector` records which slots
+# are real; drive skips the empty ones.
+function vectorize!(r::MapRel{ID{E}, R}, n::Int) where {E, R}
+    isempty(r.values) || return r
+    vals = Vector{R}(undef, n)
+    seen = falses(n)
+    for p in r.pairs
+        i = p.first.id
+        (1 <= i <= n) || error("$E ID $i out of dense range 1..$n")
+        seen[i] && error("$E duplicate ID $i — not 1:1")
+        @inbounds vals[i] = p.second
+        @inbounds seen[i] = true
+    end
+    r.values = vals
+    r.seen   = all(seen) ? nothing : seen
+    r.fwd    = nothing   # invalidate; values is the source of truth now
+    r
+end
+
+# Walk every entity-leaf relation registered via @entity and `vectorize!`
+# it, given a callback that returns the universe size for each entity.
+function vectorize_entities!(universe_size::Function)
+    for (E_sym, fields) in _ENTITY_FIELDS
+        E = getfield(parentmodule(@__MODULE__).Main, E_sym)   # caller's Main
+        n = universe_size(E_sym)
+        for f in fields
+            vectorize!(lookup_field(ID{E}, Val(f)), n)
+        end
+    end
+end
+export vectorize!, vectorize_entities!
 
 # ===== leaf indexes =====================================================
 # Each leaf carries its own forward/inverse index, built lazily on first use
@@ -624,7 +674,41 @@ Base.:~(q::Query{D, ID{E}}, re::Regex) where {D, E} = Compose(q, primary(E)) ~ r
         k(p.first, p.second)
     end
 end
+# Entity-keyed MapRel: dense-Vec fast path when `values` is populated
+# (post-`vectorize!`). Iterates `1..n` and emits `(ID{E}(i), values[i])` —
+# a tight loop with no per-row Pair construction and no Vector{Vector{R}}
+# indirection. Falls back to the generic pairs-iteration when not yet
+# vectorized.
+@inline function drive(r::MapRel{ID{E}, R}, k) where {E, R}
+    v = r.values
+    if !isempty(v)
+        s = r.seen
+        if s === nothing
+            @inbounds for i in eachindex(v)
+                k(ID{E}(i), v[i])
+            end
+        else
+            @inbounds for i in eachindex(v)
+                s[i] && k(ID{E}(i), v[i])
+            end
+        end
+    else
+        for p in r.pairs
+            k(p.first, p.second)
+        end
+    end
+end
 @inline probe(r::MapRel, x, k) = _idx_probe(fwd_index(r), x, k)
+@inline function probe(r::MapRel{ID{E}, R}, x::ID{E}, k) where {E, R}
+    v = r.values
+    if !isempty(v)
+        s = r.seen
+        i = x.id
+        @inbounds (1 <= i <= length(v) && (s === nothing || s[i])) && (k(v[i]); nothing)
+    else
+        _idx_probe(fwd_index(r), x, k)
+    end
+end
 @inline function drive(r::VecRel{E, R}, k) where {E, R}
     v = r.values
     @inbounds for i in eachindex(v)
@@ -945,6 +1029,16 @@ end
 # through return values (no mutable cell) so the whole chain is allocation-free
 # when inlined — this is the hot path for `member` on a driven stream.
 @inline probe_any(r::MapRel, x, k) = _idx_probe_any(fwd_index(r), x, k)
+@inline function probe_any(r::MapRel{ID{E}, R}, x::ID{E}, k) where {E, R}
+    v = r.values
+    if !isempty(v)
+        s = r.seen
+        i = x.id
+        @inbounds (1 <= i <= length(v) && (s === nothing || s[i])) && k(v[i])
+    else
+        _idx_probe_any(fwd_index(r), x, k)
+    end
+end
 @inline probe_any(r::VecRel{E, R}, x::ID{E}, k) where {E, R} =
     k(@inbounds r.values[x.id])
 @inline probe_any(n::Compose, x, k) = probe_any(n.a, x, m -> probe_any(n.b, m, k))
