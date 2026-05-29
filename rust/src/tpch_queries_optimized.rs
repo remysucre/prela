@@ -385,11 +385,20 @@ const Q12: &str = "MAIL|6202|9324\n\
                    SHIP|6200|9262";
 
 fn q12(d: &TpchData) -> String {
+    // Conjuncts reordered by oracle-known selectivity (most selective first)
+    // so the `.and()` short-circuit shaves rows off each downstream predicate.
+    // The algebra preserves whatever order the user wrote — Prela has no
+    // stats-driven optimizer; here we hand-encode the order DuckDB's planner
+    // would pick, to show the algebra *can* express the optimal plan.
+    //   receiptdate ∈ [1994,1995): ~14%  (most selective)
+    //   shipmode IN (MAIL, SHIP):  ~29%
+    //   shipdate < commitdate:     ~49%
+    //   commit  < receipt:         ~62%  (barely filters; runs last)
     let live = (&d.lineitem)
+        .and((&d.li_receiptdate).during(19940101, 19950101).k())
         .and((&d.li_shipmode).in_v(vec!["MAIL", "SHIP"]).k())
-        .and((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k())
         .and((&d.li_shipdate).x(&d.li_commitdate).filt(|(s, c)| s < c).k())
-        .and((&d.li_receiptdate).during(19940101, 19950101).k());
+        .and((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k());
     let scan = (&live).o(&d.li_shipmode);
     let prio = (&live).o((&d.li_order).o(&d.ord_priority));
     let result = scan.lc(prio).fold((0_i64, 0_i64), |(h, l), pr| {
