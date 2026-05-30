@@ -130,21 +130,10 @@ struct Multi{T} end
 const Rel = Staging              # cache.jl serializes the staging leaves
 const Relation = Query
 
-Base.length(r::MapRel) = length(r.pairs)
-Base.length(r::VecRel) = length(r.values)
-Base.length(r::SparseRel) = count(r.seen)
-Base.length(r::MultiRel) = sum(length, r.fwd; init = 0)
-Base.isempty(r::MapRel) = isempty(r.pairs)
-Base.isempty(r::VecRel) = isempty(r.values)
-Base.isempty(r::SparseRel) = !any(r.seen)
-Base.isempty(r::MultiRel) = all(isempty, r.fwd)
-
-_pairs(r::MapRel) = r.pairs
-_pairs(r::VecRel{E}) where E = (ID{E}(i) => r.values[i] for i in eachindex(r.values))
-_pairs(r::SparseRel{E}) where E =
-    (ID{E}(i) => r.values[i] for i in eachindex(r.values) if r.seen[i])
-_pairs(r::MultiRel{E}) where E =
-    (ID{E}(i) => y for i in eachindex(r.fwd) for y in r.fwd[i])
+# (No `Base.length`/`isempty`/`_pairs` on the leaf or result types: relations
+# are consumed via drive/probe, never as collections, and a `length`/`isempty`
+# on a sparse/multi leaf would be a silent O(n) scan behind an O(1)-looking
+# name. Inspect a leaf's storage fields directly if you need a count.)
 
 # ===== sealing: Staging → static leaf storage ===========================
 # After load, each entity leaf is sealed once from its `pairs` into the
