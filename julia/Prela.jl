@@ -570,7 +570,10 @@ function ⩘(l::Unary{D}, r) where {D}
     LeftConj{_domof(r), typeof(ml), typeof(r)}(ml, r)   # drive r ignoring its value
 end
 function ⩘(l::Query{D, R}, r) where {D, R}
-    ml = materialize(Base.adjoint(l))         # MatSet over l's *value* type
+    # Materialize the adjoint: for an entity-keyed value type this gives `ml` a
+    # dense-array membership index (vs the `Inv`'s `Dict`), ~13% faster on q20's
+    # per-row member-check. (The `Inv` self-caches too, but only as a hash.)
+    ml = materialize(Base.adjoint(l))
     LeftConj{_domof(r), typeof(ml), typeof(r)}(ml, r)
 end
 const ⩓ = ⩘
