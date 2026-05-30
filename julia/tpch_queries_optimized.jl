@@ -619,10 +619,10 @@ function _q21()
     # Hoist each membership predicate (saudi, F-status, multi, only-late)
     # into a Bitset over its domain — the 4-deep `∧` chain on `qualifying`
     # becomes 4 bit-tests per row instead of probing lazy Dicts/regex chains.
-    multi_supp = bitset(askeys((supp_state      ↦ (((f, m),) -> m))             == true), orders.n)
-    only_late  = bitset(askeys((late_supp_state ↦ (((f, m),) -> f != 0 && !m))  == true), orders.n)
-    saudi      = bitset(askeys(supplier : (Su.nation → Na.name == "SAUDI ARABIA")), supplier.n)
-    f_ords     = bitset(askeys(orders   : (Ord.status == "F")),                     orders.n)
+    multi_supp = bitset(orders : ((supp_state      ↦ (((f, m),) -> m))             == true), orders.n)
+    only_late  = bitset(orders : ((late_supp_state ↦ (((f, m),) -> f != 0 && !m))  == true), orders.n)
+    saudi      = bitset(supplier : (Su.nation → Na.name == "SAUDI ARABIA"), supplier.n)
+    f_ords     = bitset(orders   : (Ord.status == "F"),                     orders.n)
     qualifying = late : (Li.supplier → saudi) ∧
                         (order → f_ords ∧ multi_supp ∧ only_late)
     counts = (Li.supplier ← qualifying) ▷ ((a, _) -> a + 1, 0, supplier.n)
