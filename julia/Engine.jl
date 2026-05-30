@@ -637,113 +637,8 @@ function _probe_body_test(::Type{VecRel{E, R}}, q_expr, x_sym, y_sym, body) wher
     end
 end
 
-# Fallback for any other type — same as _probe_body (body return discarded
-# when used in drive context; if used in test context, may leak Nothing).
-_probe_body_test(T::Type, q_expr, x_sym, y_sym, body) = _probe_body(T, q_expr, x_sym, y_sym, body)
-
-function _probe_body(::Type{VecRel{E, R}}, q_expr, x_sym, y_sym, body) where {E, R}
-    quote
-        let $y_sym = @inbounds ($q_expr).values[($x_sym).id]
-            $body
-        end
-    end
-end
-
-# Map probe: probe(q, x, k) = probe(inner, x, v -> k(f(v)))
-# Filter probe (when a Filter appears on the rhs of a `→` and we need to
-# fetch the filtered value at a key). Probe inner, test pred, run body.
-# `else false` is required so the expression evaluates to Bool when used
-# in a probe_any chain.
-function _probe_body(::Type{<:Filter{D, R, A, FnP{F}}}, q_expr, x_sym, y_sym, body) where {D, R, A, F}
-    a_expr = :(($q_expr).a)
-    wrap = quote
-        if ($q_expr).pred.f($y_sym)
-            $body
-        else
-            false
-        end
-    end
-    _probe_body(A, a_expr, x_sym, y_sym, wrap)
-end
-function _probe_body(::Type{<:Filter{D, R, A, EqP{V}}}, q_expr, x_sym, y_sym, body) where {D, R, A, V}
-    a_expr = :(($q_expr).a)
-    wrap = quote
-        if isequal($y_sym, ($q_expr).pred.v)
-            $body
-        else
-            false
-        end
-    end
-    _probe_body(A, a_expr, x_sym, y_sym, wrap)
-end
-function _probe_body(::Type{<:Filter{D, R, A, InP{T}}}, q_expr, x_sym, y_sym, body) where {D, R, A, T}
-    a_expr = :(($q_expr).a)
-    wrap = quote
-        if $y_sym in ($q_expr).pred.vs
-            $body
-        else
-            false
-        end
-    end
-    _probe_body(A, a_expr, x_sym, y_sym, wrap)
-end
-function _probe_body(::Type{<:Filter{D, R, A, InSetP{S}}}, q_expr, x_sym, y_sym, body) where {D, R, A, S}
-    a_expr = :(($q_expr).a)
-    wrap = quote
-        if member(($q_expr).pred.s, $y_sym)
-            $body
-        else
-            false
-        end
-    end
-    _probe_body(A, a_expr, x_sym, y_sym, wrap)
-end
-
-# Compose probe (when Compose appears on the rhs of a → ): probe through chain
-function _probe_body(::Type{<:Compose{D, M, R, A, B}}, q_expr, x_sym, y_sym, body) where {D, M, R, A, B}
-    a_expr = :(($q_expr).a)
-    b_expr = :(($q_expr).b)
-    m_sym = gensym(:_mp)
-    inner = _probe_body(B, b_expr, m_sym, y_sym, body)
-    _probe_body(A, a_expr, x_sym, m_sym, inner)
-end
-
-# Fold probe: dict get
-function _probe_body(::Type{<:Fold{D, R, S, Q, OP}}, q_expr, x_sym, y_sym, body) where {D, R, S, Q, OP}
-    quote
-        let _c = Prela._fold_cache($q_expr)
-            let _g = get(_c, $x_sym, nothing)
-                if _g !== nothing
-                    let $y_sym = _g
-                        $body
-                    end
-                else
-                    false
-                end
-            end
-        end
-    end
-end
-
-# DenseFold probe: array lookup
-function _probe_body(::Type{<:DenseFold{D, R, S, Q, OP}}, q_expr, x_sym, y_sym, body) where {D, R, S, Q, OP}
-    quote
-        let (_vals, _seen) = Prela._dfold_cache($q_expr)
-            let _i = _denseidx($x_sym) + 1
-                if 1 <= _i <= length(_vals) && @inbounds(_seen[_i])
-                    let $y_sym = @inbounds _vals[_i]
-                        $body
-                    end
-                else
-                    false
-                end
-            end
-        end
-    end
-end
-
-# Materialized probe: through cached idx. Accumulate Bool over multi-valued matches.
-function _probe_body(::Type{<:Materialized{D, R, A}}, q_expr, x_sym, y_sym, body) where {D, R, A}
+# Test-context versions for pipeline-breakers. OR-accumulate Bool body.
+function _probe_body_test(::Type{<:Materialized{D, R, A}}, q_expr, x_sym, y_sym, body) where {D, R, A}
     quote
         let _mat_idx = Prela._cidx($q_expr), _mat_vs = get(_mat_idx, $x_sym, nothing), _mat_acc = false
             if _mat_vs !== nothing
@@ -755,9 +650,7 @@ function _probe_body(::Type{<:Materialized{D, R, A}}, q_expr, x_sym, y_sym, body
         end
     end
 end
-
-# Inv probe: lazy reverse index lookup. Accumulate Bool over multi-valued matches.
-function _probe_body(::Type{<:Inv{B, A, Q}}, q_expr, x_sym, y_sym, body) where {B, A, Q}
+function _probe_body_test(::Type{<:Inv{B, A, Q}}, q_expr, x_sym, y_sym, body) where {B, A, Q}
     quote
         let _inv_idx = Prela._inv_index($q_expr), _inv_vs = get(_inv_idx, $x_sym, nothing), _inv_acc = false
             if _inv_vs !== nothing
@@ -766,6 +659,142 @@ function _probe_body(::Type{<:Inv{B, A, Q}}, q_expr, x_sym, y_sym, body) where {
                 end
             end
             _inv_acc
+        end
+    end
+end
+function _probe_body_test(::Type{<:Fold{D, R, S, Q, OP}}, q_expr, x_sym, y_sym, body) where {D, R, S, Q, OP}
+    quote
+        let _c = Prela._fold_cache($q_expr), _g = get(_c, $x_sym, nothing)
+            if _g !== nothing
+                let $y_sym = _g
+                    $body
+                end
+            else
+                false
+            end
+        end
+    end
+end
+function _probe_body_test(::Type{<:DenseFold{D, R, S, Q, OP}}, q_expr, x_sym, y_sym, body) where {D, R, S, Q, OP}
+    quote
+        let (_vals, _seen) = Prela._dfold_cache($q_expr), _i = _denseidx($x_sym) + 1
+            if 1 <= _i <= length(_vals) && @inbounds(_seen[_i])
+                let $y_sym = @inbounds _vals[_i]
+                    $body
+                end
+            else
+                false
+            end
+        end
+    end
+end
+
+# Fallback: same as drive _probe_body. Safe for types whose drive form
+# already evaluates body unconditionally (VecRel, Compose, Map, Prod, etc.).
+_probe_body_test(T::Type, q_expr, x_sym, y_sym, body) = _probe_body(T, q_expr, x_sym, y_sym, body)
+
+function _probe_body(::Type{VecRel{E, R}}, q_expr, x_sym, y_sym, body) where {E, R}
+    quote
+        let $y_sym = @inbounds ($q_expr).values[($x_sym).id]
+            $body
+        end
+    end
+end
+
+# Map probe: probe(q, x, k) = probe(inner, x, v -> k(f(v)))
+# Filter probe (drive context) — fetch the filtered value at a key.
+# Probe inner, test pred, run body. No Bool needed; test-context
+# Filter handlers in `_probe_body_test` (above) emit the `else false`.
+function _probe_body(::Type{<:Filter{D, R, A, FnP{F}}}, q_expr, x_sym, y_sym, body) where {D, R, A, F}
+    wrap = quote
+        if ($q_expr).pred.f($y_sym)
+            $body
+        end
+    end
+    _probe_body(A, :(($q_expr).a), x_sym, y_sym, wrap)
+end
+function _probe_body(::Type{<:Filter{D, R, A, EqP{V}}}, q_expr, x_sym, y_sym, body) where {D, R, A, V}
+    wrap = quote
+        if isequal($y_sym, ($q_expr).pred.v)
+            $body
+        end
+    end
+    _probe_body(A, :(($q_expr).a), x_sym, y_sym, wrap)
+end
+function _probe_body(::Type{<:Filter{D, R, A, InP{T}}}, q_expr, x_sym, y_sym, body) where {D, R, A, T}
+    wrap = quote
+        if $y_sym in ($q_expr).pred.vs
+            $body
+        end
+    end
+    _probe_body(A, :(($q_expr).a), x_sym, y_sym, wrap)
+end
+function _probe_body(::Type{<:Filter{D, R, A, InSetP{S}}}, q_expr, x_sym, y_sym, body) where {D, R, A, S}
+    wrap = quote
+        if member(($q_expr).pred.s, $y_sym)
+            $body
+        end
+    end
+    _probe_body(A, :(($q_expr).a), x_sym, y_sym, wrap)
+end
+
+# Compose probe (when Compose appears on the rhs of a → ): probe through chain
+function _probe_body(::Type{<:Compose{D, M, R, A, B}}, q_expr, x_sym, y_sym, body) where {D, M, R, A, B}
+    a_expr = :(($q_expr).a)
+    b_expr = :(($q_expr).b)
+    m_sym = gensym(:_mp)
+    inner = _probe_body(B, b_expr, m_sym, y_sym, body)
+    _probe_body(A, a_expr, x_sym, m_sym, inner)
+end
+
+# Fold probe (drive context) — dict get, run body if found.
+function _probe_body(::Type{<:Fold{D, R, S, Q, OP}}, q_expr, x_sym, y_sym, body) where {D, R, S, Q, OP}
+    quote
+        let _g = get(Prela._fold_cache($q_expr), $x_sym, nothing)
+            if _g !== nothing
+                let $y_sym = _g
+                    $body
+                end
+            end
+        end
+    end
+end
+
+# DenseFold probe (drive context) — array lookup, run body if present.
+function _probe_body(::Type{<:DenseFold{D, R, S, Q, OP}}, q_expr, x_sym, y_sym, body) where {D, R, S, Q, OP}
+    quote
+        let (_vals, _seen) = Prela._dfold_cache($q_expr), _i = _denseidx($x_sym) + 1
+            if 1 <= _i <= length(_vals) && @inbounds(_seen[_i])
+                let $y_sym = @inbounds _vals[_i]
+                    $body
+                end
+            end
+        end
+    end
+end
+
+# Materialized probe — drive context, body is a statement, no Bool needed.
+function _probe_body(::Type{<:Materialized{D, R, A}}, q_expr, x_sym, y_sym, body) where {D, R, A}
+    quote
+        let _mat_idx = Prela._cidx($q_expr), _mat_vs = get(_mat_idx, $x_sym, nothing)
+            if _mat_vs !== nothing
+                for $y_sym in _mat_vs
+                    $body
+                end
+            end
+        end
+    end
+end
+
+# Inv probe — drive context.
+function _probe_body(::Type{<:Inv{B, A, Q}}, q_expr, x_sym, y_sym, body) where {B, A, Q}
+    quote
+        let _inv_idx = Prela._inv_index($q_expr), _inv_vs = get(_inv_idx, $x_sym, nothing)
+            if _inv_vs !== nothing
+                for $y_sym in _inv_vs
+                    $body
+                end
+            end
         end
     end
 end
