@@ -30,13 +30,6 @@ empty!(_QT)
 # Default row formatter: flatten key then value into pipe-separated cols.
 _default_row(k, v) = String[String(c) for c in _fmt_iter((k, v))]
 
-# InlineRel — wrap a precomputed Vector{Pair} as a drivable Query. Used when
-# the query result requires Julia post-processing that doesn't compose cleanly
-# back into the algebra (e.g. Q13's LEFT JOIN with zero-default).
-struct InlineRel{D, R} <: Prela.Query{D, R}
-    pairs::Vector{Pair{D, R}}
-end
-@inline Prela.drive(r::InlineRel, k) = (for p in r.pairs; k(p.first, p.second); end)
 
 function _q_tpch(name, oracle, f; sort_by = identity, limit = nothing, row = _default_row)
     entry = (name, oracle, f, sort_by, limit, row)
@@ -389,7 +382,7 @@ function _q13()
             n_with += 1
         end)
         dist[0] = customer.n - n_with
-        InlineRel{Int, Int}([k => v for (k, v) in dist])
+        Prela.MapRel{Int, Int}([k => v for (k, v) in dist])
     end
 end
 _q_tpch("13", _ORACLE_Q13, _q13; sort_by = ((k, v),) -> (-v, -k))

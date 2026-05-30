@@ -87,19 +87,15 @@ mutable struct Staging{D, R}
 end
 Staging{D, R}() where {D, R} = Staging{D, R}(Pair{D, R}[])
 
-# `MapRel` is the materialized-result relation: a flat pair list plus a lazily
-# built forward index. The single producer is `collect` (the REPL terminal); it
-# is a `Query` so a collected result can be re-driven/probed, but it is never an
-# entity leaf and never on a hot query path.
-mutable struct MapRel{D, R} <: Query{D, R}
+# `MapRel{D,R}` — a drive-only materialized relation: a flat pair list wrapped
+# as a `Query`. Produced by `collect` (the REPL terminal) and by query code that
+# precomputes a `Vector{Pair}` and feeds it back into the algebra (e.g. TPC-H
+# Q13's LEFT-JOIN post-processing). It supports `drive` only — a collected /
+# inlined result is meant to be scanned, not probed; wrap it in `materialize` if
+# you need probe-many.
+struct MapRel{D, R} <: Query{D, R}
     pairs::Vector{Pair{D, R}}
-    # forward index: dense Vector{Vector{R}} keyed by .id when D is ID{E}
-    # (entity PKs are contiguous → array access, not a hash), else a Dict.
-    # Built lazily on first probe.
-    fwd::Union{Nothing, Vector{Vector{R}}, Dict{D, Vector{R}}}
 end
-MapRel{D, R}(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps, nothing)
-MapRel(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps, nothing)
 
 # ===== static leaf storage (sealed from a Staging at load) ===============
 # Three immutable shapes, one per physical layout. drive/probe carry no
@@ -233,12 +229,12 @@ function seal_entities!()
 end
 export seal_entities!
 
-# ===== leaf indexes =====================================================
-# Each leaf carries its own forward/inverse index, built lazily on first use
-# and then read as a plain field — so a top-down probe, which calls fwd_index
-# once per row, never allocates or locks on the hot path. (For a parallel
-# `runall` these fields would become `@atomic` with a double-checked lock;
-# single-threaded they need neither.)
+# ===== index builders (for `Materialized`) ==============================
+# Leaves no longer carry indexes — they are sealed into VecRel/SparseRel/
+# MultiRel, each with its layout baked in. The helpers below build a forward
+# index for the one node that still needs one on demand: `Materialized` (the
+# `materialize`-once / probe-many node). Dense `Vector{Vector{R}}` when entity-
+# keyed, a `Dict` otherwise; `_idx_probe`/`_idx_probe_any` read either.
 
 const _LEAF_RELS = Base.IdSet{Any}()      # populated by @entity; kept for compat
 const _UNARY_SETS = IdDict{Any, Any}()
@@ -262,31 +258,6 @@ function _dense_fwd(pairs::Vector{Pair{ID{E}, R}}) where {E, R}
         push!(vi, p.second)
     end
     v
-end
-
-function _build_fwd(s::Query{Y, Z}) where {Y, Z}
-    d = Dict{Y, Vector{Z}}()
-    sizehint!(d, length(s))
-    for p in _pairs(s)
-        push!(get!(() -> Z[], d, p.first), p.second)
-    end
-    d
-end
-
-# entity-keyed leaf → dense array index; other domains → Dict.
-function fwd_index(r::MapRel{ID{E}, R}) where {E, R}
-    f = r.fwd
-    f === nothing || return f::Vector{Vector{R}}
-    d = _dense_fwd(r.pairs)
-    r.fwd = d
-    d
-end
-function fwd_index(r::MapRel{D, R}) where {D, R}
-    f = r.fwd
-    f === nothing || return f::Dict{D, Vector{R}}
-    d = _build_fwd(r)
-    r.fwd = d
-    d
 end
 
 # Uniform per-key access over either index representation.
@@ -703,13 +674,13 @@ Base.:~(q::Query{D, ID{E}}, re::Regex) where {D, E} = Compose(q, primary(E)) ~ r
 # drivekeys(s,k): k(x) per member    member(s,x)::Bool
 
 # ---- leaves ----
-# `MapRel` — materialized `collect` result: scan pairs to drive, lazy fwd to probe.
+# `MapRel` — drive-only materialized result (collect / inlined pairs). No probe:
+# a scanned result is never probed; `materialize` it if you need probe-many.
 @inline function drive(r::MapRel, k)
     for p in r.pairs
         k(p.first, p.second)
     end
 end
-@inline probe(r::MapRel, x, k) = _idx_probe(fwd_index(r), x, k)
 
 # `VecRel` — dense 1:1 column store. drive iterates 1..n; probe is a
 # bounds-checked array load (an id outside 1..n simply emits nothing — a leaf
@@ -1088,7 +1059,6 @@ end
 # `probe_any` stops, returning true, as soon as `k` does. The Bool is threaded
 # through return values (no mutable cell) so the whole chain is allocation-free
 # when inlined — this is the hot path for `member` on a driven stream.
-@inline probe_any(r::MapRel, x, k) = _idx_probe_any(fwd_index(r), x, k)
 @inline function probe_any(r::VecRel{E, R}, x::ID{E}, k) where {E, R}
     v = r.values; i = x.id
     @inbounds (1 <= i <= length(v)) ? k(v[i]) : false
