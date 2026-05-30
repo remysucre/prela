@@ -17,9 +17,10 @@ module Prela
 #   →  composition  | ∨ union | ∧ intersection | ==,<,~,…  predicates
 #   ×  product (tightest) | -  difference | .field navigation
 
-export Rel, MapRel, VecRel, Relation, Query, Unary, UnaryVec, Universe, Entity, ID,
-       primary, lookup_field, →, ∧, ∨, ×, ≁, vectorize,
-       drive, probe, drivekeys, member, materialize, askeys
+export Rel, MapRel, VecRel, SparseRel, MultiRel, Multi, Relation, Query, Unary,
+       UnaryVec, Universe, Entity, ID,
+       primary, lookup_field, →, ∧, ∨, ×, ≁, seal_entities!,
+       drive, probe, drivekeys, member, materialize
 
 abstract type Entity end
 
@@ -36,6 +37,8 @@ function primary end
 function lookup_field end
 
 const _ENTITY_FIELDS = Dict{Symbol, Vector{Symbol}}()
+# (entity, field) pairs declared `Multi{…}` in @entity — sealed to MultiRel.
+const _MULTI_FIELDS = Set{Tuple{Symbol, Symbol}}()
 
 function _declare_if_needed(mod::Module, sym::Symbol)
     isdefined(mod, sym) && return
@@ -49,8 +52,8 @@ end
 # whose value side is just the key (Disj, MatSet, Bitset, LeftConj). The
 # old `() → T` encoding is gone: a "unary" emits `(x, x)` not `(x, ())`,
 # so it composes with `←` and `→` without a special unary-on-right path.
-# `askeys` is identity — keeping a Query in its own type is enough,
-# downstream `member`/`probe_any` already test domain membership.
+# Restriction never projects a value-bearing query to a "keyset" node —
+# downstream `member`/`probe_any` already test domain membership directly.
 
 abstract type Query{D, R} end
 abstract type Unary{D} <: Query{D, D} end
@@ -73,95 +76,152 @@ struct Universe{E} <: Unary{ID{E}}
     n::Int
 end
 
+# `MapRel` is the staging/general relation: a flat pair list plus a lazily
+# built forward index. Leaves start life as an empty `MapRel` (filled at load),
+# and `collect` returns one. After load they are *sealed* (see `seal_entities!`)
+# into one of the static, immutable leaf types below — `MapRel` itself is no
+# longer used to serve entity-leaf queries on the hot path.
 mutable struct MapRel{D, R} <: Query{D, R}
     pairs::Vector{Pair{D, R}}
-    # Dense value array, indexed directly by `.id` when `D <: ID`. When
-    # non-empty (populated by `vectorize!`), drive/probe take the
-    # array-index fast path — physically equivalent to a column store.
-    # When empty, drive/probe fall back to the pairs/Dict path (the
-    # pre-`vectorize!` state).
-    values::Vector{R}
-    # `nothing` means values is fully populated (1:1 with the universe);
-    # a BitVector means `seen[i]` indicates whether slot `i` is real —
-    # used for sparse-PK entities (e.g. TPC-H Order: 1.5M rows, max-id 6M).
-    # drive/probe skip slots where `seen[i] == false`.
-    seen::Union{Nothing, BitVector}
     # forward index: dense Vector{Vector{R}} keyed by .id when D is ID{E}
     # (entity PKs are contiguous → array access, not a hash), else a Dict.
-    # Only built when `values` is empty (i.e. the rel isn't 1:1 dense).
+    # Built lazily on first probe.
     fwd::Union{Nothing, Vector{Vector{R}}, Dict{D, Vector{R}}}
-    inv::Union{Nothing, Dict{R, Vector{D}}}   # inverse index, built lazily
 end
-MapRel{D, R}(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps, R[], nothing, nothing, nothing)
-MapRel(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps, R[], nothing, nothing, nothing)
+MapRel{D, R}(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps, nothing)
+MapRel(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps, nothing)
 
+# ===== static leaf storage (sealed from a MapRel at load) ================
+# Three immutable shapes, one per physical layout. drive/probe carry no
+# per-row format branch — the type *is* the layout.
+
+# Dense 1:1 entity function: a column store. drive iterates 1..n; probe is a
+# bounds-checked array load. (Sealed from a 1:1 leaf whose keys fill 1..n.)
 struct VecRel{E, R} <: Query{ID{E}, R}
     values::Vector{R}
 end
 VecRel(::Type{E}, vs::Vector{R}) where {E, R} = VecRel{E, R}(vs)
+
+# Sparse 1:1 entity function: dense `values` plus a `seen` presence map (for
+# entities whose PK has gaps, e.g. TPC-H Order: 1.5M rows over a 6M id range).
+# drive skips unseen slots; probe checks `seen` before loading.
+struct SparseRel{E, R} <: Query{ID{E}, R}
+    values::Vector{R}
+    seen::BitVector
+end
+
+# Multi-valued entity relation: a dense forward index `fwd[i]` = the values at
+# id `i` (e.g. `movie → cast`). drive iterates the nest; probe indexes `fwd`.
+struct MultiRel{E, R} <: Query{ID{E}, R}
+    fwd::Vector{Vector{R}}
+end
+
+# `Multi{T}` — schema-only marker. In `@entity`, `f :: Multi{T}` declares a
+# multi-valued field (sealed to `MultiRel`); plain `f :: T` is a 1:1 function
+# (sealed to `VecRel`/`SparseRel` by density). Never instantiated.
+struct Multi{T} end
 
 const Rel = MapRel
 const Relation = Query           # cache.jl refers to `Prela.Relation`
 
 Base.length(r::MapRel) = length(r.pairs)
 Base.length(r::VecRel) = length(r.values)
+Base.length(r::SparseRel) = count(r.seen)
+Base.length(r::MultiRel) = sum(length, r.fwd; init = 0)
 Base.isempty(r::MapRel) = isempty(r.pairs)
 Base.isempty(r::VecRel) = isempty(r.values)
+Base.isempty(r::SparseRel) = !any(r.seen)
+Base.isempty(r::MultiRel) = all(isempty, r.fwd)
 
 _pairs(r::MapRel) = r.pairs
 _pairs(r::VecRel{E}) where E = (ID{E}(i) => r.values[i] for i in eachindex(r.values))
+_pairs(r::SparseRel{E}) where E =
+    (ID{E}(i) => r.values[i] for i in eachindex(r.values) if r.seen[i])
+_pairs(r::MultiRel{E}) where E =
+    (ID{E}(i) => y for i in eachindex(r.fwd) for y in r.fwd[i])
 
-function vectorize(r::MapRel{ID{E}, R}, n::Int) where {E, R}
-    vals = Vector{R}(undef, n)
-    seen = falses(n)
-    for p in r.pairs
+# ===== sealing: MapRel (staging) → static leaf storage ==================
+# After load, each entity leaf is sealed once from its `pairs` into the
+# concrete layout dictated by its declared multiplicity + the loaded data:
+#   declared 1:1  →  VecRel    (keys fill 1..n)
+#                 →  SparseRel (keys have gaps)
+#   declared Multi →  MultiRel
+# Sealing replaces the per-leaf `const` binding (see `seal_entities!`), so
+# `lookup_field` and the bare-name exposures resolve to the sealed object.
+
+# dense forward index sized to the entity universe `n` (so every valid id is
+# directly indexable). Junk pairs (id < 1) are skipped.
+function _multi_fwd(pairs::Vector{Pair{ID{E}, R}}, n::Int) where {E, R}
+    empty = R[]
+    v = fill(empty, n)
+    for p in pairs
         i = p.first.id
-        (1 <= i <= n) || error("ID $i out of dense range 1..$n")
-        seen[i] && error("duplicate ID $i — not a function, can't vectorize")
-        vals[i] = p.second
-        seen[i] = true
+        (1 <= i <= n) || continue
+        @inbounds vi = v[i]
+        vi === empty && (vi = R[]; @inbounds v[i] = vi)
+        push!(vi, p.second)
     end
-    all(seen) || error("MapRel is sparse over 1..$n: only $(count(seen))/$n filled")
-    VecRel{E, R}(vals)
+    v
 end
 
-# `vectorize!(r, n)` — populate `r.values` in place from `r.pairs` so the
-# subsequent drive/probe calls take the dense-array fast path. No-op if
-# already vectorized. For 1:1 entity-keyed rels (the bulk of TPCH/JOB
-# columns) this replaces a `Vector{Vector{R}}` probe with a direct
-# `values[i]` load and removes the per-row Pair iteration in `drive`.
-# For sparse-PK rels (e.g. TPC-H Order's PK density is 25%), the same
-# dense `Vector{R}` is allocated and a `BitVector` records which slots
-# are real; drive skips the empty ones.
-function vectorize!(r::MapRel{ID{E}, R}, n::Int) where {E, R}
-    isempty(r.values) || return r
+function seal(r::MapRel{ID{E}, R}, n::Int, multi::Bool, label) where {E, R}
+    multi && return MultiRel{E, R}(_multi_fwd(r.pairs, n))
     vals = Vector{R}(undef, n)
     seen = falses(n)
     for p in r.pairs
         i = p.first.id
-        (1 <= i <= n) || error("$E ID $i out of dense range 1..$n")
-        seen[i] && error("$E duplicate ID $i — not 1:1")
+        i < 1 && continue                       # junk pair (nonexistent entity)
+        seen[i] && error("$label: duplicate key $i — field declared 1:1 but " *
+                         "data is multi-valued (annotate it `Multi{…}`)")
         @inbounds vals[i] = p.second
         @inbounds seen[i] = true
     end
-    r.values = vals
-    r.seen   = all(seen) ? nothing : seen
-    r.fwd    = nothing   # invalidate; values is the source of truth now
-    r
+    all(seen) ? VecRel{E, R}(vals) : SparseRel{E, R}(vals, seen)
 end
 
-# Walk every entity-leaf relation registered via @entity and `vectorize!`
-# it, given a callback that returns the universe size for each entity.
-function vectorize_entities!(universe_size::Function)
+# entity universe = max key id across all of E's (still-staging) leaves.
+# `_maxid` is a function barrier: `lookup_field` returns an abstract `MapRel`
+# (R varies by field), so the pair scan must happen behind a dispatch on the
+# concrete element type, else it boxes every pair.
+function _maxid(r::MapRel{ID{E}, R}) where {E, R}
+    n = 0
+    for p in r.pairs
+        p.first.id > n && (n = p.first.id)
+    end
+    n
+end
+function _entity_universe(E, fields)
+    n = 0
+    for f in fields
+        r = lookup_field(ID{E}, Val(f))
+        r isa MapRel && (n = max(n, _maxid(r)))
+    end
+    n
+end
+
+# Seal every @entity leaf in place by rebinding its `const`. Idempotent:
+# already-sealed leaves are skipped. Callers re-run `@expose` afterwards so
+# bare names pick up the sealed bindings.
+function seal_entities!()
+    M = parentmodule(@__MODULE__).Main   # caller's Main, where the consts live
+    # Build all sealed objects, then rebind every `const` in a single
+    # `Core.eval` — one world-age bump / invalidation wave instead of one per
+    # leaf (which is quadratic-ish across a wide schema).
+    block = Expr(:block)
     for (E_sym, fields) in _ENTITY_FIELDS
-        E = getfield(parentmodule(@__MODULE__).Main, E_sym)   # caller's Main
-        n = universe_size(E_sym)
+        E = getfield(M, E_sym)
+        n = _entity_universe(E, fields)
         for f in fields
-            vectorize!(lookup_field(ID{E}, Val(f)), n)
+            old = lookup_field(ID{E}, Val(f))
+            old isa MapRel || continue
+            sealed = seal(old, n, (E_sym, f) in _MULTI_FIELDS, "$E_sym.$f")
+            push!(block.args, :(const $(Symbol("_", E_sym, "_", f)) = $sealed))
         end
     end
+    Core.eval(M, block)
+    nothing
 end
-export vectorize!, vectorize_entities!
+export seal_entities!
 
 # ===== leaf indexes =====================================================
 # Each leaf carries its own forward/inverse index, built lazily on first use
@@ -203,15 +263,6 @@ function _build_fwd(s::Query{Y, Z}) where {Y, Z}
     d
 end
 
-function _build_inv(s::Query{Y, Z}) where {Y, Z}
-    d = Dict{Z, Vector{Y}}()
-    sizehint!(d, length(s))
-    for p in _pairs(s)
-        push!(get!(() -> Y[], d, p.second), p.first)
-    end
-    d
-end
-
 # entity-keyed leaf → dense array index; other domains → Dict.
 function fwd_index(r::MapRel{ID{E}, R}) where {E, R}
     f = r.fwd
@@ -227,13 +278,6 @@ function fwd_index(r::MapRel{D, R}) where {D, R}
     r.fwd = d
     d
 end
-
-function inv_index(r::MapRel)
-    v = r.inv
-    v === nothing || return v
-    r.inv = _build_inv(r)
-end
-inv_index(s::Query) = _build_inv(s)       # VecRel etc. — rare, uncached
 
 # Uniform per-key access over either index representation.
 @inline function _idx_probe(idx::Vector{Vector{R}}, x::ID, k) where {R}
@@ -296,11 +340,11 @@ struct Diff{D, R, A, B}       <: Query{D, R};  a::A;  b::B;  end   # value-beari
 struct Prod{D, R, T<:Tuple}   <: Query{D, R};  ops::T;  end
 
 struct Disj{D, A, B} <: Unary{D};  a::A;  b::B;  end
-# `Keys(q)` — identity view over a non-identity Query's *keyset*. Used when a
-# call site (e.g. `bitset(askeys(q), n)`) wants "the dense set of D's that q
-# emits a row for," ignoring the value side. Drive emits `(x, x)` so it slots
-# straight into the identity-Unary protocol.
-struct Keys{D, A} <: Unary{D};  a::A;  end
+# `Restrict(a, b)` — restriction `a : b`. Drives `a` and keeps each row whose
+# value is a `member` of `b` (b's keyset), ignoring b's values. Replaces the old
+# `Compose(a, askeys(b))` lowering: the per-row `member(b, ·)` check is what
+# actually executes, so there is no fictional "keyset unary" node in between.
+struct Restrict{D, R, A, B} <: Query{D, R};  a::A;  b::B;  end
 
 # `materialize(q)` — the one explicit "bang". Prela is top-down / non-
 # materialized by default: a shared subexpression is re-driven on every use.
@@ -447,8 +491,8 @@ mutable struct LeftCompose{D, RK, SV, QR, QS} <: Query{RK, SV}
 end
 
 # `LeftConj(l, r)` — left-driving conjunction. `l ⩓ r` materializes `l`
-# (via `materialize(askeys(l))`) so its `member` is O(1), then drives `r`
-# and member-checks `l` per row. Lets a user-written `∧`-style expression
+# so its `member` is O(1), then drives `r` (ignoring its value) and
+# member-checks `l` per row. Lets a user-written `∧`-style expression
 # put a Query-shaped predicate (like an `Inv` for EXISTS) on the left
 # without needing an explicit `!` — the operator does the materialization.
 struct LeftConj{D, ML, R} <: Unary{D}
@@ -463,9 +507,10 @@ Filter(a::Query{D, R}, p::P) where {D, R, P} =
     Filter{D, R, typeof(a), P}(a, p)
 Diff(a::Query{D, R}, b) where {D, R} =
     Diff{D, R, typeof(a), typeof(b)}(a, b)
+Restrict(a::Query{D, R}, b) where {D, R} =
+    Restrict{D, R, typeof(a), typeof(b)}(a, b)
 Disj(a::Query{D, Ra}, b::Query{D, Rb}) where {D, Ra, Rb} =
     Disj{D, typeof(a), typeof(b)}(a, b)
-Keys(a::Query{D, R}) where {D, R} = Keys{D, typeof(a)}(a)
 function Prod(ops::Tuple)
     D = _domof(ops[1])
     R = Tuple{map(_rangeof, ops)...}
@@ -552,13 +597,11 @@ export ←
 # no-op so we materialize directly. `⩓` kept as a back-compat alias.
 function ⩘(l::Unary{D}, r) where {D}
     ml = materialize(l)
-    rs = askeys(r)
-    LeftConj{_domof(rs), typeof(ml), typeof(rs)}(ml, rs)
+    LeftConj{_domof(r), typeof(ml), typeof(r)}(ml, r)   # drive r ignoring its value
 end
 function ⩘(l::Query{D, R}, r) where {D, R}
     ml = materialize(Base.adjoint(l))         # MatSet over l's *value* type
-    rs = askeys(r)
-    LeftConj{_domof(rs), typeof(ml), typeof(rs)}(ml, rs)
+    LeftConj{_domof(r), typeof(ml), typeof(r)}(ml, r)
 end
 const ⩓ = ⩘
 export ⩘, ⩓
@@ -567,13 +610,6 @@ export ⩘, ⩓
 # Borrowed from Haskell's strictness bang; a query has no boolean-not, so `!`
 # is free to mean "force this leg".
 Base.:!(q::Query) = materialize(q)
-
-# `askeys` lifts a Query to its keyset. For identity-shaped inputs (Unary) it
-# is a no-op. For a generic `Query{D, R}` it returns a `Keys` wrapper so the
-# result is identity-typed — call sites like `bitset(askeys(q), n)` need the
-# Bitset to index D, not R.
-askeys(u::Unary) = u
-askeys(q::Query) = Keys(q)
 
 # ===== operators (build nodes) ==========================================
 # Navigation is `→` only — `q.field` overloads on Query/Unary were removed
@@ -590,14 +626,13 @@ askeys(q::Query) = Keys(q)
 # separate type is no longer pulling weight.
 ∧(a, b) = ⊗(a, b)
 ∨(a, b) = Disj(a, b)
-# `:` is now `a → askeys(b)` — pure sugar over Compose. With Unary identity-
-# shaped and the askeys lift projecting any value-bearing rhs onto its keyset,
-# both "filter by Conj/Disj/Universe" and "filter by a single value-bearing
-# predicate" reduce to composition.
-Base.:(:)(a::Query{X, Y}, b) where {X, Y} = Compose(a, askeys(b))
+# `:` restriction — keep rows of `a` whose value is a `member` of `b`. The rhs
+# `b` is consumed only via `member` (b's keyset), so any value-bearing predicate
+# works directly with no keyset projection.
+Base.:(:)(a::Query{X, Y}, b) where {X, Y} = Restrict(a, b)
 # `-`: value-bearing difference. Identity lhs falls through here too — Diff
-# emits `(x, x)` when `x` is not in `b`'s domain, same shape as the old SetDiff.
-Base.:-(a::Query{D, R}, b) where {D, R} = Diff(a, askeys(b))
+# emits `(x, x)` when `x` is not a `member` of `b`, same shape as the old SetDiff.
+Base.:-(a::Query{D, R}, b) where {D, R} = Diff(a, b)
 # Product — `⊗` is the canonical spelling (tensor-product convention from math).
 # `×` is a legacy alias; both build flat `Prod` nodes.
 ⊗(a::Query, b::Query) = Prod((a, b))
@@ -658,91 +693,94 @@ Base.:~(q::Query{D, ID{E}}, re::Regex) where {D, E} = Compose(q, primary(E)) ~ r
 # drivekeys(s,k): k(x) per member    member(s,x)::Bool
 
 # ---- leaves ----
+# `MapRel` — staging / general relation: scan pairs to drive, lazy fwd to probe.
 @inline function drive(r::MapRel, k)
     for p in r.pairs
         k(p.first, p.second)
     end
 end
-# Entity-keyed MapRel: dense-Vec fast path when `values` is populated
-# (post-`vectorize!`). Iterates `1..n` and emits `(ID{E}(i), values[i])` —
-# a tight loop with no per-row Pair construction and no Vector{Vector{R}}
-# indirection. Falls back to the generic pairs-iteration when not yet
-# vectorized.
-@inline function drive(r::MapRel{ID{E}, R}, k) where {E, R}
-    v = r.values
-    if !isempty(v)
-        s = r.seen
-        if s === nothing
-            @inbounds for i in eachindex(v)
-                k(ID{E}(i), v[i])
-            end
-        else
-            @inbounds for i in eachindex(v)
-                s[i] && k(ID{E}(i), v[i])
-            end
-        end
-    else
-        for p in r.pairs
-            k(p.first, p.second)
-        end
-    end
-end
 @inline probe(r::MapRel, x, k) = _idx_probe(fwd_index(r), x, k)
-@inline function probe(r::MapRel{ID{E}, R}, x::ID{E}, k) where {E, R}
-    v = r.values
-    if !isempty(v)
-        s = r.seen
-        i = x.id
-        @inbounds (1 <= i <= length(v) && (s === nothing || s[i])) && (k(v[i]); nothing)
-    else
-        _idx_probe(fwd_index(r), x, k)
-    end
-end
+
+# `VecRel` — dense 1:1 column store. drive iterates 1..n; probe is a
+# bounds-checked array load (an id outside 1..n simply emits nothing — a leaf
+# may be probed at an id from another table that doesn't exist here).
 @inline function drive(r::VecRel{E, R}, k) where {E, R}
     v = r.values
     @inbounds for i in eachindex(v)
         k(ID{E}(i), v[i])
     end
 end
-@inline probe(r::VecRel{E, R}, x::ID{E}, k) where {E, R} =
-    (@inbounds k(r.values[x.id]); nothing)
+@inline function probe(r::VecRel{E, R}, x::ID{E}, k) where {E, R}
+    v = r.values; i = x.id
+    @inbounds (1 <= i <= length(v)) && (k(v[i]); nothing)
+end
+
+# `SparseRel` — dense values + presence map. drive skips unseen; probe checks.
+@inline function drive(r::SparseRel{E, R}, k) where {E, R}
+    v = r.values; s = r.seen
+    @inbounds for i in eachindex(v)
+        s[i] && k(ID{E}(i), v[i])
+    end
+end
+@inline function probe(r::SparseRel{E, R}, x::ID{E}, k) where {E, R}
+    v = r.values; i = x.id
+    @inbounds (1 <= i <= length(v) && r.seen[i]) && (k(v[i]); nothing)
+end
+
+# `MultiRel` — dense forward index. drive iterates the nest; probe indexes it.
+@inline function drive(r::MultiRel{E, R}, k) where {E, R}
+    f = r.fwd
+    @inbounds for i in eachindex(f)
+        for y in f[i]
+            k(ID{E}(i), y)
+        end
+    end
+end
+@inline function probe(r::MultiRel{E, R}, x::ID{E}, k) where {E, R}
+    f = r.fwd; i = x.id
+    (1 <= i <= length(f)) || return
+    @inbounds for y in f[i]
+        k(y)
+    end
+end
 
 # ---- Compose: the loop nest ----
 @inline drive(n::Compose, k) = drive(n.a, (x, m) -> probe(n.b, m, r -> k(x, r)))
 @inline probe(n::Compose, x, k) = probe(n.a, x, m -> probe(n.b, m, r -> k(r)))
 
 # ---- Filter ----
+# Driving a Filter is a streaming filtered scan: drive the inner, keep rows
+# whose value passes the predicate. Used for top-level result filtering /
+# HAVING (e.g. `value_per_part > threshold`, `revenue == max_rev`), where the
+# inner is itself a driven source (a Fold) with no leaf to probe. There is no
+# value-jump / inverse-index path: a predicate is always either probed into
+# (the common case) or streamed over — never seek-by-value.
 @inline drive(n::Filter{D,R,A,<:FnP}, k) where {D,R,A} =
     drive(n.a, (x, y) -> n.pred.f(y) && k(x, y))
-@inline probe(n::Filter{D,R,A,<:FnP}, x, k) where {D,R,A} =
-    probe(n.a, x, y -> n.pred.f(y) && k(y))
-
-@inline probe(n::Filter{D,R,A,<:EqP}, x, k) where {D,R,A} =
-    probe(n.a, x, y -> isequal(y, n.pred.v) && k(y))
 @inline drive(n::Filter{D,R,A,<:EqP}, k) where {D,R,A} =
     drive(n.a, (x, y) -> isequal(y, n.pred.v) && k(x, y))
-# driving-mode for `==` on a leaf: jump to matches via inv_index
-function drive(n::Filter{D,R,<:MapRel,<:EqP}, k) where {D,R}
-    xs = get(inv_index(n.a), n.pred.v, nothing)
-    xs === nothing && return
-    for x in xs; k(x, n.pred.v); end
-end
-function drive(n::Filter{D,R,<:VecRel,<:EqP}, k) where {D,R}
-    xs = get(inv_index(n.a), n.pred.v, nothing)
-    xs === nothing && return
-    for x in xs; k(x, n.pred.v); end
-end
-
-@inline probe(n::Filter{D,R,A,<:InP}, x, k) where {D,R,A} =
-    probe(n.a, x, y -> (y in n.pred.vs) && k(y))
 @inline drive(n::Filter{D,R,A,<:InP}, k) where {D,R,A} =
     drive(n.a, (x, y) -> (y in n.pred.vs) && k(x, y))
+@inline probe(n::Filter{D,R,A,<:FnP}, x, k) where {D,R,A} =
+    probe(n.a, x, y -> n.pred.f(y) && k(y))
+@inline probe(n::Filter{D,R,A,<:EqP}, x, k) where {D,R,A} =
+    probe(n.a, x, y -> isequal(y, n.pred.v) && k(y))
+@inline probe(n::Filter{D,R,A,<:InP}, x, k) where {D,R,A} =
+    probe(n.a, x, y -> (y in n.pred.vs) && k(y))
+
+# ---- Restrict (a : b) — drive a, keep rows whose value is a member of b ----
+@inline drive(n::Restrict, k) =
+    drive(n.a, (x, m) -> member(n.b, m) && k(x, m))
+@inline probe(n::Restrict, x, k) =
+    probe(n.a, x, m -> member(n.b, m) && k(m))
+@inline probe_any(n::Restrict, x, k) =
+    probe_any(n.a, x, m -> member(n.b, m) && k(m))
 
 # ---- Diff (a:Query - b:predicate) ----
 @inline drive(n::Diff, k) =
-    drive(n.a, (x, y) -> probe_any(n.b, x, _ -> true) || k(x, y))
+    drive(n.a, (x, y) -> member(n.b, x) || k(x, y))
 @inline probe(n::Diff, x, k) =
-    probe_any(n.b, x, _ -> true) || probe(n.a, x, k)
+    member(n.b, x) || probe(n.a, x, k)
 
 # ---- Prod (n-ary ×) ----
 # Generated drive/probe — per-arity unroll. The previous recursive `_pp`
@@ -789,11 +827,11 @@ function _prod_probe_any_body(N::Int)
     body
 end
 # `member` for Prod — flat short-circuit AND of per-leg `member` calls.
-# This is the conj-use fast path: `lineitem : (f1 ∧ f2 ∧ f3)` ends up calling
-# `member(Keys(Prod), x)` per row, which routes here. No tuple is built and
-# the closures are stateless, matching the flat shape of the old Conj's
-# probe_any. The tuple-bearing `probe_any(::Prod)` above stays available for
-# the non-trivial-k cases (FnP destructuring etc.).
+# This is the conj-use fast path: `lineitem : (f1 ∧ f2 ∧ f3)` calls
+# `member(Prod, x)` per row (from `Restrict`), which routes here. No tuple is
+# built and the closures are stateless, matching the flat shape of the old
+# Conj's probe_any. The tuple-bearing `probe_any(::Prod)` above stays available
+# for the non-trivial-k cases (FnP destructuring etc.).
 function _prod_member_body(N::Int)
     body = true
     for i in N:-1:1
@@ -885,13 +923,13 @@ end
     vs === nothing && return
     for v in vs; k(v); end
 end
-# ---- LeftConj: drive r, member-check materialized l ----
+# ---- LeftConj: drive r (ignoring its value), member-check materialized l ----
 @inline drive(n::LeftConj, k) =
-    drive(n.r, (x, _) -> probe_any(n.l, x, _ -> true) && k(x, x))
+    drive(n.r, (x, _) -> member(n.l, x) && k(x, x))
 @inline probe(n::LeftConj, x, k) =
-    probe_any(n.l, x, _ -> true) && probe_any(n.r, x, _ -> true) && (k(x); nothing)
+    member(n.l, x) && member(n.r, x) && (k(x); nothing)
 @inline probe_any(n::LeftConj, x, k) =
-    probe_any(n.l, x, _ -> true) && probe_any(n.r, x, _ -> true) && k(x)
+    member(n.l, x) && member(n.r, x) && k(x)
 
 # ---- Fold: per-key foldl, lazy-cached ----
 function _fold_cache(n::Fold{D, R, S, Q, OP}) where {D, R, S, Q, OP}
@@ -1027,38 +1065,36 @@ end
     @inbounds (1 <= i <= length(b.bits) && b.bits[i]) && k(x)
 end
 
-@inline drive(s::Keys, k) = drive(s.a, (x, _) -> k(x, x))
-# Route through `member` so the `Keys(Prod)` and similar identity-of-keyset
-# chains take the flat-short-circuit fast path (no tuple build).
-@inline probe(s::Keys, x, k) = member(s.a, x) && (k(x); nothing)
-@inline probe_any(s::Keys, x, k) = member(s.a, x) && k(x)
-
 @inline function drive(s::Disj, k)
     drive(s.a, (x, _) -> k(x, x))
-    drive(s.b, (x, _) -> probe_any(s.a, x, _ -> true) || (k(x, x); nothing))
+    drive(s.b, (x, _) -> member(s.a, x) || (k(x, x); nothing))
 end
 @inline probe(s::Disj{D}, x, k) where {D} =
-    (probe_any(s.a, x, _ -> true) || probe_any(s.b, x, _ -> true)) && (k(x); nothing)
+    (member(s.a, x) || member(s.b, x)) && (k(x); nothing)
 @inline probe_any(s::Disj{D}, x, k) where {D} =
-    (probe_any(s.a, x, _ -> true) || probe_any(s.b, x, _ -> true)) && k(x)
+    (member(s.a, x) || member(s.b, x)) && k(x)
 
 # `probe_any(q, x, k)` — like `probe`, but the continuation returns a Bool and
 # `probe_any` stops, returning true, as soon as `k` does. The Bool is threaded
 # through return values (no mutable cell) so the whole chain is allocation-free
 # when inlined — this is the hot path for `member` on a driven stream.
 @inline probe_any(r::MapRel, x, k) = _idx_probe_any(fwd_index(r), x, k)
-@inline function probe_any(r::MapRel{ID{E}, R}, x::ID{E}, k) where {E, R}
-    v = r.values
-    if !isempty(v)
-        s = r.seen
-        i = x.id
-        @inbounds (1 <= i <= length(v) && (s === nothing || s[i])) && k(v[i])
-    else
-        _idx_probe_any(fwd_index(r), x, k)
-    end
+@inline function probe_any(r::VecRel{E, R}, x::ID{E}, k) where {E, R}
+    v = r.values; i = x.id
+    @inbounds (1 <= i <= length(v)) ? k(v[i]) : false
 end
-@inline probe_any(r::VecRel{E, R}, x::ID{E}, k) where {E, R} =
-    k(@inbounds r.values[x.id])
+@inline function probe_any(r::SparseRel{E, R}, x::ID{E}, k) where {E, R}
+    v = r.values; i = x.id
+    @inbounds (1 <= i <= length(v) && r.seen[i]) ? k(v[i]) : false
+end
+@inline function probe_any(r::MultiRel{E, R}, x::ID{E}, k) where {E, R}
+    f = r.fwd; i = x.id
+    (1 <= i <= length(f)) || return false
+    @inbounds for y in f[i]
+        k(y) && return true
+    end
+    false
+end
 @inline probe_any(n::Compose, x, k) = probe_any(n.a, x, m -> probe_any(n.b, m, k))
 @inline probe_any(n::Filter{D,R,A,<:FnP}, x, k) where {D,R,A} =
     probe_any(n.a, x, y -> n.pred.f(y) && k(y))
@@ -1067,7 +1103,7 @@ end
 @inline probe_any(n::Filter{D,R,A,<:InP}, x, k) where {D,R,A} =
     probe_any(n.a, x, y -> (y in n.pred.vs) && k(y))
 @inline probe_any(n::Diff, x, k) =
-    (!probe_any(n.b, x, _ -> true)) && probe_any(n.a, x, k)
+    (!member(n.b, x)) && probe_any(n.a, x, k)
 @inline probe_any(n::Materialized, x, k) = _idx_probe_any(_cidx(n), x, k)
 @inline function probe_any(n::DenseFold{D, R, S, Q, OP}, d, k) where {D, R, S, Q, OP}
     (vals, seen) = _dfold_cache(n)
@@ -1083,10 +1119,8 @@ end
 
 # member of a Query = "is x in its domain".
 @inline member(q::Query, x) = probe_any(q, x, _ -> true)
-# Fast paths that avoid the tuple-threading nested closures of probe_any.
-# `Keys` propagates membership of its inner; `Prod` short-circuits flat across
-# its legs without ever building the tuple value.
-@inline member(s::Keys, x) = member(s.a, x)
+# Fast path: `Prod` short-circuits flat across its legs without ever building
+# the tuple value (vs the generic `probe_any` which threads the tuple).
 @inline member(n::Prod, x) = _prod_member(n.ops, x)
 
 # `drivekeys(q, k)` — emit each domain key. Back-compat alias over `drive`.
@@ -1129,9 +1163,18 @@ macro entity(entity_sym, block)
         if stmt isa Expr && stmt.head === :(::)
             field_sym  = stmt.args[1]
             range_expr = stmt.args[2]
+            # `f :: Multi{T}` declares a multi-valued field: record it and store
+            # the unwrapped `T` as the leaf's value type (the staging MapRel and
+            # sealed MultiRel both hold `Pair{ID{E}, T}`).
+            is_multi = range_expr isa Expr && range_expr.head === :curly &&
+                       range_expr.args[1] === :Multi
+            is_multi && (range_expr = range_expr.args[2])
             qual_sym = Symbol("_", entity_sym, "_", field_sym)
             push!(field_names, field_sym)
             push!(field_consts, qual_sym)
+            is_multi && push!(out.args,
+                :(push!($(GlobalRef(@__MODULE__, :_MULTI_FIELDS)),
+                        ($(QuoteNode(entity_sym)), $(QuoteNode(field_sym))))))
             push!(out.args, quote
                 const $(esc(qual_sym)) = $rel_type{$id_type, $(esc(range_expr))}(
                     Pair{$id_type, $(esc(range_expr))}[]
