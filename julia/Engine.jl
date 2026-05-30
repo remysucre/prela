@@ -911,6 +911,33 @@ function _probe_any_body(::Type{<:Disj{D, A, B}}, q_expr, x_sym) where {D, A, B}
     :($a || $b)
 end
 
+# Diff probe_any: x in a but not in b.
+function _probe_any_body(::Type{<:Diff{D, R, A, B}}, q_expr, x_sym) where {D, R, A, B}
+    a_chk = _probe_any_body(A, :(($q_expr).a), x_sym)
+    b_chk = _probe_any_body(B, :(($q_expr).b), x_sym)
+    :($a_chk && !$b_chk)
+end
+
+# Map probe_any: preserves domain — just check inner.
+function _probe_any_body(::Type{<:Map{D, R, S, Q, F}}, q_expr, x_sym) where {D, R, S, Q, F}
+    _probe_any_body(Q, :(($q_expr).q), x_sym)
+end
+
+# Fold/BufFold/DenseFold probe_any: x is in the cache.
+function _probe_any_body(::Type{<:Fold{D, R, S, Q, OP}}, q_expr, x_sym) where {D, R, S, Q, OP}
+    :(haskey(Prela._fold_cache($q_expr), $x_sym))
+end
+function _probe_any_body(::Type{<:BufFold{D, R, S, Q, F}}, q_expr, x_sym) where {D, R, S, Q, F}
+    :(haskey(Prela._buf_cache($q_expr), $x_sym))
+end
+function _probe_any_body(::Type{<:DenseFold{D, R, S, Q, OP}}, q_expr, x_sym) where {D, R, S, Q, OP}
+    quote
+        let (_, _seen) = Prela._dfold_cache($q_expr), _i = _denseidx($x_sym) + 1
+            1 <= _i <= length(_seen) && @inbounds(_seen[_i])
+        end
+    end
+end
+
 # Materialized.probe_any — through cached idx. For ID-keyed (Vector{Vector{R}})
 # do bounds + non-empty inner. For Dict-keyed use haskey.
 function _probe_any_body(::Type{<:Materialized{D, R, A}}, q_expr, x_sym) where {D, R, A}
