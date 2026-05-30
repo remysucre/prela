@@ -29,8 +29,8 @@ using Parquet2, DataFrames
     name           :: String
     gender         :: String
     name_pcode_cf  :: String
-    aka            :: ID{AkaName}
-    info           :: ID{PersonInfo}
+    aka            :: Multi{ID{AkaName}}
+    info           :: Multi{ID{PersonInfo}}
 end
 
 @entity PersonInfo begin
@@ -80,15 +80,15 @@ end
     production_year :: Int
     episode_nr      :: Int
     kind            :: ID{Kind}
-    info            :: ID{Info}
-    keyword         :: ID{Keyword}
-    data            :: ID{Data}
-    company         :: ID{Company}
-    complete_cast   :: ID{CompleteCast}
-    link            :: ID{MovieLink}
-    linked_by       :: ID{MovieLink}
-    aka             :: ID{AkaTitle}
-    cast            :: ID{Cast}        # movie → its cast_info rows (the M:N edge)
+    info            :: Multi{ID{Info}}
+    keyword         :: Multi{ID{Keyword}}
+    data            :: Multi{ID{Data}}
+    company         :: Multi{ID{Company}}
+    complete_cast   :: Multi{ID{CompleteCast}}
+    link            :: Multi{ID{MovieLink}}
+    linked_by       :: Multi{ID{MovieLink}}
+    aka             :: Multi{ID{AkaTitle}}
+    cast            :: Multi{ID{Cast}}   # movie → its cast_info rows (the M:N edge)
 end
 
 @expose Movie
@@ -461,50 +461,26 @@ end
 # Universe of movies — dense PK 1..n, so just a range-backed Universe.
 const movie = Universe{Movie}(length(title.pairs))
 println("Universe: $(movie.n) movies")
+# Person count, captured before sealing (afterwards `_Person_name` is a VecRel
+# with no `.pairs`).
+const _n_person = length(_Person_name.pairs)
 
 # No `cast` universe — Cast is the M:N edge table, reached only via the
 # `movie → cast` edge. Every query roots at `movie`.
 
-# === Promote dense one-to-one leaf rels to VecRel (column-store) ========
-# Cache is saved as MapRel; promotion only changes the in-memory representation.
-let
-    n_cast  = length(_Cast_movie.pairs)
-    n_movie = movie.n
-    function _promote!(qual_sym::Symbol, n::Int)
-        old = getfield(@__MODULE__, qual_sym)
-        old isa Prela.VecRel && return  # already promoted
-        try
-            new = Prela.vectorize(old, n)
-            Core.eval(@__MODULE__, :(const $qual_sym = $new))
-            push!(Prela._LEAF_RELS, new)
-        catch e
-            @info "skip promote $qual_sym: $(sprint(showerror, e))"
-        end
-    end
-    _promote!(:_Cast_movie,   n_cast)
-    _promote!(:_Cast_person,  n_cast)
-    _promote!(:_Cast_role,    n_cast)
-    _promote!(:_Movie_title,  n_movie)
-    _promote!(:_Movie_kind,   n_movie)
-end
-
-# Bare-expose Cast's field rels for navigating from a cast row reached via
-# `movie → cast` — e.g. `movie → cast → person`, `cast → note`.
+# === Seal every leaf into static storage (column store / sparse / multi) ====
+# `seal_entities!` rebinds each `_Entity_field` const to its sealed object,
+# chosen by declared multiplicity + density. Re-`@expose` afterwards so bare
+# names (`title`, `cast`, …) — which captured the staging MapRel by reference —
+# pick up the sealed bindings. (`Entity.field` access resolves dynamically and
+# needs no refresh.)
+Prela.seal_entities!()
+@expose Movie
 const note      = _Cast_note
 const role      = _Cast_role
 const person    = _Cast_person
 const character = _Cast_character
 
 # Person universe — for person-rooted broadcasts (e.g. `persons.(Person.name; ...)`).
-# Iterating 4M persons is much cheaper than scanning 36M cast→person pairs when
-# the query filters persons before joining back to casts.
-const persons = Universe{Person}(_Person_name isa Prela.VecRel ?
-    length(_Person_name.values) : length(_Person_name.pairs))
+const persons = Universe{Person}(_n_person)
 println("Person universe: $(persons.n) persons")
-
-# Re-bind Movie's bare-exposed fields whose backing rel was promoted. The
-# original `@expose Movie` captured the MapRel object by reference; const
-# redefinition swaps in the VecRel-backed binding so bare `title`/`kind`
-# get the fast path.
-const title = _Movie_title
-const kind  = _Movie_kind

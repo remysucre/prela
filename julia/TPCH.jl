@@ -220,30 +220,45 @@ else
     save_cache!()
 end
 
-# === Universes for the root entities ===
+# === Universe sizes — captured from staging `.pairs` before sealing (the
+# sealed leaves drop `.pairs`). Order's PK is gappy, so its universe is the
+# max id, not the row count.
+const _UNIV_N = (
+    Lineitem = length(_Lineitem_order.pairs),
+    Order    = (let n = 0; for x in _Order_customer.pairs; x.first.id > n && (n = x.first.id); end; n end),
+    Customer = length(_Customer_name.pairs),
+    Supplier = length(_Supplier_name.pairs),
+    Part     = length(_Part_name.pairs),
+    PartSupp = length(_PartSupp_part.pairs),
+    Nation   = length(_Nation_name.pairs),
+    Region   = length(_Region_name.pairs),
+)
 
-const lineitem = Universe{Lineitem}(length(_Lineitem_order.pairs))
-const orders   = Universe{Order}(let p = _Order_customer.pairs;
-                                     n = 0; for x in p; x.first.id > n && (n = x.first.id); end; n; end)
-const customer = Universe{Customer}(length(_Customer_name.pairs))
-const supplier = Universe{Supplier}(length(_Supplier_name.pairs))
-const part     = Universe{Part}(length(_Part_name.pairs))
-const partsupp = Universe{PartSupp}(length(_PartSupp_part.pairs))
-const nation   = Universe{Nation}(length(_Nation_name.pairs))
-const region   = Universe{Region}(length(_Region_name.pairs))
+# Seal every entity-leaf relation into static storage. After this, `Li.quantity`
+# etc. take the dense `values[i]` fast path (VecRel column store; SparseRel for
+# the gappy Order PK) with no per-row format branch. Re-`@expose` so bare names
+# pick up the sealed bindings.
+let t = time()
+    Prela.seal_entities!()
+    println("Sealed entity leaves in $(round(time()-t; digits=2))s")
+end
+@expose Lineitem
+@expose Order    : totalprice, date, priority, shippriority, clerk
+@expose Part     : mfgr, brand, type, size, container, retailprice
+@expose PartSupp : availqty, supplycost
+@expose Customer : mktsegment
+
+# === Universes for the root entities — defined LAST so the `part`/`supplier`
+# universe bindings override the same-named Lineitem leaf fields exposed above.
+const lineitem = Universe{Lineitem}(_UNIV_N.Lineitem)
+const orders   = Universe{Order}(_UNIV_N.Order)
+const customer = Universe{Customer}(_UNIV_N.Customer)
+const supplier = Universe{Supplier}(_UNIV_N.Supplier)
+const part     = Universe{Part}(_UNIV_N.Part)
+const partsupp = Universe{PartSupp}(_UNIV_N.PartSupp)
+const nation   = Universe{Nation}(_UNIV_N.Nation)
+const region   = Universe{Region}(_UNIV_N.Region)
 
 println("Universes: lineitem=$(lineitem.n)  orders=$(orders.n)  customer=$(customer.n)  " *
         "supplier=$(supplier.n)  part=$(part.n)  partsupp=$(partsupp.n)  nation=$(nation.n)  " *
         "region=$(region.n)")
-
-# Vectorize every entity-leaf relation. After this, `Li.quantity` etc. take
-# the dense `values[i]` fast path in drive/probe — physically equivalent
-# to a column store, no `Vector{Vector{R}}` indirection per row.
-let t = time(), _u = Dict(
-        :Lineitem => lineitem.n, :Order => orders.n, :Customer => customer.n,
-        :Supplier => supplier.n, :Part => part.n, :PartSupp => partsupp.n,
-        :Nation => nation.n,     :Region => region.n,
-    )
-    Prela.vectorize_entities!(sym -> _u[sym])
-    println("Vectorized entity leaves in $(round(time()-t; digits=2))s")
-end
