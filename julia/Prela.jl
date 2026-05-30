@@ -76,11 +76,21 @@ struct Universe{E} <: Unary{ID{E}}
     n::Int
 end
 
-# `MapRel` is the staging/general relation: a flat pair list plus a lazily
-# built forward index. Leaves start life as an empty `MapRel` (filled at load),
-# and `collect` returns one. After load they are *sealed* (see `seal_entities!`)
-# into one of the static, immutable leaf types below — `MapRel` itself is no
-# longer used to serve entity-leaf queries on the hot path.
+# `Staging{D,R}` — the load-time container for a leaf relation: just a flat pair
+# list, filled at load and consumed by `seal_entities!`. Deliberately NOT a
+# `Query` — it has no drive/probe, so it *cannot* appear in a query plan (the
+# node constructors require `Query` arguments). Every leaf starts as a `Staging`
+# and, after load, is *sealed* (see `seal_entities!`) into one of the static,
+# immutable leaf types below, which is what queries actually run on.
+mutable struct Staging{D, R}
+    pairs::Vector{Pair{D, R}}
+end
+Staging{D, R}() where {D, R} = Staging{D, R}(Pair{D, R}[])
+
+# `MapRel` is the materialized-result relation: a flat pair list plus a lazily
+# built forward index. The single producer is `collect` (the REPL terminal); it
+# is a `Query` so a collected result can be re-driven/probed, but it is never an
+# entity leaf and never on a hot query path.
 mutable struct MapRel{D, R} <: Query{D, R}
     pairs::Vector{Pair{D, R}}
     # forward index: dense Vector{Vector{R}} keyed by .id when D is ID{E}
@@ -91,7 +101,7 @@ end
 MapRel{D, R}(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps, nothing)
 MapRel(ps::Vector{Pair{D, R}}) where {D, R} = MapRel{D, R}(ps, nothing)
 
-# ===== static leaf storage (sealed from a MapRel at load) ================
+# ===== static leaf storage (sealed from a Staging at load) ===============
 # Three immutable shapes, one per physical layout. drive/probe carry no
 # per-row format branch — the type *is* the layout.
 
@@ -121,8 +131,8 @@ end
 # (sealed to `VecRel`/`SparseRel` by density). Never instantiated.
 struct Multi{T} end
 
-const Rel = MapRel
-const Relation = Query           # cache.jl refers to `Prela.Relation`
+const Rel = Staging              # cache.jl serializes the staging leaves
+const Relation = Query
 
 Base.length(r::MapRel) = length(r.pairs)
 Base.length(r::VecRel) = length(r.values)
@@ -140,7 +150,7 @@ _pairs(r::SparseRel{E}) where E =
 _pairs(r::MultiRel{E}) where E =
     (ID{E}(i) => y for i in eachindex(r.fwd) for y in r.fwd[i])
 
-# ===== sealing: MapRel (staging) → static leaf storage ==================
+# ===== sealing: Staging → static leaf storage ===========================
 # After load, each entity leaf is sealed once from its `pairs` into the
 # concrete layout dictated by its declared multiplicity + the loaded data:
 #   declared 1:1  →  VecRel    (keys fill 1..n)
@@ -164,7 +174,7 @@ function _multi_fwd(pairs::Vector{Pair{ID{E}, R}}, n::Int) where {E, R}
     v
 end
 
-function seal(r::MapRel{ID{E}, R}, n::Int, multi::Bool, label) where {E, R}
+function seal(r::Staging{ID{E}, R}, n::Int, multi::Bool, label) where {E, R}
     multi && return MultiRel{E, R}(_multi_fwd(r.pairs, n))
     vals = Vector{R}(undef, n)
     seen = falses(n)
@@ -180,10 +190,10 @@ function seal(r::MapRel{ID{E}, R}, n::Int, multi::Bool, label) where {E, R}
 end
 
 # entity universe = max key id across all of E's (still-staging) leaves.
-# `_maxid` is a function barrier: `lookup_field` returns an abstract `MapRel`
+# `_maxid` is a function barrier: `lookup_field` returns an abstract `Staging`
 # (R varies by field), so the pair scan must happen behind a dispatch on the
 # concrete element type, else it boxes every pair.
-function _maxid(r::MapRel{ID{E}, R}) where {E, R}
+function _maxid(r::Staging{ID{E}, R}) where {E, R}
     n = 0
     for p in r.pairs
         p.first.id > n && (n = p.first.id)
@@ -194,7 +204,7 @@ function _entity_universe(E, fields)
     n = 0
     for f in fields
         r = lookup_field(ID{E}, Val(f))
-        r isa MapRel && (n = max(n, _maxid(r)))
+        r isa Staging && (n = max(n, _maxid(r)))
     end
     n
 end
@@ -213,7 +223,7 @@ function seal_entities!()
         n = _entity_universe(E, fields)
         for f in fields
             old = lookup_field(ID{E}, Val(f))
-            old isa MapRel || continue
+            old isa Staging || continue          # already sealed → skip
             sealed = seal(old, n, (E_sym, f) in _MULTI_FIELDS, "$E_sym.$f")
             push!(block.args, :(const $(Symbol("_", E_sym, "_", f)) = $sealed))
         end
@@ -693,7 +703,7 @@ Base.:~(q::Query{D, ID{E}}, re::Regex) where {D, E} = Compose(q, primary(E)) ~ r
 # drivekeys(s,k): k(x) per member    member(s,x)::Bool
 
 # ---- leaves ----
-# `MapRel` — staging / general relation: scan pairs to drive, lazy fwd to probe.
+# `MapRel` — materialized `collect` result: scan pairs to drive, lazy fwd to probe.
 @inline function drive(r::MapRel, k)
     for p in r.pairs
         k(p.first, p.second)
@@ -1152,7 +1162,7 @@ macro entity(entity_sym, block)
     push!(out.args, :($(GlobalRef(@__MODULE__, :_declare_if_needed))(@__MODULE__, $(QuoteNode(entity_sym)))))
 
     id_type    = :($(GlobalRef(@__MODULE__, :ID)){$(esc(entity_sym))})
-    rel_type   = GlobalRef(@__MODULE__, :MapRel)
+    rel_type   = GlobalRef(@__MODULE__, :Staging)
     lookup_fn  = GlobalRef(@__MODULE__, :lookup_field)
     primary_fn = GlobalRef(@__MODULE__, :primary)
 
@@ -1164,8 +1174,8 @@ macro entity(entity_sym, block)
             field_sym  = stmt.args[1]
             range_expr = stmt.args[2]
             # `f :: Multi{T}` declares a multi-valued field: record it and store
-            # the unwrapped `T` as the leaf's value type (the staging MapRel and
-            # sealed MultiRel both hold `Pair{ID{E}, T}`).
+            # the unwrapped `T` as the leaf's value type (the `Staging` leaf and
+            # sealed `MultiRel` both hold `Pair{ID{E}, T}`).
             is_multi = range_expr isa Expr && range_expr.head === :curly &&
                        range_expr.args[1] === :Multi
             is_multi && (range_expr = range_expr.args[2])

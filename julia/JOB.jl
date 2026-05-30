@@ -471,7 +471,7 @@ const _n_person = length(_Person_name.pairs)
 # === Seal every leaf into static storage (column store / sparse / multi) ====
 # `seal_entities!` rebinds each `_Entity_field` const to its sealed object,
 # chosen by declared multiplicity + density. Re-`@expose` afterwards so bare
-# names (`title`, `cast`, …) — which captured the staging MapRel by reference —
+# names (`title`, `cast`, …) — which captured the staging leaf by reference —
 # pick up the sealed bindings. (`Entity.field` access resolves dynamically and
 # needs no refresh.)
 Prela.seal_entities!()
