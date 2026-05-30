@@ -4,9 +4,9 @@
 # hand-rolled Q6 (0.05s) while preserving the algebra surface.
 
 using Main: Prela
-import Main.Prela: Query, Unary, Universe, URestrict, Restrict, Diff, Compose,
-                   Filter, Conj, Disj, SetDiff, URestrict, Keys, Prod, MapRel,
-                   VecRel, UnaryVec, Scalar, FnP, EqP, InP, InSetP, Map,
+import Main.Prela: Query, Unary, Universe, Diff, Compose,
+                   Filter, Disj, Keys, Prod, MapRel,
+                   VecRel, UnaryVec, Scalar, FnP, EqP, InP, Map,
                    LeftCompose, LeftConj, DenseFold, Fold, BufFold, Inv,
                    Bitset, Materialized, MatSet, _denseidx, _densebox,
                    member, drive, probe, probe_any, askeys
@@ -22,33 +22,18 @@ import Main.Prela: Query, Unary, Universe, URestrict, Restrict, Diff, Compose,
 #   (and, where applicable, `_v` to the value) and runs body_expr.
 
 function _drive_body(::Type{Universe{E}}, q_expr, body) where E
+    # Identity-Unary: value equals the key.
     quote
         @inbounds for _i in 1:($q_expr).n
-            let _x = Prela.ID{$E}(_i), _v = ()
+            let _x = Prela.ID{$E}(_i), _v = _x
                 $body
             end
         end
     end
 end
 
-function _drive_body(::Type{<:URestrict{D, A, B}}, q_expr, body) where {D, A, B}
-    a_expr = :(($q_expr).a)
-    b_expr = :(($q_expr).b)
-    pred = _probe_any_body(B, b_expr, :_x)
-    wrapped = quote
-        if $pred
-            $body
-        end
-    end
-    _drive_body(A, a_expr, wrapped)
-end
-
-function _drive_body(::Type{<:Restrict{D, R, A, B}}, q_expr, body) where {D, R, A, B}
-    a_expr = :(($q_expr).a)
-    b_expr = :(($q_expr).b)
-    inner = _probe_body(B, b_expr, :_x, :_v, body)
-    _drive_body(A, a_expr, inner)
-end
+# Restrict / URestrict types are gone (tarski) — both reduce to Compose with
+# `askeys(b)` on the rhs. Handled by Compose.drive below.
 
 # MapRel drive (entity-keyed dense values fast path). Locals prefixed
 # `_mr_` to avoid collision with DenseFold's `_seen`/`_vals` when the
@@ -94,11 +79,11 @@ function _drive_body(::Type{<:VecRel{E, R}}, q_expr, body) where {E, R}
     end
 end
 
-# UnaryVec drive: iterate the values vector
+# UnaryVec drive: iterate the values vector (identity-Unary: _v = _x)
 function _drive_body(::Type{<:UnaryVec{D}}, q_expr, body) where {D}
     quote
         for _x in ($q_expr).values
-            let _v = ()
+            let _v = _x
                 $body
             end
         end
@@ -272,41 +257,22 @@ function _drive_body(::Type{<:Filter{D, R, A, InP{T}}}, q_expr, body) where {D, 
     end
     _drive_body(A, a_expr, wrap)
 end
-function _drive_body(::Type{<:Filter{D, R, A, InSetP{S}}}, q_expr, body) where {D, R, A, S}
-    a_expr = :(($q_expr).a)
-    wrap = quote
-        if member(($q_expr).pred.s, _v)
-            $body
-        end
-    end
-    _drive_body(A, a_expr, wrap)
-end
+# Filter{InSetP} is gone — under tarski, set membership in filter chains
+# uses Compose with `askeys(set)` on the rhs, not a Filter-with-set-pred.
+# Conj / SetDiff types are gone (tarski). `∧` aliases `⊗` (Prod); set
+# difference goes through Diff with `askeys(b)` on the rhs.
 
-# Conj drive (as Unary): drive a, member-check b
-function _drive_body(::Type{<:Conj{D, A, B}}, q_expr, body) where {D, A, B}
-    a_expr = :(($q_expr).a)
-    b_expr = :(($q_expr).b)
-    pred = _probe_any_body(B, b_expr, :_x)
-    wrap = quote
-        if $pred
-            $body
-        end
-    end
-    _drive_body(A, a_expr, wrap)
-end
-
-# Disj drive (as Unary): drive a, then drive b excluding a's keys
+# Disj drive: drive a (emits (x, x)), then drive b excluding a's keys
 function _drive_body(::Type{<:Disj{D, A, B}}, q_expr, body) where {D, A, B}
     a_expr = :(($q_expr).a)
     b_expr = :(($q_expr).b)
     a_check = _probe_any_body(A, a_expr, :_x)
-    body_a = body
     body_b = quote
         if !($a_check)
             $body
         end
     end
-    a_drive = _drive_body(A, a_expr, body_a)
+    a_drive = _drive_body(A, a_expr, body)
     b_drive = _drive_body(B, b_expr, body_b)
     quote
         $a_drive
@@ -314,20 +280,7 @@ function _drive_body(::Type{<:Disj{D, A, B}}, q_expr, body) where {D, A, B}
     end
 end
 
-# SetDiff drive (as Unary): drive a, exclude keys in b
-function _drive_body(::Type{<:SetDiff{D, A, B}}, q_expr, body) where {D, A, B}
-    a_expr = :(($q_expr).a)
-    b_expr = :(($q_expr).b)
-    b_check = _probe_any_body(B, b_expr, :_x)
-    wrap = quote
-        if !($b_check)
-            $body
-        end
-    end
-    _drive_body(A, a_expr, wrap)
-end
-
-# Diff drive (as Query): drive a, exclude keys in b (set-side).
+# Diff drive (value-bearing): drive a, exclude keys in b.
 function _drive_body(::Type{<:Diff{D, R, A, B}}, q_expr, body) where {D, R, A, B}
     a_expr = :(($q_expr).a)
     b_expr = :(($q_expr).b)
@@ -340,27 +293,25 @@ function _drive_body(::Type{<:Diff{D, R, A, B}}, q_expr, body) where {D, R, A, B
     _drive_body(A, a_expr, wrap)
 end
 
-# Keys drive (Unary view over a Query): drive a, ignore the value
+# Keys drive (identity view of a Query's keyset): drive a, rebind _v = _x.
 function _drive_body(::Type{<:Keys{D, A}}, q_expr, body) where {D, A}
     a_expr = :(($q_expr).a)
-    # Drive a, body sees _x and _v (the value). For Keys we throw v away
-    # and set _v = ().
     wrap = quote
-        let _v = ()
+        let _v = _x
             $body
         end
     end
     _drive_body(A, a_expr, wrap)
 end
 
-# Bitset drive: iterate set bits. Box D at codegen time.
+# Bitset drive: iterate set bits. Box D at codegen; emit (x, x) for identity.
 function _drive_body(::Type{<:Bitset{D}}, q_expr, body) where {D}
     box_expr = D === Int ? :(_i - 1) : :($D(_i - 1))
     quote
         let _b = $q_expr
             @inbounds for _i in eachindex(_b.bits)
                 if _b.bits[_i]
-                    let _x = $box_expr, _v = ()
+                    let _x = $box_expr, _v = _x
                         $body
                     end
                 end
@@ -424,14 +375,14 @@ end
 function _drive_body(::Type{<:MatSet{D, A}}, q_expr, body) where {D, A}
     quote
         for _x in Prela._mkeys($q_expr)
-            let _v = ()
+            let _v = _x
                 $body
             end
         end
     end
 end
 
-# LeftConj drive (Unary): drive r, member-check materialized l per row.
+# LeftConj drive (identity Unary): drive r, member-check l per row.
 function _drive_body(::Type{<:LeftConj{D, ML, R}}, q_expr, body) where {D, ML, R}
     r_expr = :(($q_expr).r)
     l_expr = :(($q_expr).l)
@@ -599,18 +550,6 @@ function _probe_body_test(::Type{<:Filter{D, R, A, InP{T}}}, q_expr, x_sym, y_sy
     end
     _probe_body_test(A, a_expr, x_sym, y_sym, wrap)
 end
-function _probe_body_test(::Type{<:Filter{D, R, A, InSetP{S}}}, q_expr, x_sym, y_sym, body) where {D, R, A, S}
-    a_expr = :(($q_expr).a)
-    wrap = quote
-        if member(($q_expr).pred.s, $y_sym)
-            $body
-        else
-            false
-        end
-    end
-    _probe_body_test(A, a_expr, x_sym, y_sym, wrap)
-end
-
 function _probe_body_test(::Type{<:Prod{D, R, OPS}}, q_expr, x_sym, y_sym, body) where {D, R, OPS}
     op_types = OPS.parameters
     N = length(op_types)
@@ -729,13 +668,84 @@ function _probe_body(::Type{<:Filter{D, R, A, InP{T}}}, q_expr, x_sym, y_sym, bo
     end
     _probe_body(A, :(($q_expr).a), x_sym, y_sym, wrap)
 end
-function _probe_body(::Type{<:Filter{D, R, A, InSetP{S}}}, q_expr, x_sym, y_sym, body) where {D, R, A, S}
-    wrap = quote
-        if member(($q_expr).pred.s, $y_sym)
-            $body
+# ---- Identity-Unary probes (tarski) — yield x as the value if member. ----
+# In tarski, Unary{D} <: Query{D, D}: probing at x yields x iff member(q, x).
+
+function _probe_body(::Type{<:Keys{D, A}}, q_expr, x_sym, y_sym, body) where {D, A}
+    test = _probe_any_body(A, :(($q_expr).a), x_sym)
+    quote
+        if $test
+            let $y_sym = $x_sym
+                $body
+            end
         end
     end
-    _probe_body(A, :(($q_expr).a), x_sym, y_sym, wrap)
+end
+
+function _probe_body(::Type{Universe{E}}, q_expr, x_sym, y_sym, body) where {E}
+    quote
+        if 1 <= ($x_sym).id <= ($q_expr).n
+            let $y_sym = $x_sym
+                $body
+            end
+        end
+    end
+end
+
+function _probe_body(::Type{<:Bitset{D}}, q_expr, x_sym, y_sym, body) where {D}
+    quote
+        let _b = $q_expr, _i = _denseidx($x_sym) + 1
+            if @inbounds(1 <= _i <= length(_b.bits) && _b.bits[_i])
+                let $y_sym = $x_sym
+                    $body
+                end
+            end
+        end
+    end
+end
+
+function _probe_body(::Type{<:UnaryVec{D}}, q_expr, x_sym, y_sym, body) where {D}
+    quote
+        if member($q_expr, $x_sym)
+            let $y_sym = $x_sym
+                $body
+            end
+        end
+    end
+end
+
+function _probe_body(::Type{<:MatSet{D, A}}, q_expr, x_sym, y_sym, body) where {D, A}
+    quote
+        if member($q_expr, $x_sym)
+            let $y_sym = $x_sym
+                $body
+            end
+        end
+    end
+end
+
+function _probe_body(::Type{<:Disj{D, A, B}}, q_expr, x_sym, y_sym, body) where {D, A, B}
+    a_chk = _probe_any_body(A, :(($q_expr).a), x_sym)
+    b_chk = _probe_any_body(B, :(($q_expr).b), x_sym)
+    quote
+        if $a_chk || $b_chk
+            let $y_sym = $x_sym
+                $body
+            end
+        end
+    end
+end
+
+function _probe_body(::Type{<:LeftConj{D, ML, R}}, q_expr, x_sym, y_sym, body) where {D, ML, R}
+    l_chk = _probe_any_body(ML, :(($q_expr).l), x_sym)
+    r_chk = _probe_any_body(R, :(($q_expr).r), x_sym)
+    quote
+        if $l_chk && $r_chk
+            let $y_sym = $x_sym
+                $body
+            end
+        end
+    end
 end
 
 # Compose probe (when Compose appears on the rhs of a → ): probe through chain
@@ -838,12 +848,18 @@ function _probe_any_body(::Type{<:Keys{D, A}}, q_expr, x_sym) where {D, A}
     _probe_any_body(A, a_expr, x_sym)
 end
 
-function _probe_any_body(::Type{<:Conj{D, A, B}}, q_expr, x_sym) where {D, A, B}
-    a_expr = :(($q_expr).a)
-    b_expr = :(($q_expr).b)
-    a_check = _probe_any_body(A, a_expr, x_sym)
-    b_check = _probe_any_body(B, b_expr, x_sym)
-    :($a_check && $b_check)
+# Conj is gone (tarski) — `∧` aliases `⊗` (Prod). Prod gets its own
+# probe_any via Prela._prod_member (flat short-circuit AND), so we
+# delegate at codegen.
+function _probe_any_body(::Type{<:Prod{D, R, OPS}}, q_expr, x_sym) where {D, R, OPS}
+    op_types = OPS.parameters
+    N = length(op_types)
+    # Emit a flat short-circuit AND chain — mirrors Prela._prod_member.
+    body = :true
+    for i in N:-1:1
+        body = :(member(($q_expr).ops[$i], $x_sym) && $body)
+    end
+    body
 end
 
 # Filter with FnP{F} closure predicate — covers <, >, <=, >=, in interval, etc.
@@ -868,16 +884,8 @@ function _probe_any_body(::Type{<:Filter{D, R, A, InP{T}}}, q_expr, x_sym) where
     _probe_body_test(A, a_expr, x_sym, y_sym, test)
 end
 
-# Filter with InSetP{S} — value must be a member of the set S.
-function _probe_any_body(::Type{<:Filter{D, R, A, InSetP{S}}}, q_expr, x_sym) where {D, R, A, S}
-    a_expr = :(($q_expr).a)
-    y_sym = gensym(:_yis)
-    # member(set, y) is the engine API for set-membership; for Bitset/Keys/etc.
-    # we could emit specialized code, but the fallback is fine because `member`
-    # itself is @inline and goes to probe_any.
-    test = :(member(($q_expr).pred.s, $y_sym))
-    _probe_body_test(A, a_expr, x_sym, y_sym, test)
-end
+# Filter{InSetP} is gone — set membership in filter chains now goes through
+# Compose with `askeys(set)` on the rhs.
 
 # Bitset.probe_any — direct bit-test in the @generated codegen so the bit
 # bounds check inlines flat into the surrounding loop.
@@ -903,14 +911,21 @@ function _probe_any_body(::Type{<:Disj{D, A, B}}, q_expr, x_sym) where {D, A, B}
     :($a || $b)
 end
 
-# SetDiff — in A but not in B.
-function _probe_any_body(::Type{<:SetDiff{D, A, B}}, q_expr, x_sym) where {D, A, B}
-    a = _probe_any_body(A, :(($q_expr).a), x_sym)
-    b = _probe_any_body(B, :(($q_expr).b), x_sym)
-    :($a && !$b)
+# Materialized.probe_any — through cached idx. For ID-keyed (Vector{Vector{R}})
+# do bounds + non-empty inner. For Dict-keyed use haskey.
+function _probe_any_body(::Type{<:Materialized{D, R, A}}, q_expr, x_sym) where {D, R, A}
+    if D <: Prela.ID
+        quote
+            let _idx = Prela._cidx($q_expr), _i = ($x_sym).id
+                1 <= _i <= length(_idx) && !isempty(@inbounds _idx[_i])
+            end
+        end
+    else
+        :(haskey(Prela._cidx($q_expr), $x_sym))
+    end
 end
 
-# MatSet.probe_any — fall back to the runtime set lookup. MatSet builds its
+# SetDiff is gone (tarski). MatSet.probe_any — fall back to the runtime set lookup. MatSet builds its
 # internal `Set{D}` lazily on first call, so it's fine to call `member` here.
 function _probe_any_body(::Type{<:MatSet{D, A}}, q_expr, x_sym) where {D, A}
     :(member($q_expr, $x_sym))
@@ -937,22 +952,9 @@ function _probe_any_body(::Type{<:Compose{D, M, R, A, B}}, q_expr, x_sym) where 
     probe_let
 end
 
-# Restrict probe_any: probe(a, x, _ -> probe_any(b, x, k)) — but Restrict is
-# a Query, not used in probe_any chains typically. Emit conservatively.
-function _probe_any_body(::Type{<:Restrict{D, R, A, B}}, q_expr, x_sym) where {D, R, A, B}
-    :(member($q_expr, $x_sym))
-end
-
-# Inv probe_any: lazy dict lookup
+# Restrict / URestrict types are gone (tarski). Inv probe_any: lazy dict lookup
 function _probe_any_body(::Type{<:Inv{B, A, Q}}, q_expr, x_sym) where {B, A, Q}
     :(haskey(Prela._inv_index($q_expr), $x_sym))
-end
-
-# URestrict probe_any: both sides must contain x
-function _probe_any_body(::Type{<:URestrict{D, A, B}}, q_expr, x_sym) where {D, A, B}
-    a = _probe_any_body(A, :(($q_expr).a), x_sym)
-    b = _probe_any_body(B, :(($q_expr).b), x_sym)
-    :($a && $b)
 end
 
 # LeftConj probe_any: both
