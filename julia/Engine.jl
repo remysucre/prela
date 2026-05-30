@@ -1055,11 +1055,29 @@ if isdefined(Main, :_vals_tpch)
     end
 end
 if isdefined(Main, :_vals)
+    # Mirror queries.jl `_vals`: per-column running min, no materialization.
+    # Drives via execute_drive so the engine's flattened loop is used.
     function Main._vals(q)
-        rows = Tuple{Any, Any}[]
-        execute_drive(q, (x, y) -> push!(rows, (x, y)))
-        isempty(rows) && return "(empty)"
-        sort!(rows; by = x -> x[1])
-        join([string(k) for (k, _) in rows], " || ")
+        cur = Ref{Any}(nothing)
+        emit = y -> begin
+            fl = Main._flatten(y)
+            c = cur[]
+            if c === nothing
+                cur[] = collect(Any, fl)
+            else
+                cc = c::Vector{Any}
+                @inbounds for i in eachindex(cc)
+                    fi = fl[i]
+                    isless(fi, cc[i]) && (cc[i] = fi)
+                end
+            end
+        end
+        if Prela._rangeof(q) === Tuple{}
+            execute_drive(q, (x, _) -> emit(x))
+        else
+            execute_drive(q, (_, y) -> emit(y))
+        end
+        c = cur[]
+        c === nothing ? "(empty)" : join(string.(c::Vector{Any}), " || ")
     end
 end
