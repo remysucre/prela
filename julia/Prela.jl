@@ -218,15 +218,12 @@ function seal_entities!()
 end
 export seal_entities!
 
-# ===== index builders (for `Materialized`) ==============================
+# ===== Materialized index builder + readers =============================
 # Leaves no longer carry indexes — they are sealed into VecRel/SparseRel/
-# MultiRel, each with its layout baked in. The helpers below build a forward
+# MultiRel with their layout baked in. The helpers below build / read a forward
 # index for the one node that still needs one on demand: `Materialized` (the
 # `materialize`-once / probe-many node). Dense `Vector{Vector{R}}` when entity-
 # keyed, a `Dict` otherwise; `_idx_probe`/`_idx_probe_any` read either.
-
-const _LEAF_RELS = Base.IdSet{Any}()      # populated by @entity; kept for compat
-const _UNARY_SETS = IdDict{Any, Any}()
 
 # Dense forward index: for an entity-keyed relation (contiguous PK 1..n) the
 # index is a Vector{Vector{R}} addressed by `.id` — an array access per probe,
@@ -282,8 +279,6 @@ end
     end
     false
 end
-
-_unary_set(u::UnaryVec{D}) where D = get!(() -> Set(u.values), _UNARY_SETS, u)::Set{D}
 
 # ===== predicate payloads (typed so codegen branches statically) ========
 
@@ -1009,6 +1004,11 @@ end
 # These are the binary identity form of the former Unary leaves — the value
 # side equals the key, and `member` is just `probe_any`.
 
+# Membership set for a `UnaryVec`, built lazily on first probe and cached by
+# object identity (a `UnaryVec` is immutable, so it can't hold the cache itself).
+const _UNARY_SETS = IdDict{Any, Any}()
+_unary_set(u::UnaryVec{D}) where D = get!(() -> Set(u.values), _UNARY_SETS, u)::Set{D}
+
 @inline drive(u::UnaryVec{D}, k) where {D} = (for v in u.values; k(v, v); end)
 @inline probe(u::UnaryVec, x, k) = (x in _unary_set(u)) && (k(x); nothing)
 @inline probe_any(u::UnaryVec, x, k) = (x in _unary_set(u)) && k(x)
@@ -1152,7 +1152,6 @@ macro entity(entity_sym, block)
                     Pair{$id_type, $(esc(range_expr))}[]
                 )
                 $lookup_fn(::Type{$id_type}, ::Val{$(QuoteNode(field_sym))}) = $(esc(qual_sym))
-                push!($(GlobalRef(@__MODULE__, :_LEAF_RELS)), $(esc(qual_sym)))
             end)
         else
             error("@entity: unsupported statement $stmt; expected `name :: Type`")
