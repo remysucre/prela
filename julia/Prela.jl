@@ -1038,10 +1038,14 @@ end
     @inbounds (1 <= i <= length(b.bits) && b.bits[i]) && k(x)
 end
 
-@inline function drive(s::Disj, k)
-    drive(s.a, (x, _) -> k(x, x))
-    drive(s.b, (x, _) -> member(s.a, x) || (k(x, x); nothing))
-end
+# `∨`/`Disj` is a *membership* union (probe-only): `member(l ∨ r, x)` is just
+# `member(l, x) || member(r, x)` — order-free, no dedup, and the two sides need
+# not share an element type (it's a predicate over the coproduct domain). It is
+# never enumerated: driving a union (dedup-while-emitting) is the one operation
+# that would need its lhs both driven and probed, so it lives elsewhere — use
+# `Union` (bag-concat of same-typed rels) to enumerate.
+drive(::Disj, k) = error("∨ (Disj) is a probe-only membership union; " *
+                         "use `Union` to enumerate a union")
 @inline probe(s::Disj{D}, x, k) where {D} =
     (member(s.a, x) || member(s.b, x)) && (k(x); nothing)
 @inline probe_any(s::Disj{D}, x, k) where {D} =
