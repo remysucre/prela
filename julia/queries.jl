@@ -44,7 +44,10 @@ end
 # terminal continuation. Never materializes the result. `cur` is a mutable
 # typed Vector{Any} sized once at first emit; later emits compare in place
 # without allocating.
-function _vals(q)
+# `_vals_prepared(pq)` — drive an already-prepared plan to the result string.
+# (prepare is treated as compilation: the bench harness prepares untimed, then
+# times only this.) `_vals(q)` = prepare + run, for the REPL / runall.
+function _vals_prepared(pq)
     cur = Ref{Any}(nothing)
     emit = y -> begin
         fl = _flatten(y)
@@ -59,14 +62,15 @@ function _vals(q)
             end
         end
     end
-    if Prela._rangeof(q) === Tuple{}
-        Prela.drive(q, (x, _) -> emit(x))
+    if Prela._rangeof(pq) === Tuple{}
+        Prela.drive(pq, (x, _) -> emit(x))
     else
-        Prela.drive(q, (_, y) -> emit(y))
+        Prela.drive(pq, (_, y) -> emit(y))
     end
     c = cur[]
     c === nothing ? "(empty)" : join(string.(c::Vector{Any}), " || ")
 end
+_vals(q) = _vals_prepared(Prela.prepare(q, Prela.Driven()))
 
 const _PRINT_LOCK = ReentrantLock()
 

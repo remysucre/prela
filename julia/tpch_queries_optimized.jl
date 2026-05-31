@@ -38,9 +38,10 @@ function _q_tpch(name, oracle, f; sort_by = identity, limit = nothing, row = _de
     nothing
 end
 
-function _vals_tpch(q, sort_by, limit, row)
+# prepare = compilation: bench prepares untimed, then times `_vals_tpch_prepared`.
+function _vals_tpch_prepared(pq, sort_by, limit, row)
     rows = Tuple{Any, Any}[]
-    Prela.drive(q, (x, y) -> push!(rows, (x, y)))
+    Prela.drive(pq, (x, y) -> push!(rows, (x, y)))
     isempty(rows) && return "(empty)"
     sort!(rows; by = sort_by)
     limit !== nothing && length(rows) > limit && resize!(rows, limit)
@@ -50,6 +51,8 @@ function _vals_tpch(q, sort_by, limit, row)
     end
     join(lines, "\n")
 end
+_vals_tpch(q, sort_by, limit, row) =
+    _vals_tpch_prepared(Prela.prepare(q, Prela.Driven()), sort_by, limit, row)
 
 function runall_tpch()
     ok = 0
@@ -377,7 +380,7 @@ function _q13()
         # orders get c_count = 0 (LEFT JOIN semantic).
         dist = Dict{Int, Int}()
         n_with = 0
-        Prela.drive(count_per_cust, (_, c) -> begin
+        Prela.drive(Prela.prepare(count_per_cust, Prela.Driven()), (_, c) -> begin
             dist[c] = get(dist, c, 0) + 1
             n_with += 1
         end)

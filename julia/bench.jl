@@ -11,12 +11,15 @@ using Printf
 suite = get(ARGS, 1, "job")
 ENV["PRELA_SKIP_RUNALL"] = "1"
 
+# `run()` builds the plan (`f()` — which eagerly materializes any `bitset`
+# indexes), lowers its access mode (`prepare`, now ~free since it's type-stable),
+# and drives it to the result. Everything here is real query work — index/cache/
+# bitset building included — so it's all timed; only JIT is excluded (cold pass).
 if suite == "job"
     include("JOB.jl")
     include("queries.jl")
     # JOB entries: (name, oracle, f)  — f() returns a Query.
-    eval_fn = (f) -> Main._vals(f())
-    qs = [(name, oracle, () -> eval_fn(f)) for (name, oracle, f) in Main._Q]
+    qs = [(name, () -> Main._vals(f())) for (name, _oracle, f) in Main._Q]
 elseif suite == "tpch"
     include("TPCH.jl")
     variant = get(ENV, "QS", "idiomatic")
@@ -24,25 +27,25 @@ elseif suite == "tpch"
         error("QS must be \"idiomatic\" or \"optimized\", got $(repr(variant))")
     include("tpch_queries_$(variant).jl")
     # TPC-H entries: (name, oracle, f, sort_by, limit, row).
-    qs = Tuple{String, String, Function}[]
-    for (name, oracle, f, sort_by, limit, row) in Main._QT
+    qs = Tuple{String, Function}[]
+    for (name, _oracle, f, sort_by, limit, row) in Main._QT
         run = let f=f, sb=sort_by, lim=limit, r=row
             () -> Main._vals_tpch(f(), sb, lim, r)
         end
-        push!(qs, (name, oracle, run))
+        push!(qs, (name, run))
     end
 else
     error("usage: julia bench.jl {job|tpch}")
 end
 
 # Cold pass — triggers JIT/specialization; results discarded.
-for (_, _, run) in qs
+for (_, run) in qs
     try run() catch end
 end
 GC.gc(true)  # clear cold-pass garbage so the first warm query isn't penalized by it
 
-# Warm pass — wall-clock per query, written to stdout for the plot scripts.
-for (name, _oracle, run) in qs
+# Warm pass — wall-clock per query (build + prepare + drive), written to stdout.
+for (name, run) in qs
     t = time_ns()
     _ = try run() catch e e end
     dt = (time_ns() - t) / 1e9
