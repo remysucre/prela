@@ -1,7 +1,7 @@
 # Prela: Purely Algebraic Relation Combinators
 
-> The calculus of relations has an intrinsic charm and beauty which makes it a source of intellectual
-> delight to all who become acquainted with it - Alfred Tarski
+> "The calculus of relations has an intrinsic charm and beauty which makes it a source of intellectual
+> delight to all who become acquainted with it." -Alfred Tarski
 
 Prela is an embedded query language
  based on [Tarski's Algebra of Relations](https://www.cl.cam.ac.uk/teaching/1415/Databases/Tarski_1941.pdf)
