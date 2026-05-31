@@ -1034,6 +1034,94 @@ end
 # `drivekeys(q, k)` — emit each domain key. Back-compat alias over `drive`.
 @inline drivekeys(q::Query, k) = drive(q, (x, _) -> k(x))
 
+# ===== build_*: the data-building half of `prepare` =====================
+# `prepare` (below) is pure mode-propagation: it threads access modes and
+# rebuilds structural nodes, choosing each node's prepared *type* by a rule that
+# depends only on (node type, mode) — never on data. The actual data
+# construction — driving an inner once to fill an index/cache — lives here, in
+# named `build_*` functions over already-prepared (driven) inners. This is the
+# lower/build split: `prepare` is the "lower" recursion (a pure, type-level
+# rule); these drives are the "build". Keeping them apart means the `@generated`
+# Engine can reuse this exact build logic while reproducing the mode rule at
+# codegen time (the type-level CPS).
+
+# Inv probed: eager inverse index — drive the inner, bucket keys by value.
+function build_inv_index(pq::Query{A, B}) where {A, B}
+    d = Dict{B, Vector{A}}()
+    drive(pq, (a, b) -> push!(get!(() -> A[], d, b), a))
+    InvIndexed{B, A}(d)
+end
+
+# LeftCompose probed: concrete Dict{RK, Vector{SV}} — drive s, probe r per row.
+function build_lc_index(pr::Query{D, RK}, ps::Query{D, SV}) where {D, RK, SV}
+    d = Dict{RK, Vector{SV}}()
+    drive(ps, (dd, v) -> probe(pr, dd, rk -> push!(get!(() -> SV[], d, rk), v)))
+    LCIndexed{RK, SV}(d)
+end
+
+# Fold: per-key foldl cache (`S` is the accumulator type, fixed by `init`).
+function build_fold(pq::Query{D, R}, op, init::S) where {D, R, S}
+    acc = Dict{D, S}()
+    drive(pq, (d, v) -> (acc[d] = op(get(acc, d, init), v)))
+    FoldP{D, S}(acc)
+end
+
+# DenseFold: dense per-key fold over slots `0..n`.
+function build_densefold(pq::Query{D, R}, op, init::S, n::Int) where {D, R, S}
+    sz = n + 1; vals = fill(init, sz); seen = falses(sz)
+    drive(pq, (d, v) -> begin
+        i = _denseidx(d) + 1
+        if 1 <= i <= sz
+            @inbounds vals[i] = op(vals[i], v); @inbounds seen[i] = true
+        end
+    end)
+    DenseFoldP{D, S}(vals, seen)
+end
+
+# BufFold: per-key buffered reduce — collect all values, then call `f`. `S` is
+# `f`'s result type (not derivable from the inner), so the caller passes it.
+function build_buffold(pq::Query{D, R}, f, ::Type{S}) where {D, R, S}
+    buf = Dict{D, Vector{R}}()
+    drive(pq, (d, v) -> push!(get!(() -> R[], buf, d), v))
+    out = Dict{D, S}()
+    for (d, vs) in buf; out[d] = f(vs); end
+    FoldP{D, S}(out)
+end
+
+# Scalar: no-group foldl to a single value.
+function build_scalar(pq, op, init::S) where {S}
+    acc = Ref{S}(init)
+    drive(pq, (_, v) -> (acc[] = op(acc[], v)))
+    ScalarP{S}(acc[])
+end
+
+# Materialized: drive the inner once into stored pairs (driven) or a concrete
+# forward index (probed). `_matpairs`/`_mat_idx` are the underlying builders.
+build_mat_stream(pa::Query{D, R}) where {D, R} = MatStream{D, R}(_matpairs(pa, D, R))
+function build_mat_probed(pa::Query{D, R}) where {D, R}
+    idx = _mat_idx(_matpairs(pa, D, R))
+    MatProbed{D, R, typeof(idx)}(idx)
+end
+
+# MatSet driven/probed: stored keys / membership Set.
+function build_matset_keys(pa::Unary{D}) where {D}
+    keys = D[]; drive(pa, (x, _) -> push!(keys, x)); MatSetStream{D}(keys)
+end
+function build_matset_set(pa::Unary{D}) where {D}
+    s = Set{D}(); drive(pa, (x, _) -> push!(s, x)); MatSetProbed{D}(s)
+end
+
+# BitsetMat → dense `Bitset` membership: one bit per dense-int value (`MEM` is
+# the value side — a Unary emits its keys through the value slot).
+function build_bitset(pq::Query{D, MEM}, n::Int) where {D, MEM}
+    b = Bitset{MEM}(n)
+    drive(pq, (_, v) -> begin
+        i = _denseidx(v) + 1
+        @inbounds (1 <= i <= n + 1) && (b.bits[i] = true)
+    end)
+    b
+end
+
 # ===== prepare: lift the drive/probe mode to the types =================
 # `prepare(q, Driven())` rewrites the plan top-down so each node is in its access
 # mode (the root is driven). Structural nodes rebuild with children prepared per
@@ -1049,12 +1137,7 @@ end
 # Inv: the split (driven → stream, probed → eager concrete index).
 prepare(n::Inv{B,A,Q}, ::Driven) where {B,A,Q} =
     (pq = prepare(n.q, Driven()); InvStream{B,A,typeof(pq)}(pq))
-function prepare(n::Inv{B,A,Q}, ::Probed) where {B,A,Q}
-    pq = prepare(n.q, Driven())
-    d  = Dict{B, Vector{A}}()
-    drive(pq, (a, b) -> push!(get!(() -> A[], d, b), a))
-    InvIndexed{B,A}(d)
-end
+prepare(n::Inv, ::Probed) = build_inv_index(prepare(n.q, Driven()))
 
 # Structural nodes: rebuild with children prepared in their modes.
 prepare(n::Compose, m::Mode) = Compose(prepare(n.a, m), prepare(n.b, Probed()))
@@ -1075,81 +1158,38 @@ prepare(n::LeftConj{D,ML,R}, m::Mode) where {D,ML,R} =
 prepare(n::LeftCompose{D,RK,SV,QR,QS}, ::Driven) where {D,RK,SV,QR,QS} =
     (pr = prepare(n.r, Probed()); ps = prepare(n.s, Driven());
      LCStream{D,RK,SV,typeof(pr),typeof(ps)}(pr, ps))
-function prepare(n::LeftCompose{D,RK,SV,QR,QS}, ::Probed) where {D,RK,SV,QR,QS}
-    pr = prepare(n.r, Probed())
-    ps = prepare(n.s, Driven())
-    d = Dict{RK, Vector{SV}}()
-    drive(ps, (dd, v) -> probe(pr, dd, rk -> push!(get!(() -> SV[], d, rk), v)))
-    LCIndexed{RK,SV}(d)
-end
-# Folds: pipeline-breakers — the cache is always needed (both modes), so build it
-# eagerly into a concrete prepared result (no mode split, no Union).
-function prepare(n::Fold{D,R,S,Q,OP}, ::Mode) where {D,R,S,Q,OP}
-    pq = prepare(n.q, Driven())
-    acc = Dict{D, S}()
-    drive(pq, (d, v) -> (acc[d] = n.op(get(acc, d, n.init), v)))
-    FoldP{D,S}(acc)
-end
-function prepare(n::DenseFold{D,R,S,Q,OP}, ::Mode) where {D,R,S,Q,OP}
-    pq = prepare(n.q, Driven())
-    sz = n.n + 1; vals = fill(n.init, sz); seen = falses(sz); op = n.op
-    drive(pq, (d, v) -> begin
-        i = _denseidx(d) + 1
-        if 1 <= i <= sz
-            @inbounds vals[i] = op(vals[i], v); @inbounds seen[i] = true
-        end
-    end)
-    DenseFoldP{D,S}(vals, seen)
-end
-function prepare(n::BufFold{D,R,S,Q,F}, ::Mode) where {D,R,S,Q,F}
-    pq = prepare(n.q, Driven())
-    buf = Dict{D, Vector{R}}()
-    drive(pq, (d, v) -> push!(get!(() -> R[], buf, d), v))
-    out = Dict{D, S}(); for (d, vs) in buf; out[d] = n.f(vs); end
-    FoldP{D,S}(out)
-end
-function prepare(n::Scalar{S,Q,OP}, ::Mode) where {S,Q,OP}
-    pq = prepare(n.q, Driven())
-    acc = Ref{S}(n.init)
-    drive(pq, (_, v) -> (acc[] = n.op(acc[], v)))
-    ScalarP{S}(acc[])
-end
+prepare(n::LeftCompose, ::Probed) =
+    build_lc_index(prepare(n.r, Probed()), prepare(n.s, Driven()))
+
+# Pipeline-breakers (Folds/Scalar): the cache is always needed (both modes), so
+# `prepare` builds it eagerly into a concrete prepared result — no mode split.
+prepare(n::Fold, ::Mode) = build_fold(prepare(n.q, Driven()), n.op, n.init)
+prepare(n::DenseFold, ::Mode) = build_densefold(prepare(n.q, Driven()), n.op, n.init, n.n)
+prepare(n::BufFold{D,R,S,Q,F}, ::Mode) where {D,R,S,Q,F} =
+    build_buffold(prepare(n.q, Driven()), n.f, S)
+prepare(n::Scalar, ::Mode) = build_scalar(prepare(n.q, Driven()), n.op, n.init)
+
 # Materialized: split by mode — driven → stored pairs; probed → concrete index.
-# Both materialize the inner once (driving it). `_matpairs` is a function barrier
-# so the materializing drive specializes on the concrete prepared inner type.
+# `_matpairs` is the function barrier so the materializing drive specializes on
+# the concrete prepared inner type.
 function _matpairs(pa, ::Type{D}, ::Type{R}) where {D, R}
     out = Pair{D, R}[]
     drive(pa, (x, y) -> push!(out, x => y))
     out
 end
-prepare(n::Materialized{D,R,A}, ::Driven) where {D,R,A} =
-    MatStream{D,R}(_matpairs(prepare(n.a, Driven()), D, R))
-function prepare(n::Materialized{D,R,A}, ::Probed) where {D,R,A}
-    idx = _mat_idx(_matpairs(prepare(n.a, Driven()), D, R))
-    MatProbed{D,R,typeof(idx)}(idx)
-end
-prepare(n::MatSet{D,A}, ::Driven) where {D,A} =
-    (pa = prepare(n.a, Driven()); keys = D[]; drive(pa, (x,_) -> push!(keys, x));
-     MatSetStream{D}(keys))
-function prepare(n::MatSet{D,A}, ::Probed) where {D,A}
-    pa = prepare(n.a, Driven())
-    s = Set{D}(); drive(pa, (x, _) -> push!(s, x))
-    MatSetProbed{D}(s)
-end
+prepare(n::Materialized, ::Driven) = build_mat_stream(prepare(n.a, Driven()))
+prepare(n::Materialized, ::Probed) = build_mat_probed(prepare(n.a, Driven()))
+
+# MatSet: split by mode — driven → stored keys; probed → membership Set.
+prepare(n::MatSet, ::Driven) = build_matset_keys(prepare(n.a, Driven()))
+prepare(n::MatSet, ::Probed) = build_matset_set(prepare(n.a, Driven()))
 
 # UnaryVec: driven → iterate keys (identity); probed → concrete membership Set.
 prepare(n::UnaryVec, ::Driven) = n
 prepare(n::UnaryVec{D}, ::Probed) where {D} = MatSetProbed{D}(Set(n.values))
 
 # BitsetMat → a dense `Bitset` membership, built by driving the inner once.
-function prepare(node::BitsetMat{MEM, A}, ::Mode) where {MEM, A}
-    b = Bitset{MEM}(node.n)
-    drive(prepare(node.q, Driven()), (_, v) -> begin
-        i = _denseidx(v) + 1
-        @inbounds (1 <= i <= node.n + 1) && (b.bits[i] = true)
-    end)
-    b
-end
+prepare(n::BitsetMat, ::Mode) = build_bitset(prepare(n.q, Driven()), n.n)
 
 # Leaves / sources (and already-prepared variants): identity.
 prepare(n::Union{VecRel,SparseRel,MultiRel,MapRel,Universe,Bitset,
