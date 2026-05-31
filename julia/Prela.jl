@@ -313,22 +313,33 @@ struct Restrict{D, R, A, B} <: Query{D, R};  a::A;  b::B;  end
 
 # `materialize(q)` — the one explicit "bang". Prela is top-down / non-
 # materialized by default: a shared subexpression is re-driven on every use.
-# Wrapping it in `materialize(...)` evaluates it once into a stored vector +
-# hash index — materialize-once / probe-many. The bushy-plan building block:
-# wrap each selective non-driving leg in `materialize(...)` and the author gets
-# a hand-picked bushy hash-join plan (cf. ../ttj-rs, which materializes every
-# leg). Lazy: the materialization fires on first drive/probe, in demand order.
-mutable struct Materialized{D, R, A} <: Query{D, R}
+# Wrapping it in `materialize(...)` evaluates it once and serves it many — the
+# bushy-plan building block (wrap each selective non-driving leg). AST-only:
+# `prepare` lowers it to `MatStream` (driven → stored pairs) or `MatProbed`
+# (probed → concrete forward index), so `Materialized` itself is never run.
+struct Materialized{D, R, A} <: Query{D, R}
     a::A
-    mat::Union{Nothing, Vector{Pair{D, R}}}
-    idx::Union{Nothing, Vector{Vector{R}}, Dict{D, Vector{R}}}
 end
 
-# `materialize` on a set-query: evaluate once into a vector + membership set.
-mutable struct MatSet{D, A} <: Unary{D}
+# Prepared forms: drive-only stored pairs vs probe-only concrete index — dense
+# `Vector{Vector{R}}` when entity-keyed, else `Dict{D, Vector{R}}` (no Union).
+struct MatStream{D, R} <: Query{D, R}
+    mat::Vector{Pair{D, R}}
+end
+struct MatProbed{D, R, IDX} <: Query{D, R}
+    idx::IDX
+end
+
+# `materialize` on a set-query. AST-only: `prepare` lowers to `MatSetStream`
+# (driven → stored keys) or `MatSetProbed` (probed → concrete membership Set).
+struct MatSet{D, A} <: Unary{D}
     a::A
-    keys::Union{Nothing, Vector{D}}
-    set::Union{Nothing, Set{D}}
+end
+struct MatSetStream{D} <: Unary{D}
+    keys::Vector{D}
+end
+struct MatSetProbed{D} <: Unary{D}
+    set::Set{D}
 end
 
 # `Bitset(n)` — dense `BitVector`-backed `Unary{D}`. Drop-in replacement
@@ -344,41 +355,46 @@ mutable struct Bitset{D} <: Unary{D}
 end
 Bitset{D}(n::Int) where {D} = Bitset{D}(falses(n + 1), n)
 
-# `bitset(s, n)` — materialize a `Unary{D}` into a `Bitset{D}`.
-function bitset(s::Unary{D}, n::Int) where {D}
-    b = Bitset{D}(n)
-    drivekeys(s, x -> begin
-        i = _denseidx(x) + 1
-        if 1 <= i <= n + 1
-            @inbounds b.bits[i] = true
-        end
-    end)
-    b
+# `bitset(s/q, n)` — a *lazy* dense-membership materialize. `BitsetMat` is an AST
+# node that `prepare` lowers to a `Bitset` (driving the inner once, one bit per
+# dense-int member). So the index is built at prepare — part of the plan, timed
+# as real work — not eagerly during query construction. A `Unary` input bit-sets
+# its keys; a value-bearing `Query` bit-sets its values (both flow through the
+# value slot of `drive`, since a Unary emits `(x, x)`).
+struct BitsetMat{MEM, A} <: Unary{MEM}
+    q::A
+    n::Int
 end
-# `bitset(q, n)` — materialize a `Query{D, R}` value-side `R` into a
-# `Bitset{R}`. Useful for "set of Rs that this Query emits", mirroring the
-# Rust port's `Bitset::from_drive` for late-orderkey scans.
-function bitset(q::Query{D, R}, n::Int) where {D, R}
-    b = Bitset{R}(n)
-    drive(q, (_, x) -> begin
-        i = _denseidx(x) + 1
-        if 1 <= i <= n + 1
-            @inbounds b.bits[i] = true
-        end
-    end)
-    b
-end
+bitset(s::Unary{D}, n::Int) where {D} = BitsetMat{D, typeof(s)}(s, n)
+bitset(q::Query{D, R}, n::Int) where {D, R} = BitsetMat{R, typeof(q)}(q, n)
 export bitset, Bitset
 
-# `Inv(q)` — invert a relation. `q : A → B` becomes `Inv(q) : B → A`.
-# Surface syntax is postfix adjoint `q'`. `drive` is streaming (just flips
-# pairs, no allocation). `probe`/`member`/`drivekeys` lazy-build a
-# Dict{B, Vector{A}} on first call and reuse it thereafter — so using
-# `q'` on the rhs of a `→` (Compose) auto-materializes the inverse index
-# the first time the scan needs it.
-mutable struct Inv{B, A, Q} <: Query{B, A}
+# `Inv(q)` — invert a relation. `q : A → B` becomes `Inv(q) : B → A`. Surface
+# syntax is postfix adjoint `q'`. AST-only: `prepare` lowers it to `InvStream`
+# (driven → streaming flip) or `InvIndexed` (probed → eager concrete index), so
+# `Inv` itself is never driven/probed.
+struct Inv{B, A, Q} <: Query{B, A}
     q::Q
-    idx::Union{Nothing, Dict{B, Vector{A}}}
+end
+
+# ===== access mode, made type-level by `prepare` ========================
+# The drive-vs-probe mode is a top-down, build-time property (the root is always
+# driven). `prepare(plan, Driven())` rewrites the plan so each node sits in its
+# mode; where a probed node needs an index it becomes a distinct, concrete-typed
+# prepared node — no lazy `Union{Nothing,…}`. (See the plan; this slice splits
+# only `Inv`.)
+abstract type Mode end
+struct Driven <: Mode end
+struct Probed <: Mode end
+
+# `Inv` splits by mode at `prepare` time: driven → streaming flip (no index);
+# probed → an eagerly-built, concrete inverse index. Each supports exactly one
+# access, so the mode is type-enforced.
+struct InvStream{B, A, Q} <: Query{B, A}
+    q::Q
+end
+struct InvIndexed{B, A} <: Query{B, A}
+    idx::Dict{B, Vector{A}}
 end
 
 # `Fold(q, op, init)` — per-key foldl aggregation. `q : D → R`, the inner
@@ -386,11 +402,10 @@ end
 # per key we foldl `op` over the values starting from `init`. Mutable +
 # lazy-cached so the same Fold can be referenced multiple times (e.g. by
 # both a sum and the mean built from sum/count) without re-aggregating.
-mutable struct Fold{D, R, S, Q, OP} <: Query{D, S}
+struct Fold{D, R, S, Q, OP} <: Query{D, S}
     q::Q
     op::OP
     init::S
-    cache::Union{Nothing, Dict{D, S}}
 end
 
 # `DenseFold(q, op, init, n)` — `Fold` variant that caches into a
@@ -399,12 +414,11 @@ end
 # IDs, or a packed-byte index like Q1's `(rf, ls)`). Avoids hash + entry
 # alloc per reduce step. Surface syntax: `q ▷ (op, init, n)` — adding a
 # trailing `n::Int` to the existing 2-tuple opts in to the dense form.
-mutable struct DenseFold{D, R, S, Q, OP} <: Query{D, S}
+struct DenseFold{D, R, S, Q, OP} <: Query{D, S}
     q::Q
     op::OP
     init::S
     n::Int
-    cache::Union{Nothing, Tuple{Vector{S}, BitVector}}
 end
 
 # coerce/unbox between a DenseFold's D type and its int slot index. D must
@@ -418,10 +432,9 @@ end
 # into a `Vector{R}` then call `f(vs) → S`. Use when the reducer needs
 # the whole multiset (count-distinct, set construction, median, etc.) —
 # anything that doesn't fit foldl's `(S, R) → S` shape.
-mutable struct BufFold{D, R, S, Q, F} <: Query{D, S}
+struct BufFold{D, R, S, Q, F} <: Query{D, S}
     q::Q
     f::F
-    cache::Union{Nothing, Dict{D, S}}
 end
 
 # `Map(q, f)` — generalized projection (per-row lambda). `q : D → R` with
@@ -436,23 +449,39 @@ end
 # into a single scalar (keys ignored). Result is `Query{Nothing, S}` with
 # one row keyed by `nothing`, so it still composes uniformly with `↦`.
 # Surface syntax `q ▶ (op, init)`.
-mutable struct Scalar{S, Q, OP} <: Query{Nothing, S}
+struct Scalar{S, Q, OP} <: Query{Nothing, S}
     q::Q
     op::OP
     init::S
-    cache::Union{Nothing, Some{S}}
+end
+
+# Prepared fold results (concrete caches, built at `prepare`; no Union, no lazy
+# check). `FoldP` serves both `Fold` and `BufFold` (both are `Dict{D,S}` groups).
+struct FoldP{D, S} <: Query{D, S}
+    cache::Dict{D, S}
+end
+struct DenseFoldP{D, S} <: Query{D, S}
+    vals::Vector{S}
+    seen::BitVector
+end
+struct ScalarP{S} <: Query{Nothing, S}
+    value::S
 end
 
 # `LeftCompose(r, s)` — for `r : D → R` and `s : D → S` (same domain),
-# produces `Query{R, S}`. Surface syntax `r ← s`. `drive` walks `s` and
-# probes `r` per row — distinct from `r' → s` which walks `r` and probes
-# `s`. `probe`/`member`/`drivekeys` lazy-build a `Dict{RK, Vector{SV}}`
-# on first call (same lazy-cache pattern as `Inv`/`Fold`), so using `←`
-# on the rhs of a `→` auto-materializes — no explicit `!` needed.
-mutable struct LeftCompose{D, RK, SV, QR, QS} <: Query{RK, SV}
+# produces `Query{R, S}`. Surface syntax `r ← s`. AST-only: `prepare` lowers it
+# to `LCStream` (driven → walk `s`, probe `r` per row) or `LCIndexed` (probed →
+# concrete `Dict{RK, Vector{SV}}`). Same stream-vs-index split as `Inv`.
+struct LeftCompose{D, RK, SV, QR, QS} <: Query{RK, SV}
     r::QR
     s::QS
-    idx::Union{Nothing, Dict{RK, Vector{SV}}}
+end
+struct LCStream{D, RK, SV, QR, QS} <: Query{RK, SV}
+    r::QR
+    s::QS
+end
+struct LCIndexed{RK, SV} <: Query{RK, SV}
+    idx::Dict{RK, Vector{SV}}
 end
 
 # `LeftConj(l, r)` — left-driving conjunction. `l ⩓ r` materializes `l`
@@ -481,24 +510,24 @@ function Prod(ops::Tuple)
     R = Tuple{map(_rangeof, ops)...}
     Prod{D, R, typeof(ops)}(ops)
 end
-materialize(s::Unary{D}) where {D} = MatSet{D, typeof(s)}(s, nothing, nothing)
-materialize(q::Query{D, R}) where {D, R} = Materialized{D, R, typeof(q)}(q, nothing, nothing)
+materialize(s::Unary{D}) where {D} = MatSet{D, typeof(s)}(s)
+materialize(q::Query{D, R}) where {D, R} = Materialized{D, R, typeof(q)}(q)
 
 # Adjoint = inverse: `q'` on a Query{A, B} returns Inv : Query{B, A}.
-Base.adjoint(q::Query{A, B}) where {A, B} = Inv{B, A, typeof(q)}(q, nothing)
+Base.adjoint(q::Query{A, B}) where {A, B} = Inv{B, A, typeof(q)}(q)
 
 # `▷` — per-key foldl. Pass `(op, init)` as a 2-tuple on the rhs.
 # `q ▷ (+, 0.0)` is sum; `q ▷ ((a, _) -> a + 1, 0)` is count; arbitrary
 # `(S, R) → S` reductions supported. Free function, no getproperty overload.
 function ▷(q::Query{D, R}, opinit::Tuple{OP, S}) where {D, R, OP, S}
-    Fold{D, R, S, typeof(q), OP}(q, opinit[1], opinit[2], nothing)
+    Fold{D, R, S, typeof(q), OP}(q, opinit[1], opinit[2])
 end
 
 # `▷` with a 3-tuple `(op, init, n)` opts in to `DenseFold` — `Vector{S}`-
 # backed group cache over the dense int domain `0..n`. The user explicitly
 # states the bound; no heuristic dense-vs-hash selection.
 function ▷(q::Query{D, R}, opinitn::Tuple{OP, S, Int}) where {D, R, OP, S}
-    DenseFold{D, R, S, typeof(q), OP}(q, opinitn[1], opinitn[2], opinitn[3], nothing)
+    DenseFold{D, R, S, typeof(q), OP}(q, opinitn[1], opinitn[2], opinitn[3])
 end
 export ▷
 
@@ -508,7 +537,7 @@ export ▷
 function ▷(q::Query{D, R}, f::Base.Callable) where {D, R}
     S = Core.Compiler.return_type(f, Tuple{Vector{R}})
     S === Union{} && (S = Any)
-    BufFold{D, R, S, typeof(q), typeof(f)}(q, f, nothing)
+    BufFold{D, R, S, typeof(q), typeof(f)}(q, f)
 end
 
 # `⊵` — no-group foldl. Folds every value of `q` into one scalar; result
@@ -517,7 +546,7 @@ end
 # group-dict build. `▶` is a prefix-only alias (Julia parses `▶` as an
 # identifier, not as a binary operator).
 function ⊵(q::Query{D, R}, opinit::Tuple{OP, S}) where {D, R, OP, S}
-    Scalar{S, typeof(q), OP}(q, opinit[1], opinit[2], nothing)
+    Scalar{S, typeof(q), OP}(q, opinit[1], opinit[2])
 end
 const ▶ = ⊵
 export ⊵, ▶
@@ -528,7 +557,7 @@ export ⊵, ▶
 # `threshold = 0.0001 * unwrap(value_per_part ⊵ (+, 0.0))`.
 function unwrap(q::Query{Nothing, S}) where {S}
     r = Ref{S}()
-    drive(q, (_, v) -> r[] = v)
+    drive(prepare(q, Driven()), (_, v) -> r[] = v)
     r[]
 end
 export unwrap
@@ -552,7 +581,7 @@ export ↦
 # Unary now identity-shaped, `r ← (set)` is just the general Query/Query
 # form — no special unary-on-right path is needed.
 function ←(r::Query{D, RK}, s::Query{D, SV}) where {D, RK, SV}
-    LeftCompose{D, RK, SV, typeof(r), typeof(s)}(r, s, nothing)
+    LeftCompose{D, RK, SV, typeof(r), typeof(s)}(r, s)
 end
 export ←
 
@@ -818,79 +847,45 @@ end
 @inline drive(n::Prod, k)    = _prod_drive(n.ops, k)
 @inline probe_any(n::Prod, x, k) = _prod_probe_any(n.ops, x, k)
 
-# ---- Materialized: materialize once, then serve from vector + hash index ----
-# `A` (the inner query type) is named explicitly so the method specializes on
-# it — otherwise `n.a` is abstract and the materializing drive boxes per row.
-function _cmat(n::Materialized{D, R, A}) where {D, R, A}
-    m = n.mat
-    m === nothing || return m::Vector{Pair{D, R}}
-    out = Pair{D, R}[]
-    drive(n.a, (x, y) -> push!(out, x => y))
-    n.mat = out
-    out
-end
-function _cidx(n::Materialized{ID{E}, R, A}) where {E, R, A}
-    f = n.idx
-    f === nothing || return f::Vector{Vector{R}}
-    d = _dense_fwd(_cmat(n))
-    n.idx = d
-    d
-end
-function _cidx(n::Materialized{D, R, A}) where {D, R, A}
-    f = n.idx
-    f === nothing || return f::Dict{D, Vector{R}}
+# ---- Materialized: `prepare` lowers to MatStream (driven) / MatProbed (probed) ----
+# `_mat_idx` builds a materialized result's forward index: dense `Vector{Vector}`
+# when entity-keyed (array access, no hashing — reuses `_dense_fwd`), else a Dict.
+_mat_idx(pairs::Vector{Pair{ID{E}, R}}) where {E, R} = _dense_fwd(pairs)
+function _mat_idx(pairs::Vector{Pair{D, R}}) where {D, R}
     d = Dict{D, Vector{R}}()
-    for p in _cmat(n)
+    for p in pairs
         push!(get!(() -> R[], d, p.first), p.second)
     end
-    n.idx = d
     d
 end
-@inline function drive(n::Materialized, k)
-    for p in _cmat(n)
+@inline function drive(n::MatStream, k)
+    for p in n.mat
         k(p.first, p.second)
     end
 end
-@inline probe(n::Materialized, x, k) = _idx_probe(_cidx(n), x, k)
+@inline probe(n::MatProbed, x, k) = _idx_probe(n.idx, x, k)
+@inline probe_any(n::MatProbed, x, k) = _idx_probe_any(n.idx, x, k)
 
-# ---- Inv: streaming drive; lazy-indexed probe/member/drivekeys ----
-# `drive` flips pairs streaming (no allocation). The first call to
-# `probe`/`member`/`drivekeys` lazy-builds a `Dict{B, Vector{A}}` and
-# caches it on the Inv, so subsequent probes are O(1).
-@inline drive(n::Inv, k) = drive(n.q, (a, b) -> k(b, a))
-function _inv_idx(n::Inv{B, A, Q}) where {B, A, Q}
-    n.idx === nothing || return n.idx::Dict{B, Vector{A}}
-    d = Dict{B, Vector{A}}()
-    drive(n.q, (a, b) -> push!(get!(() -> A[], d, b), a))
-    n.idx = d
-end
-@inline function probe(n::Inv{B, A, Q}, b, k) where {B, A, Q}
-    vs = get(_inv_idx(n), b, nothing)
+# ---- Inv: `prepare` lowers to InvStream (driven) / InvIndexed (probed) ----
+# drive-only stream vs probe-only concrete index — `Inv` itself is never run.
+@inline drive(n::InvStream, k) = drive(n.q, (a, b) -> k(b, a))
+@inline function probe(n::InvIndexed{B, A}, b, k) where {B, A}
+    vs = get(n.idx, b, nothing)
     vs === nothing && return
     for a in vs; k(a); end
 end
+@inline probe_any(n::InvIndexed, b, k) = _idx_probe_any(n.idx, b, k)
 
-# ---- LeftCompose: streaming drive; lazy-indexed probe/member/drivekeys ----
-# `r ← s` semantically equals `r' ∘ s` but flips which side scans. Drives
-# `s` (the natural source — e.g. a filtered table scan) and probes `r` per
-# row to compute the would-be group key. Designed to feed `▷`. For
-# probe/member access (e.g. when `←` ends up on the rhs of a `→` or used
-# in a SetDiff), lazy-builds a `Dict{RK, Vector{SV}}` on first call so
-# subsequent probes are O(1) — mirroring `Inv`.
-@inline function drive(n::LeftCompose, k)
-    drive(n.s, (d, v) -> probe(n.r, d, rk -> k(rk, v)))
-end
-function _lc_idx(n::LeftCompose{D, RK, SV, QR, QS}) where {D, RK, SV, QR, QS}
-    n.idx === nothing || return n.idx::Dict{RK, Vector{SV}}
-    d = Dict{RK, Vector{SV}}()
-    drive(n, (rk, sv) -> push!(get!(() -> SV[], d, rk), sv))
-    n.idx = d
-end
-@inline function probe(n::LeftCompose{D, RK, SV, QR, QS}, rk, k) where {D, RK, SV, QR, QS}
-    vs = get(_lc_idx(n), rk, nothing)
+# ---- LeftCompose: `prepare` lowers to LCStream (driven) / LCIndexed (probed) ----
+# `r ← s` drives `s` (the natural source) and probes `r` per row to compute the
+# group key. Driven → streaming; probed → a concrete `Dict{RK, Vector{SV}}`.
+@inline drive(n::LCStream, k) = drive(n.s, (d, v) -> probe(n.r, d, rk -> k(rk, v)))
+@inline function probe(n::LCIndexed, rk, k)
+    vs = get(n.idx, rk, nothing)
     vs === nothing && return
     for v in vs; k(v); end
 end
+@inline probe_any(n::LCIndexed, rk, k) = _idx_probe_any(n.idx, rk, k)
 # ---- LeftConj: drive r (ignoring its value), member-check materialized l ----
 @inline drive(n::LeftConj, k) =
     drive(n.r, (x, _) -> member(n.l, x) && k(x, x))
@@ -899,119 +894,62 @@ end
 @inline probe_any(n::LeftConj, x, k) =
     member(n.l, x) && member(n.r, x) && k(x)
 
-# ---- Fold: per-key foldl, lazy-cached ----
-function _fold_cache(n::Fold{D, R, S, Q, OP}) where {D, R, S, Q, OP}
-    n.cache === nothing || return n.cache::Dict{D, S}
-    acc = Dict{D, S}()
-    drive(n.q, (d, v) -> (acc[d] = n.op(get(acc, d, n.init), v)))
-    n.cache = acc
-end
-@inline function drive(n::Fold{D, R, S, Q, OP}, k) where {D, R, S, Q, OP}
-    for (d, s) in _fold_cache(n)
+# ---- FoldP: prepared per-key group cache (Fold + BufFold). drive iterates,
+# probe looks up. The cache is built eagerly in `prepare`.
+@inline function drive(n::FoldP, k)
+    for (d, s) in n.cache
         k(d, s)
     end
 end
-@inline function probe(n::Fold{D, R, S, Q, OP}, d, k) where {D, R, S, Q, OP}
-    s = get(_fold_cache(n), d, nothing)
+@inline function probe(n::FoldP, d, k)
+    s = get(n.cache, d, nothing)
     s === nothing && return
     k(s)
 end
+@inline probe_any(n::FoldP, d, k) =
+    (s = get(n.cache, d, nothing); s === nothing ? false : k(s))
 
-# ---- DenseFold: per-key foldl with `Vector{S}` cache over `0..n` ----
-function _dfold_cache(n::DenseFold{D, R, S, Q, OP}) where {D, R, S, Q, OP}
-    n.cache === nothing || return n.cache::Tuple{Vector{S}, BitVector}
-    sz   = n.n + 1
-    vals = fill(n.init, sz)   # pre-init means `vals[i]` IS the right operand
-    seen = falses(sz)         # whether slot has been touched (for drive enum)
-    op   = n.op
-    drive(n.q, (d, v) -> begin
-        i = _denseidx(d) + 1
-        if 1 <= i <= sz
-            @inbounds vals[i] = op(vals[i], v)
-            @inbounds seen[i] = true
-        end
-    end)
-    n.cache = (vals, seen)
-end
-@inline function drive(n::DenseFold{D, R, S, Q, OP}, k) where {D, R, S, Q, OP}
-    (vals, seen) = _dfold_cache(n)
+# ---- DenseFoldP: prepared dense per-key fold over `0..n` ----
+@inline function drive(n::DenseFoldP{D, S}, k) where {D, S}
+    vals, seen = n.vals, n.seen
     @inbounds for i in eachindex(vals)
         seen[i] && k(_densebox(D, i - 1), vals[i])
     end
 end
-@inline function probe(n::DenseFold{D, R, S, Q, OP}, d, k) where {D, R, S, Q, OP}
-    (vals, seen) = _dfold_cache(n)
+@inline function probe(n::DenseFoldP{D, S}, d, k) where {D, S}
+    vals, seen = n.vals, n.seen
     i = _denseidx(d) + 1
     @inbounds if 1 <= i <= length(vals) && seen[i]
         k(vals[i])
     end
 end
-
-# ---- BufFold: per-key buffered reduce, lazy-cached ----
-function _buf_cache(n::BufFold{D, R, S, Q, F}) where {D, R, S, Q, F}
-    n.cache === nothing || return n.cache::Dict{D, S}
-    buf = Dict{D, Vector{R}}()
-    drive(n.q, (d, v) -> push!(get!(() -> R[], buf, d), v))
-    out = Dict{D, S}()
-    for (d, vs) in buf
-        out[d] = n.f(vs)
-    end
-    n.cache = out
-end
-@inline function drive(n::BufFold{D, R, S, Q, F}, k) where {D, R, S, Q, F}
-    for (d, s) in _buf_cache(n)
-        k(d, s)
-    end
-end
-@inline function probe(n::BufFold{D, R, S, Q, F}, d, k) where {D, R, S, Q, F}
-    s = get(_buf_cache(n), d, nothing)
-    s === nothing && return
-    k(s)
+@inline function probe_any(n::DenseFoldP{D, S}, d, k) where {D, S}
+    vals, seen = n.vals, n.seen
+    i = _denseidx(d) + 1
+    @inbounds (1 <= i <= length(vals) && seen[i]) ? k(vals[i]) : false
 end
 
 # ---- Map: per-row lambda ----
 @inline drive(n::Map, k) = drive(n.q, (d, v) -> k(d, n.f(v)))
 @inline probe(n::Map, d, k) = probe(n.q, d, v -> k(n.f(v)))
 
-# ---- Scalar: no-group foldl, lazy-cached ----
-function _scalar_value(n::Scalar{S, Q, OP}) where {S, Q, OP}
-    n.cache === nothing || return (n.cache::Some{S}).value
-    acc = Ref{S}(n.init)
-    drive(n.q, (_, v) -> (acc[] = n.op(acc[], v)))
-    n.cache = Some(acc[])
-    acc[]
-end
-@inline drive(n::Scalar, k) = k(nothing, _scalar_value(n))
-@inline probe(n::Scalar, ::Nothing, k) = k(_scalar_value(n))
+# ---- ScalarP: prepared no-group fold result (a single value) ----
+@inline drive(n::ScalarP, k) = k(nothing, n.value)
+@inline probe(n::ScalarP, ::Nothing, k) = k(n.value)
 
-function _mkeys(n::MatSet{D}) where {D}
-    if n.keys === nothing
-        out = D[]
-        drive(n.a, (x, _) -> push!(out, x))
-        n.keys = out
-    end
-    n.keys
-end
-function _mset(n::MatSet{D}) where {D}
-    n.set === nothing && (n.set = Set(_mkeys(n)))
-    n.set
-end
-@inline drive(n::MatSet, k) = (for x in _mkeys(n); k(x, x); end)
-@inline probe(n::MatSet, x, k) = (x in _mset(n)) && (k(x); nothing)
-@inline probe_any(n::MatSet, x, k) = (x in _mset(n)) && k(x)
+# MatSet prepared forms: drive-only stored keys vs probe-only membership Set.
+@inline drive(n::MatSetStream, k) = (for x in n.keys; k(x, x); end)
+@inline probe(n::MatSetProbed, x, k) = (x in n.set) && (k(x); nothing)
+@inline probe_any(n::MatSetProbed, x, k) = (x in n.set) && k(x)
 
 # ---- identity-leaf relations: drive emits `(x, x)`, probe yields `x`. ----
 # These are the binary identity form of the former Unary leaves — the value
 # side equals the key, and `member` is just `probe_any`.
 
-# Membership set for a `UnaryVec`, built lazily on first probe and cached by
-# object identity (a `UnaryVec` is immutable, so it can't hold the cache itself).
-const _UNARY_SETS = IdDict{Any, Any}()
-_unary_set(u::UnaryVec{D}) where D = get!(() -> Set(u.values), _UNARY_SETS, u)::Set{D}
-
+# `UnaryVec` is a stored key set. Driven → iterate (kept as-is); probed → a
+# concrete membership `Set` (lowered to `MatSetProbed` by `prepare`), so there's
+# no global lazy membership cache.
 @inline drive(u::UnaryVec{D}, k) where {D} = (for v in u.values; k(v, v); end)
-@inline probe(u::UnaryVec, x, k) = (x in _unary_set(u)) && (k(x); nothing)
-@inline probe_any(u::UnaryVec, x, k) = (x in _unary_set(u)) && k(x)
 
 @inline drive(u::Universe{E}, k) where {E} =
     (for i in 1:u.n; let id = ID{E}(i); k(id, id); end; end)
@@ -1080,12 +1018,6 @@ end
     probe_any(n.a, x, y -> (y in n.pred.vs) && k(y))
 @inline probe_any(n::Diff, x, k) =
     (!member(n.b, x)) && probe_any(n.a, x, k)
-@inline probe_any(n::Materialized, x, k) = _idx_probe_any(_cidx(n), x, k)
-@inline function probe_any(n::DenseFold{D, R, S, Q, OP}, d, k) where {D, R, S, Q, OP}
-    (vals, seen) = _dfold_cache(n)
-    i = _denseidx(d) + 1
-    @inbounds (1 <= i <= length(vals) && seen[i]) && k(vals[i])
-end
 # generic fallback (Prod and other shapes) — no early exit, rarely on hot paths
 function probe_any(q::Query, x, k)
     found = Ref(false)
@@ -1102,6 +1034,128 @@ end
 # `drivekeys(q, k)` — emit each domain key. Back-compat alias over `drive`.
 @inline drivekeys(q::Query, k) = drive(q, (x, _) -> k(x))
 
+# ===== prepare: lift the drive/probe mode to the types =================
+# `prepare(q, Driven())` rewrites the plan top-down so each node is in its access
+# mode (the root is driven). Structural nodes rebuild with children prepared per
+# the mode table; `Inv` splits into `InvStream` (driven) / `InvIndexed` (probed,
+# concrete index). The executor calls this once before `drive` — think of it as
+# compilation. It is **memo-free and type-stable**: for a concrete (node, mode)
+# the prepared type is determined, so `prepare(q, Driven())` infers a concrete
+# plan and the rebuild inlines. Prela is non-materialized by default — a
+# subexpression referenced twice is prepared (and run) twice; wrap it in
+# `materialize`/`collect` to share. This slice splits only `Inv`; the other lazy
+# nodes are rebuilt but stay lazy.
+
+# Inv: the split (driven → stream, probed → eager concrete index).
+prepare(n::Inv{B,A,Q}, ::Driven) where {B,A,Q} =
+    (pq = prepare(n.q, Driven()); InvStream{B,A,typeof(pq)}(pq))
+function prepare(n::Inv{B,A,Q}, ::Probed) where {B,A,Q}
+    pq = prepare(n.q, Driven())
+    d  = Dict{B, Vector{A}}()
+    drive(pq, (a, b) -> push!(get!(() -> A[], d, b), a))
+    InvIndexed{B,A}(d)
+end
+
+# Structural nodes: rebuild with children prepared in their modes.
+prepare(n::Compose, m::Mode) = Compose(prepare(n.a, m), prepare(n.b, Probed()))
+prepare(n::Filter, m::Mode) = Filter(prepare(n.a, m), n.pred)
+prepare(n::Restrict, m::Mode) = Restrict(prepare(n.a, m), prepare(n.b, Probed()))
+prepare(n::Diff, m::Mode) = Diff(prepare(n.a, m), prepare(n.b, Probed()))
+prepare(n::Disj, ::Mode) = Disj(prepare(n.a, Probed()), prepare(n.b, Probed()))
+prepare(n::Prod, m::Mode) =
+    Prod((prepare(n.ops[1], m), map(o -> prepare(o, Probed()), Base.tail(n.ops))...))
+prepare(n::Map{D,R,S,Q,F}, m::Mode) where {D,R,S,Q,F} =
+    (pq = prepare(n.q, m); Map{D,R,S,typeof(pq),F}(pq, n.f))
+prepare(n::LeftConj{D,ML,R}, m::Mode) where {D,ML,R} =
+    (pl = prepare(n.l, Probed()); pr = prepare(n.r, m);
+     LeftConj{D, typeof(pl), typeof(pr)}(pl, pr))
+
+# Lazy nodes (not split this slice): rebuild with children driven to build the
+# cache; the node itself stays lazy (cache reset to `nothing`).
+prepare(n::LeftCompose{D,RK,SV,QR,QS}, ::Driven) where {D,RK,SV,QR,QS} =
+    (pr = prepare(n.r, Probed()); ps = prepare(n.s, Driven());
+     LCStream{D,RK,SV,typeof(pr),typeof(ps)}(pr, ps))
+function prepare(n::LeftCompose{D,RK,SV,QR,QS}, ::Probed) where {D,RK,SV,QR,QS}
+    pr = prepare(n.r, Probed())
+    ps = prepare(n.s, Driven())
+    d = Dict{RK, Vector{SV}}()
+    drive(ps, (dd, v) -> probe(pr, dd, rk -> push!(get!(() -> SV[], d, rk), v)))
+    LCIndexed{RK,SV}(d)
+end
+# Folds: pipeline-breakers — the cache is always needed (both modes), so build it
+# eagerly into a concrete prepared result (no mode split, no Union).
+function prepare(n::Fold{D,R,S,Q,OP}, ::Mode) where {D,R,S,Q,OP}
+    pq = prepare(n.q, Driven())
+    acc = Dict{D, S}()
+    drive(pq, (d, v) -> (acc[d] = n.op(get(acc, d, n.init), v)))
+    FoldP{D,S}(acc)
+end
+function prepare(n::DenseFold{D,R,S,Q,OP}, ::Mode) where {D,R,S,Q,OP}
+    pq = prepare(n.q, Driven())
+    sz = n.n + 1; vals = fill(n.init, sz); seen = falses(sz); op = n.op
+    drive(pq, (d, v) -> begin
+        i = _denseidx(d) + 1
+        if 1 <= i <= sz
+            @inbounds vals[i] = op(vals[i], v); @inbounds seen[i] = true
+        end
+    end)
+    DenseFoldP{D,S}(vals, seen)
+end
+function prepare(n::BufFold{D,R,S,Q,F}, ::Mode) where {D,R,S,Q,F}
+    pq = prepare(n.q, Driven())
+    buf = Dict{D, Vector{R}}()
+    drive(pq, (d, v) -> push!(get!(() -> R[], buf, d), v))
+    out = Dict{D, S}(); for (d, vs) in buf; out[d] = n.f(vs); end
+    FoldP{D,S}(out)
+end
+function prepare(n::Scalar{S,Q,OP}, ::Mode) where {S,Q,OP}
+    pq = prepare(n.q, Driven())
+    acc = Ref{S}(n.init)
+    drive(pq, (_, v) -> (acc[] = n.op(acc[], v)))
+    ScalarP{S}(acc[])
+end
+# Materialized: split by mode — driven → stored pairs; probed → concrete index.
+# Both materialize the inner once (driving it). `_matpairs` is a function barrier
+# so the materializing drive specializes on the concrete prepared inner type.
+function _matpairs(pa, ::Type{D}, ::Type{R}) where {D, R}
+    out = Pair{D, R}[]
+    drive(pa, (x, y) -> push!(out, x => y))
+    out
+end
+prepare(n::Materialized{D,R,A}, ::Driven) where {D,R,A} =
+    MatStream{D,R}(_matpairs(prepare(n.a, Driven()), D, R))
+function prepare(n::Materialized{D,R,A}, ::Probed) where {D,R,A}
+    idx = _mat_idx(_matpairs(prepare(n.a, Driven()), D, R))
+    MatProbed{D,R,typeof(idx)}(idx)
+end
+prepare(n::MatSet{D,A}, ::Driven) where {D,A} =
+    (pa = prepare(n.a, Driven()); keys = D[]; drive(pa, (x,_) -> push!(keys, x));
+     MatSetStream{D}(keys))
+function prepare(n::MatSet{D,A}, ::Probed) where {D,A}
+    pa = prepare(n.a, Driven())
+    s = Set{D}(); drive(pa, (x, _) -> push!(s, x))
+    MatSetProbed{D}(s)
+end
+
+# UnaryVec: driven → iterate keys (identity); probed → concrete membership Set.
+prepare(n::UnaryVec, ::Driven) = n
+prepare(n::UnaryVec{D}, ::Probed) where {D} = MatSetProbed{D}(Set(n.values))
+
+# BitsetMat → a dense `Bitset` membership, built by driving the inner once.
+function prepare(node::BitsetMat{MEM, A}, ::Mode) where {MEM, A}
+    b = Bitset{MEM}(node.n)
+    drive(prepare(node.q, Driven()), (_, v) -> begin
+        i = _denseidx(v) + 1
+        @inbounds (1 <= i <= node.n + 1) && (b.bits[i] = true)
+    end)
+    b
+end
+
+# Leaves / sources (and already-prepared variants): identity.
+prepare(n::Union{VecRel,SparseRel,MultiRel,MapRel,Universe,Bitset,
+                 InvStream,InvIndexed,MatStream,MatProbed,LCStream,LCIndexed,
+                 FoldP,DenseFoldP,ScalarP,MatSetStream,MatSetProbed}, ::Mode) = n
+
 # ===== terminals ========================================================
 # Queries are consumed by `drive`/`drivekeys` with a folding continuation
 # (see `_vals` in queries.jl) — no result relation is ever built. `collect`
@@ -1109,12 +1163,12 @@ end
 
 function Base.collect(q::Query{D, R}) where {D, R}
     out = Pair{D, R}[]
-    drive(q, (x, y) -> push!(out, x => y))
+    drive(prepare(q, Driven()), (x, y) -> push!(out, x => y))
     MapRel{D, R}(out)
 end
 function Base.collect(s::Unary{D}) where D
     out = D[]
-    drive(s, (x, _) -> push!(out, x))
+    drive(prepare(s, Driven()), (x, _) -> push!(out, x))
     UnaryVec{D}(out)
 end
 
