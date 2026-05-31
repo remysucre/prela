@@ -4,26 +4,25 @@
 > delight to all who become acquainted with it." —Alfred Tarski
 
 Prela is an embedded query language
- based on [Tarski's Algebra of Relations](https://www.cl.cam.ac.uk/teaching/1415/Databases/Tarski_1941.pdf)
+ based on [Tarski's Algebra of Relations](https://www.cl.cam.ac.uk/teaching/1415/Databases/Tarski_1941.pdf).
 Its queries are concise, clear, and fast.
-It is implemented by direct embedding 
- (a.k.a. [shallow embedding](https://decomposition.al/blog/2015/06/02/embedding-deep-and-shallow/))
+It is implemented by 
+ [shallow embedding](https://decomposition.al/blog/2015/06/02/embedding-deep-and-shallow/)
  in a host programming language:
  Prela operators are regular functions in the host.
 The implementation follows [continuation-passing style](https://en.wikipedia.org/wiki/Continuation-passing_style)
- which recovers efficient columnar execution when compiled.
+ which compiles to efficient columnar execution.
 
 > [!NOTE]
 > Prela is a research prototype in early development. 
 > Expect constant and sweeping changes to both language design and implementation.
-> 
 > I'm currently focused on polishing the Julia implementation,
 > and there are ~~vibe-ported~~ *experimental* Rust and Zig ports on separate branches.
 
 
 ## Example
 
-Prela queries are readable even to the untrained eye. 
+Prela queries are readable even to those new to the language. 
 Consider Join Order Benchmark [22a](https://github.com/gregrahn/join-order-benchmark/blob/master/22a.sql):
 
 ```julia
@@ -59,10 +58,12 @@ In SQL's way of thinking, `movie` would be in the `FROM` clause (along with othe
  and what comes after `→` are `SELECT`ed.
 But unlike SQL, Prela can freely interleave predicates and outputs,
  resulting in more natural queries as shown above.
+You can also think of the `(data : ...)` and `(company : ...)` parts as *subqueries*
+ which require special syntax in SQL, but are just subexpressions in Prela. 
 And instead of explicit conditions,
  joins in Prela are reflected by the *structure* of the query in a navigational style.
 
-## Data Model
+## Data Model and Simple (SPJ) Queries
 
 To understand what's going on under the hood, we should first clarify
  the data model used by Prela.
@@ -70,7 +71,7 @@ This is where Tarski's Algebra of Relations comes in:
  everything in Prela is a binary relation,
  and a query is built up with operators
  that take in and produce binary relations,
- called *relation combinators*.
+ which I call *relation combinators*.
 One way to think about this is a very extreme form
  of normalization: every table with k columns
  is "shredded" into k binary tables, one per column.
@@ -102,11 +103,13 @@ The same thing happens for `Info.type == "countries"` and `Info.info in ("German
 
 Next, `:` is the *restriction* combinator:
  it takes two relations, and restricts the last column of the LHS with the first column of the RHS;
- i.e., it is exactly a left-semijoin.
+ i.e., it is exactly a left-semijoin.[^1]
 In this example, `movie : (production_year > 2008)`
  semijoins `movie` with the filterd-out `production_year` relation,
  and since `movie` is the identity relation,
  we're left with the IDs for movies made after 2008.
+
+[^1]:  `:` binds tighter than `→`. 
 
 The `→` combinator is *relational composition*.
 It is the workhorse of both Prela and Tarski's Algebra of Relations.
@@ -132,15 +135,17 @@ function R → S(x)
 end
 ```
 
-In math: $R \rightarrow S = \{ (x, z) \mid \exists_y . (x, y) \in R \land (y, z) \in S \}$.
-
+In math: $R \rightarrow S = \lbrace (x, z) \mid \exists y . (x, y) \in R \land (y, z) \in S \rbrace$.
 In standard relational algebra: $R \rightarrow S = \pi_{x, z}(R \Join_{R.y = S.y} S)$ 
  where R's schema is over x and y, and S's schema is over y and z.
 
-Going back to our example, `→` takes two inputs, namely 
-`movie : (production_year > 2008)`, which has all movies after 2008,
- and `title` which has type `Movie -> String`.
-The composition then produces an output of type `Movie -> String`,
+Going back to our example, `→` takes two inputs:
+
+- `movie : (production_year > 2008)`, which has all movies after 2008
+ and is of type `Movie -> Movie`
+- `title` which has type `Movie -> String`
+
+Their composition then produces an output of type `Movie -> String`,
  namely, a mapping from each qualifying movie to its title.
 
 Another (perhaps more natural) way to think about all these is to pretend
@@ -168,7 +173,11 @@ Note that `×` does not exist in Tarski's algebra, as it somewhat "pollutes"
 On one hand, `×` is a practical convinience, as we often need to output multiple columns;
  on the other hand, the pollution is contained, as tuples are
  just opaque values stored in a column,
- and all operators still behave as usual over relations containing tuples.
+ and all operators still behave as usual over relations containing tuples.[^2]
+
+ [^2]: Mathematically speaking, Tarski's algebra is an *abstract algebra* specified
+ by a set of axioms, and there is a chance that the concrete algebra implemented by
+ Prela satisfies these axioms. 
 
 TPCH [q21](https://github.com/dragansah/tpch-dbgen/blob/master/tpch-queries/21.sql):
 
@@ -199,6 +208,8 @@ Directly embedding Prela like this allows one to freely intermix queries with
  both in terms of expressiveness and performance.
 For example, the Prela version of [TPCH Q13](https://github.com/dragansah/tpch-dbgen/blob/master/tpch-queries/13.sql)
  uses Julia code to implement `LEFT JOIN` semantics (Prela currently [has no `NULL`s](https://arxiv.org/abs/2307.15751)):
+
+## Aggregation and UDFs
 
 ```julia
 let live_orders = orders ∧ (Ord.comment ≁ r"special.*requests"),
