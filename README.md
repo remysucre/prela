@@ -1,21 +1,24 @@
 # Prela: Purely Algebraic Relation Combinators
 
+> The calculus of relations has an intrinsic charm and beauty which makes it a source of intellectual
+> delight to all who become acquainted with it - Alfred Tarski
+
 Prela is an embedded query language
- based on [Tarski's Algebra of Relations](https://en.wikipedia.org/wiki/Relation_algebra).
-Prela queries are concise, clear, and fast.
-The language is implemented by direct embedding 
+ based on [Tarski's Algebra of Relations](https://www.cl.cam.ac.uk/teaching/1415/Databases/Tarski_1941.pdf)
+Its queries are concise, clear, and fast.
+It is implemented by direct embedding 
  (a.k.a. [shallow embedding](https://decomposition.al/blog/2015/06/02/embedding-deep-and-shallow/))
  in a host programming language:
- its operators are regular functions in the host.
-The implementation follows [continuation-passing style](https://en.wikipedia.org/wiki/Continuation-passing_style),
- which produces highly efficient code when compiled.
-We provide two prototypes:
- the Julia engine enjoys elegant syntax thanks to operator overloading and multiple dispatch,
- while the Rust engine gives you (slightly) uglier but fast code.
+ Prela operators are regular functions in the host.
+The implementation follows [continuation-passing style](https://en.wikipedia.org/wiki/Continuation-passing_style)
+ which recovers efficient columnar execution when compiled.
 
 > [!NOTE]
 > Prela is a research prototype in early development. 
 > Expect constant and sweeping changes to both language design and implementation.
+> 
+> I'm currently focused on polishing the Julia implementation,
+> and there are ~~vibe-ported~~ *experimental* Rust and Zig ports on separate branches.
 
 
 ## Example
@@ -31,11 +34,11 @@ movie
    ∧ (production_year > 2008)
    ∧ (kind in ("movie", "episode"))
    → title
-   × ((data → (Data.data < "7.0") ∧ (Data.type == "rating")) → Data.data)
-   × ((company → (Company.note ≁ r"\(USA\)")
+   × (data : (Data.data < "7.0") ∧ (Data.type == "rating") → Data.data)
+   × (company : (Company.note ≁ r"\(USA\)")
               ∧ (Company.note ~ r"\(200.*\)")
               ∧ (Company.country != "[us]")
-              ∧ (Company.type == "production companies")) → Company.name)
+              ∧ (Company.type == "production companies") → Company.name)
 ```
 
 Intuitively, the query looks for `movies` satisfying several conditions:
@@ -48,8 +51,8 @@ Intuitively, the query looks for `movies` satisfying several conditions:
 Then, for each such movie, output the following attributes:
 
 - Its title
-- Its rating data, if lower than 7
-- The name of its production company, if satisfying further conditions
+- Its rating, if lower than 7
+- Its production company, if satisfying further conditions
 
 In SQL's way of thinking, `movie` would be in the `FROM` clause (along with other tables involved),
  the predicates between `:` and `→` are in the `WHERE` clause,
@@ -82,10 +85,12 @@ Here, `title` and `production_year` are both attributes of
  the same table in the original schema,
  but in Prela, each of them becomes a binary relation,
  mapping every movie (ID) to its title and production year, respectively.
-`movie` can be thought of as a unary relation storing all the movie IDs;
- but if we strictly following the "everything is a *binary* relation" doctrine,
- a unary relation of type `T` is just a (degenerate) binary relation of type `() -> T`
- where `()` is the unit type.
+`movie` is also a binary relation, albeit a little special:
+ it corresponds to the primary-key ID column of the original table,
+ and is the *identity* relation over the IDs;
+ in other words, `movie` contains `(i, i)` for every ID `i` in the table.
+Overall, each "column table" can be thought of as a map from the primary
+ key to its corresponding value.
 
 Binary operators like `>` and `in` are regular Julia functions,
  but overloaded to operate on relations.
@@ -95,15 +100,15 @@ For example, `production_year > 2008` returns a binary relation that's
 The same thing happens for `Info.type == "countries"` and `Info.info in ("Germany", "German", "USA", "American")`
  in the full query, as well as for all other predicates.
 
-Next, the `:` operator is the *restriction* operator:
- it takes two relations, and restricts the last column of the LHS with the first column of the RHS.
-In this example, since `movie` is unary (we won't insist on the pedantry of binary relations), there's
- only one column over the movie IDs;
- on the other hand, the first column of `production_year > 2008` contains the IDs of all movies
- produced after 2008.
-So `movie : (production_year > 2008)` is a unary relation over the IDs of all post-2008 movies.
+Next, `:` is the *restriction* combinator:
+ it takes two relations, and restricts the last column of the LHS with the first column of the RHS;
+ i.e., it is exactly a left-semijoin.
+In this example, `movie : (production_year > 2008)`
+ semijoins `movie` with the filterd-out `production_year` relation,
+ and since `movie` is the identity relation,
+ we're left with the IDs for movies made after 2008.
 
-The `→` operator is *relational composition*.
+The `→` combinator is *relational composition*.
 It is the workhorse of both Prela and Tarski's Algebra of Relations.
 The key to understanding relational composition is to view relations as 
  a generalization of functions:
@@ -121,25 +126,22 @@ In code:
 
 ```julia
 function R → S(x)
-for y in R[x]:
-  for z in S[z]:
-    print((x, z))
+  for y in R[x]:
+    for z in S[z]:
+      print((x, z))
 end
 ```
 
-In math: $R \rightarrow S = \{(x, z) \mid \exists_y . (x, y) \in R \land (y, z) \in S \}$.
+In math: $R \rightarrow S = \{ (x, z) \mid \exists_y . (x, y) \in R \land (y, z) \in S \}$.
 
-In standard relational algebra: $R \rightarrow S = \pi_{x, z}(R \Join{R.y = S.y} S)$ 
+In standard relational algebra: $R \rightarrow S = \pi_{x, z}(R \Join_{R.y = S.y} S)$ 
  where R's schema is over x and y, and S's schema is over y and z.
 
-Going back to our example, the `→` operator takes two inputs, namely 
+Going back to our example, `→` takes two inputs, namely 
 `movie : (production_year > 2008)`, which has all movies after 2008,
  and `title` which has type `Movie -> String`.
-Recall that a unary relation really has type `() -> T`,
- so the first input is really a `() -> Movie`.
-The composition then produces an output of type `() -> String`,
- namely, a unary relation containing strings,
- which are all the movie titles.
+The composition then produces an output of type `Movie -> String`,
+ namely, a mapping from each qualifying movie to its title.
 
 Another (perhaps more natural) way to think about all these is to pretend
  every movie is a JSON object called `movie`,
@@ -148,18 +150,14 @@ Another (perhaps more natural) way to think about all these is to pretend
 
 There are two more constructs in our original example,
  the conjunction `∧` and product `×`.
-
-A conjunction takes two relations of types `X -> Y` and `X -> Z`,
- and *intersects* their domain `X` to produce a relation of type `X -> ()`.
-This allows us to combine different predicates:
+They are in fact exactly the same - `∧` is just an alias of `×`.
+The product combinator takes two relations of types `X -> Y` and `X -> Z`,
+ and joins them on `X` to produce an output of type `X -> (Y, Z)`.
+When used as a conjunction (suggested by the `∧` symbol),
+ product allows us to combine different predicates:
  `(production_year > 2008) ∧ (kind in ("movie", "episode"))`
  gives us movies produced after 2008 *and* whose `kind` is either "movie" or "episode".
-
-The product is similar to conjunction but preserves the "output types":
- with `R: X -> Y` and `S: X -> Z`, 
- `R × S` has type `X -> (Y, Z)`, 
- and is exactly the join of `R` and `S` on their first column.
-This allows us to combine different columns in the output:
+When spelled `×`, it combines different columns in the output:
  in the full example, we output title, data (with additional filters),
  and company name - the last because
  `company : ... → Company.name` computes a relation of type `Movie -> String`
