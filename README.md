@@ -303,10 +303,17 @@ def map(iter, f):
 Now, suppose `blah.map(f)` desugars to `map(blah, f)`, then `iter.map(f)`
  becomes `map(f, iter)`.
 
-If we inline the definition, then this becomes:
+If we inline the definition, then `iter.map(x -> x + 1).map(x -> x * 2)`
+ becomes a brand new iter that fuses both `map`s into one pass:
 
-...
+```
+def iter_mapped(xs, k):
+  for x in xs:
+    k((x + 1) * 2)
+```
 
+There's no intermediate list at all — each `x` flows through `+ 1` and `* 2`
+ and lands in `k` before the next `x` is read.
 Instead of applying `f` to each `x` and returning the new list,
  `map` applies `f`, then immediately applies the continuation `k` to the result.
 
