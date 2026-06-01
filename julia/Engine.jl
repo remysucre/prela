@@ -891,6 +891,14 @@ end
 end
 execute_drive(q, sink) = _exec_drive(Prela.prepare(q, Prela.Driven()), sink)
 
+# Full codegen: route `prepare`'s build scans through the engine's codegen drive
+# too, so the (dominant) index/cache construction is generated code, not just the
+# final scan. `pq` here is always a fully-built physical plan (prepare is
+# bottom-up), so `_exec_drive` handles it exactly like the final scan. With this,
+# every `drive` in the system — builds and the final scan — is generated code;
+# only `prepare`'s selection (type-level, instant) stays interpreted.
+@inline Prela._build_drive(pq, sink) = _exec_drive(pq, sink)
+
 @generated function _exec_count(q::Q) where {Q}
     drv = _drive_body(Q, :q, :(_count += 1))
     quote

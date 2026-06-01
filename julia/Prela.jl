@@ -1045,31 +1045,38 @@ end
 # Engine can reuse this exact build logic while reproducing the mode rule at
 # codegen time (the type-level CPS).
 
+# `_build_drive` — the drive every `build_*` uses for its data scan. Defaults to
+# the interpreted CPS `drive`; the `@generated` engine overrides it to its
+# codegen drive (`_exec_drive`) so build scans are codegen'd too, not just the
+# final scan. Selection/orchestration stays in interpreted `prepare` (cheap,
+# type-level); the heavy per-row work (these scans) becomes generated code.
+@inline _build_drive(pq, k) = drive(pq, k)
+
 # Inv probed: eager inverse index — drive the inner, bucket keys by value.
 function build_inv_index(pq::Query{A, B}) where {A, B}
     d = Dict{B, Vector{A}}()
-    drive(pq, (a, b) -> push!(get!(() -> A[], d, b), a))
+    _build_drive(pq, (a, b) -> push!(get!(() -> A[], d, b), a))
     InvIndexed{B, A}(d)
 end
 
 # LeftCompose probed: concrete Dict{RK, Vector{SV}} — drive s, probe r per row.
 function build_lc_index(pr::Query{D, RK}, ps::Query{D, SV}) where {D, RK, SV}
     d = Dict{RK, Vector{SV}}()
-    drive(ps, (dd, v) -> probe(pr, dd, rk -> push!(get!(() -> SV[], d, rk), v)))
+    _build_drive(ps, (dd, v) -> probe(pr, dd, rk -> push!(get!(() -> SV[], d, rk), v)))
     LCIndexed{RK, SV}(d)
 end
 
 # Fold: per-key foldl cache (`S` is the accumulator type, fixed by `init`).
 function build_fold(pq::Query{D, R}, op, init::S) where {D, R, S}
     acc = Dict{D, S}()
-    drive(pq, (d, v) -> (acc[d] = op(get(acc, d, init), v)))
+    _build_drive(pq, (d, v) -> (acc[d] = op(get(acc, d, init), v)))
     FoldP{D, S}(acc)
 end
 
 # DenseFold: dense per-key fold over slots `0..n`.
 function build_densefold(pq::Query{D, R}, op, init::S, n::Int) where {D, R, S}
     sz = n + 1; vals = fill(init, sz); seen = falses(sz)
-    drive(pq, (d, v) -> begin
+    _build_drive(pq, (d, v) -> begin
         i = _denseidx(d) + 1
         if 1 <= i <= sz
             @inbounds vals[i] = op(vals[i], v); @inbounds seen[i] = true
@@ -1082,7 +1089,7 @@ end
 # `f`'s result type (not derivable from the inner), so the caller passes it.
 function build_buffold(pq::Query{D, R}, f, ::Type{S}) where {D, R, S}
     buf = Dict{D, Vector{R}}()
-    drive(pq, (d, v) -> push!(get!(() -> R[], buf, d), v))
+    _build_drive(pq, (d, v) -> push!(get!(() -> R[], buf, d), v))
     out = Dict{D, S}()
     for (d, vs) in buf; out[d] = f(vs); end
     FoldP{D, S}(out)
@@ -1091,7 +1098,7 @@ end
 # Scalar: no-group foldl to a single value.
 function build_scalar(pq, op, init::S) where {S}
     acc = Ref{S}(init)
-    drive(pq, (_, v) -> (acc[] = op(acc[], v)))
+    _build_drive(pq, (_, v) -> (acc[] = op(acc[], v)))
     ScalarP{S}(acc[])
 end
 
@@ -1105,17 +1112,17 @@ end
 
 # MatSet driven/probed: stored keys / membership Set.
 function build_matset_keys(pa::Unary{D}) where {D}
-    keys = D[]; drive(pa, (x, _) -> push!(keys, x)); MatSetStream{D}(keys)
+    keys = D[]; _build_drive(pa, (x, _) -> push!(keys, x)); MatSetStream{D}(keys)
 end
 function build_matset_set(pa::Unary{D}) where {D}
-    s = Set{D}(); drive(pa, (x, _) -> push!(s, x)); MatSetProbed{D}(s)
+    s = Set{D}(); _build_drive(pa, (x, _) -> push!(s, x)); MatSetProbed{D}(s)
 end
 
 # BitsetMat → dense `Bitset` membership: one bit per dense-int value (`MEM` is
 # the value side — a Unary emits its keys through the value slot).
 function build_bitset(pq::Query{D, MEM}, n::Int) where {D, MEM}
     b = Bitset{MEM}(n)
-    drive(pq, (_, v) -> begin
+    _build_drive(pq, (_, v) -> begin
         i = _denseidx(v) + 1
         @inbounds (1 <= i <= n + 1) && (b.bits[i] = true)
     end)
@@ -1174,7 +1181,7 @@ prepare(n::Scalar, ::Mode) = build_scalar(prepare(n.q, Driven()), n.op, n.init)
 # the concrete prepared inner type.
 function _matpairs(pa, ::Type{D}, ::Type{R}) where {D, R}
     out = Pair{D, R}[]
-    drive(pa, (x, y) -> push!(out, x => y))
+    _build_drive(pa, (x, y) -> push!(out, x => y))
     out
 end
 prepare(n::Materialized, ::Driven) = build_mat_stream(prepare(n.a, Driven()))
