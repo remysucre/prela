@@ -274,19 +274,38 @@ I'll try to explain CPS with a simple example.
 Suppose we want to pass a list of numbers through a bunch of `map` operations:
 
 ```
-xs.map(x -> x + 1).map(x -> x + 2).map(x -> x + 3)
+xs.map(x -> x + 1).map(x -> x * 2)
 ```
 
 A "direct style" implementation would have the `map` function take in a list, 
  apply the function to each element, then produce another list.
-This means before the final results, we will produce 2 intermediate lists
- from the first 2 `map`s.
+This means before the final results, we will produce an intermediate list
+ from the first `map`.
 In other words, a direct-style function takes something and *makes* another thing.
 
 In CPS, a function doesn't *make*, it *does*.
-A CPS `map` takes one extra argument, namely the *continuation* `k`:
+First, suppose there's an `iter` function that takes a continuation `k`
+ and applies it per `x`:
 
-CODE EXAMPLE
+```
+def iter(xs, k):
+  for x in xs:
+    k(x)
+```
+
+A `map` then takes an `iter` and returns another one by *doing* `f`:
+
+```
+def map(iter, f):
+  xs, k -> iter(xs, x -> k(f(x)))
+```
+
+Now, suppose `blah.map(f)` desugars to `map(blah, f)`, then `iter.map(f)`
+ becomes `map(f, iter)`.
+
+If we inline the definition, then this becomes:
+
+...
 
 Instead of applying `f` to each `x` and returning the new list,
  `map` applies `f`, then immediately applies the continuation `k` to the result.
