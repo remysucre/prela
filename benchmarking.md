@@ -129,49 +129,38 @@ julia --project=. -e 'include("TPCH.jl"); include("tpch_queries.jl"); runall_tpc
 
 ```bash
 cd julia
-julia --project=. -t1 bench.jl job  > ../rust/bench/data/julia_job.txt
-julia --project=. -t1 bench.jl tpch > ../rust/bench/data/julia_tpch.txt
+julia --project=. -t1 bench.jl job                > bench/data/julia_job.txt
+QS=idiomatic julia --project=. -t1 bench.jl tpch  > bench/data/julia_tpch_idiomatic.txt
+QS=optimized julia --project=. -t1 bench.jl tpch  > bench/data/julia_tpch_optimized.txt
 ```
 
-### Rust (JOB)
+### Rust
 
-```bash
-cd rust
-cargo build --release
-./target/release/prela           # default: JOB suite
-```
-
-Prints `load: …s`, runs the 113 queries twice (cold + warm), reports
-`N/N ok` plus per-query timing. Build takes ~20–30 s clean (LLVM
-optimizing 113 generic monomorphizations); warm runs land at ~6 s.
-
-### Rust (TPC-H)
-
-```bash
-./target/release/prela tpch                   # default: optimized variant
-QS=idiomatic ./target/release/prela tpch      # the algebra-port baseline
-QS=optimized ./target/release/prela tpch      # engine-wide Tier-1+2 fixes
-QS=ddbcheat  ./target/release/prela tpch      # plus all DuckDB-plan-inspired tricks
-```
-
-Same protocol as JOB: cold + warm runs, per-query timing. The `QS` env
-var picks which variant (`tpch_queries_idiomatic.rs` /
-`tpch_queries_optimized.rs` / `tpch_queries_ddbcheat.rs`) to run.
+The Rust implementation lives on the `rust` branch (`git checkout rust`),
+under `rust/`, with its own build + run instructions. `main` carries only
+the Julia implementation; the plots here compare Julia against the DuckDB
+single-thread baseline.
 
 ### Regenerate the comparison plots
 
 ```bash
-cd rust/bench
-python3 plot_tpch.py   # → tpch_scatter.png  (3 panels, one per variant)
+cd julia/bench
+python3 plot_tpch.py   # → tpch_scatter.png  (idiomatic + optimized vs DuckDB)
 python3 plot_job.py    # → job_scatter.png
 ```
 
 Both scripts read from `data/` and write the PNG next to themselves. The
-data files are captured from the bench runs above.
+Julia timings come from the bench runs above; the DuckDB baselines
+(`data/job_duck.txt`, `data/duckdb_st.txt`) are checked in.
 
 ### Regenerate the DuckDB baseline + TPCH oracles
 
+The capture scripts (`run_job_duck.sh`, `regen_tpch_oracles.sh`) live on the
+`rust` branch under `rust/bench/`. The baselines they produce are checked in
+here as `julia/bench/data/{job_duck,duckdb_st}.txt`.
+
 ```bash
+# on the `rust` branch:
 cd rust/bench
 ./run_job_duck.sh         # → data/job_duck.txt (canonical JOB, ST DuckDB)
 ./regen_tpch_oracles.sh   # → /tmp/tpch_oracles/Q{2,7,8,...}.txt

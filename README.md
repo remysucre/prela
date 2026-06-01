@@ -364,11 +364,14 @@ We've taken liberty refactoring the JOB schema to make Prela queries
 Overall, the main takeaway from the numbers is that 
 *the simplicity of Prela does not hold it back from running fast*.
 
-The plots below compare the run time of the Rust and Julia implementation
+The plots below compare the run time of the Julia implementation
  against DuckDB (1 thread) as baseline,
  over TPCH and the Join Order Benchmark.
+On JOB, Prela runs the 113 queries in 15.9s vs DuckDB's 29.6s
+ (1.9× faster, winning 80 of 113); on TPC-H SF=1 DuckDB's vectorized
+ engine is the stronger single-thread baseline.
 
 <p>
-  <img src="./rust/bench/tpch_scatter.png" width="49%" alt="TPC-H SF=1">
-  <img src="./rust/bench/job_scatter.png" width="49%" alt="JOB">
+  <img src="./julia/bench/tpch_scatter.png" width="49%" alt="TPC-H SF=1">
+  <img src="./julia/bench/job_scatter.png" width="49%" alt="JOB">
 </p>
