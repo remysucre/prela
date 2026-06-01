@@ -122,8 +122,10 @@ julia --project=. -i -e 'include("start.jl")'
 
 ```bash
 cd julia
-julia --project=. -e 'include("TPCH.jl"); include("tpch_queries.jl"); runall_tpch()'
+julia --project=. -e 'include("TPCH.jl"); include("tpch_queries_idiomatic.jl")'   # or _optimized
 ```
+
+Including a `tpch_queries_*.jl` file auto-runs `runall_tpch()`.
 
 ### Julia (single-thread warm bench, used by the plot scripts)
 
@@ -171,8 +173,8 @@ against a single-threaded DuckDB instance built from `~/projects/jobdata/parquet
 captures cold/warm timings, and writes them in the `Run Time (s): real …`
 format that `plot_job.py` expects.
 
-`regen_tpch_oracles.sh` rebuilds the 14 file-loaded TPCH oracles that
-`julia/tpch_queries.jl` reads from `/tmp/tpch_oracles/` (the ones not
+`regen_tpch_oracles.sh` rebuilds the 14 file-loaded TPCH oracles that the
+`julia/tpch_queries_*.jl` files read from `/tmp/tpch_oracles/` (the ones not
 inlined as string constants). It runs each canonical TPCH SQL against
 `cache/tpch/*.parquet` with `PRAGMA threads=1` (so Float64 sums are
 deterministic and the Q15 self-equality holds) and formats every decimal

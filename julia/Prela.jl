@@ -15,9 +15,9 @@ module Prela
 #
 # Operators (low→high precedence):
 #   →  composition  | ∨ union | ∧ intersection | ==,<,~,…  predicates
-#   ×  product (tightest) | -  difference | .field navigation
+#   ×  product (tightest) | :  restriction | -  difference
 
-export Rel, MapRel, VecRel, SparseRel, MultiRel, Multi, Relation, Query, Unary,
+export Rel, MapRel, VecRel, SparseRel, MultiRel, Multi, Query, Unary,
        UnaryVec, Universe, Entity, ID,
        primary, lookup_field, →, ∧, ∨, ×, ≁, seal_entities!,
        drive, probe, drivekeys, member, materialize
@@ -128,7 +128,6 @@ end
 struct Multi{T} end
 
 const Rel = Staging              # cache.jl serializes the staging leaves
-const Relation = Query
 
 # (No `Base.length`/`isempty`/`_pairs` on the leaf or result types: relations
 # are consumed via drive/probe, never as collections, and a `length`/`isempty`
@@ -280,7 +279,7 @@ end
     false
 end
 
-# ===== predicate payloads (typed so codegen branches statically) ========
+# ===== predicate payloads (concrete types → static dispatch) ============
 
 struct EqP{V};  v::V;  end          # == val
 struct InP{T};  vs::T;  end          # in (tuple of vals)
@@ -306,9 +305,8 @@ struct Prod{D, R, T<:Tuple}   <: Query{D, R};  ops::T;  end
 
 struct Disj{D, A, B} <: Unary{D};  a::A;  b::B;  end
 # `Restrict(a, b)` — restriction `a : b`. Drives `a` and keeps each row whose
-# value is a `member` of `b` (b's keyset), ignoring b's values. Replaces the old
-# `Compose(a, askeys(b))` lowering: the per-row `member(b, ·)` check is what
-# actually executes, so there is no fictional "keyset unary" node in between.
+# value is a `member` of `b` (b's keyset), ignoring b's values. The per-row
+# `member(b, ·)` check is what executes — no intermediate "keyset" node.
 struct Restrict{D, R, A, B} <: Query{D, R};  a::A;  b::B;  end
 
 # `materialize(q)` — the one explicit "bang". Prela is top-down / non-
@@ -381,8 +379,7 @@ end
 # The drive-vs-probe mode is a top-down, build-time property (the root is always
 # driven). `prepare(plan, Driven())` rewrites the plan so each node sits in its
 # mode; where a probed node needs an index it becomes a distinct, concrete-typed
-# prepared node — no lazy `Union{Nothing,…}`. (See the plan; this slice splits
-# only `Inv`.)
+# prepared node — no lazy `Union{Nothing,…}`.
 abstract type Mode end
 struct Driven <: Mode end
 struct Probed <: Mode end
@@ -399,9 +396,10 @@ end
 
 # `Fold(q, op, init)` — per-key foldl aggregation. `q : D → R`, the inner
 # is grouped by D on the fly (it emits (key, value) pairs many-to-one);
-# per key we foldl `op` over the values starting from `init`. Mutable +
-# lazy-cached so the same Fold can be referenced multiple times (e.g. by
-# both a sum and the mean built from sum/count) without re-aggregating.
+# per key we foldl `op` over the values starting from `init`. Immutable AST
+# node — `prepare` builds the concrete per-key cache (`FoldP`). Non-materialized
+# by default, so a Fold used twice is re-aggregated unless wrapped in
+# `materialize`.
 struct Fold{D, R, S, Q, OP} <: Query{D, S}
     q::Q
     op::OP
@@ -448,7 +446,7 @@ end
 # `Scalar(q, op, init)` — no-group foldl. Folds every value emitted by `q`
 # into a single scalar (keys ignored). Result is `Query{Nothing, S}` with
 # one row keyed by `nothing`, so it still composes uniformly with `↦`.
-# Surface syntax `q ▶ (op, init)`.
+# Surface syntax `q ⊵ (op, init)`.
 struct Scalar{S, Q, OP} <: Query{Nothing, S}
     q::Q
     op::OP
@@ -484,7 +482,7 @@ struct LCIndexed{RK, SV} <: Query{RK, SV}
     idx::Dict{RK, Vector{SV}}
 end
 
-# `LeftConj(l, r)` — left-driving conjunction. `l ⩓ r` materializes `l`
+# `LeftConj(l, r)` — left-driving conjunction. `l ⩘ r` materializes `l`
 # so its `member` is O(1), then drives `r` (ignoring its value) and
 # member-checks `l` per row. Lets a user-written `∧`-style expression
 # put a Query-shaped predicate (like an `Inv` for EXISTS) on the left
@@ -543,13 +541,11 @@ end
 # `⊵` — no-group foldl. Folds every value of `q` into one scalar; result
 # is `Query{Nothing, S}` with a single row, so it still chains with `↦`.
 # Equivalent of synthesizing a singleton group key, but cheaper: skips the
-# group-dict build. `▶` is a prefix-only alias (Julia parses `▶` as an
-# identifier, not as a binary operator).
+# group-dict build.
 function ⊵(q::Query{D, R}, opinit::Tuple{OP, S}) where {D, R, OP, S}
     Scalar{S, typeof(q), OP}(q, opinit[1], opinit[2])
 end
-const ▶ = ⊵
-export ⊵, ▶
+export ⊵
 
 # `unwrap(q::Query{Nothing, S}) → S` — eliminator for the one-row container
 # `⊵` (and `↦` on it) produces. Drives once, returns the single value as a
@@ -588,20 +584,19 @@ export ←
 # `⩘` — left-driving wedge (\bigslopedwedge). `l ⩘ r` materializes the
 # *value-set* of `l` (auto-invert, mirroring `←`), then drives `r` and
 # member-checks per row. For an identity `l` (`Unary{D}`), invert is a
-# no-op so we materialize directly. `⩓` kept as a back-compat alias.
+# no-op so we materialize directly.
 function ⩘(l::Unary{D}, r) where {D}
     ml = materialize(l)
     LeftConj{_domof(r), typeof(ml), typeof(r)}(ml, r)   # drive r ignoring its value
 end
 function ⩘(l::Query{D, R}, r) where {D, R}
     # Materialize the adjoint: for an entity-keyed value type this gives `ml` a
-    # dense-array membership index (vs the `Inv`'s `Dict`), ~13% faster on q20's
-    # per-row member-check. (The `Inv` self-caches too, but only as a hash.)
+    # dense-array membership index, ~13% faster on q20's per-row member-check
+    # than a hash index.
     ml = materialize(Base.adjoint(l))
     LeftConj{_domof(r), typeof(ml), typeof(r)}(ml, r)
 end
-const ⩓ = ⩘
-export ⩘, ⩓
+export ⩘
 
 # Prefix `!` is the terse spelling of `materialize` — `!(q)` ≡ `materialize(q)`.
 # Borrowed from Haskell's strictness bang; a query has no boolean-not, so `!`
@@ -617,25 +612,25 @@ Base.:!(q::Query) = materialize(q)
 # both reduce to Compose with identity on one side.
 →(a::Query{X, Y}, b::Query{Y, Z}) where {X, Y, Z} = Compose(a, b)
 
-# ∧ ∨ : - ⊗
-# `∧` aliases `⊗` — under the specialized `probe_any(::Prod)`, the conj-use
-# of Prod short-circuits identically to the old dedicated `Conj` node, so the
-# separate type is no longer pulling weight.
-∧(a, b) = ⊗(a, b)
+# ∧ ∨ : - ×
+# `∧` is conjunction — an alias for `×` (Prod). The specialized
+# `probe_any(::Prod)` short-circuits flat across the legs, so a conjunction of
+# predicates costs no more than a hand-written AND.
+∧(a, b) = ×(a, b)
 ∨(a, b) = Disj(a, b)
 # `:` restriction — keep rows of `a` whose value is a `member` of `b`. The rhs
 # `b` is consumed only via `member` (b's keyset), so any value-bearing predicate
 # works directly with no keyset projection.
 Base.:(:)(a::Query{X, Y}, b) where {X, Y} = Restrict(a, b)
-# `-`: value-bearing difference. Identity lhs falls through here too — Diff
-# emits `(x, x)` when `x` is not a `member` of `b`, same shape as the old SetDiff.
+# `-`: value-bearing difference. `a - b` keeps each row of `a` whose key is not a
+# `member` of `b`. An identity (`Unary`) lhs falls through here too, emitting
+# `(x, x)` for keys absent from `b`.
 Base.:-(a::Query{D, R}, b) where {D, R} = Diff(a, b)
-# Product — `⊗` is the canonical spelling (tensor-product convention from math).
-# `×` is a legacy alias; both build flat `Prod` nodes.
-⊗(a::Query, b::Query) = Prod((a, b))
-⊗(a::Prod,  b::Query) = Prod((a.ops..., b))
-const × = ⊗
-export ⊗, ×
+# Product — `×` builds a flat `Prod` node, pairing columns of the same domain
+# into a tuple value (`x → y` and `x → z` become `x → (y, z)`).
+×(a::Query, b::Query) = Prod((a, b))
+×(a::Prod,  b::Query) = Prod((a.ops..., b))
+export ×
 
 # predicates — scalar range (value-vs-constant)
 Base.:(==)(q::Query{D, R}, val) where {D, R} = Filter(q, EqP(val))
@@ -780,18 +775,14 @@ end
     member(n.b, x) || probe(n.a, x, k)
 
 # ---- Prod (n-ary ×) ----
-# Generated drive/probe — per-arity unroll. The previous recursive `_pp`
+# Per-arity unrolled drive/probe. The previous recursive `_pp`
 # (`probe(ops[1], x, y -> _pp(tail(ops), x, (acc..., y), k))`) wouldn't
-# unroll at compile time, so each level built a closure capture on the
-# growing `acc` tuple. The result was ~3 heap allocations per produced
-# row (visible in `Profile.Allocs` as the `_pp` closure). A `@generated`
-# function emits a flat nest specialized to the concrete tuple length,
-# so the closure chain is just N straight-line `probe(..., y -> probe(...))`
-# calls — fully inlinable, no recursion.
-# `@generated` bodies must be pure — Julia checks for allocations/closures
-# in the generator itself, not the returned AST. We build the per-arity AST
-# in a helper called from a normal function, then `@eval` per-arity
-# specializations at module-load time. The same effect as @generated.
+# unroll at compile time, so each level built a closure capture on the growing
+# `acc` tuple — ~3 heap allocations per produced row (visible in
+# `Profile.Allocs` as the `_pp` closure). Instead we emit, per arity, a flat
+# nest specialized to the tuple length: N straight-line
+# `probe(..., y -> probe(...))` calls — fully inlinable, no recursion. Each
+# per-arity AST is built in a normal helper and `@eval`'d at module-load time.
 _prod_yvar(i::Int) = Symbol("y_", i)
 function _prod_probe_body(N::Int)
     yvars = ntuple(_prod_yvar, N)
@@ -826,9 +817,8 @@ end
 # `member` for Prod — flat short-circuit AND of per-leg `member` calls.
 # This is the conj-use fast path: `lineitem : (f1 ∧ f2 ∧ f3)` calls
 # `member(Prod, x)` per row (from `Restrict`), which routes here. No tuple is
-# built and the closures are stateless, matching the flat shape of the old
-# Conj's probe_any. The tuple-bearing `probe_any(::Prod)` above stays available
-# for the non-trivial-k cases (FnP destructuring etc.).
+# built and the closures are stateless. The tuple-bearing `probe_any(::Prod)`
+# above stays available for the non-trivial-k cases (FnP destructuring etc.).
 function _prod_member_body(N::Int)
     body = true
     for i in N:-1:1
@@ -1043,8 +1033,7 @@ end
 # the prepared type is determined, so `prepare(q, Driven())` infers a concrete
 # plan and the rebuild inlines. Prela is non-materialized by default — a
 # subexpression referenced twice is prepared (and run) twice; wrap it in
-# `materialize`/`collect` to share. This slice splits only `Inv`; the other lazy
-# nodes are rebuilt but stay lazy.
+# `materialize`/`collect` to share.
 
 # Inv: the split (driven → stream, probed → eager concrete index).
 prepare(n::Inv{B,A,Q}, ::Driven) where {B,A,Q} =
@@ -1070,8 +1059,8 @@ prepare(n::LeftConj{D,ML,R}, m::Mode) where {D,ML,R} =
     (pl = prepare(n.l, Probed()); pr = prepare(n.r, m);
      LeftConj{D, typeof(pl), typeof(pr)}(pl, pr))
 
-# Lazy nodes (not split this slice): rebuild with children driven to build the
-# cache; the node itself stays lazy (cache reset to `nothing`).
+# Stream-or-index nodes (LeftCompose, like Inv): driven → a streaming form;
+# probed → an eagerly-built concrete index (`LCIndexed`).
 prepare(n::LeftCompose{D,RK,SV,QR,QS}, ::Driven) where {D,RK,SV,QR,QS} =
     (pr = prepare(n.r, Probed()); ps = prepare(n.s, Driven());
      LCStream{D,RK,SV,typeof(pr),typeof(ps)}(pr, ps))

@@ -199,7 +199,7 @@ qualifying = late : (Li.supplier → (Su.nation → Na.name == "SAUDI ARABIA"))
                            ∧ ((order ← late → Li.supplier) ▷ n_distinct == 1))
 
 counts = (Li.supplier ← qualifying) ▷ ((a, _) -> a + 1, 0)
-counts ⊗ Su.name
+counts × Su.name
 ```
 
 The first line assigns the result of a query to the variable `late`,
