@@ -179,62 +179,72 @@ On one hand, `×` is a practical convinience, as we often need to output multipl
  by a set of axioms, and there is a chance that the concrete algebra implemented by
  Prela satisfies these axioms. 
 
-TPCH [q21](https://github.com/dragansah/tpch-dbgen/blob/master/tpch-queries/21.sql):
+## CTEs, UDFs, and Aggregation
+
+Since Prela is directly embedded in the host language,
+ we can borrow many constructs from the host to get
+ many features that are considered advanced in other query languages,
+ *for free*.
+Consider TPCH [q21](https://github.com/dragansah/tpch-dbgen/blob/master/tpch-queries/21.sql):
 
 ```julia
-late = lineitem ∧ (receiptdate > commitdate)
+late = lineitem : (receiptdate > commitdate)
 n_distinct = vs -> length(unique(vs))
-qualifying = (late
-    ∧ (Li.supplier → supplier ∧ (Su.nation → Na.name == "SAUDI ARABIA"))
-    ∧ (order → (orders ∧ (Ord.status == "F"))
-                # EXISTS another supplier on the order (across all lineitems)
-                ∧ ((order ← Li.supplier) ▷ n_distinct > 1)
-                # NOT EXISTS another LATE supplier (only L1 is late)
-                ∧ ((order ← (late → Li.supplier)) ▷ n_distinct == 1)))
+
+qualifying = late : (Li.supplier → (Su.nation → Na.name == "SAUDI ARABIA"))
+                  ∧ (order → (Ord.status == "F")
+                             # EXISTS another supplier on the order (across all lineitems)
+                           ∧ ((order ← Li.supplier) ▷ n_distinct > 1)
+                             # NOT EXISTS another LATE supplier (only L1 is late)
+                           ∧ ((order ← late → Li.supplier) ▷ n_distinct == 1))
+
 counts = (Li.supplier ← qualifying) ▷ ((a, _) -> a + 1, 0)
 counts ⊗ Su.name
 ```
 
-In the examples, constructs like `movie`, `Info.type` are regular Julia variables of type
- `Relation`, and operators like `→`, `∧`, and `in` are regular Julia functions overloaded
- to operate on relations.
-Notably, tables are decomposed into [sixth normal form](https://en.wikipedia.org/wiki/Sixth_normal_form),
- so `keyword` is a *relation* mapping each movie ID to a string.
-The overhead of "joining back together" the decomposed columns is eliminated by continuation passing style
- which produces code that co-iterates the column tables.
+The first line assigns the result of a query to the variable `late`,
+ which would require CTEs in SQL,
+ but is simply a variable assignment in Prela/Julia!
+The second line defines the `n_distinct` function to be used later
+ in aggregation, which again requires UDFs in SQL,
+ but is just a regular anonymous Julia function.
 
-Directly embedding Prela like this allows one to freely intermix queries with
- code of the host language to extend the reach of Prela,
- both in terms of expressiveness and performance.
-For example, the Prela version of [TPCH Q13](https://github.com/dragansah/tpch-dbgen/blob/master/tpch-queries/13.sql)
- uses Julia code to implement `LEFT JOIN` semantics (Prela currently [has no `NULL`s](https://arxiv.org/abs/2307.15751)):
+The next new Prela construct excercised by this query is group-by aggregation.
+Let's focus on the expression `(order ← Li.supplier) ▷ n_distinct > 1`.
+Intuitively, this can be read as
+"group the suppliers by their orders, then `COUNT DISTINCT`, and keep the groups
+ with more than 1 distinct suppliers.
+In SQL it would look like this:
 
-## Aggregation and UDFs
-
-```julia
-let live_orders = orders ∧ (Ord.comment ≁ r"special.*requests"),
-    # Per-customer order count (only for customers with at least one match)
-    count_per_cust = (Ord.customer ← (live_orders → date)) ▷ ((a, _) -> a + 1, 0)
-    # Build the c_count → custdist distribution. Customers with no matching
-    # orders get c_count = 0 (LEFT JOIN semantic).
-    dist = Dict{Int, Int}()
-    n_with = 0
-    Prela.drive(count_per_cust, (_, c) -> begin
-        dist[c] = get(dist, c, 0) + 1
-        n_with += 1
-    end)
-    dist[0] = customer.n - n_with
-    InlineRel{Int, Int}([k => v for (k, v) in dist])
-end
+```SQL
+  SELECT order, supplier
+    FROM lineitem
+GROUP BY order
+  HAVING COUNT DISTINCT(supplier) > 1
 ```
 
-Unlike SQL's user-defined functions, Prela "UDF"s are inlined and compiled together with the outer query
- without penalizing performance.
-User can also swap out parts of the query with custom kernels to squeeze out extra performance,
- as exercised in the [Rust TPCH queries](./rust/src).
+To understand how the Prela query works, we shall first introduce one more combinator,
+ the inverse `'`: `R'` just flips the columns of `R`, so if `R: X -> Y`,
+ then `R': Y -> X`, like how you invert a function. 
 
-See [julia/queries.jl](./julia/queries.jl) and [julia/tpch_queries.jl](./julia/tpch_queries.jl) for more examples,
- or the corresponding Rust versions under [rust/src](./rust/src).
+Now, back to the query: the "left compose" `←` is short hand for
+ "compose with inverse", i.e. `order ← Li.supplier` means `order' → Li.supplier`.
+Here, the `order` relation has type `Li -> Order`, so its inverse `order'`
+ has type `Order -> Li` and maps each order to the lineitem.
+Then, `Li.supplier` has type `Li -> Supplier`,
+ so the composition `order' → Li.supplier` has type `Order -> Supplier`,
+ mapping each order to its supplier.
+Next, the `▷` combinator groups its LHS relation by the first column,
+ and computes the aggregate over its second column using the supplied aggregator function. 
+In our case, we group the suppliers by order, then count the number of distinct suppliers per group.
+Finally, `>` works as before and filters the LHS relation to keep the orders
+ that are supplied by more than 1 distinct suppliers,
+ which corresponds to the `HAVING` clause in SQL but requires no special treatment in Prela.
+`▷` may appear limiting as it "can only group by one attribute", but that is not true -
+ grouping by multiple attributes can be achieved by left-composing with a product!
+ I'll leave that as an excercise for the reader.
+
+See [julia/queries.jl](./julia/queries.jl) and [julia/tpch_queries_idiomatic.jl](./julia/tpch_queries_idiomatic.jl) for more examples.
 
 ## Benchmark
 
