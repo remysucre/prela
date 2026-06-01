@@ -284,6 +284,18 @@ This means before the final results, we will produce an intermediate list
 In other words, a direct-style function takes something and *makes* another thing.
 
 In CPS, a function doesn't *make*, it *does*.
+
+Think of someone who works for you. You tell them: "take this list of numbers, and add one to each of them".
+In direct style, they would add one to every number, and hand the result back to you.
+In CPS, they say: "OK I'll do that, but also tell me what you will do with the new numbers, and I'll do that too".
+Then, you answer by passing in the *continuation* `k` which will get applied after their job is done.
+
+What's powerful about continuations is that they *compose*:
+ in our example, if `iter()` *itself* takes a continuation,
+ we can fuse together everything into one pass!
+
+Let's look at some code.
+
 First, suppose there's an `iter` function that takes a continuation `k`
  and applies it per `x`:
 
@@ -312,22 +324,27 @@ def iter_mapped(xs, k):
     k((x + 1) * 2)
 ```
 
-There's no intermediate list at all — each `x` flows through `+ 1` and `* 2`
- and lands in `k` before the next `x` is read.
+There's no intermediate list at all: each `x` flows through `+ 1` and `* 2`
+ and arrives in `k` before the next `x` is read.
 Instead of applying `f` to each `x` and returning the new list,
  `map` applies `f`, then immediately applies the continuation `k` to the result.
+Finally, to get the result out, we supply an *collect* continuation:
 
-Think of someone who works for you. You tell them: "take this list of numbers, and add one to each of them".
-In direct style, they would add one to every number, and hand the result back to you.
-In CPS, they say: "OK I'll do that, but also tell me what you will do with the new numbers, and I'll do that too".
-Then, you answer by passing in the *continuation* `k` which will get applied after their job is done.
+```
+def collect(iter):
+  ys = []
+  iter(y -> ys.insert(y))
+```
 
-What's powerful about continuations is that they *compose*:
- in our example, if `iter()` *itself* takes a continuation,
- we can fuse together everything into one pass!
-In code:
+We can chain together any number of steps, and after inlining,
+ they will all collapse into a *sinlge* pass of iteration over the input without any intermediates.
 
-CODE
+So far, this is nothing new, and has been known in functional programming for a long time.
+But when applied to Prela, something incredible happens:
+ when evaluated under CPS over a vector-based data representation, 
+ the algebra-style queries *automatically recovers columnar query execution*!
+
+TBC...
 
 ## Benchmark
 
