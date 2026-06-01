@@ -246,6 +246,63 @@ Finally, `>` works as before and filters the LHS relation to keep the orders
 
 See [julia/queries.jl](./julia/queries.jl) and [julia/tpch_queries_idiomatic.jl](./julia/tpch_queries_idiomatic.jl) for more examples.
 
+## Implementation
+
+If implemented naively, Prela would be pretty slow. 
+Indeed, the first prototype was around 100x slower than DuckDB!
+The naive implementation literally had each combinator take in and produce
+ relations, which leads to a lot of materialized intermediates
+ that are only filtered down later on.
+There are [two standard solutions](https://www.vldb.org/pvldb/vol11/p2209-kersten.pdf) in DB to this problem:
+ implement the [iterator model](https://cs-people.bu.edu/mathan/reading-groups/papers-classics/volcano.pdf)
+ and vectorize it to make it fast, 
+ or compile the query into low-level code running tight loops.
+Both approach involve significant effort.
+To be honest, I almost gave up at that point, because building a vectorized or compiled DB is much too large of a scope.
+Until I remembered a dark magic I picked up from my functional programming days - [continuation-passing style](https://en.wikipedia.org/wiki/Continuation-passing_style) (CPS).
+Actually, I never really understood CPS until working on Prela,
+ and when it clicked, I literally cried because the idea was so beautiful.[^3]
+
+[^3]: Long before AI psychosis, there was functional programming (FP) psychosis,
+which triggers when someone learns about recursion, higher-order function, or monads.
+On the other hand,
+CPS was the OG AI psychosis, as the term was coined by Sussman and Steele in their [*AI Memo*](https://www.laputan.org/pub/papers/aim-349.pdf). 
+
+### Passing Data Through Continuation
+
+I'll try to explain CPS with a simple example.
+Suppose we want to pass a list of numbers through a bunch of `map` operations:
+
+```
+xs.map(x -> x + 1).map(x -> x + 2).map(x -> x + 3)
+```
+
+A "direct style" implementation would have the `map` function take in a list, 
+ apply the function to each element, then produce another list.
+This means before the final results, we will produce 2 intermediate lists
+ from the first 2 `map`s.
+In other words, a direct-style function takes something and *makes* another thing.
+
+In CPS, a function doesn't *make*, it *does*.
+A CPS `map` takes one extra argument, namely the *continuation* `k`:
+
+CODE EXAMPLE
+
+Instead of applying `f` to each `x` and returning the new list,
+ `map` applies `f`, then immediately applies the continuation `k` to the result.
+
+Think of someone who works for you. You tell them: "take this list of numbers, and add one to each of them".
+In direct style, they would add one to every number, and hand the result back to you.
+In CPS, they say: "OK I'll do that, but also tell me what you will do with the new numbers, and I'll do that too".
+Then, you answer by passing in the *continuation* `k` which will get applied after their job is done.
+
+What's powerful about continuations is that they *compose*:
+ in our example, if `iter()` *itself* takes a continuation,
+ we can fuse together everything into one pass!
+In code:
+
+CODE
+
 ## Benchmark
 
 **Take performance numbers with a grain of salt**, Prela differs from
