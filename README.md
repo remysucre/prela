@@ -340,11 +340,13 @@ We can chain together any number of steps, and after inlining,
  they will all collapse into a *sinlge* pass of iteration over the input without any intermediates.
 
 So far, this is nothing new, and has been known in functional programming for a long time.
-But when applied to Prela, something incredible happens:
- when evaluated under CPS over a vector-based data representation, 
- the algebra-style queries *automatically recovers columnar query execution*!
-
-TBC...
+For Prela, this means a simple, modular CPS-style interpreter
+ piggybacks on Julia's JIT and gets compiled down to tight loops
+ that stream the operators without any iterator overhead. 
+But when combined with vector-based physical data storage,
+ something incredible happens:
+ *CPS automatically transforms the algebra-style queries to recover columnar query execution*!
+The details on that deserves its own article, and I'll defer that to another time.
 
 ## Benchmark
 
