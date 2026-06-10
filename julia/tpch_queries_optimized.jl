@@ -39,9 +39,9 @@ function _q_tpch(name, oracle, f; sort_by = identity, limit = nothing, row = _de
 end
 
 # prepare = compilation: bench prepares untimed, then times `_vals_tpch_prepared`.
-function _vals_tpch_prepared(pq, sort_by, limit, row)
+function _vals_tpch_prepared(pq, sort_by, limit, row; eng = Prela.Staged())
     rows = Tuple{Any, Any}[]
-    Prela.drive(pq, (x, y) -> push!(rows, (x, y)))
+    Prela.scan(eng, pq, (x, y) -> push!(rows, (x, y)))
     isempty(rows) && return "(empty)"
     sort!(rows; by = sort_by)
     limit !== nothing && length(rows) > limit && resize!(rows, limit)
@@ -51,8 +51,8 @@ function _vals_tpch_prepared(pq, sort_by, limit, row)
     end
     join(lines, "\n")
 end
-_vals_tpch(q, sort_by, limit, row) =
-    _vals_tpch_prepared(Prela.prepare(q, Prela.Driven()), sort_by, limit, row)
+_vals_tpch(q, sort_by, limit, row; eng = Prela.Staged()) =
+    _vals_tpch_prepared(Prela.prepare(eng, q), sort_by, limit, row; eng)
 
 function runall_tpch()
     ok = 0
@@ -109,9 +109,9 @@ function _q1()
     pack(rfls) =
         (Int(UInt8(rfls[1][1]) - UInt8('A')) << 4) |
          Int(UInt8(rfls[2][1]) - UInt8('F'))
-    (((returnflag × Li.status) ↦ pack)
+    (((returnflag ⊗ Li.status) ↦ pack)
         ← (lineitem : (shipdate <= "1998-09-02")
-            → quantity × extendedprice × discount × tax)) ▷
+            → quantity ⊗ extendedprice ⊗ discount ⊗ tax)) ▷
         (cmb, (0.0, 0.0, 0.0, 0.0, 0.0, 0), 288) ↦ out
 end
 _q_tpch("1", _ORACLE_Q1, _q1;
@@ -133,7 +133,7 @@ function _q6()
     (lineitem : (shipdate in during("1994-01-01", "1995-01-01")) ∧
                 (discount in (0.05 .. 0.07)) ∧
                 (quantity <  24.0)
-     → extendedprice × discount) ⊵ (
+     → extendedprice ⊗ discount) ⊵ (
         (c, (e, d)) -> c + e * d, 0.0
     )
 end
@@ -153,7 +153,7 @@ function _q14()
     end
     ratio((promo, total)) = 100.0 * promo / total
     (lineitem : (shipdate in during("1995-09-01", "1995-10-01"))
-     → extendedprice × discount × (Li.part → type)) ⊵ (cmb, (0.0, 0.0)) ↦ ratio
+     → extendedprice ⊗ discount ⊗ (Li.part → type)) ⊵ (cmb, (0.0, 0.0)) ↦ ratio
 end
 _q_tpch("14", _ORACLE_Q14, _q14; row = _value_only)
 
@@ -176,11 +176,11 @@ function _q3()
     let item = (lineitem : (shipdate > "1995-03-15") 
                          ∧ (order → (date < "1995-03-15") 
                                   ∧ (Ord.customer → mktsegment == "BUILDING"))),
-        revenue = (order ← item → extendedprice × discount) ▷ (
+        revenue = (order ← item → extendedprice ⊗ discount) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
         )
-        revenue × date × shippriority
+        revenue ⊗ date ⊗ shippriority
     end
 end
 _q_tpch("3", _ORACLE_Q3, _q3;
@@ -223,7 +223,7 @@ function _q5()
         live = lineitem : ((order → date in during("1994-01-01", "1995-01-01")) ∧
                            (s_nation → Na.region → Re.name == "ASIA") ∧
                            (c_nation == s_nation))
-        (Na.name ← s_nation ← live → extendedprice × discount) ▷ (
+        (Na.name ← s_nation ← live → extendedprice ⊗ discount) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
         )
@@ -259,13 +259,13 @@ const _ORACLE_Q10 = "57040|Customer#000057040|734235.25|632.87|JAPAN|nICtsILWBB|
 function _q10()
     let scan = (lineitem : (returnflag == "R") ∧ 
                            (order → date in during("1993-10-01", "1994-01-01"))
-                         → extendedprice × discount),
+                         → extendedprice ⊗ discount),
         revenue = (Ord.customer ← order ← scan) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
         )
-        revenue × Cu.name × Cu.acctbal × Cu.phone ×
-            (Cu.nation → Na.name) × Cu.address × Cu.comment
+        revenue ⊗ Cu.name ⊗ Cu.acctbal ⊗ Cu.phone ⊗
+            (Cu.nation → Na.name) ⊗ Cu.address ⊗ Cu.comment
     end
 end
 _q_tpch("10", _ORACLE_Q10, _q10;
@@ -318,7 +318,7 @@ function _q19()
         live    = lineitem : (shipmode in ("AIR", "AIR REG")) ∧
                              (shipinstruct == "DELIVER IN PERSON") ∧
                              (branch1 ∨ branch2 ∨ branch3)
-        (live → extendedprice × discount) ⊵ (
+        (live → extendedprice ⊗ discount) ⊵ (
             (a, (e, d)) -> a + e * (1 - d), 0.0
         )
     end
@@ -334,7 +334,7 @@ const _ORACLE_Q11 = read("/tmp/tpch_oracles/Q11.txt", String)
 function _q11()
     let live_ps = partsupp : (PS.supplier → Su.nation → Na.name == "GERMANY"),
         # sum supplycost * availqty per partkey
-        value_per_part = (PS.part ← live_ps → supplycost × availqty) ▷ (
+        value_per_part = (PS.part ← live_ps → supplycost ⊗ availqty) ▷ (
             (a, (c, q)) -> a + c * q, 0.0),
         # global total → unwrap to scalar so we can multiply by 0.0001
         threshold = 0.0001 * unwrap(value_per_part ⊵ (+, 0.0))
@@ -367,7 +367,7 @@ _q_tpch("17", _ORACLE_Q17, _q17; row = _value_only)
 
 const _ORACLE_Q13 = read("/tmp/tpch_oracles/Q13.txt", String)
 
-function _q13()
+function _q13(eng = Prela.Staged())
     # Hoist `Ord.comment ≁ r"special.*requests"` into a Bitset of qualifying
     # orderkeys (~1.5M scan, applied once) so `live_orders` becomes an
     # `O(1)`-membership restriction rather than re-running the regex per
@@ -380,7 +380,7 @@ function _q13()
         # orders get c_count = 0 (LEFT JOIN semantic).
         dist = Dict{Int, Int}()
         n_with = 0
-        Prela.drive(Prela.prepare(count_per_cust, Prela.Driven()), (_, c) -> begin
+        Prela.scan(eng, Prela.prepare(eng, count_per_cust), (_, c) -> begin
             dist[c] = get(dist, c, 0) + 1
             n_with += 1
         end)
@@ -404,7 +404,7 @@ function _q7()
         live = lineitem : (shipdate in ("1995-01-01" .. "1996-12-31")) ∧
                           (is_fr_de ∨ is_de_fr),
         year  = shipdate ↦ (d -> d[1:4])
-        (snat × cnat × year ← live → extendedprice × discount) ▷ (
+        (snat ⊗ cnat ⊗ year ← live → extendedprice ⊗ discount) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
         )
@@ -425,7 +425,7 @@ function _q8()
         year = (live → order → date) ↦ (d -> d[1:4]),
         snat = live → Li.supplier → Su.nation → Na.name
         # Per group, accumulate (brazil_sum, total_sum)
-        ((year ← live → extendedprice × discount × snat) ▷ (
+        ((year ← live → extendedprice ⊗ discount ⊗ snat) ▷ (
             ((b, t), (e, d, nm)) -> begin
                 v = e * (1 - d)
                 (b + (nm == "BRAZIL" ? v : 0.0), t + v)
@@ -457,9 +457,9 @@ function _q9()
     let live  = lineitem : (Li.part → green_parts),
         sname = live → Li.supplier → Su.nation → Na.name,
         year  = (live → order → date) ↦ (d -> d[1:4]),
-        scan  = live → (extendedprice × discount × quantity
-                        × ((Li.part × Li.supplier) → (PS.part × PS.supplier)' → supplycost))
-        ((sname × year) ← scan) ▷ (
+        scan  = live → (extendedprice ⊗ discount ⊗ quantity
+                        ⊗ ((Li.part ⊗ Li.supplier) → (PS.part ⊗ PS.supplier)' → supplycost))
+        ((sname ⊗ year) ← scan) ▷ (
             (a, (e, d, q, cost)) -> a + e * (1 - d) - cost * q,
             0.0
         )
@@ -474,7 +474,7 @@ function _q18()
     sum_qty_per_order = (order ← quantity) ▷ (+, 0.0, orders.n)
     big_orders = sum_qty_per_order > 300.0   # Filter{Ord, Float64}
     # Decorate with the per-order fields. Value tuple: (sum_qty, c_name, c_custkey, date, totalprice)
-    big_orders × (Ord.customer → Cu.name) × Ord.customer × date × totalprice
+    big_orders ⊗ (Ord.customer → Cu.name) ⊗ Ord.customer ⊗ date ⊗ totalprice
 end
 _q_tpch("18", _ORACLE_Q18, _q18;
         sort_by = ((k, v),) -> (-v[5], v[4]),   # totalprice desc, date asc
@@ -513,7 +513,7 @@ function _q16()
                                           (size in (49, 14, 23, 45, 19, 3, 36, 9)))) ∧
                               (PS.supplier → Su.comment ≁ r"Customer.*Complaints"))
         # Count distinct suppliers per (brand, type, size) via buffered ▷.
-        (brand × type × size ← PS.part ← live_ps → PS.supplier) ▷ (vs -> length(unique(vs)))
+        (brand ⊗ type ⊗ size ← PS.part ← live_ps → PS.supplier) ▷ (vs -> length(unique(vs)))
     end
 end
 _q_tpch("16", _ORACLE_Q16, _q16;
@@ -527,12 +527,12 @@ const _ORACLE_Q15 = read("/tmp/tpch_oracles/Q15.txt", String)
 
 function _q15()
     let live = lineitem : (shipdate in during("1996-01-01", "1996-04-01")),
-        revenue = (Li.supplier ← live → extendedprice × discount) ▷ (
+        revenue = (Li.supplier ← live → extendedprice ⊗ discount) ▷ (
             (a, (e, d)) -> a + e * (1 - d),
             0.0
         ),
         max_rev = unwrap(revenue ⊵ (max, 0.0))
-        (revenue == max_rev) × Su.name × Su.address × Su.phone
+        (revenue == max_rev) ⊗ Su.name ⊗ Su.address ⊗ Su.phone
     end
 end
 _q_tpch("15", _ORACLE_Q15, _q15;
@@ -555,9 +555,9 @@ function _q2()
                   (supplycost == (PS.part → min_per_part)))
         # Output value tuple — supplier-side and part-side fields each
         # factored under their respective navigation.
-        target → ((PS.supplier → Su.acctbal × Su.name × (Su.nation → Na.name)
-                               × Su.address × Su.phone × Su.comment)
-               × PS.part × (PS.part → mfgr))
+        target → ((PS.supplier → Su.acctbal ⊗ Su.name ⊗ (Su.nation → Na.name)
+                               ⊗ Su.address ⊗ Su.phone ⊗ Su.comment)
+               ⊗ PS.part ⊗ (PS.part → mfgr))
     end
 end
 _q_tpch("2", _ORACLE_Q2, _q2;
@@ -576,16 +576,16 @@ const _ORACLE_Q20 = read("/tmp/tpch_oracles/Q20.txt", String)
 function _q20()
     let live_li = lineitem : (shipdate in during("1994-01-01", "1995-01-01")),
         # Per-(part, supp) sum of 1994 lineitem quantity — algebraic 2-key fold.
-        sum_qty = (Li.part × Li.supplier ← live_li → quantity) ▷ (+, 0.0),
+        sum_qty = (Li.part ⊗ Li.supplier ← live_li → quantity) ▷ (+, 0.0),
         # Per-PS half-of-sum threshold. Missing (part, supp) tuples (no 1994
         # lineitems) emit nothing, so the cross-col `availqty > threshold`
         # skips those rows — matches SQL "comparison against NULL is false".
-        threshold = ((PS.part × PS.supplier) → sum_qty) ↦ (s -> 0.5 * s),
+        threshold = ((PS.part ⊗ PS.supplier) → sum_qty) ↦ (s -> 0.5 * s),
         qual_ps = (partsupp : (PS.part → Part.name ~ r"^forest") ∧
                               (availqty > threshold)),
         target = (qual_ps → PS.supplier) ⩘
                  (supplier : (Su.nation → Na.name == "CANADA"))
-        target → Su.name × Su.address
+        target → Su.name ⊗ Su.address
     end
 end
 _q_tpch("20", _ORACLE_Q20, _q20;
@@ -622,7 +622,7 @@ function _q21()
     qualifying = late : (Li.supplier → saudi) ∧
                         (order → f_ords ∧ multi_supp ∧ only_late)
     counts = (Li.supplier ← qualifying) ▷ ((a, _) -> a + 1, 0, supplier.n)
-    counts × Su.name
+    counts ⊗ Su.name
 end
 _q_tpch("21", _ORACLE_Q21, _q21;
         sort_by = ((k, v),) -> (-v[1], v[2]),

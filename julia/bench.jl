@@ -11,6 +11,10 @@ using Printf
 suite = get(ARGS, 1, "job")
 ENV["PRELA_SKIP_RUNALL"] = "1"
 
+# ENGINE=interp|staged selects the engine for every scan (builds + final).
+const ENG = get(ENV, "ENGINE", "staged") == "interp" ? Main.Prela.Interp() :
+                                                       Main.Prela.Staged()
+
 # `run()` builds the plan (`f()` — which eagerly materializes any `bitset`
 # indexes), lowers its access mode (`prepare`, now ~free since it's type-stable),
 # and drives it to the result. Everything here is real query work — index/cache/
@@ -19,7 +23,7 @@ if suite == "job"
     include("JOB.jl")
     include("queries.jl")
     # JOB entries: (name, oracle, f)  — f() returns a Query.
-    qs = [(name, () -> Main._vals(f())) for (name, _oracle, f) in Main._Q]
+    qs = [(name, () -> Main._vals(f(); eng = ENG)) for (name, _oracle, f) in Main._Q]
 elseif suite == "tpch"
     include("TPCH.jl")
     variant = get(ENV, "QS", "idiomatic")
@@ -30,7 +34,7 @@ elseif suite == "tpch"
     qs = Tuple{String, Function}[]
     for (name, _oracle, f, sort_by, limit, row) in Main._QT
         run = let f=f, sb=sort_by, lim=limit, r=row
-            () -> Main._vals_tpch(f(), sb, lim, r)
+            () -> Main._vals_tpch(f(), sb, lim, r; eng = ENG)
         end
         push!(qs, (name, run))
     end

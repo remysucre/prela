@@ -1,17 +1,17 @@
+# Tiny self-contained demo — no datasets needed.
+#
+#   julia --project=. demo.jl
+#
+# Shows the full pipeline: @entity schema → staged leaves → seal → queries
+# through `→ : ∧ ∨ ⊗ ' ▷` → results via both engines.
+
 include("Prela.jl")
 using .Prela
 
-# === Schema with polymorphic names: `info` and `type` appear on several
-# entities. Prela tells them apart by type, so the same name can name different
-# relations. Multi-valued fields (a movie has many keywords / info rows) are
-# declared `Multi{...}`.
-
-# Declare all entity types up front (settles the type bindings before use), then
-# give each its fields.
-@declare InfoType Keyword Company Info Movie
+# === Schema with polymorphic names: `info` and `name` appear on multiple entities.
 
 @entity InfoType begin
-    info :: String              # primary — the info type's name, e.g. "countries"
+    info :: String   # primary (the info type's name, e.g. "countries")
 end
 
 @entity Keyword begin
@@ -20,14 +20,12 @@ end
 
 @entity Company begin
     name    :: String
-    note    :: String
     country :: String
 end
 
 @entity Info begin
     info :: String              # primary — the info text
     type :: ID{InfoType}
-    note :: String
 end
 
 @entity Movie begin
@@ -37,9 +35,6 @@ end
     company         :: ID{Company}
     info            :: Multi{ID{Info}}
 end
-
-# === Data — appended to the staging leaves (before sealing). `Entity.field`
-# resolves to the staging relation, whose `.pairs` we push into. ===
 
 M(i) = ID{Movie}(i); K(i) = ID{Keyword}(i); C(i) = ID{Company}(i)
 I(i) = ID{Info}(i);  IT(i) = ID{InfoType}(i)
@@ -52,89 +47,52 @@ append!(Movie.production_year.pairs, [
     M(1) => 2004, M(2) => 2008, M(3) => 2010, M(4) => 2010, M(5) => 2006,
 ])
 append!(Movie.keyword.pairs, [
-    M(1) => K(10),
-    M(2) => K(11), M(2) => K(12),
-    M(3) => K(11), M(3) => K(12),
-    M(4) => K(13), M(4) => K(14),
-    M(5) => K(15),
+    M(1) => K(1),
+    M(2) => K(2), M(2) => K(3),
+    M(3) => K(2), M(3) => K(3),
+    M(4) => K(4), M(5) => K(5),
 ])
 append!(Movie.company.pairs, [
-    M(1) => C(100), M(2) => C(101), M(3) => C(101),
-    M(4) => C(102), M(5) => C(103),
+    M(1) => C(1), M(2) => C(2), M(3) => C(2), M(4) => C(3), M(5) => C(4),
 ])
-# Each movie has multiple Info rows (countries + release dates).
 append!(Movie.info.pairs, [
-    M(1) => I(201), M(1) => I(202),
-    M(2) => I(203), M(2) => I(204),
-    M(3) => I(205), M(3) => I(206),
-    M(4) => I(207),
-    M(5) => I(208),
-])
-append!(Info.info.pairs, [
-    I(201) => "USA",      I(202) => "USA:2004-04-23",
-    I(203) => "USA",      I(204) => "USA:2008-04-30",
-    I(205) => "USA",      I(206) => "USA:2010-05-07",
-    I(207) => "USA",      I(208) => "USA",
-])
-append!(Info.type.pairs, [
-    I(201) => IT(1), I(202) => IT(2),
-    I(203) => IT(1), I(204) => IT(2),
-    I(205) => IT(1), I(206) => IT(2),
-    I(207) => IT(1),
-    I(208) => IT(1),
-])
-append!(InfoType.info.pairs, [
-    IT(1) => "countries",
-    IT(2) => "release dates",
+    M(1) => I(1), M(2) => I(2), M(3) => I(2), M(4) => I(3), M(5) => I(2),
 ])
 append!(Keyword.keyword.pairs, [
-    K(10) => "animation", K(11) => "marvel", K(12) => "action",
-    K(13) => "thriller", K(14) => "heist",  K(15) => "crime",
+    K(1) => "animation", K(2) => "marvel", K(3) => "action",
+    K(4) => "heist", K(5) => "crime",
 ])
 append!(Company.name.pairs, [
-    C(100) => "DreamWorks", C(101) => "Marvel Studios",
-    C(102) => "Warner Bros", C(103) => "Plan B",
+    C(1) => "DreamWorks", C(2) => "Marvel Studios", C(3) => "Warner Bros", C(4) => "Plan B",
 ])
 append!(Company.country.pairs, [
-    C(100) => "[us]", C(101) => "[us]", C(102) => "[us]", C(103) => "[us]",
+    C(1) => "[us]", C(2) => "[us]", C(3) => "[us]", C(4) => "[us]",
 ])
+append!(Info.info.pairs, [I(1) => "USA", I(2) => "USA", I(3) => "UK"])
+append!(Info.type.pairs, [I(1) => IT(1), I(2) => IT(1), I(3) => IT(1)])
+append!(InfoType.info.pairs, [IT(1) => "countries"])
 
-# === Seal the staging leaves into static storage, then bind a few bare aliases
-# for the unique (non-polymorphic) Movie fields. `movie` is the universe of all
-# five movies. ===
+seal_entities!()
+@expose Movie : title, production_year
 
-Prela.seal_entities!()
-const movie           = UnaryVec{ID{Movie}}(M.(1:5))
-const title           = Movie.title
-const production_year = Movie.production_year
+const movie = UnaryVec{ID{Movie}}(M.(1:5))
 
-# Drive a query to completion and print its (key → value) pairs.
-print_pairs(q) = for p in collect(q).pairs
-    println("  $(p.first) -> $(p.second)")
+show_pairs(q) = (r = collect(q); for p in r.pairs; println("  ", p.first, " -> ", p.second); end)
+
+println("Q1: titles of movies after 2005")
+show_pairs(movie : (production_year > 2005) → title)
+
+println("\nQ2: marvel movies (navigate keyword, filter, back to title)")
+show_pairs(movie : (Movie.keyword → Keyword.keyword == "marvel") → title)
+
+println("\nQ3: title ⊗ year pairs for USA movies")
+show_pairs(movie : (Movie.info → Info.info == "USA") → title ⊗ production_year)
+
+println("\nQ4: movies per company (inverse navigation + fold)")
+show_pairs((Movie.company ← title) ▷ ((a, _) -> a + 1, 0))
+
+println("\nQ5: same query, interpreted engine — identical result")
+let q = (Movie.company ← title) ▷ ((a, _) -> a + 1, 0)
+    r = collect(q, Interp())
+    for p in r.pairs; println("  ", p.first, " -> ", p.second); end
 end
-
-# === Queries demonstrating polymorphism ===
-
-println("\nQ1: movies with an Info row of type 'countries' and info text 'USA'")
-println("    movie : (Movie.info → ((Info.type == \"countries\") ∧ (Info.info == \"USA\"))) → title")
-q1 = (movie : (Movie.info → ((Info.type == "countries") ∧ (Info.info == "USA")))) → title
-print_pairs(q1)
-
-println("\nQ2: movies with at least one Info row of type 'release dates' (title only)")
-println("    movie : (Movie.info → (Info.type == \"release dates\")) → title")
-q2 = (movie : (Movie.info → (Info.type == "release dates"))) → title
-print_pairs(q2)
-
-println("\nQ3: bare alias still works for a unique field name")
-println("    movie : (production_year > 2005) → title")
-q3 = (movie : (production_year > 2005)) → title
-print_pairs(q3)
-
-println("\nQ4: Movie.info vs Info.info — same name, different relations")
-println("    Movie.info: ", typeof(Movie.info))
-println("    Info.info:  ", typeof(Info.info))
-
-println("\nQ5: compose two polymorphic hops — Movie.info → Info.type, matched by name")
-println("    movie : ((Movie.info → Info.type) ~ r\"countries\") → title")
-q5 = (movie : ((Movie.info → Info.type) ~ r"countries")) → title
-print_pairs(q5)
