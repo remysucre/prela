@@ -1,0 +1,26 @@
+  cache: loaded 114729525 pairs from /Users/remywang/projects/prela/julia/../cache (2.4s)
+Loaded TPC-H tables from cache (binary + mmap).
+Universes: lineitem=6001215  orders=6000000  customer=150000  supplier=10000  part=200000  partsupp=800000  nation=25  region=5
+Vectorized entity leaves in 0.64s
+1	0.516594
+6	0.084724
+14	0.078005
+3	0.111452
+4	0.353656
+5	0.176851
+10	0.116595
+12	0.184340
+19	0.337229
+11	0.013931
+17	0.145413
+13	0.092850
+7	0.220144
+8	0.269367
+9	0.277531
+18	0.028810
+22	0.096962
+16	0.078868
+15	0.078779
+2	0.082878
+20	0.181516
+21	0.317756

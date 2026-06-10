@@ -1,0 +1,50 @@
+load: 0.36s  (li n=6001215, ord n=6000000, ps n=800000)
+22 TPC-H queries registered (ddbcheat variant)
+--- run 1 ---
+1     ok      0.0236s
+2     ok      0.0103s
+3     ok      0.0247s
+4     ok      0.0327s
+5     ok      0.0197s
+6     ok      0.0104s
+7     ok      0.0219s
+8     ok      0.0274s
+9     ok      0.0566s
+10    ok      0.0308s
+11    ok      0.0038s
+12    ok      0.0243s
+13    ok      0.0395s
+14    ok      0.0106s
+15    ok      0.0130s
+16    ok      0.0179s
+17    ok      0.0881s
+18    ok      0.0153s
+19    ok      0.0368s
+20    ok      0.0089s
+21    ok      0.0603s
+22    ok      0.0033s
+run 1: 22/22 ok  total 0.58s
+--- run 2 ---
+1     ok      0.0181s
+2     ok      0.0098s
+3     ok      0.0234s
+4     ok      0.0303s
+5     ok      0.0190s
+6     ok      0.0107s
+7     ok      0.0220s
+8     ok      0.0265s
+9     ok      0.0528s
+10    ok      0.0312s
+11    ok      0.0037s
+12    ok      0.0215s
+13    ok      0.0373s
+14    ok      0.0110s
+15    ok      0.0130s
+16    ok      0.0175s
+17    ok      0.0836s
+18    ok      0.0162s
+19    ok      0.0347s
+20    ok      0.0091s
+21    ok      0.0571s
+22    ok      0.0032s
+run 2: 22/22 ok  total 0.55s
