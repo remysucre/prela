@@ -4,7 +4,7 @@ use crate::engine::*;
 use super::helpers::*;
 use super::sets::*;
 
-pub const ENTRIES: &[(&str, &str, fn(&Data) -> String)] = &[
+pub const ENTRIES: &[super::Entry] = &[
     ("2a",  "'Doc'",                                                                    q2a),
     ("2d",  "& Teller",                                                                 q2d),
     ("3b",  "300: Rise of an Empire",                                                   q3b),
@@ -36,27 +36,20 @@ pub const ENTRIES: &[(&str, &str, fn(&Data) -> String)] = &[
     ("22c", "(empty)",                                                                  q22c),
 ];
 
-fn q2a(d: &Data) -> String {
+// q2a–q2d differ only in the company country code.
+fn q2(d: &Data, country: &'static str) -> String {
     let q = d.movie.o(
         (&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title").k()
-            .and((&d.movie_company).o((&d.company_country).eq("[de]")).k())
+            .and((&d.movie_company).o((&d.company_country).eq(country)).k())
             .o(&d.movie_title)
     );
-    let mut m: Option<&'static str> = None;
-    q.drive(|_, v| update(&mut m, v));
-    fmt1(m)
+    min_row(q)
 }
 
-fn q2d(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title").k()
-            .and((&d.movie_company).o((&d.company_country).eq("[us]")).k())
-            .o(&d.movie_title)
-    );
-    let mut m: Option<&'static str> = None;
-    q.drive(|_, v| update(&mut m, v));
-    fmt1(m)
-}
+fn q2a(d: &Data) -> String { q2(d, "[de]") }
+fn q2b(d: &Data) -> String { q2(d, "[nl]") }
+fn q2c(d: &Data) -> String { q2(d, "[sm]") }
+fn q2d(d: &Data) -> String { q2(d, "[us]") }
 
 fn q3b(d: &Data) -> String {
     let q = d.movie.o(
@@ -67,28 +60,29 @@ fn q3b(d: &Data) -> String {
             )
             .o(&d.movie_title)
     );
-    let mut m: Option<&'static str> = None;
-    q.drive(|_, v| update(&mut m, v));
-    fmt1(m)
+    min_row(q)
 }
 
-fn q4a(d: &Data) -> String {
+// q4a–q4c differ only in the year cutoff and rating threshold.
+fn q4(d: &Data, year: i64, rating: &'static str) -> String {
     let q = d.movie.o(
         (&d.movie_keyword).o(&d.keyword_keyword).rx(r"sequel").k()
-            .and((&d.movie_production_year).gt(2005).k())
+            .and((&d.movie_production_year).gt(year).k())
             .o(
                 (&d.movie_data).o(
                     (&d.data_type).o(&d.infotype_info).eq("rating").k()
-                        .and((&d.data_data).gt("5.0").k())
+                        .and((&d.data_data).gt(rating).k())
                         .o(&d.data_data)
                 )
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (a, b)| { update(&mut m[0], a); update(&mut m[1], b); });
-    fmt2(m)
+    min_row(q)
 }
+
+fn q4a(d: &Data) -> String { q4(d, 2005, "5.0") }
+fn q4b(d: &Data) -> String { q4(d, 2010, "9.0") }
+fn q4c(d: &Data) -> String { q4(d, 1990, "2.0") }
 
 fn q13a(d: &Data) -> String {
     let q = d.movie.o(
@@ -111,9 +105,7 @@ fn q13a(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q11a(d: &Data) -> String {
@@ -143,9 +135,7 @@ fn q11a(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q22a(d: &Data) -> String {
@@ -185,9 +175,7 @@ fn q22a(d: &Data) -> String {
                     )
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q1a(d: &Data) -> String {
@@ -209,11 +197,7 @@ fn q1a(d: &Data) -> String {
                 .x(&d.movie_production_year)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    let mut my: Option<i64> = None;
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut my, c); });
-    if m[0].is_none() { return "(empty)".into(); }
-    format!("{} || {} || {}", m[0].unwrap(), m[1].unwrap(), my.unwrap())
+    min_row(q)
 }
 
 fn q5a(d: &Data) -> String {
@@ -231,9 +215,7 @@ fn q5a(d: &Data) -> String {
             )
             .o(&d.movie_title)
     );
-    let mut m: Option<&'static str> = None;
-    q.drive(|_, v| update(&mut m, v));
-    fmt1(m)
+    min_row(q)
 }
 
 fn q12a(d: &Data) -> String {
@@ -262,9 +244,7 @@ fn q12a(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q14a(d: &Data) -> String {
@@ -289,9 +269,7 @@ fn q14a(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (a, b)| { update(&mut m[0], a); update(&mut m[1], b); });
-    fmt2(m)
+    min_row(q)
 }
 
 fn q1b(d: &Data) -> String {
@@ -311,79 +289,25 @@ fn q1b(d: &Data) -> String {
                 .x(&d.movie_production_year)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    let mut my: Option<i64> = None;
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut my, c); });
-    if m[0].is_none() { return "(empty)".into(); }
-    format!("{} || {} || {}", m[0].unwrap(), m[1].unwrap(), my.unwrap())
+    min_row(q)
 }
 
-fn q2b(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title").k()
-            .and((&d.movie_company).o((&d.company_country).eq("[nl]")).k())
-            .o(&d.movie_title)
-    );
-    let mut m: Option<&'static str> = None;
-    q.drive(|_, v| update(&mut m, v));
-    fmt1(m)
-}
-
-fn q2c(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title").k()
-            .and((&d.movie_company).o((&d.company_country).eq("[sm]")).k())
-            .o(&d.movie_title)
-    );
-    let mut m: Option<&'static str> = None;
-    q.drive(|_, v| update(&mut m, v));
-    fmt1(m)
-}
-
-fn q3a(d: &Data) -> String {
+// q3a/q3c differ only in the country list and the year cutoff.
+fn q3ac(d: &Data, countries: Vec<&'static str>, year: i64) -> String {
     let q = d.movie.o(
         (&d.movie_keyword).o(&d.keyword_keyword).rx(r"sequel").k()
             .and(
-                (&d.movie_info).o((&d.info_info).in_v(nordic8())).k()
-                    .and((&d.movie_production_year).gt(2005).k())
+                (&d.movie_info).o((&d.info_info).in_v(countries)).k()
+                    .and((&d.movie_production_year).gt(year).k())
             )
             .o(&d.movie_title)
     );
-    let mut m: Option<&'static str> = None;
-    q.drive(|_, v| update(&mut m, v));
-    fmt1(m)
+    min_row(q)
 }
 
+fn q3a(d: &Data) -> String { q3ac(d, nordic8(), 2005) }
 fn q3c(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_keyword).o(&d.keyword_keyword).rx(r"sequel").k()
-            .and(
-                (&d.movie_info).o((&d.info_info).in_v(vec!["Sweden","Norway","Germany","Denmark","Swedish","Denish","Norwegian","German","USA","American"])).k()
-                    .and((&d.movie_production_year).gt(1990).k())
-            )
-            .o(&d.movie_title)
-    );
-    let mut m: Option<&'static str> = None;
-    q.drive(|_, v| update(&mut m, v));
-    fmt1(m)
-}
-
-fn q4b(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_keyword).o(&d.keyword_keyword).rx(r"sequel").k()
-            .and((&d.movie_production_year).gt(2010).k())
-            .o(
-                (&d.movie_data).o(
-                    (&d.data_type).o(&d.infotype_info).eq("rating").k()
-                        .and((&d.data_data).gt("9.0").k())
-                        .o(&d.data_data)
-                )
-                .x(&d.movie_title)
-            )
-    );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (a, b)| { update(&mut m[0], a); update(&mut m[1], b); });
-    fmt2(m)
+    q3ac(d, vec!["Sweden","Norway","Germany","Denmark","Swedish","Denish","Norwegian","German","USA","American"], 1990)
 }
 
 fn q11b(d: &Data) -> String {
@@ -413,9 +337,7 @@ fn q11b(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q13b(d: &Data) -> String {
@@ -446,9 +368,7 @@ fn q13b(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q1c(d: &Data) -> String {
@@ -468,11 +388,7 @@ fn q1c(d: &Data) -> String {
                 .x(&d.movie_production_year)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    let mut my: Option<i64> = None;
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut my, c); });
-    if m[0].is_none() { return "(empty)".into(); }
-    format!("{} || {} || {}", m[0].unwrap(), m[1].unwrap(), my.unwrap())
+    min_row(q)
 }
 
 fn q1d(d: &Data) -> String {
@@ -489,29 +405,7 @@ fn q1d(d: &Data) -> String {
                 .x(&d.movie_production_year)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    let mut my: Option<i64> = None;
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut my, c); });
-    if m[0].is_none() { return "(empty)".into(); }
-    format!("{} || {} || {}", m[0].unwrap(), m[1].unwrap(), my.unwrap())
-}
-
-fn q4c(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_keyword).o(&d.keyword_keyword).rx(r"sequel").k()
-            .and((&d.movie_production_year).gt(1990).k())
-            .o(
-                (&d.movie_data).o(
-                    (&d.data_type).o(&d.infotype_info).eq("rating").k()
-                        .and((&d.data_data).gt("2.0").k())
-                        .o(&d.data_data)
-                )
-                .x(&d.movie_title)
-            )
-    );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (a, b)| { update(&mut m[0], a); update(&mut m[1], b); });
-    fmt2(m)
+    min_row(q)
 }
 
 fn q12b(d: &Data) -> String {
@@ -538,9 +432,7 @@ fn q12b(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (a, b)| { update(&mut m[0], a); update(&mut m[1], b); });
-    fmt2(m)
+    min_row(q)
 }
 
 fn q12c(d: &Data) -> String {
@@ -569,9 +461,7 @@ fn q12c(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q13c(d: &Data) -> String {
@@ -602,9 +492,7 @@ fn q13c(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q14b(d: &Data) -> String {
@@ -638,9 +526,7 @@ fn q14b(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (a, b)| { update(&mut m[0], a); update(&mut m[1], b); });
-    fmt2(m)
+    min_row(q)
 }
 
 fn q14c(d: &Data) -> String {
@@ -665,9 +551,7 @@ fn q14c(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (a, b)| { update(&mut m[0], a); update(&mut m[1], b); });
-    fmt2(m)
+    min_row(q)
 }
 
 fn q22b(d: &Data) -> String {
@@ -707,9 +591,7 @@ fn q22b(d: &Data) -> String {
                     )
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q22c(d: &Data) -> String {
@@ -749,7 +631,5 @@ fn q22c(d: &Data) -> String {
                     )
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }

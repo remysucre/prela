@@ -19,10 +19,8 @@
 // time. Stream/index pairs are separate types, chosen by the query author:
 //
 //   .inv()      → InvStream   (drive-only: flips pairs, no state)
-//   .inv_idx()  → HashIdx     (probe-only: eager HashMap<R, SVec<D>>)
-//   .mat()      → MatStream   (drive-only: eager Vec<(D, R)>)
-//   .mat_idx()  → HashIdx     (probe-only)
-//   .lc(s)      → LCStream    (drive-only)   .lc_idx(s)  → HashIdx
+//   .mat_idx()  → HashIdx     (probe-only: eager HashMap<D, SVec<R>>)
+//   .lc(s)      → LCStream    (drive-only)
 //   .fold(...)  → Fold        (cache; both modes)
 //
 // State is EAGER: every index/cache-holding node builds its state in its
@@ -33,8 +31,6 @@
 // each query type monomorphizes into a fused loop nest at `cargo build` time.
 // All non-leaf operators are #[inline(always)]; the runtime cost matches a
 // hand-rolled imperative loop.
-
-#![allow(dead_code)]
 
 use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use regex::Regex;
@@ -72,11 +68,6 @@ pub trait DriveKeys: KeySet {
 
 pub trait Member: KeySet {
     fn member(&self, x: Self::D) -> bool;
-}
-
-#[inline(always)]
-pub fn member_of<Q: Probe>(q: &Q, x: Q::D) -> bool {
-    q.probe_any(x, |_| true)
 }
 
 // blanket: &T inherits T's modes.
@@ -241,67 +232,17 @@ pub struct Filter<A, P> { pub a: A, pub p: P }
 
 pub trait Pred<R> { fn test(&self, v: R) -> bool; }
 
-pub struct EqP<R: Copy + PartialEq>(pub R);
-impl<R: Copy + PartialEq> Pred<R> for EqP<R> {
-    #[inline(always)] fn test(&self, v: R) -> bool { v == self.0 }
-}
-pub struct Ne<R: Copy + PartialEq>(pub R);
-impl<R: Copy + PartialEq> Pred<R> for Ne<R> {
-    #[inline(always)] fn test(&self, v: R) -> bool { v != self.0 }
-}
-pub struct Gt<R: Copy + PartialOrd>(pub R);
-impl<R: Copy + PartialOrd> Pred<R> for Gt<R> {
-    #[inline(always)] fn test(&self, v: R) -> bool { v > self.0 }
-}
-pub struct Lt<R: Copy + PartialOrd>(pub R);
-impl<R: Copy + PartialOrd> Pred<R> for Lt<R> {
-    #[inline(always)] fn test(&self, v: R) -> bool { v < self.0 }
-}
-pub struct Ge<R: Copy + PartialOrd>(pub R);
-impl<R: Copy + PartialOrd> Pred<R> for Ge<R> {
-    #[inline(always)] fn test(&self, v: R) -> bool { v >= self.0 }
-}
-pub struct Le<R: Copy + PartialOrd>(pub R);
-impl<R: Copy + PartialOrd> Pred<R> for Le<R> {
-    #[inline(always)] fn test(&self, v: R) -> bool { v <= self.0 }
-}
-
-pub struct InVec<R: Copy + PartialEq>(pub Vec<R>);
-impl<R: Copy + PartialEq> Pred<R> for InVec<R> {
-    #[inline(always)] fn test(&self, v: R) -> bool { self.0.iter().any(|&x| x == v) }
-}
-
-pub struct RegexP(pub Regex);
-impl Pred<&'static str> for RegexP {
-    #[inline(always)] fn test(&self, v: &'static str) -> bool { self.0.is_match(v) }
-}
-pub struct NotRegexP(pub Regex);
-impl Pred<&'static str> for NotRegexP {
-    #[inline(always)] fn test(&self, v: &'static str) -> bool { !self.0.is_match(v) }
-}
-
+/// Membership-in-a-KeySet predicate. Kept nominal (rather than a closure)
+/// so it can hold the set by value without naming its type.
 pub struct InSet<S: Member>(pub S);
 impl<S: Member<D = i64>> Pred<i64> for InSet<S> {
     #[inline(always)] fn test(&self, v: i64) -> bool { self.0.member(v) }
 }
 
-/// Closure-typed predicate — used for cross-column compares like
-/// `(c_nation ⊗ s_nation).filt(|(c, s)| c == s)`.
+/// Closure predicate — every comparison combinator below desugars to this.
 pub struct FnP<F>(pub F);
 impl<R: Copy, F: Fn(R) -> bool> Pred<R> for FnP<F> {
     #[inline(always)] fn test(&self, v: R) -> bool { (self.0)(v) }
-}
-
-// Half-open interval [lo, hi) — for date ranges, the common TPC-H idiom.
-pub struct InCO<T: Copy + PartialOrd>(pub T, pub T);
-impl<T: Copy + PartialOrd> Pred<T> for InCO<T> {
-    #[inline(always)] fn test(&self, v: T) -> bool { v >= self.0 && v < self.1 }
-}
-
-// Closed interval [lo, hi]
-pub struct InCC<T: Copy + PartialOrd>(pub T, pub T);
-impl<T: Copy + PartialOrd> Pred<T> for InCC<T> {
-    #[inline(always)] fn test(&self, v: T) -> bool { v >= self.0 && v <= self.1 }
 }
 
 impl<A: Rel, P> Rel for Filter<A, P> {
@@ -452,42 +393,18 @@ impl<Q: Drive> Drive for InvStream<Q> where Q::R: Eq + Hash {
 }
 
 // ===== HashIdx — THE probe-side physical node ===========================
-// An eager `HashMap<K, SVec<V>>` with probe access. Serves as the probed
-// form of `Inv` (inverse index), `Mat` (forward index), and `LeftCompose`
-// (group index) — they differ only in how the map is filled, so they share
-// one physical type with one constructor each.
+// An eager `HashMap<K, SVec<V>>` with probe access — the probed form of a
+// materialized forward index (`.mat_idx()`).
 
 pub struct HashIdx<K: Copy + Eq + Hash, V: Copy> {
     pub idx: HashMap<K, SVec<V>>,
 }
 
 impl<K: Copy + Eq + Hash, V: Copy> HashIdx<K, V> {
-    /// Inverse index: bucket q's keys by value. (`.inv_idx()`)
-    pub fn inv<Q: Drive<D = V, R = K>>(q: Q) -> Self {
-        let mut m: HashMap<K, SVec<V>> = HashMap::new();
-        q.drive(|d, r| m.entry(r).or_default().push(d));
-        HashIdx { idx: m }
-    }
     /// Forward index: bucket q's values by key. (`.mat_idx()`)
     pub fn mat<Q: Drive<D = K, R = V>>(q: Q) -> Self {
         let mut m: HashMap<K, SVec<V>> = HashMap::new();
         q.drive(|d, r| m.entry(d).or_default().push(r));
-        HashIdx { idx: m }
-    }
-    /// Left-compose index: drive s, probe r per row, group s-values by
-    /// r-value. (`.lc_idx(s)`)
-    pub fn lc<R, S>(r: R, s: S) -> Self
-    where R: Probe<R = K>, S: Drive<D = R::D, R = V> {
-        let mut m: HashMap<K, SVec<V>> = HashMap::new();
-        s.drive(|d, sv| r.probe(d, |rk| m.entry(rk).or_default().push(sv)));
-        HashIdx { idx: m }
-    }
-    /// Left-compose-set index: like `lc` but s is a KeySet; the key is
-    /// re-emitted as the value. (`.lcs_idx(s)`)
-    pub fn lcs<R, S>(r: R, s: S) -> Self
-    where R: Probe<R = K, D = V>, S: DriveKeys<D = V> {
-        let mut m: HashMap<K, SVec<V>> = HashMap::new();
-        s.drivekeys(|d| r.probe(d, |rk| m.entry(rk).or_default().push(d)));
         HashIdx { idx: m }
     }
 }
@@ -509,57 +426,13 @@ impl<K: Copy + Eq + Hash, V: Copy> Probe for HashIdx<K, V> {
     }
 }
 
-// ===== MatStream — `!q` in drive position: eager stored pairs ===========
-
-pub struct MatStream<D: Copy + Eq + Hash, R: Copy> {
-    pub pairs: Vec<(D, R)>,
-}
-
-impl<D: Copy + Eq + Hash, R: Copy> MatStream<D, R> {
-    pub fn build<Q: Drive<D = D, R = R>>(q: Q) -> Self {
-        let mut v = Vec::new();
-        q.drive(|d, r| v.push((d, r)));
-        MatStream { pairs: v }
-    }
-}
-
-impl<D: Copy + Eq + Hash, R: Copy> Rel for MatStream<D, R> { type D = D; type R = R; }
-impl<D: Copy + Eq + Hash, R: Copy> Drive for MatStream<D, R> {
-    #[inline(always)]
-    fn drive<K: FnMut(D, R)>(&self, mut k: K) {
-        for &(d, r) in &self.pairs { k(d, r); }
-    }
-}
-
-// ===== MatSetKeys / MatSetSet — materialized key-sets ===================
-
-pub struct MatSetKeys<D: Copy + Eq + Hash> { pub keys: Vec<D> }
-impl<D: Copy + Eq + Hash> MatSetKeys<D> {
-    pub fn build<S: DriveKeys<D = D>>(s: S) -> Self {
-        let mut v = Vec::new();
-        s.drivekeys(|x| v.push(x));
-        MatSetKeys { keys: v }
-    }
-}
-impl<D: Copy + Eq + Hash> KeySet for MatSetKeys<D> { type D = D; }
-impl<D: Copy + Eq + Hash> DriveKeys for MatSetKeys<D> {
-    #[inline(always)]
-    fn drivekeys<K: FnMut(D)>(&self, mut k: K) {
-        for &x in &self.keys { k(x); }
-    }
-}
+// ===== MatSetSet — materialized membership key-set ======================
 
 pub struct MatSetSet<D: Copy + Eq + Hash> { pub set: HashSet<D> }
 impl<D: Copy + Eq + Hash> MatSetSet<D> {
     pub fn build<S: DriveKeys<D = D>>(s: S) -> Self {
         let mut set = HashSet::new();
         s.drivekeys(|x| { set.insert(x); });
-        MatSetSet { set }
-    }
-    /// Membership over a Drive's *values* — the ⩘ helper.
-    pub fn of_values<Q: Drive>(q: Q) -> MatSetSet<Q::R> where Q::R: Eq + Hash {
-        let mut set = HashSet::new();
-        q.drive(|_, v| { set.insert(v); });
         MatSetSet { set }
     }
 }
@@ -628,7 +501,6 @@ impl Member for Bitset {
 
 // ===== LCStream (`r ← s`) — drive s, probe r per row ====================
 // For r: Probe<D, RK> and s: Drive<D, SV>, produces a drive-only RK → SV.
-// The probed form is `HashIdx::lc` (`.lc_idx(s)`).
 
 pub struct LCStream<R, S> { pub r: R, pub s: S }
 
@@ -690,9 +562,8 @@ impl<D: Copy + Eq + Hash, R: Member<D = D>> Member for LeftConj<D, R> {
 }
 
 // ===== Fold (`▷`) — per-key reduce into an eager cache ==================
-// One physical type serves foldl (`.fold`), buffered reduce (`.buf_fold`),
-// and count-distinct (`.count_distinct`) — they differ only in how the
-// cache is filled.
+// One physical type serves foldl (`.fold`) and count-distinct
+// (`.count_distinct`) — they differ only in how the cache is filled.
 
 pub struct Fold<D: Copy + Eq + Hash, S: Copy> {
     pub cache: HashMap<D, S>,
@@ -704,17 +575,10 @@ impl<D: Copy + Eq + Hash, S: Copy> Fold<D, S> {
     where Q: Drive<D = D>, OP: Fn(S, Q::R) -> S {
         let mut m: HashMap<D, S> = HashMap::new();
         q.drive(|d, v| {
-            let s = m.get(&d).copied().unwrap_or(init);
-            m.insert(d, op(s, v));
+            let s = m.entry(d).or_insert(init);
+            *s = op(*s, v);
         });
         Fold { cache: m }
-    }
-    /// Per-key buffered reduce: collect all values, then `f(&values)`.
-    pub fn build_buf<Q, F>(q: Q, f: F) -> Self
-    where Q: Drive<D = D>, F: Fn(&[Q::R]) -> S {
-        let mut buf: HashMap<D, SVec<Q::R>> = HashMap::new();
-        q.drive(|d, v| buf.entry(d).or_default().push(v));
-        Fold { cache: buf.into_iter().map(|(d, vs)| (d, f(&vs))).collect() }
     }
 }
 
@@ -861,11 +725,6 @@ pub trait QueryExt: Rel + Sized {
     #[inline(always)]
     fn inv(self) -> InvStream<Self> where Self::R: Eq + Hash { InvStream { q: self } }
 
-    /// Postfix adjoint in probe position — eager inverse index.
-    #[inline(always)]
-    fn inv_idx(self) -> HashIdx<Self::R, Self::D>
-    where Self: Drive, Self::R: Eq + Hash { HashIdx::inv(self) }
-
     /// Reify the key set.
     #[inline(always)]
     fn k(self) -> Keys<Self> { Keys { q: self } }
@@ -874,40 +733,42 @@ pub trait QueryExt: Rel + Sized {
     #[inline(always)]
     fn x<B: Rel<D = Self::D>>(self, b: B) -> Prod<Self, B> { Prod { a: self, b } }
 
-    // Predicate filters.
-    #[inline(always)] fn eq(self, v: Self::R) -> Filter<Self, EqP<Self::R>>
-        where Self::R: PartialEq { Filter { a: self, p: EqP(v) } }
-    #[inline(always)] fn ne(self, v: Self::R) -> Filter<Self, Ne<Self::R>>
-        where Self::R: PartialEq { Filter { a: self, p: Ne(v) } }
-    #[inline(always)] fn gt(self, v: Self::R) -> Filter<Self, Gt<Self::R>>
-        where Self::R: PartialOrd { Filter { a: self, p: Gt(v) } }
-    #[inline(always)] fn lt(self, v: Self::R) -> Filter<Self, Lt<Self::R>>
-        where Self::R: PartialOrd { Filter { a: self, p: Lt(v) } }
-    #[inline(always)] fn ge(self, v: Self::R) -> Filter<Self, Ge<Self::R>>
-        where Self::R: PartialOrd { Filter { a: self, p: Ge(v) } }
-    #[inline(always)] fn le(self, v: Self::R) -> Filter<Self, Le<Self::R>>
-        where Self::R: PartialOrd { Filter { a: self, p: Le(v) } }
-    #[inline(always)] fn in_v(self, vs: Vec<Self::R>) -> Filter<Self, InVec<Self::R>>
-        where Self::R: PartialEq { Filter { a: self, p: InVec(vs) } }
+    // Predicate filters — all captured-closure forms of `filt`.
+    #[inline(always)] fn eq(self, v: Self::R) -> Filter<Self, impl Pred<Self::R>>
+        where Self::R: PartialEq { self.filt(move |x| x == v) }
+    #[inline(always)] fn ne(self, v: Self::R) -> Filter<Self, impl Pred<Self::R>>
+        where Self::R: PartialEq { self.filt(move |x| x != v) }
+    #[inline(always)] fn gt(self, v: Self::R) -> Filter<Self, impl Pred<Self::R>>
+        where Self::R: PartialOrd { self.filt(move |x| x > v) }
+    #[inline(always)] fn lt(self, v: Self::R) -> Filter<Self, impl Pred<Self::R>>
+        where Self::R: PartialOrd { self.filt(move |x| x < v) }
+    #[inline(always)] fn ge(self, v: Self::R) -> Filter<Self, impl Pred<Self::R>>
+        where Self::R: PartialOrd { self.filt(move |x| x >= v) }
+    #[inline(always)] fn le(self, v: Self::R) -> Filter<Self, impl Pred<Self::R>>
+        where Self::R: PartialOrd { self.filt(move |x| x <= v) }
+    #[inline(always)] fn in_v(self, vs: Vec<Self::R>) -> Filter<Self, impl Pred<Self::R>>
+        where Self::R: PartialEq { self.filt(move |x| vs.iter().any(|&v| v == x)) }
     #[inline(always)] fn in_s<S: Member<D = i64>>(self, s: S) -> Filter<Self, InSet<S>>
         where Self: Rel<R = i64> { Filter { a: self, p: InSet(s) } }
-    #[inline(always)] fn rx(self, re: &str) -> Filter<Self, RegexP>
-        where Self: Rel<R = &'static str> { Filter { a: self, p: RegexP(Regex::new(re).unwrap()) } }
-    #[inline(always)] fn nrx(self, re: &str) -> Filter<Self, NotRegexP>
-        where Self: Rel<R = &'static str> { Filter { a: self, p: NotRegexP(Regex::new(re).unwrap()) } }
+    #[inline(always)] fn rx(self, re: &str) -> Filter<Self, impl Pred<Self::R>>
+        where Self: Rel<R = &'static str> {
+        let re = Regex::new(re).unwrap();
+        self.filt(move |s| re.is_match(s))
+    }
+    #[inline(always)] fn nrx(self, re: &str) -> Filter<Self, impl Pred<Self::R>>
+        where Self: Rel<R = &'static str> {
+        let re = Regex::new(re).unwrap();
+        self.filt(move |s| !re.is_match(s))
+    }
     /// Closure-predicate filter — for things like cross-column compares.
     #[inline(always)] fn filt<F: Fn(Self::R) -> bool>(self, f: F) -> Filter<Self, FnP<F>>
         { Filter { a: self, p: FnP(f) } }
     /// Half-open range `[lo, hi)` — Julia `during(lo, hi)`.
-    #[inline(always)] fn during(self, lo: Self::R, hi: Self::R) -> Filter<Self, InCO<Self::R>>
-        where Self::R: PartialOrd { Filter { a: self, p: InCO(lo, hi) } }
+    #[inline(always)] fn during(self, lo: Self::R, hi: Self::R) -> Filter<Self, impl Pred<Self::R>>
+        where Self::R: PartialOrd { self.filt(move |x| x >= lo && x < hi) }
     /// Closed range `[lo, hi]` — Julia `lo..hi`.
-    #[inline(always)] fn between(self, lo: Self::R, hi: Self::R) -> Filter<Self, InCC<Self::R>>
-        where Self::R: PartialOrd { Filter { a: self, p: InCC(lo, hi) } }
-
-    /// Materialize in drive position (`!q` scanned) — eager stored pairs.
-    #[inline(always)]
-    fn mat(self) -> MatStream<Self::D, Self::R> where Self: Drive { MatStream::build(self) }
+    #[inline(always)] fn between(self, lo: Self::R, hi: Self::R) -> Filter<Self, impl Pred<Self::R>>
+        where Self::R: PartialOrd { self.filt(move |x| x >= lo && x <= hi) }
 
     /// Materialize in probe position (`!q` probed) — eager forward index.
     #[inline(always)]
@@ -918,20 +779,10 @@ pub trait QueryExt: Rel + Sized {
     fn lc<S: Rel<D = Self::D>>(self, s: S) -> LCStream<Self, S>
     where Self::R: Eq + Hash { LCStream { r: self, s } }
 
-    /// `r ← s` in probe position — eager group index.
-    #[inline(always)]
-    fn lc_idx<S: Drive<D = Self::D>>(self, s: S) -> HashIdx<Self::R, S::R>
-    where Self: Probe, Self::R: Eq + Hash { HashIdx::lc(self, s) }
-
     /// `r ← s` where s is a KeySet — drives s's keys, probes r, value = key.
     #[inline(always)]
     fn lcs<S: KeySet<D = Self::D>>(self, s: S) -> LCSetStream<Self, S>
     where Self::R: Eq + Hash { LCSetStream { r: self, s } }
-
-    /// KeySet left-compose in probe position.
-    #[inline(always)]
-    fn lcs_idx<S: DriveKeys<D = Self::D>>(self, s: S) -> HashIdx<Self::R, Self::D>
-    where Self: Probe, Self::R: Eq + Hash { HashIdx::lcs(self, s) }
 
     /// `l ⩘ r` — left-driving wedge: materialize l's value-set, intersect r.
     #[inline(always)]
@@ -950,11 +801,6 @@ pub trait QueryExt: Rel + Sized {
     fn dense_fold<OP: Fn(S, Self::R) -> S, S: Copy>(self, n: i64, init: S, op: OP)
         -> DenseFold<S>
     where Self: Drive<D = i64> { DenseFold::build(self, n, init, op) }
-
-    /// `▷ f` — per-key buffered reduce.
-    #[inline(always)]
-    fn buf_fold<F: Fn(&[Self::R]) -> S, S: Copy>(self, f: F) -> Fold<Self::D, S>
-    where Self: Drive { Fold::build_buf(self, f) }
 
     /// Specialized count-distinct fold — sorts + dedups the per-key SVec on
     /// finalization, avoiding the HashSet alloc per group.
@@ -993,10 +839,6 @@ pub trait SetExt: KeySet + Sized {
     #[inline(always)]
     fn minus<B: KeySet<D = Self::D>>(self, b: B) -> SetDiff<Self, B> { SetDiff { a: self, b } }
 
-    /// Materialize in drive position — eager stored keys.
-    #[inline(always)]
-    fn mat_keys(self) -> MatSetKeys<Self::D> where Self: DriveKeys { MatSetKeys::build(self) }
-
     /// Materialize in member position — eager membership HashSet.
     #[inline(always)]
     fn mat_set(self) -> MatSetSet<Self::D> where Self: DriveKeys { MatSetSet::build(self) }
@@ -1029,7 +871,7 @@ mod tests {
         let mut got = Vec::new();
         f.probe(2, |v| got.push(v));
         assert_eq!(got, vec![20]);
-        assert!(member_of(&cast(), 3) && !member_of(&cast(), 2));
+        assert!(cast().probe_any(3, |_| true) && !cast().probe_any(2, |_| true));
     }
 
     #[test]
@@ -1045,24 +887,19 @@ mod tests {
     }
 
     #[test]
-    fn inv_both_modes() {
+    fn inv_stream() {
         let f = films();
         assert_eq!(drive_all(&(&f).inv()), vec![(10, 1), (20, 2), (30, 3)]);
-        let idx = (&f).inv_idx();
-        let mut got = Vec::new();
-        idx.probe(20, |d| got.push(d));
-        assert_eq!(got, vec![2]);
-        assert!(!member_of(&idx, 99));
     }
 
     #[test]
-    fn mat_both_modes() {
+    fn mat_idx() {
         let f = films();
-        assert_eq!(drive_all(&(&f).filt(|v| v > 10).mat()), vec![(2, 20), (3, 30)]);
         let idx = (&f).filt(|v| v > 10).mat_idx();
         let mut got = Vec::new();
         idx.probe(3, |v| got.push(v));
         assert_eq!(got, vec![30]);
+        assert!(!idx.probe_any(99, |_| true));
     }
 
     #[test]
@@ -1073,20 +910,13 @@ mod tests {
         // s=films driven: for film d, value f(d), key = each cast member of d.
         let grouped = (&c).lc(&f);
         assert_eq!(drive_all(&grouped), vec![(7, 10), (7, 30), (8, 10)]);
-        let idx = (&c).lc_idx(&f);
-        let mut got = Vec::new();
-        idx.probe(7, |v| got.push(v));
-        got.sort();
-        assert_eq!(got, vec![10, 30]);
         // fold: count films per person
         let counts = (&c).lc(&f).fold(0i64, |a, _| a + 1);
         assert_eq!(drive_all(&counts), vec![(7, 2), (8, 1)]);
         // dense fold over person ids 1..=8
         let dcounts = (&c).lc(&f).dense_fold(8, 0i64, |a, _| a + 1);
         assert_eq!(drive_all(&dcounts), vec![(7, 2), (8, 1)]);
-        // buffered + count_distinct
-        let buf = (&c).lc(&f).buf_fold(|vs| vs.len() as i64);
-        assert_eq!(drive_all(&buf), vec![(7, 2), (8, 1)]);
+        // count_distinct
         let cd = (&c).lc(&f).count_distinct();
         assert_eq!(drive_all(&cd), vec![(7, 2), (8, 1)]);
         // scalar
@@ -1097,14 +927,13 @@ mod tests {
     fn sets_and_bitset() {
         let c = cast();
         let people = (&c).k(); // keyset of cast = films with cast
-        let mk = (&people).mat_keys();
         let mut keys = Vec::new();
-        mk.drivekeys(|x| keys.push(x));
+        people.drivekeys(|x| keys.push(x));
         keys.sort(); keys.dedup();
         assert_eq!(keys, vec![1, 3]);
         let ms = (&people).mat_set();
         assert!(ms.member(1) && !ms.member(2));
-        let b = Bitset::from_setq(3, &mk);
+        let b = Bitset::from_setq(3, &people);
         assert!(b.member(1) && !b.member(2) && b.member(3));
         // conj/disj/diff over Universe
         let u2 = Universe { n: 2 };

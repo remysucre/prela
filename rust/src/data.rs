@@ -1,68 +1,8 @@
-// Load the JOB tables from Julia's binary cache (../prela/cache/*.bin).
-//
-// File formats (from cache.jl):
-//   bits  — [u64 n][n × (i64,i64)]         ID×ID or ID×Int pairs
-//   str   — [u64 n][n × i64 keys][(n+1) × u32 offsets][bytes]
-//
-// Strings are returned as &'static str — the mmap is leaked, so the bytes live
-// for the program. No per-string allocation.
+// The JOB tables, loaded from Julia's binary cache (../cache/*.bin) via the
+// shared loaders in cache.rs.
 
-#![allow(dead_code)]
-
-use memmap2::Mmap;
-use std::fs::File;
-use std::path::{Path, PathBuf};
-
+use crate::cache::{load_bits, load_strs, max_key, max_val};
 use crate::engine::{Many, Universe, Vec1};
-
-fn cache_dir() -> PathBuf {
-    PathBuf::from("../cache")
-}
-
-fn mmap_static(path: &Path) -> &'static [u8] {
-    let f = File::open(path).unwrap_or_else(|e| panic!("open {path:?}: {e}"));
-    let mmap = unsafe { Mmap::map(&f).unwrap() };
-    let leaked: &'static Mmap = Box::leak(Box::new(mmap));
-    &**leaked
-}
-
-fn load_bits(name: &str) -> &'static [[i64; 2]] {
-    let bytes = mmap_static(&cache_dir().join(format!("{name}.bin")));
-    let n = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
-    let ptr = unsafe { bytes.as_ptr().add(8) as *const [i64; 2] };
-    unsafe { std::slice::from_raw_parts(ptr, n) }
-}
-
-fn load_strs(name: &str) -> Vec<(i64, &'static str)> {
-    let bytes = mmap_static(&cache_dir().join(format!("{name}.bin")));
-    let n = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
-    let keys_off = 8;
-    let offsets_off = keys_off + n * 8;
-    let bytes_off = offsets_off + (n + 1) * 4;
-    let keys: &'static [i64] = unsafe {
-        std::slice::from_raw_parts(bytes.as_ptr().add(keys_off) as *const i64, n)
-    };
-    let offsets: &'static [u32] = unsafe {
-        std::slice::from_raw_parts(bytes.as_ptr().add(offsets_off) as *const u32, n + 1)
-    };
-    let data: &'static [u8] = &bytes[bytes_off..];
-    (0..n).map(|i| {
-        let lo = offsets[i] as usize;
-        let hi = offsets[i + 1] as usize;
-        let s: &'static str = unsafe { std::str::from_utf8_unchecked(&data[lo..hi]) };
-        (keys[i], s)
-    }).collect()
-}
-
-fn max_src_bits(p: &[[i64; 2]]) -> usize {
-    p.iter().map(|x| x[0]).max().unwrap_or(0) as usize
-}
-fn max_src_str(p: &[(i64, &str)]) -> usize {
-    p.iter().map(|x| x.0).max().unwrap_or(0) as usize
-}
-fn max_val_bits(p: &[[i64; 2]]) -> usize {
-    p.iter().map(|x| x[1]).max().unwrap_or(0) as usize
-}
 
 // ===== the loaded dataset ===============================================
 
@@ -193,74 +133,74 @@ impl Data {
         let cck  = load_strs("CompCastType_kind");
 
         // ---- entity sizes (max id seen across all references) ----
-        let n_movie     = max_src_str(&mt)
-                          .max(mlt.iter().map(|x| x[1]).max().unwrap_or(0) as usize);
-        let n_person    = max_src_str(&pn);
-        let n_cast      = max_src_bits(cp);
-        let n_keyword   = max_src_str(&kk)
-                          .max(max_val_bits(mk));
-        let n_kind      = max_src_str(&kik).max(max_val_bits(mki));
-        let n_roletype  = max_src_str(&rt).max(max_val_bits(cr));
-        let n_character = max_src_str(&chn).max(max_val_bits(cch));
-        let n_company   = max_src_str(&cmn_)
-                          .max(max_src_str(&cc))
-                          .max(max_src_str(&cmnt))
-                          .max(max_src_bits(cty))
-                          .max(max_val_bits(mcmp));
-        let n_comptype  = max_src_str(&cyk).max(max_val_bits(cty));
-        let n_info      = max_src_str(&ii)
-                          .max(max_src_bits(ity))
-                          .max(max_src_str(&in_))
-                          .max(max_val_bits(mif));
-        let n_infotype  = max_src_str(&ityp).max(max_val_bits(ity));
-        let n_data      = max_src_str(&dd)
-                          .max(max_src_bits(dty))
-                          .max(max_val_bits(mdt));
-        let n_pinfo     = max_src_str(&pi)
-                          .max(max_src_bits(pity))
-                          .max(max_src_str(&pin))
-                          .max(max_val_bits(pif));
-        let n_akaname   = max_src_str(&an).max(max_val_bits(pa));
-        let n_akatitle  = max_src_str(&at).max(max_val_bits(mak));
-        let n_mlink     = max_src_bits(mlt)
-                          .max(max_src_bits(mlty))
-                          .max(max_val_bits(mln))
-                          .max(max_val_bits(mlnby));
-        let n_ltype     = max_src_str(&lty).max(max_val_bits(mlty));
-        let n_ccast     = max_src_bits(ccst)
-                          .max(max_src_bits(ccsub))
-                          .max(max_val_bits(mcc));
-        let n_ccktype   = max_src_str(&cck)
-                          .max(ccst.iter().map(|x| x[1]).max().unwrap_or(0) as usize)
-                          .max(ccsub.iter().map(|x| x[1]).max().unwrap_or(0) as usize);
+        let n_movie     = max_key(&mt)
+                          .max(max_val(&mlt));
+        let n_person    = max_key(&pn);
+        let n_cast      = max_key(&cp);
+        let n_keyword   = max_key(&kk)
+                          .max(max_val(&mk));
+        let n_kind      = max_key(&kik).max(max_val(&mki));
+        let n_roletype  = max_key(&rt).max(max_val(&cr));
+        let n_character = max_key(&chn).max(max_val(&cch));
+        let n_company   = max_key(&cmn_)
+                          .max(max_key(&cc))
+                          .max(max_key(&cmnt))
+                          .max(max_key(&cty))
+                          .max(max_val(&mcmp));
+        let n_comptype  = max_key(&cyk).max(max_val(&cty));
+        let n_info      = max_key(&ii)
+                          .max(max_key(&ity))
+                          .max(max_key(&in_))
+                          .max(max_val(&mif));
+        let n_infotype  = max_key(&ityp).max(max_val(&ity));
+        let n_data      = max_key(&dd)
+                          .max(max_key(&dty))
+                          .max(max_val(&mdt));
+        let n_pinfo     = max_key(&pi)
+                          .max(max_key(&pity))
+                          .max(max_key(&pin))
+                          .max(max_val(&pif));
+        let n_akaname   = max_key(&an).max(max_val(&pa));
+        let n_akatitle  = max_key(&at).max(max_val(&mak));
+        let n_mlink     = max_key(&mlt)
+                          .max(max_key(&mlty))
+                          .max(max_val(&mln))
+                          .max(max_val(&mlnby));
+        let n_ltype     = max_key(&lty).max(max_val(&mlty));
+        let n_ccast     = max_key(&ccst)
+                          .max(max_key(&ccsub))
+                          .max(max_val(&mcc));
+        let n_ccktype   = max_key(&cck)
+                          .max(max_val(&ccst))
+                          .max(max_val(&ccsub));
 
         Data {
             movie:   Universe { n: n_movie  as i64 },
             persons: Universe { n: n_person as i64 },
 
             movie_title:           Vec1::from_pairs(n_movie, mt.iter().copied()),
-            movie_kind:            Vec1::from_pairs(n_movie, mki.iter().map(|p| (p[0], p[1]))),
-            movie_production_year: Many::from_pairs(n_movie, py.iter().map(|p| (p[0], p[1]))),
-            movie_episode_nr:      Many::from_pairs(n_movie, men.iter().map(|p| (p[0], p[1]))),
-            movie_keyword:         Many::from_pairs(n_movie, mk.iter().map(|p| (p[0], p[1]))),
-            movie_company:         Many::from_pairs(n_movie, mcmp.iter().map(|p| (p[0], p[1]))),
-            movie_cast:            Many::from_pairs(n_movie, mcst.iter().map(|p| (p[0], p[1]))),
-            movie_info:            Many::from_pairs(n_movie, mif.iter().map(|p| (p[0], p[1]))),
-            movie_data:            Many::from_pairs(n_movie, mdt.iter().map(|p| (p[0], p[1]))),
-            movie_complete_cast:   Many::from_pairs(n_movie, mcc.iter().map(|p| (p[0], p[1]))),
-            movie_link:            Many::from_pairs(n_movie, mln.iter().map(|p| (p[0], p[1]))),
-            movie_linked_by:       Many::from_pairs(n_movie, mlnby.iter().map(|p| (p[0], p[1]))),
-            movie_aka:             Many::from_pairs(n_movie, mak.iter().map(|p| (p[0], p[1]))),
+            movie_kind:            Vec1::from_pairs(n_movie, mki.iter().copied()),
+            movie_production_year: Many::from_pairs(n_movie, py.iter().copied()),
+            movie_episode_nr:      Many::from_pairs(n_movie, men.iter().copied()),
+            movie_keyword:         Many::from_pairs(n_movie, mk.iter().copied()),
+            movie_company:         Many::from_pairs(n_movie, mcmp.iter().copied()),
+            movie_cast:            Many::from_pairs(n_movie, mcst.iter().copied()),
+            movie_info:            Many::from_pairs(n_movie, mif.iter().copied()),
+            movie_data:            Many::from_pairs(n_movie, mdt.iter().copied()),
+            movie_complete_cast:   Many::from_pairs(n_movie, mcc.iter().copied()),
+            movie_link:            Many::from_pairs(n_movie, mln.iter().copied()),
+            movie_linked_by:       Many::from_pairs(n_movie, mlnby.iter().copied()),
+            movie_aka:             Many::from_pairs(n_movie, mak.iter().copied()),
 
-            cast_person:     Vec1::from_pairs(n_cast, cp.iter().map(|p| (p[0], p[1]))),
-            cast_role:       Vec1::from_pairs(n_cast, cr.iter().map(|p| (p[0], p[1]))),
+            cast_person:     Vec1::from_pairs(n_cast, cp.iter().copied()),
+            cast_role:       Vec1::from_pairs(n_cast, cr.iter().copied()),
             cast_note:       Many::from_pairs(n_cast, cnt.iter().copied()),
-            cast_character:  Many::from_pairs(n_cast, cch.iter().map(|p| (p[0], p[1]))),
+            cast_character:  Many::from_pairs(n_cast, cch.iter().copied()),
 
             person_name:       Vec1::from_pairs(n_person, pn.iter().copied()),
             person_gender:     Many::from_pairs(n_person, pg.iter().copied()),
-            person_aka:        Many::from_pairs(n_person, pa.iter().map(|p| (p[0], p[1]))),
-            person_info:       Many::from_pairs(n_person, pif.iter().map(|p| (p[0], p[1]))),
+            person_aka:        Many::from_pairs(n_person, pa.iter().copied()),
+            person_info:       Many::from_pairs(n_person, pif.iter().copied()),
             person_name_pcode: Many::from_pairs(n_person, pnp.iter().copied()),
 
             keyword_keyword: Vec1::from_pairs(n_keyword,   kk.iter().copied()),
@@ -271,28 +211,28 @@ impl Data {
             company_country: Many::from_pairs(n_company, cc.iter().copied()),
             company_name:    Vec1::from_pairs(n_company, cmn_.iter().copied()),
             company_note:    Many::from_pairs(n_company, cmnt.iter().copied()),
-            company_type:    Vec1::from_pairs(n_company, cty.iter().map(|p| (p[0], p[1]))),
+            company_type:    Vec1::from_pairs(n_company, cty.iter().copied()),
             companytype_kind: Vec1::from_pairs(n_comptype, cyk.iter().copied()),
 
             info_info:    Vec1::from_pairs(n_info,     ii.iter().copied()),
-            info_type:    Vec1::from_pairs(n_info,     ity.iter().map(|p| (p[0], p[1]))),
+            info_type:    Vec1::from_pairs(n_info,     ity.iter().copied()),
             info_note:    Many::from_pairs(n_info,     in_.iter().copied()),
             infotype_info: Vec1::from_pairs(n_infotype, ityp.iter().copied()),
             data_data:    Vec1::from_pairs(n_data,     dd.iter().copied()),
-            data_type:    Vec1::from_pairs(n_data,     dty.iter().map(|p| (p[0], p[1]))),
+            data_type:    Vec1::from_pairs(n_data,     dty.iter().copied()),
             personinfo_info: Vec1::from_pairs(n_pinfo,  pi.iter().copied()),
-            personinfo_type: Vec1::from_pairs(n_pinfo,  pity.iter().map(|p| (p[0], p[1]))),
+            personinfo_type: Vec1::from_pairs(n_pinfo,  pity.iter().copied()),
             personinfo_note: Many::from_pairs(n_pinfo,  pin.iter().copied()),
 
             akaname_name:    Vec1::from_pairs(n_akaname,  an.iter().copied()),
             akatitle_title:  Vec1::from_pairs(n_akatitle, at.iter().copied()),
 
-            movielink_target: Vec1::from_pairs(n_mlink, mlt.iter().map(|p| (p[0], p[1]))),
-            movielink_type:   Vec1::from_pairs(n_mlink, mlty.iter().map(|p| (p[0], p[1]))),
+            movielink_target: Vec1::from_pairs(n_mlink, mlt.iter().copied()),
+            movielink_type:   Vec1::from_pairs(n_mlink, mlty.iter().copied()),
             linktype_link:    Vec1::from_pairs(n_ltype, lty.iter().copied()),
 
-            completecast_status:  Vec1::from_pairs(n_ccast, ccst.iter().map(|p| (p[0], p[1]))),
-            completecast_subject: Vec1::from_pairs(n_ccast, ccsub.iter().map(|p| (p[0], p[1]))),
+            completecast_status:  Vec1::from_pairs(n_ccast, ccst.iter().copied()),
+            completecast_subject: Vec1::from_pairs(n_ccast, ccsub.iter().copied()),
             compcasttype_kind:    Vec1::from_pairs(n_ccktype, cck.iter().copied()),
         }
     }

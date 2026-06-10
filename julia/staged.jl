@@ -3,8 +3,8 @@
 # `_exec_drive` is `@generated` over the *physical* plan's type: the emitters
 # below walk that type at codegen time and emit one flat, fused loop nest.
 # Mode is already resolved into the types (`prepare` lowered every index/cache
-# node to a concrete physical struct — `InvStream`/`InvIndexed`,
-# `FoldP`/`DenseFoldP`, `MatStream`/`MatProbed`, …), so the emitters read
+# node to a concrete physical struct — `InvStream`/`Indexed`,
+# `FoldP`/`DenseFoldP`, `MapRel`/`Indexed`, …), so the emitters read
 # concrete fields and never build anything: all state construction happened in
 # `prepare`, which itself scans through this same engine (see plan.jl).
 #
@@ -13,6 +13,13 @@
 # plan *type* the way `k` is threaded over the *value*. This is why deep plans
 # compile flat here while the interpreted engine trips the inference recursion
 # limit — the continuation grows at codegen time, where growth is free.
+#
+# Structure: leaves describe their probe-side access ONCE via `_access` /
+# `_access_multi` descriptors; the three probe protocols (`_probe_body`,
+# `_probe_body_test`, `_probe_any_body`) are derived from the descriptor by
+# generic templates. Only structural nodes (Compose, Filter, …) and the
+# drive protocol (where iteration shapes genuinely differ) have bespoke
+# emitters.
 
 # =====================================================================
 # _drive_body(QType, q_expr, body) -> Expr
@@ -70,7 +77,8 @@ function _drive_body(::Type{<:MultiRel{E, R}}, q_expr, body) where {E, R}
     end
 end
 
-# `MapRel` — drive-only materialized result (collect / inlined pairs).
+# `MapRel` — drive-only materialized result (collect / materialize / inlined
+# pairs).
 function _drive_body(::Type{<:MapRel{D, R}}, q_expr, body) where {D, R}
     quote
         for _p in ($q_expr).pairs
@@ -120,26 +128,10 @@ function _drive_body(::Type{<:Compose{D, M, R, A, B}}, q_expr, body) where {D, M
     _drive_body(A, :(($q_expr).a), inner_with_m)
 end
 
-# Filter drive — streaming filtered scan, one emit per predicate kind.
-function _drive_body(::Type{<:Filter{D, R, A, FnP{F}}}, q_expr, body) where {D, R, A, F}
+# Filter drive — streaming filtered scan; the predicate is any callable.
+function _drive_body(::Type{<:Filter{D, R, A}}, q_expr, body) where {D, R, A}
     wrap = quote
-        if ($q_expr).pred.f(_v)
-            $body
-        end
-    end
-    _drive_body(A, :(($q_expr).a), wrap)
-end
-function _drive_body(::Type{<:Filter{D, R, A, EqP{V}}}, q_expr, body) where {D, R, A, V}
-    wrap = quote
-        if isequal(_v, ($q_expr).pred.v)
-            $body
-        end
-    end
-    _drive_body(A, :(($q_expr).a), wrap)
-end
-function _drive_body(::Type{<:Filter{D, R, A, InP{T}}}, q_expr, body) where {D, R, A, T}
-    wrap = quote
-        if _v in ($q_expr).pred.vs
+        if ($q_expr).pred(_v)
             $body
         end
     end
@@ -244,28 +236,6 @@ function _drive_body(::Type{<:LCStream{D, RK, SV, QR, QS}}, q_expr, body) where 
     _drive_body(QS, :(($q_expr).s), inner)
 end
 
-# MatStream drive: iterate the stored pairs.
-function _drive_body(::Type{<:MatStream{D, R}}, q_expr, body) where {D, R}
-    quote
-        for _p in ($q_expr).mat
-            let _x = _p.first, _v = _p.second
-                $body
-            end
-        end
-    end
-end
-
-# MatSetStream drive: iterate the stored keys (identity).
-function _drive_body(::Type{<:MatSetStream{D}}, q_expr, body) where {D}
-    quote
-        for _x in ($q_expr).keys
-            let _v = _x
-                $body
-            end
-        end
-    end
-end
-
 # ---- prepared caches (pipeline-breakers; built by `prepare`) ----
 # FoldP drive: iterate the per-key cache.
 function _drive_body(::Type{<:FoldP{D, S}}, q_expr, body) where {D, S}
@@ -310,87 +280,106 @@ function _drive_body(::Type{Q}, q_expr, body) where {Q}
 end
 
 # =====================================================================
+# Leaf access descriptors. Each probe-able physical node describes its
+# access exactly once:
+#
+#   _access(T, q_expr, x_sym)       -> (setup, cond, val)    single-valued
+#   _access_multi(T, q_expr, x_sym) -> (setup, cond, iter)   vector-valued
+#
+# `setup` is a vector of `lhs = rhs` binding Exprs (wrapped in a `let` when
+# nonempty); `cond` is a Bool Expr guarding presence; `val` / `iter` is the
+# value / iterable Expr. The generic templates below derive all three probe
+# protocols from the descriptor, so a new physical node needs one method
+# here instead of three hand-written emitters.
+# =====================================================================
+
+const SingleValued = Union{VecRel, SparseRel, Universe, Bitset, MatSetProbed,
+                           FoldP, DenseFoldP, ScalarP, Disj, LeftConj}
+const MultiValued  = Union{MultiRel, Indexed}
+
+_let(setup, body) = isempty(setup) ? body : Expr(:let, Expr(:block, setup...), body)
+
+_access(::Type{<:VecRel}, q, x) = (
+    [:(_i = ($x).id), :(_vv = ($q).values)],
+    :(1 <= _i <= length(_vv)),
+    :(@inbounds _vv[_i]))
+_access(::Type{<:SparseRel}, q, x) = (
+    [:(_i = ($x).id), :(_vv = ($q).values)],
+    :(1 <= _i <= length(_vv) && @inbounds(($q).seen[_i])),
+    :(@inbounds _vv[_i]))
+_access(::Type{<:Universe}, q, x) = (
+    Expr[], :(1 <= ($x).id <= ($q).n), x)
+_access(::Type{<:Bitset}, q, x) = (
+    [:(_b = $q), :(_i = _denseidx($x) + 1)],
+    :(@inbounds(1 <= _i <= length(_b.bits) && _b.bits[_i])),
+    x)
+_access(::Type{<:MatSetProbed}, q, x) = (
+    Expr[], :($x in ($q).set), x)
+_access(::Type{<:FoldP}, q, x) = (
+    [:(_g = get(($q).cache, $x, nothing))], :(_g !== nothing), :_g)
+_access(::Type{<:DenseFoldP}, q, x) = (
+    [:(_vals = ($q).vals), :(_i = _denseidx($x) + 1)],
+    :(1 <= _i <= length(_vals) && @inbounds(($q).seen[_i])),
+    :(@inbounds _vals[_i]))
+_access(::Type{<:ScalarP}, q, x) = (Expr[], true, :(($q).value))
+
+# Conditional identity nodes: yield x iff member (cond recurses into legs).
+_access(::Type{<:Disj{D, A, B}}, q, x) where {D, A, B} = (
+    Expr[],
+    :($(_probe_any_body(A, :(($q).a), x)) || $(_probe_any_body(B, :(($q).b), x))),
+    x)
+_access(::Type{<:LeftConj{D, ML, R}}, q, x) where {D, ML, R} = (
+    Expr[],
+    :($(_probe_any_body(ML, :(($q).l), x)) && $(_probe_any_body(R, :(($q).r), x))),
+    x)
+
+_access_multi(::Type{<:MultiRel}, q, x) = (
+    [:(_i = ($x).id), :(_f = ($q).fwd)],
+    :(1 <= _i <= length(_f)),
+    :(@inbounds _f[_i]))
+# `Indexed` — dense `Vector{Vector}` (entity-keyed) or `Dict`; branch on IDX.
+function _access_multi(::Type{<:Indexed{D, R, IDX}}, q, x) where {D, R, IDX}
+    if IDX <: AbstractVector
+        ([:(_i = ($x).id), :(_idx = ($q).idx)],
+         :(1 <= _i <= length(_idx)),
+         :(@inbounds _idx[_i]))
+    else
+        ([:(_vs = get(($q).idx, $x, nothing))], :(_vs !== nothing), :_vs)
+    end
+end
+
+# =====================================================================
 # _probe_body(QType, q_expr, x_sym, y_sym, body) -> Expr
 #   Probe Q at x_sym, bind the value to y_sym, run body (a statement).
 # =====================================================================
 
-# ---- leaves ----
-function _probe_body(::Type{<:VecRel{E, R}}, q_expr, x_sym, y_sym, body) where {E, R}
-    quote
-        let _i = ($x_sym).id, _vv = ($q_expr).values
-            if 1 <= _i <= length(_vv)
-                let $y_sym = @inbounds _vv[_i]
-                    $body
-                end
-            end
-        end
-    end
-end
-function _probe_body(::Type{<:SparseRel{E, R}}, q_expr, x_sym, y_sym, body) where {E, R}
-    quote
-        let _i = ($x_sym).id, _vv = ($q_expr).values
-            if 1 <= _i <= length(_vv) && @inbounds(($q_expr).seen[_i])
-                let $y_sym = @inbounds _vv[_i]
-                    $body
-                end
-            end
-        end
-    end
-end
-function _probe_body(::Type{<:MultiRel{E, R}}, q_expr, x_sym, y_sym, body) where {E, R}
-    quote
-        let _i = ($x_sym).id, _f = ($q_expr).fwd
-            if 1 <= _i <= length(_f)
-                for $y_sym in @inbounds _f[_i]
-                    $body
-                end
-            end
-        end
-    end
-end
-
-function _probe_body(::Type{Universe{E}}, q_expr, x_sym, y_sym, body) where {E}
-    quote
-        if 1 <= ($x_sym).id <= ($q_expr).n
-            let $y_sym = $x_sym
+# ---- leaves, derived from the access descriptors ----
+function _probe_body(::Type{Q}, q_expr, x_sym, y_sym, body) where {Q <: SingleValued}
+    setup, cond, val = _access(Q, q_expr, x_sym)
+    _let(setup, quote
+        if $cond
+            let $y_sym = $val
                 $body
             end
         end
-    end
+    end)
 end
 
-function _probe_body(::Type{<:Bitset{D}}, q_expr, x_sym, y_sym, body) where {D}
-    quote
-        let _b = $q_expr, _i = _denseidx($x_sym) + 1
-            if @inbounds(1 <= _i <= length(_b.bits) && _b.bits[_i])
-                let $y_sym = $x_sym
-                    $body
-                end
+function _probe_body(::Type{Q}, q_expr, x_sym, y_sym, body) where {Q <: MultiValued}
+    setup, cond, iter = _access_multi(Q, q_expr, x_sym)
+    _let(setup, quote
+        if $cond
+            for $y_sym in $iter
+                $body
             end
         end
-    end
+    end)
 end
 
 # ---- structural ----
-function _probe_body(::Type{<:Filter{D, R, A, FnP{F}}}, q_expr, x_sym, y_sym, body) where {D, R, A, F}
+function _probe_body(::Type{<:Filter{D, R, A}}, q_expr, x_sym, y_sym, body) where {D, R, A}
     wrap = quote
-        if ($q_expr).pred.f($y_sym)
-            $body
-        end
-    end
-    _probe_body(A, :(($q_expr).a), x_sym, y_sym, wrap)
-end
-function _probe_body(::Type{<:Filter{D, R, A, EqP{V}}}, q_expr, x_sym, y_sym, body) where {D, R, A, V}
-    wrap = quote
-        if isequal($y_sym, ($q_expr).pred.v)
-            $body
-        end
-    end
-    _probe_body(A, :(($q_expr).a), x_sym, y_sym, wrap)
-end
-function _probe_body(::Type{<:Filter{D, R, A, InP{T}}}, q_expr, x_sym, y_sym, body) where {D, R, A, T}
-    wrap = quote
-        if $y_sym in ($q_expr).pred.vs
+        if ($q_expr).pred($y_sym)
             $body
         end
     end
@@ -451,126 +440,6 @@ function _probe_body(::Type{<:Prod{D, R, OPS}}, q_expr, x_sym, y_sym, body) wher
     inner
 end
 
-# ---- identity-Unary probes: yield x as the value iff member. ----
-function _probe_body(::Type{<:Disj{D, A, B}}, q_expr, x_sym, y_sym, body) where {D, A, B}
-    a_chk = _probe_any_body(A, :(($q_expr).a), x_sym)
-    b_chk = _probe_any_body(B, :(($q_expr).b), x_sym)
-    quote
-        if $a_chk || $b_chk
-            let $y_sym = $x_sym
-                $body
-            end
-        end
-    end
-end
-
-function _probe_body(::Type{<:LeftConj{D, ML, R}}, q_expr, x_sym, y_sym, body) where {D, ML, R}
-    l_chk = _probe_any_body(ML, :(($q_expr).l), x_sym)
-    r_chk = _probe_any_body(R, :(($q_expr).r), x_sym)
-    quote
-        if $l_chk && $r_chk
-            let $y_sym = $x_sym
-                $body
-            end
-        end
-    end
-end
-
-function _probe_body(::Type{<:MatSetProbed{D}}, q_expr, x_sym, y_sym, body) where {D}
-    quote
-        if $x_sym in ($q_expr).set
-            let $y_sym = $x_sym
-                $body
-            end
-        end
-    end
-end
-
-# ---- prepared probe-side indexes ----
-# InvIndexed / LCIndexed — Dict{key, Vector{val}}; iterate matches.
-function _probe_body(::Type{<:InvIndexed{B, A}}, q_expr, x_sym, y_sym, body) where {B, A}
-    quote
-        let _vs = get(($q_expr).idx, $x_sym, nothing)
-            if _vs !== nothing
-                for $y_sym in _vs
-                    $body
-                end
-            end
-        end
-    end
-end
-function _probe_body(::Type{<:LCIndexed{RK, SV}}, q_expr, x_sym, y_sym, body) where {RK, SV}
-    quote
-        let _vs = get(($q_expr).idx, $x_sym, nothing)
-            if _vs !== nothing
-                for $y_sym in _vs
-                    $body
-                end
-            end
-        end
-    end
-end
-
-# MatProbed — dense `Vector{Vector}` (entity-keyed) or `Dict`; branch on IDX.
-function _probe_body(::Type{<:MatProbed{D, R, IDX}}, q_expr, x_sym, y_sym, body) where {D, R, IDX}
-    if IDX <: AbstractVector
-        quote
-            let _i = ($x_sym).id, _idx = ($q_expr).idx
-                if 1 <= _i <= length(_idx)
-                    for $y_sym in @inbounds _idx[_i]
-                        $body
-                    end
-                end
-            end
-        end
-    else
-        quote
-            let _vs = get(($q_expr).idx, $x_sym, nothing)
-                if _vs !== nothing
-                    for $y_sym in _vs
-                        $body
-                    end
-                end
-            end
-        end
-    end
-end
-
-# FoldP probe — single value per key.
-function _probe_body(::Type{<:FoldP{D, S}}, q_expr, x_sym, y_sym, body) where {D, S}
-    quote
-        let _g = get(($q_expr).cache, $x_sym, nothing)
-            if _g !== nothing
-                let $y_sym = _g
-                    $body
-                end
-            end
-        end
-    end
-end
-
-# DenseFoldP probe — dense slot lookup.
-function _probe_body(::Type{<:DenseFoldP{D, S}}, q_expr, x_sym, y_sym, body) where {D, S}
-    quote
-        let _vals = ($q_expr).vals, _i = _denseidx($x_sym) + 1
-            if 1 <= _i <= length(_vals) && @inbounds(($q_expr).seen[_i])
-                let $y_sym = @inbounds _vals[_i]
-                    $body
-                end
-            end
-        end
-    end
-end
-
-# ScalarP probe — the single value (key is `nothing`).
-function _probe_body(::Type{<:ScalarP{S}}, q_expr, x_sym, y_sym, body) where {S}
-    quote
-        let $y_sym = ($q_expr).value
-            $body
-        end
-    end
-end
-
 function _probe_body(::Type{Q}, q_expr, x_sym, y_sym, body) where {Q}
     quote
         probe($q_expr, $x_sym, $y_sym -> $body)
@@ -584,34 +453,29 @@ end
 #   No body duplication for multi-valued probes.
 # =====================================================================
 
-function _probe_body_test(::Type{<:VecRel{E, R}}, q_expr, x_sym, y_sym, body) where {E, R}
-    quote
-        let _i = ($x_sym).id, _vv = ($q_expr).values
-            (1 <= _i <= length(_vv)) ? (let $y_sym = @inbounds _vv[_i]; $body; end) : false
-        end
-    end
+# ---- leaves, derived from the access descriptors ----
+function _probe_body_test(::Type{Q}, q_expr, x_sym, y_sym, body) where {Q <: SingleValued}
+    setup, cond, val = _access(Q, q_expr, x_sym)
+    _let(setup, quote
+        ($cond) ? (let $y_sym = $val; $body; end) : false
+    end)
 end
-function _probe_body_test(::Type{<:SparseRel{E, R}}, q_expr, x_sym, y_sym, body) where {E, R}
-    quote
-        let _i = ($x_sym).id, _vv = ($q_expr).values
-            (1 <= _i <= length(_vv) && @inbounds(($q_expr).seen[_i])) ?
-                (let $y_sym = @inbounds _vv[_i]; $body; end) : false
-        end
-    end
-end
-function _probe_body_test(::Type{<:MultiRel{E, R}}, q_expr, x_sym, y_sym, body) where {E, R}
-    quote
-        let _i = ($x_sym).id, _f = ($q_expr).fwd, _acc = false
-            if 1 <= _i <= length(_f)
-                for $y_sym in @inbounds _f[_i]
+
+function _probe_body_test(::Type{Q}, q_expr, x_sym, y_sym, body) where {Q <: MultiValued}
+    setup, cond, iter = _access_multi(Q, q_expr, x_sym)
+    _let(setup, quote
+        let _acc = false
+            if $cond
+                for $y_sym in $iter
                     _acc = ($body) || _acc
                 end
             end
             _acc
         end
-    end
+    end)
 end
 
+# ---- structural ----
 function _probe_body_test(::Type{<:Compose{D, M, R, A, B}}, q_expr, x_sym, y_sym, body) where {D, M, R, A, B}
     m_sym = gensym(:_mpt)
     inner = _probe_body_test(B, :(($q_expr).b), m_sym, y_sym, body)
@@ -626,21 +490,9 @@ function _probe_body_test(::Type{<:Map{D, R, S, Q, F}}, q_expr, x_sym, y_sym, bo
     end
     _probe_body_test(Q, :(($q_expr).q), x_sym, inner_y, inner_body)
 end
-function _probe_body_test(::Type{<:Filter{D, R, A, FnP{F}}}, q_expr, x_sym, y_sym, body) where {D, R, A, F}
+function _probe_body_test(::Type{<:Filter{D, R, A}}, q_expr, x_sym, y_sym, body) where {D, R, A}
     wrap = quote
-        ($q_expr).pred.f($y_sym) ? ($body) : false
-    end
-    _probe_body_test(A, :(($q_expr).a), x_sym, y_sym, wrap)
-end
-function _probe_body_test(::Type{<:Filter{D, R, A, EqP{V}}}, q_expr, x_sym, y_sym, body) where {D, R, A, V}
-    wrap = quote
-        isequal($y_sym, ($q_expr).pred.v) ? ($body) : false
-    end
-    _probe_body_test(A, :(($q_expr).a), x_sym, y_sym, wrap)
-end
-function _probe_body_test(::Type{<:Filter{D, R, A, InP{T}}}, q_expr, x_sym, y_sym, body) where {D, R, A, T}
-    wrap = quote
-        ($y_sym in ($q_expr).pred.vs) ? ($body) : false
+        ($q_expr).pred($y_sym) ? ($body) : false
     end
     _probe_body_test(A, :(($q_expr).a), x_sym, y_sym, wrap)
 end
@@ -666,89 +518,6 @@ function _probe_body_test(::Type{<:Prod{D, R, OPS}}, q_expr, x_sym, y_sym, body)
     inner
 end
 
-function _probe_body_test(::Type{<:InvIndexed{B, A}}, q_expr, x_sym, y_sym, body) where {B, A}
-    quote
-        let _vs = get(($q_expr).idx, $x_sym, nothing), _acc = false
-            if _vs !== nothing
-                for $y_sym in _vs
-                    _acc = ($body) || _acc
-                end
-            end
-            _acc
-        end
-    end
-end
-function _probe_body_test(::Type{<:LCIndexed{RK, SV}}, q_expr, x_sym, y_sym, body) where {RK, SV}
-    quote
-        let _vs = get(($q_expr).idx, $x_sym, nothing), _acc = false
-            if _vs !== nothing
-                for $y_sym in _vs
-                    _acc = ($body) || _acc
-                end
-            end
-            _acc
-        end
-    end
-end
-function _probe_body_test(::Type{<:MatProbed{D, R, IDX}}, q_expr, x_sym, y_sym, body) where {D, R, IDX}
-    if IDX <: AbstractVector
-        quote
-            let _i = ($x_sym).id, _idx = ($q_expr).idx, _acc = false
-                if 1 <= _i <= length(_idx)
-                    for $y_sym in @inbounds _idx[_i]
-                        _acc = ($body) || _acc
-                    end
-                end
-                _acc
-            end
-        end
-    else
-        quote
-            let _vs = get(($q_expr).idx, $x_sym, nothing), _acc = false
-                if _vs !== nothing
-                    for $y_sym in _vs
-                        _acc = ($body) || _acc
-                    end
-                end
-                _acc
-            end
-        end
-    end
-end
-function _probe_body_test(::Type{<:FoldP{D, S}}, q_expr, x_sym, y_sym, body) where {D, S}
-    quote
-        let _g = get(($q_expr).cache, $x_sym, nothing)
-            _g !== nothing ? (let $y_sym = _g; $body; end) : false
-        end
-    end
-end
-function _probe_body_test(::Type{<:DenseFoldP{D, S}}, q_expr, x_sym, y_sym, body) where {D, S}
-    quote
-        let _vals = ($q_expr).vals, _i = _denseidx($x_sym) + 1
-            (1 <= _i <= length(_vals) && @inbounds(($q_expr).seen[_i])) ?
-                (let $y_sym = @inbounds _vals[_i]; $body; end) : false
-        end
-    end
-end
-function _probe_body_test(::Type{Universe{E}}, q_expr, x_sym, y_sym, body) where {E}
-    quote
-        (1 <= ($x_sym).id <= ($q_expr).n) ? (let $y_sym = $x_sym; $body; end) : false
-    end
-end
-function _probe_body_test(::Type{<:Bitset{D}}, q_expr, x_sym, y_sym, body) where {D}
-    quote
-        let _b = $q_expr, _i = _denseidx($x_sym) + 1
-            @inbounds(1 <= _i <= length(_b.bits) && _b.bits[_i]) ?
-                (let $y_sym = $x_sym; $body; end) : false
-        end
-    end
-end
-function _probe_body_test(::Type{<:MatSetProbed{D}}, q_expr, x_sym, y_sym, body) where {D}
-    quote
-        ($x_sym in ($q_expr).set) ? (let $y_sym = $x_sym; $body; end) : false
-    end
-end
-
 # Fallback: types whose probe form runs body at most once unconditionally.
 _probe_body_test(T::Type, q_expr, x_sym, y_sym, body) = _probe_body(T, q_expr, x_sym, y_sym, body)
 
@@ -757,51 +526,27 @@ _probe_body_test(T::Type, q_expr, x_sym, y_sym, body) = _probe_body(T, q_expr, x
 #   True iff x is in the domain / has a matching value.
 # =====================================================================
 
-function _probe_any_body(::Type{<:VecRel{E, R}}, q_expr, x_sym) where {E, R}
-    :(let _i = ($x_sym).id; 1 <= _i <= length(($q_expr).values); end)
-end
-function _probe_any_body(::Type{<:SparseRel{E, R}}, q_expr, x_sym) where {E, R}
-    quote
-        let _i = ($x_sym).id, _vv = ($q_expr).values
-            1 <= _i <= length(_vv) && @inbounds(($q_expr).seen[_i])
-        end
-    end
-end
-function _probe_any_body(::Type{<:MultiRel{E, R}}, q_expr, x_sym) where {E, R}
-    quote
-        let _i = ($x_sym).id, _f = ($q_expr).fwd
-            1 <= _i <= length(_f) && !isempty(@inbounds _f[_i])
-        end
-    end
-end
-function _probe_any_body(::Type{<:Universe{E}}, q_expr, x_sym) where {E}
-    :(let _i = ($x_sym).id; 1 <= _i <= ($q_expr).n; end)
-end
-function _probe_any_body(::Type{<:Bitset{D}}, q_expr, x_sym) where {D}
-    quote
-        let _b = $q_expr, _i = _denseidx($x_sym) + 1
-            @inbounds(1 <= _i <= length(_b.bits) && _b.bits[_i])
-        end
-    end
+# ---- leaves, derived from the access descriptors ----
+function _probe_any_body(::Type{Q}, q_expr, x_sym) where {Q <: SingleValued}
+    setup, cond, _ = _access(Q, q_expr, x_sym)
+    _let(setup, cond)
 end
 
+function _probe_any_body(::Type{Q}, q_expr, x_sym) where {Q <: MultiValued}
+    setup, cond, iter = _access_multi(Q, q_expr, x_sym)
+    _let(setup, :($cond && !isempty($iter)))
+end
+
+# ---- structural ----
 # Compose probe_any: any m from probe(a, x) with probe_any(b, m).
 function _probe_any_body(::Type{<:Compose{D, M, R, A, B}}, q_expr, x_sym) where {D, M, R, A, B}
     m_sym = gensym(:_mc)
     b_check = _probe_any_body(B, :(($q_expr).b), m_sym)
     _probe_body_test(A, :(($q_expr).a), x_sym, m_sym, b_check)
 end
-function _probe_any_body(::Type{<:Filter{D, R, A, FnP{F}}}, q_expr, x_sym) where {D, R, A, F}
+function _probe_any_body(::Type{<:Filter{D, R, A}}, q_expr, x_sym) where {D, R, A}
     y_sym = gensym(:_yf)
-    _probe_body_test(A, :(($q_expr).a), x_sym, y_sym, :(($q_expr).pred.f($y_sym)))
-end
-function _probe_any_body(::Type{<:Filter{D, R, A, EqP{V}}}, q_expr, x_sym) where {D, R, A, V}
-    y_sym = gensym(:_ye)
-    _probe_body_test(A, :(($q_expr).a), x_sym, y_sym, :(isequal($y_sym, ($q_expr).pred.v)))
-end
-function _probe_any_body(::Type{<:Filter{D, R, A, InP{T}}}, q_expr, x_sym) where {D, R, A, T}
-    y_sym = gensym(:_yi)
-    _probe_body_test(A, :(($q_expr).a), x_sym, y_sym, :($y_sym in ($q_expr).pred.vs))
+    _probe_body_test(A, :(($q_expr).a), x_sym, y_sym, :(($q_expr).pred($y_sym)))
 end
 function _probe_any_body(::Type{<:Restrict{D, R, A, B}}, q_expr, x_sym) where {D, R, A, B}
     y_sym = gensym(:_yr)
@@ -824,45 +569,6 @@ function _probe_any_body(::Type{<:Prod{D, R, OPS}}, q_expr, x_sym) where {D, R, 
         body = :(member(($q_expr).ops[$i], $x_sym) && $body)
     end
     body
-end
-function _probe_any_body(::Type{<:Disj{D, A, B}}, q_expr, x_sym) where {D, A, B}
-    a = _probe_any_body(A, :(($q_expr).a), x_sym)
-    b = _probe_any_body(B, :(($q_expr).b), x_sym)
-    :($a || $b)
-end
-function _probe_any_body(::Type{<:LeftConj{D, ML, R}}, q_expr, x_sym) where {D, ML, R}
-    l = _probe_any_body(ML, :(($q_expr).l), x_sym)
-    r = _probe_any_body(R, :(($q_expr).r), x_sym)
-    :($l && $r)
-end
-function _probe_any_body(::Type{<:MatSetProbed{D}}, q_expr, x_sym) where {D}
-    :($x_sym in ($q_expr).set)
-end
-
-# prepared probe-side indexes — membership = key present.
-_probe_any_body(::Type{<:InvIndexed{B, A}}, q_expr, x_sym) where {B, A} =
-    :(haskey(($q_expr).idx, $x_sym))
-_probe_any_body(::Type{<:LCIndexed{RK, SV}}, q_expr, x_sym) where {RK, SV} =
-    :(haskey(($q_expr).idx, $x_sym))
-function _probe_any_body(::Type{<:MatProbed{D, R, IDX}}, q_expr, x_sym) where {D, R, IDX}
-    if IDX <: AbstractVector
-        quote
-            let _i = ($x_sym).id, _idx = ($q_expr).idx
-                1 <= _i <= length(_idx) && !isempty(@inbounds _idx[_i])
-            end
-        end
-    else
-        :(haskey(($q_expr).idx, $x_sym))
-    end
-end
-_probe_any_body(::Type{<:FoldP{D, S}}, q_expr, x_sym) where {D, S} =
-    :(haskey(($q_expr).cache, $x_sym))
-function _probe_any_body(::Type{<:DenseFoldP{D, S}}, q_expr, x_sym) where {D, S}
-    quote
-        let _i = _denseidx($x_sym) + 1, _seen = ($q_expr).seen
-            1 <= _i <= length(_seen) && @inbounds(_seen[_i])
-        end
-    end
 end
 
 # Fallback.

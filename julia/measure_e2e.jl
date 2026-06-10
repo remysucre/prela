@@ -1,6 +1,12 @@
 # End-to-end (prepare + scan) per query, counting sink. ENGINE=interp|staged
 # selects the engine for every scan (builds + final). `minimum` over reps to
 # cut GC noise.
+#
+# Include after a loaded suite, e.g.:
+#   PRELA_SKIP_RUNALL=1 julia --project=. -e '
+#     include("TPCH.jl"); include("tpch_queries_optimized.jl"); include("measure_e2e.jl")'
+# Runs the TPC-H registry (_QT) when present, else the JOB registry (_Q).
+# REPS=n controls the rep count (default 8).
 using Printf
 import Main.Prela
 

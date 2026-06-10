@@ -2,7 +2,7 @@
 # physical), constructors, and the surface operator syntax. Pure vocabulary —
 # execution lives in interp.jl/staged.jl, lowering and state in plan.jl.
 
-export Rel, MapRel, VecRel, SparseRel, MultiRel, Multi, Query, Unary,
+export Staging, MapRel, VecRel, SparseRel, MultiRel, Multi, Query, Unary,
        UnaryVec, Universe, Entity, ID,
        primary, lookup_field, →, ∧, ∨, ≁,
        drive, probe, member, materialize
@@ -58,7 +58,7 @@ end
 # node constructors require `Query` arguments). Every leaf starts as a `Staging`
 # and, after load, is *sealed* (see `seal_entities!`) into one of the static,
 # immutable leaf types below, which is what queries actually run on.
-mutable struct Staging{D, R}
+struct Staging{D, R}
     pairs::Vector{Pair{D, R}}
 end
 Staging{D, R}() where {D, R} = Staging{D, R}(Pair{D, R}[])
@@ -103,28 +103,28 @@ end
 # (sealed to `VecRel`/`SparseRel` by density). Never instantiated.
 struct Multi{T} end
 
-const Rel = Staging              # cache.jl serializes the staging leaves
-
 # (No `Base.length`/`isempty`/`_pairs` on the leaf or result types: relations
 # are consumed via drive/probe, never as collections, and a `length`/`isempty`
 # on a sparse/multi leaf would be a silent O(n) scan behind an O(1)-looking
 # name. Inspect a leaf's storage fields directly if you need a count.)
-# ===== predicate payloads (typed so codegen branches statically) ========
+# ===== predicates ========================================================
+# A Filter's predicate is any callable `y -> Bool`. Named concrete callables
+# (not closures) keep the predicate type stable across query constructions;
+# `Base.Fix1`/`Fix2` cover the comparison operators, and a raw closure is fine
+# where the call site is unique anyway (cross-column compares).
 
-struct EqP{V};  v::V;  end          # == val
+struct EqP{V};  v::V;  end           # == val
 struct InP{T};  vs::T;  end          # in (tuple of vals)
-struct FnP{F};  f::F;  end          # any unary y -> Bool  (< > <= >= != ~ ≁)
+@inline (p::EqP)(y) = isequal(y, p.v)
+@inline (p::InP)(y) = y in p.vs
 
-# Interval types — used as the rhs of `q in iv`. `a..b` is closed [a, b]
-# (matches IntervalSets convention); `during(a, b)` is half-open [a, b)
-# (the common date-range pattern). Concrete callable structs (not closures)
-# so the predicate type is stable across query constructions.
+# Interval types — used as the rhs of `q in iv`, and callable so they ARE the
+# Filter predicate. `a..b` is closed [a, b] (matches IntervalSets convention);
+# `during(a, b)` is half-open [a, b) (the common date-range pattern).
 struct ClosedInterval{T};      lo::T; hi::T; end
 struct ClosedOpenInterval{T};  lo::T; hi::T; end
-struct InClosed{T};      lo::T; hi::T; end
-struct InClosedOpen{T};  lo::T; hi::T; end
-@inline (p::InClosed{T})(v) where {T}     = (p.lo <= v <= p.hi)
-@inline (p::InClosedOpen{T})(v) where {T} = (p.lo <= v <  p.hi)
+@inline (iv::ClosedInterval)(v)     = (iv.lo <= v <= iv.hi)
+@inline (iv::ClosedOpenInterval)(v) = (iv.lo <= v <  iv.hi)
 
 # ===== query nodes ======================================================
 
@@ -144,28 +144,24 @@ struct Restrict{D, R, A, B} <: Query{D, R};  a::A;  b::B;  end
 # materialized by default: a shared subexpression is re-driven on every use.
 # Wrapping it in `materialize(...)` evaluates it once and serves it many — the
 # bushy-plan building block (wrap each selective non-driving leg). AST-only:
-# `prepare` lowers it to `MatStream` (driven → stored pairs) or `MatProbed`
+# `prepare` lowers it to `MapRel` (driven → stored pairs) or `Indexed`
 # (probed → concrete forward index), so `Materialized` itself is never run.
 struct Materialized{D, R, A} <: Query{D, R}
     a::A
 end
 
-# Prepared forms: drive-only stored pairs vs probe-only concrete index — dense
-# `Vector{Vector{R}}` when entity-keyed, else `Dict{D, Vector{R}}` (no Union).
-struct MatStream{D, R} <: Query{D, R}
-    mat::Vector{Pair{D, R}}
-end
-struct MatProbed{D, R, IDX} <: Query{D, R}
+# `Indexed{D,R,IDX}` — THE probe-side index node: a concrete per-key index,
+# dense `Vector{Vector{R}}` when entity-keyed, else `Dict{D, Vector{R}}` (no
+# Union). Every probed stream-or-index node (`Materialized`, `Inv`,
+# `LeftCompose`) lowers to it.
+struct Indexed{D, R, IDX} <: Query{D, R}
     idx::IDX
 end
 
-# `materialize` on a set-query. AST-only: `prepare` lowers to `MatSetStream`
+# `materialize` on a set-query. AST-only: `prepare` lowers to `UnaryVec`
 # (driven → stored keys) or `MatSetProbed` (probed → concrete membership Set).
 struct MatSet{D, A} <: Unary{D}
     a::A
-end
-struct MatSetStream{D} <: Unary{D}
-    keys::Vector{D}
 end
 struct MatSetProbed{D} <: Unary{D}
     set::Set{D}
@@ -200,7 +196,7 @@ export bitset, Bitset
 
 # `Inv(q)` — invert a relation. `q : A → B` becomes `Inv(q) : B → A`. Surface
 # syntax is postfix adjoint `q'`. AST-only: `prepare` lowers it to `InvStream`
-# (driven → streaming flip) or `InvIndexed` (probed → eager concrete index), so
+# (driven → streaming flip) or `Indexed` (probed → eager concrete index), so
 # `Inv` itself is never driven/probed.
 struct Inv{B, A, Q} <: Query{B, A}
     q::Q
@@ -216,13 +212,10 @@ struct Driven <: Mode end
 struct Probed <: Mode end
 
 # `Inv` splits by mode at `prepare` time: driven → streaming flip (no index);
-# probed → an eagerly-built, concrete inverse index. Each supports exactly one
-# access, so the mode is type-enforced.
+# probed → an eagerly-built, concrete inverse `Indexed`. Each supports exactly
+# one access, so the mode is type-enforced.
 struct InvStream{B, A, Q} <: Query{B, A}
     q::Q
-end
-struct InvIndexed{B, A} <: Query{B, A}
-    idx::Dict{B, Vector{A}}
 end
 
 # `Fold(q, op, init)` — per-key foldl aggregation. `q : D → R`, the inner
@@ -298,7 +291,7 @@ end
 
 # `LeftCompose(r, s)` — for `r : D → R` and `s : D → S` (same domain),
 # produces `Query{R, S}`. Surface syntax `r ← s`. AST-only: `prepare` lowers it
-# to `LCStream` (driven → walk `s`, probe `r` per row) or `LCIndexed` (probed →
+# to `LCStream` (driven → walk `s`, probe `r` per row) or `Indexed` (probed →
 # concrete `Dict{RK, Vector{SV}}`). Same stream-vs-index split as `Inv`.
 struct LeftCompose{D, RK, SV, QR, QS} <: Query{RK, SV}
     r::QR
@@ -307,9 +300,6 @@ end
 struct LCStream{D, RK, SV, QR, QS} <: Query{RK, SV}
     r::QR
     s::QS
-end
-struct LCIndexed{RK, SV} <: Query{RK, SV}
-    idx::Dict{RK, Vector{SV}}
 end
 
 # `LeftConj(l, r)` — left-driving conjunction. `l ⩓ r` materializes `l`
@@ -454,12 +444,10 @@ export ⊗, ×
 # predicates — scalar range (value-vs-constant)
 Base.:(==)(q::Query{D, R}, val) where {D, R} = Filter(q, EqP(val))
 Base.in(q::Query{D, R}, vals::Tuple) where {D, R} = Filter(q, InP(vals))
-Base.in(q::Query{D, R}, iv::ClosedInterval) where {D, R} =
-    Filter(q, FnP(InClosed{typeof(iv.lo)}(iv.lo, iv.hi)))
-Base.in(q::Query{D, R}, iv::ClosedOpenInterval) where {D, R} =
-    Filter(q, FnP(InClosedOpen{typeof(iv.lo)}(iv.lo, iv.hi)))
+Base.in(q::Query{D, R}, iv::Union{ClosedInterval, ClosedOpenInterval}) where {D, R} =
+    Filter(q, iv)
 for op in (:(<), :(>), :(<=), :(>=), :(!=))
-    @eval Base.$op(q::Query{D, R}, val) where {D, R} = Filter(q, FnP(Base.Fix2($op, val)))
+    @eval Base.$op(q::Query{D, R}, val) where {D, R} = Filter(q, Base.Fix2($op, val))
 end
 
 # `a..b` — closed interval [a, b]; pair with `q in (a..b)`.
@@ -469,32 +457,31 @@ during(a, b) = ClosedOpenInterval{promote_type(typeof(a), typeof(b))}(promote(a,
 export .., during
 
 # predicates — cross-column (Query-vs-Query, same domain). Comparing two
-# leaves of the same row is `Filter(a × b, FnP(((x, y),) -> op(x, y)))`;
+# leaves of the same row is `Filter(a × b, ((x, y),) -> op(x, y))`;
 # this overload makes that the natural spelling, e.g.
 #   Lineitem.commitdate < Lineitem.receiptdate
 #   Customer.nation == Supplier.nation       (when composed onto the same domain)
 for op in (:(<), :(>), :(<=), :(>=), :(==), :(!=))
     @eval Base.$op(a::Query{D, X}, b::Query{D, Y}) where {D, X, Y} =
-        Filter(Prod((a, b)), FnP(((x, y),) -> $op(x, y)))
+        Filter(Prod((a, b)), ((x, y),) -> $op(x, y))
     # Specific override for entity-typed columns on both sides: compares the
     # entity IDs directly (no primary-field elision). Resolves the ambiguity
     # between the cross-column overload above and the scalar entity-elision
     # overload below.
     @eval Base.$op(a::Query{D, ID{E}}, b::Query{D, ID{E}}) where {D, E} =
-        Filter(Prod((a, b)), FnP(((x, y),) -> $op(x, y)))
+        Filter(Prod((a, b)), ((x, y),) -> $op(x, y))
 end
 Base.:~(q::Query{D, R}, re::Regex) where {D, R <: AbstractString} =
-    Filter(q, FnP(Base.Fix1(occursin, re)))
+    Filter(q, Base.Fix1(occursin, re))
 ≁(q::Query{D, R}, re::Regex) where {D, R <: AbstractString} =
-    Filter(q, FnP(s -> !occursin(re, s)))
+    Filter(q, s -> !occursin(re, s))
 
-# predicates — entity range: elide through the primary field
-Base.:(==)(q::Query{D, ID{E}}, val) where {D, E} = Compose(q, primary(E)) == val
-Base.in(q::Query{D, ID{E}}, vals::Tuple) where {D, E} = in(Compose(q, primary(E)), vals)
-Base.in(q::Query{D, ID{E}}, iv::ClosedInterval) where {D, E} = in(Compose(q, primary(E)), iv)
-Base.in(q::Query{D, ID{E}}, iv::ClosedOpenInterval) where {D, E} = in(Compose(q, primary(E)), iv)
-for op in (:(<), :(>), :(<=), :(>=), :(!=))
-    @eval Base.$op(q::Query{D, ID{E}}, val) where {D, E} = $op(Compose(q, primary(E)), val)
+# predicates — entity range: elide through the primary field. Every shape is
+# the same delegation `op(Compose(q, primary(E)), rhs)`.
+for (op, RHS) in ((:(==), Any), (:(<), Any), (:(>), Any), (:(<=), Any),
+                  (:(>=), Any), (:(!=), Any), (:in, Tuple),
+                  (:in, Union{ClosedInterval, ClosedOpenInterval}), (:~, Regex))
+    @eval Base.$op(q::Query{D, ID{E}}, rhs::$RHS) where {D, E} =
+        Base.$op(Compose(q, primary(E)), rhs)
 end
-Base.:~(q::Query{D, ID{E}}, re::Regex) where {D, E} = Compose(q, primary(E)) ~ re
 ≁(q::Query{D, ID{E}}, re::Regex) where {D, E} = ≁(Compose(q, primary(E)), re)

@@ -38,23 +38,27 @@ export Engine, Interp, Staged, scan, prepare
 
 # Dense forward index: for an entity-keyed relation (contiguous PK 1..n) the
 # index is a Vector{Vector{R}} addressed by `.id` — an array access per probe,
-# no hashing. Unfilled slots share one empty vector.
-function _dense_fwd(pairs::Vector{Pair{ID{E}, R}}) where {E, R}
-    n = 0
-    for p in pairs
-        i = p.first.id
-        i > n && (n = i)
-    end
+# no hashing. Unfilled slots share one empty vector. Out-of-range keys (junk
+# id ≤ 0, or beyond a caller-supplied universe `n`) are skipped.
+function _dense_fwd(pairs::Vector{Pair{ID{E}, R}}, n::Int = _max_id(pairs)) where {E, R}
     empty = R[]
     v = fill(empty, n)
     for p in pairs
         i = p.first.id
-        i < 1 && continue          # junk pair → nonexistent entity (id ≤ 0)
+        (1 <= i <= n) || continue
         @inbounds vi = v[i]
         vi === empty && (vi = R[]; @inbounds v[i] = vi)
         push!(vi, p.second)
     end
     v
+end
+function _max_id(pairs::Vector{<:Pair{<:ID}})
+    n = 0
+    for p in pairs
+        i = p.first.id
+        i > n && (n = i)
+    end
+    n
 end
 
 # `_mat_idx` builds a materialized result's forward index: dense
@@ -76,14 +80,14 @@ end
 function build_inv_index(eng::Engine, pq::Query{A, B}) where {A, B}
     d = Dict{B, Vector{A}}()
     scan(eng, pq, (a, b) -> push!(get!(() -> A[], d, b), a))
-    InvIndexed{B, A}(d)
+    Indexed{B, A, typeof(d)}(d)
 end
 
 # LeftCompose probed: concrete Dict{RK, Vector{SV}} — drive s, probe r per row.
 function build_lc_index(eng::Engine, pr::Query{D, RK}, ps::Query{D, SV}) where {D, RK, SV}
     d = Dict{RK, Vector{SV}}()
     scan(eng, ps, (dd, v) -> probe(pr, dd, rk -> push!(get!(() -> SV[], d, rk), v)))
-    LCIndexed{RK, SV}(d)
+    Indexed{RK, SV, typeof(d)}(d)
 end
 
 # Fold: per-key foldl cache (`S` is the accumulator type, fixed by `init`).
@@ -130,15 +134,15 @@ function _matpairs(eng::Engine, pa, ::Type{D}, ::Type{R}) where {D, R}
     out
 end
 build_mat_stream(eng::Engine, pa::Query{D, R}) where {D, R} =
-    MatStream{D, R}(_matpairs(eng, pa, D, R))
+    MapRel{D, R}(_matpairs(eng, pa, D, R))
 function build_mat_probed(eng::Engine, pa::Query{D, R}) where {D, R}
     idx = _mat_idx(_matpairs(eng, pa, D, R))
-    MatProbed{D, R, typeof(idx)}(idx)
+    Indexed{D, R, typeof(idx)}(idx)
 end
 
 # MatSet driven/probed: stored keys / membership Set.
 function build_matset_keys(eng::Engine, pa::Unary{D}) where {D}
-    keys = D[]; scan(eng, pa, (x, _) -> push!(keys, x)); MatSetStream{D}(keys)
+    keys = D[]; scan(eng, pa, (x, _) -> push!(keys, x)); UnaryVec{D}(keys)
 end
 function build_matset_set(eng::Engine, pa::Unary{D}) where {D}
     s = Set{D}(); scan(eng, pa, (x, _) -> push!(s, x)); MatSetProbed{D}(s)
@@ -232,8 +236,8 @@ prepare(eng::Engine, n::BitsetMat, ::Mode) =
 
 # Leaves / sources (and already-physical nodes): identity.
 prepare(::Engine, n::Union{VecRel,SparseRel,MultiRel,MapRel,Universe,Bitset,
-                 InvStream,InvIndexed,MatStream,MatProbed,LCStream,LCIndexed,
-                 FoldP,DenseFoldP,ScalarP,MatSetStream,MatSetProbed}, ::Mode) = n
+                 InvStream,LCStream,Indexed,
+                 FoldP,DenseFoldP,ScalarP,MatSetProbed}, ::Mode) = n
 
 # ===== terminals ========================================================
 # Queries are consumed by `scan` with a folding continuation (see `_vals` in
@@ -251,13 +255,7 @@ function unwrap(q::Query{Nothing, S}, eng::Engine = Staged()) where {S}
 end
 export unwrap
 
-function Base.collect(q::Query{D, R}, eng::Engine = Staged()) where {D, R}
-    out = Pair{D, R}[]
-    scan(eng, prepare(eng, q), (x, y) -> push!(out, x => y))
-    MapRel{D, R}(out)
-end
-function Base.collect(s::Unary{D}, eng::Engine = Staged()) where D
-    out = D[]
-    scan(eng, prepare(eng, s), (x, _) -> push!(out, x))
-    UnaryVec{D}(out)
-end
+# `collect` is exactly "prepare, then materialize the driven plan": a stored
+# pair stream (`MapRel`) for a Query, a stored key set (`UnaryVec`) for a Unary.
+Base.collect(q::Query, eng::Engine = Staged()) = build_mat_stream(eng, prepare(eng, q))
+Base.collect(s::Unary, eng::Engine = Staged()) = build_matset_keys(eng, prepare(eng, s))

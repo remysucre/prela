@@ -12,7 +12,11 @@
 @assert isdefined(Main, :movie) "Run include(\"JOB.jl\") first."
 
 # A query registers a (name, reference, thunk); runall() evaluates them.
-const _Q = Tuple{String,String,Function}[]
+# Cleared on every include so re-includes can't accumulate stale entries.
+if !@isdefined(_Q)
+    const _Q = Tuple{String,String,Function}[]
+end
+empty!(_Q)
 function _q(f, name, oracle)
     entry = (name, oracle, f)
     idx = findfirst(t -> t[1] == name, _Q)
@@ -77,16 +81,19 @@ const _PRINT_LOCK = ReentrantLock()
 
 # Evaluate every registered query (parallel across threads when Julia is
 # started with -t N), printing each result with its reference as it finishes,
-# then a final match count.
-function runall()
+# then a final match count. `eng` selects the engine (default: ENGINE env var,
+# staged). Set PRELA_PROGRESS_LOG=/path to also tee progress to a file.
+function runall(; eng = get(ENV, "ENGINE", "staged") == "interp" ? Prela.Interp() :
+                                                                   Prela.Staged())
     res = Vector{Any}(undef, length(_Q))
     done = Threads.Atomic{Int}(0)
-    log_file = open("/tmp/prela_progress.log", "w")
+    log_path = get(ENV, "PRELA_PROGRESS_LOG", "")
+    log_file = isempty(log_path) ? nothing : open(log_path, "w")
     Threads.@threads for i in eachindex(_Q)
         name, oracle, f = _Q[i]
         t = time()
         got = try
-            _vals(f())
+            _vals(f(); eng)
         catch e
             "ERROR: " * sprint(showerror, e)
         end
@@ -100,17 +107,14 @@ function runall()
         lock(_PRINT_LOCK) do
             println(msg)
             flush(stdout)
-            println(log_file, msg)
-            flush(log_file)
+            log_file === nothing || (println(log_file, msg); flush(log_file))
         end
     end
     pass = count(t -> t[2] == t[3], res)
     summary = "\n$pass / $(length(_Q)) queries match reference"
     println(summary)
     flush(stdout)
-    println(log_file, summary)
-    flush(log_file)
-    close(log_file)
+    log_file === nothing || (println(log_file, summary); close(log_file))
 end
 
 const _KW8 = ("superhero", "sequel", "second-part", "marvel-comics",
@@ -126,12 +130,19 @@ const _WRITER5 = ("(writer)", "(head writer)", "(written by)",
                   "(story)", "(story editor)")
 const _GENRE6 = ("Horror", "Action", "Sci-Fi", "Thriller", "Crime", "War")
 const _MURDER4 = ("murder", "murder-in-title", "blood", "violence")
+# The nordic-country lists come in JOB-spec-mandated variants that differ in
+# one entry: _NORDIC8/_NORDIC9/_NORDIC10_DENISH carry the spec's deliberate
+# "Denish" misspelling; _NORDIC10 is the "Danish" + USA/American variant.
+# Keep them as named consts so the typo can't be "fixed" at one site only.
+const _NORDIC4 = ("Sweden", "Germany", "Swedish", "German")
 const _NORDIC8 = ("Sweden", "Norway", "Germany", "Denmark",
                   "Swedish", "Denish", "Norwegian", "German")
 const _NORDIC9 = ("Sweden", "Norway", "Germany", "Denmark", "Swedish",
                   "Denish", "Norwegian", "German", "English")
 const _NORDIC10 = ("Sweden", "Norway", "Germany", "Denmark", "Swedish",
                    "Danish", "Norwegian", "German", "USA", "American")
+const _NORDIC10_DENISH = ("Sweden", "Norway", "Germany", "Denmark", "Swedish",
+                          "Denish", "Norwegian", "German", "USA", "American")
 const _LINK3 = ("sequel", "follows", "followed by")
 
 _q("1a", "(A Warner Bros.-First National Picture) (presents) || A Clockwork Orange || 1934") do
@@ -207,8 +218,7 @@ end
 _q("3a", "2 Days in New York") do
     (movie
         : (keyword ~ r"sequel")
-        ∧ (info → (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
-                                 "Swedish", "Denish", "Norwegian", "German")))
+        ∧ (info → (Info.info in _NORDIC8))
         ∧ (production_year > 2005)
         → title)
 end
@@ -224,9 +234,7 @@ end
 _q("3c", "& Teller 2") do
     (movie
         : (keyword ~ r"sequel")
-        ∧ (info → (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
-                                 "Swedish", "Denish", "Norwegian", "German",
-                                 "USA", "American")))
+        ∧ (info → (Info.info in _NORDIC10_DENISH))
         ∧ (production_year > 1990)
         → title)
 end
@@ -260,8 +268,7 @@ _q("5a", "(empty)") do
         : (company → (Company.type == "production companies")
                    ∧ (Company.note ~ r"\(theatrical\)")
                    ∧ (Company.note ~ r"\(France\)"))
-        ∧ (info → (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
-                                 "Swedish", "Denish", "Norwegian", "German")))
+        ∧ (info → (Info.info in _NORDIC8))
         ∧ (production_year > 2005)
         → title)
 end
@@ -282,9 +289,7 @@ _q("5c", "11,830,420") do
         : (company → (Company.type == "production companies")
                    ∧ (Company.note ≁ r"\(TV\)")
                    ∧ (Company.note ~ r"\(USA\)"))
-        ∧ (info → Info.info in ("Sweden", "Norway", "Germany", "Denmark",
-                                "Swedish", "Denish", "Norwegian", "German",
-                                "USA", "American"))
+        ∧ (info → Info.info in _NORDIC10_DENISH)
         ∧ (production_year > 1990)
         → title)
 end
@@ -612,12 +617,10 @@ end
 
 _q("14a", "1.0 || \$lowdown") do
     (movie
-        : (keyword in ("murder", "murder-in-title", "blood", "violence"))
+        : (keyword in _MURDER4)
         ∧ (kind == "movie")
         ∧ (info → (Info.type == "countries")
-                ∧ (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
-                                 "Swedish", "Denish", "Norwegian", "German",
-                                 "USA", "American")))
+                ∧ (Info.info in _NORDIC10_DENISH))
         ∧ (production_year > 2010)
         → (data : (Data.type == "rating") ∧ (Data.data < "8.5") → Data.data)
         × title)
@@ -628,9 +631,7 @@ _q("14b", "6.4 || Of Dolls and Murder") do
         : (keyword in ("murder", "murder-in-title"))
         ∧ (kind == "movie")
         ∧ (info → (Info.type == "countries")
-                ∧ (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
-                                 "Swedish", "Denish", "Norwegian", "German",
-                                 "USA", "American")))
+                ∧ (Info.info in _NORDIC10_DENISH))
         ∧ (production_year > 2010)
         ∧ ((title ~ r"murder") ∨ (title ~ r"Murder") ∨ (title ~ r"Mord"))
         → (data : (Data.type == "rating") ∧ (Data.data > "6.0") → Data.data)
@@ -639,12 +640,10 @@ end
 
 _q("14c", "1.0 || \$lowdown") do
     (movie
-        : (keyword in ("murder", "murder-in-title", "blood", "violence"))
+        : (keyword in _MURDER4)
         ∧ (kind in ("movie", "episode"))
         ∧ (info → (Info.type == "countries")
-                ∧ (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
-                                 "Swedish", "Danish", "Norwegian", "German",
-                                 "USA", "American")))
+                ∧ (Info.info in _NORDIC10))
         ∧ (production_year > 2005)
         → (data : (Data.type == "rating") ∧ (Data.data < "8.5") → Data.data)
         × title)
@@ -921,7 +920,7 @@ _q("22a", "(empty)") do
     (movie
         : (info → (Info.type == "countries")
                 ∧ (Info.info in ("Germany", "German", "USA", "American")))
-        ∧ (keyword in ("murder", "murder-in-title", "blood", "violence"))
+        ∧ (keyword in _MURDER4)
         ∧ (production_year > 2008)
         ∧ (kind in ("movie", "episode"))
         → title
@@ -936,7 +935,7 @@ _q("22b", "(empty)") do
     (movie
         : (info → (Info.type == "countries")
                 ∧ (Info.info in ("Germany", "German", "USA", "American")))
-        ∧ (keyword in ("murder", "murder-in-title", "blood", "violence"))
+        ∧ (keyword in _MURDER4)
         ∧ (production_year > 2009)
         ∧ (kind in ("movie", "episode"))
         → title
@@ -950,10 +949,8 @@ end
 _q("22c", "(empty)") do
     (movie
         : (info → (Info.type == "countries")
-                ∧ (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
-                                 "Swedish", "Danish", "Norwegian", "German",
-                                 "USA", "American")))
-        ∧ (keyword in ("murder", "murder-in-title", "blood", "violence"))
+                ∧ (Info.info in _NORDIC10))
+        ∧ (keyword in _MURDER4)
         ∧ (production_year > 2005)
         ∧ (kind in ("movie", "episode"))
         → title
@@ -967,10 +964,8 @@ end
 _q("22d", "(#1.1) || 2.0 || 13 Productions") do
     (movie
         : (info → (Info.type == "countries")
-                ∧ (Info.info in ("Sweden", "Norway", "Germany", "Denmark",
-                                 "Swedish", "Danish", "Norwegian", "German",
-                                 "USA", "American")))
-        ∧ (keyword in ("murder", "murder-in-title", "blood", "violence"))
+                ∧ (Info.info in _NORDIC10))
+        ∧ (keyword in _MURDER4)
         ∧ (production_year > 2005)
         ∧ (kind in ("movie", "episode"))
         → title
@@ -1095,7 +1090,7 @@ _q("27a", "Det Danske Filminstitut || followed by || Spår i mörker") do
         (movie
            : (complete_cast → (CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete"))
            ∧ (keyword == "sequel")
-           ∧ (info → (Info.info in ("Sweden", "Germany", "Swedish", "German")))
+           ∧ (info → (Info.info in _NORDIC4))
            ∧ (production_year >= 1950) ∧ (production_year <= 2000)
            → (co → Company.name) × lk × title)
     end
@@ -1107,7 +1102,7 @@ _q("27b", "Filmlance International AB || followed by || Vita nätter") do
         (movie
            : (complete_cast → (CompleteCast.subject in ("cast", "crew")) ∧ (CompleteCast.status == "complete"))
            ∧ (keyword == "sequel")
-           ∧ (info → (Info.info in ("Sweden", "Germany", "Swedish", "German")))
+           ∧ (info → (Info.info in _NORDIC4))
            ∧ (production_year == 1998)
            → (co → Company.name) × lk × title)
     end
@@ -1141,7 +1136,7 @@ _q("28b", "20th Century Fox || 6.6 || (#1.1)") do
         dt = (data : (Data.type == "rating") ∧ (Data.data > "6.5"))
         (movie
            : (complete_cast → (CompleteCast.subject == "crew") ∧ (CompleteCast.status != "complete+verified"))
-           ∧ (info → (Info.type == "countries") ∧ (Info.info in ("Sweden", "Germany", "Swedish", "German")))
+           ∧ (info → (Info.type == "countries") ∧ (Info.info in _NORDIC4))
            ∧ (keyword in _MURDER4) ∧ (kind in ("movie", "episode")) ∧ (production_year > 2005)
            → (co → Company.name) × (dt → Data.data) × title)
     end

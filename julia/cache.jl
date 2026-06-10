@@ -1,5 +1,6 @@
-# Persistent on-disk cache using raw binary + Mmap for every Rel: ID-only Rels
-# (the fast path, the bulk of JOB data) and String-valued Rels alike.
+# Persistent on-disk cache using raw binary + Mmap for every Staging leaf:
+# ID-only leaves (the fast path, the bulk of JOB data) and String-valued
+# leaves alike.
 #
 # - Vector{Pair{ID{E1}, ID{E2}}}: 16-byte fixed records, mmapped and
 #   reinterpreted as Vector{Pair{Int, Int}} → constant-time "load".
@@ -14,7 +15,7 @@ const CACHE_DIR = joinpath(@__DIR__, "..", "cache")
 # ---------------- bits-only Rels (ID×ID, ID×Int) ----------------
 # Stored as: raw Vector{Pair{Int, Int}} bytes. Just `write(io, pairs)`.
 
-function _bits_save(path::String, rel::Prela.Rel{D, R}) where {D, R}
+function _bits_save(path::String, rel::Prela.Staging{D, R}) where {D, R}
     n = length(rel.pairs)
     # Reinterpret as Pair{Int, Int} for raw write (D/R wrap Int internally).
     raw = reinterpret(Pair{Int, Int}, rel.pairs)
@@ -24,7 +25,7 @@ function _bits_save(path::String, rel::Prela.Rel{D, R}) where {D, R}
     end
 end
 
-function _bits_load!(rel::Prela.Rel{D, R}, path::String) where {D, R}
+function _bits_load!(rel::Prela.Staging{D, R}, path::String) where {D, R}
     io = open(path, "r")
     n = Int(read(io, UInt64))
     raw = Mmap.mmap(io, Vector{Pair{Int, Int}}, n, 8)  # offset past UInt64 header
@@ -37,7 +38,7 @@ end
 # ---------------- String-valued Rels (ID×String) ----------------
 # Stored as: header (n, total_bytes) + n offsets (UInt32) + n keys (Int) + bytes.
 
-function _str_save(path::String, rel::Prela.Rel{D, String}) where D
+function _str_save(path::String, rel::Prela.Staging{D, String}) where D
     n = length(rel.pairs)
     keys = Vector{Int}(undef, n)
     offsets = Vector{UInt32}(undef, n + 1)
@@ -58,7 +59,7 @@ function _str_save(path::String, rel::Prela.Rel{D, String}) where D
     end
 end
 
-function _str_load!(rel::Prela.Rel{D, String}, path::String) where D
+function _str_load!(rel::Prela.Staging{D, String}, path::String) where D
     io = open(path, "r")
     n = Int(read(io, UInt64))
     keys_off    = 8
@@ -77,30 +78,28 @@ end
 
 # ---------------- dispatch ----------------
 
-_is_bits_pair(::Type{Pair{D, R}}) where {D, R} = isbitstype(Pair{D, R})
-
-function _save_rel(path::String, rel::Prela.Rel{D, R}) where {D, R}
-    if _is_bits_pair(Pair{D, R})
+function _save_rel(path::String, rel::Prela.Staging{D, R}) where {D, R}
+    if isbitstype(Pair{D, R})
         _bits_save(path, rel)
     elseif R === String
         _str_save(path, rel)
     else
-        error("unsupported Rel{$D, $R}")
+        error("unsupported Staging{$D, $R}")
     end
 end
 
-function _load_rel!(rel::Prela.Rel{D, R}, path::String) where {D, R}
-    if _is_bits_pair(Pair{D, R})
+function _load_rel!(rel::Prela.Staging{D, R}, path::String) where {D, R}
+    if isbitstype(Pair{D, R})
         _bits_load!(rel, path)
     elseif R === String
         _str_load!(rel, path)
     else
-        error("unsupported Rel{$D, $R}")
+        error("unsupported Staging{$D, $R}")
     end
 end
 
 function _each_rel()
-    out = Tuple{Type, Symbol, Prela.Rel}[]   # staging leaves (pre-seal)
+    out = Tuple{Type, Symbol, Prela.Staging}[]   # staging leaves (pre-seal)
     for (entity_sym, fields) in Prela._ENTITY_FIELDS
         E = getfield(Main, entity_sym)
         for f in fields

@@ -102,7 +102,7 @@ col(df, i) = df[!, i + 1]   # 0-based to 1-based
 
 # Load a Rel{D, R} from two parquet columns. `idctor` / `valctor` wrap the raw
 # Int into entity IDs (or `identity` for scalars).
-function _load!(rel::Rel{D, R}, ids, vals, idctor, valctor) where {D, R}
+function _load!(rel::Staging{D, R}, ids, vals, idctor, valctor) where {D, R}
     n = length(ids)
     pairs = Vector{Pair{D, R}}(undef, 0)
     sizehint!(pairs, n)

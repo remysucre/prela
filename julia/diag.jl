@@ -1,4 +1,5 @@
 # @time a few cast queries (post-warmup) — allocation count is the tell.
+# Standalone: julia --project=. diag.jl  (loads JOB itself).
 ENV["PRELA_SKIP_RUNALL"] = "1"
 include("JOB.jl")
 include("queries.jl")

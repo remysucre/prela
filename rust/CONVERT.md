@@ -84,12 +84,12 @@ or `.and(…)` step on a new line, with the body indented inside the parens.
 
 - Function names (`fn q2a`, etc.) and signatures.
 - `pub const ENTRIES` arrays.
-- Output destructuring (`q.drive(|_, ((kw, title), name)| …)`).
-- Format helpers (`fmt1`, `fmt2`, `fmt3`, `fmt4`).
-- The closure / helper-fn pattern for shared sub-queries (`co_21`, `gf_25ab`,
-  etc.) — only the bodies of those helpers need the operator rename.
+- The `min_row(q)` query tail (see TRANSLATION.md — output columns fold via
+  the `Row` trait, no per-query destructuring or format helpers).
+- The closure / helper-fn pattern for shared sub-queries (`gf_25ab`,
+  `helpers::film_or_warner_co`, etc.) — only the bodies of those helpers
+  need the operator rename.
 - `super::sets::*` imports and the named-tuple constants (`kw8()`, etc.).
-- Type annotations like `let mut m: [Option<&'static str>; 3] = [None; 3];`.
 
 ## Style
 

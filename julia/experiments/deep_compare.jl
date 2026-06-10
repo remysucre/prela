@@ -1,12 +1,12 @@
 using InteractiveUtils
 
-# Compare CPS (exp.jl) vs staged (stage.jl) for a DEEP right-nested product:
+# Compare toy CPS combinators vs toy staged codegen for a DEEP right-nested product:
 #   product(probe(c1), product(probe(c2), ... product(probe(c_{D-1}), probe(cD))))
 # at increasing depth D. Everything is concrete-typed (cols::Vector{Vector{Int}},
 # row index Int) so the pipeline stays type-stable; the only question is whether
 # @inline keeps collapsing the closure tree as it gets deeper.
 
-# ---------- staged combinators (stage.jl) ----------
+# ---------- staged combinators ----------
 let counter = Ref(0)
     global fresh(prefix = :v) = Symbol(prefix, counter[] += 1)
 end

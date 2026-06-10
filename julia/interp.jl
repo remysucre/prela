@@ -98,27 +98,18 @@ end
 
 # ---- Compose: the loop nest ----
 @inline drive(n::Compose, k) = drive(n.a, (x, m) -> probe(n.b, m, r -> k(x, r)))
-@inline probe(n::Compose, x, k) = probe(n.a, x, m -> probe(n.b, m, r -> k(r)))
+@inline probe(n::Compose, x, k) = probe(n.a, x, m -> probe(n.b, m, k))
 
 # ---- Filter ----
 # Driving a Filter is a streaming filtered scan: drive the inner, keep rows
-# whose value passes the predicate. Used for top-level result filtering /
-# HAVING (e.g. `value_per_part > threshold`, `revenue == max_rev`), where the
-# inner is itself a driven source (a Fold) with no leaf to probe. There is no
-# value-jump / inverse-index path: a predicate is always either probed into
-# (the common case) or streamed over — never seek-by-value.
-@inline drive(n::Filter{D,R,A,<:FnP}, k) where {D,R,A} =
-    drive(n.a, (x, y) -> n.pred.f(y) && k(x, y))
-@inline drive(n::Filter{D,R,A,<:EqP}, k) where {D,R,A} =
-    drive(n.a, (x, y) -> isequal(y, n.pred.v) && k(x, y))
-@inline drive(n::Filter{D,R,A,<:InP}, k) where {D,R,A} =
-    drive(n.a, (x, y) -> (y in n.pred.vs) && k(x, y))
-@inline probe(n::Filter{D,R,A,<:FnP}, x, k) where {D,R,A} =
-    probe(n.a, x, y -> n.pred.f(y) && k(y))
-@inline probe(n::Filter{D,R,A,<:EqP}, x, k) where {D,R,A} =
-    probe(n.a, x, y -> isequal(y, n.pred.v) && k(y))
-@inline probe(n::Filter{D,R,A,<:InP}, x, k) where {D,R,A} =
-    probe(n.a, x, y -> (y in n.pred.vs) && k(y))
+# whose value passes the predicate (any callable y -> Bool). Used for
+# top-level result filtering / HAVING (e.g. `value_per_part > threshold`,
+# `revenue == max_rev`), where the inner is itself a driven source (a Fold)
+# with no leaf to probe. There is no value-jump / inverse-index path: a
+# predicate is always either probed into (the common case) or streamed over —
+# never seek-by-value.
+@inline drive(n::Filter, k) = drive(n.a, (x, y) -> n.pred(y) && k(x, y))
+@inline probe(n::Filter, x, k) = probe(n.a, x, y -> n.pred(y) && k(y))
 
 # ---- Restrict (a : b) — drive a, keep rows whose value is a member of b ----
 @inline drive(n::Restrict, k) =
@@ -168,7 +159,7 @@ function _prod_drive_body(N::Int)
 end
 # `probe_any` for Prod — nested probe_any chain that short-circuits each leg
 # and threads the real tuple `(y_1, …, y_N)` to `k` at the bottom. Needed by
-# tuple-bearing callers like `Filter(Prod, FnP)` (cross-column compares like
+# tuple-bearing callers like a Filter over a Prod (cross-column compares like
 # `commitdate < receiptdate`).
 function _prod_probe_any_body(N::Int)
     yvars = ntuple(_prod_yvar, N)
@@ -183,7 +174,7 @@ end
 # `member(Prod, x)` per row (from `Restrict`), which routes here. No tuple is
 # built and the closures are stateless, matching the flat shape of the old
 # Conj's probe_any. The tuple-bearing `probe_any(::Prod)` above stays available
-# for the non-trivial-k cases (FnP destructuring etc.).
+# for the non-trivial-k cases (predicate destructuring etc.).
 function _prod_member_body(N::Int)
     body = true
     for i in N:-1:1
@@ -202,45 +193,16 @@ end
 @inline drive(n::Prod, k)    = _prod_drive(n.ops, k)
 @inline probe_any(n::Prod, x, k) = _prod_probe_any(n.ops, x, k)
 
-# ---- Materialized: `prepare` lowers to MatStream (driven) / MatProbed (probed) ----
-# `_mat_idx` builds a materialized result's forward index: dense `Vector{Vector}`
-# when entity-keyed (array access, no hashing — reuses `_dense_fwd`), else a Dict.
-_mat_idx(pairs::Vector{Pair{ID{E}, R}}) where {E, R} = _dense_fwd(pairs)
-function _mat_idx(pairs::Vector{Pair{D, R}}) where {D, R}
-    d = Dict{D, Vector{R}}()
-    for p in pairs
-        push!(get!(() -> R[], d, p.first), p.second)
-    end
-    d
-end
-@inline function drive(n::MatStream, k)
-    for p in n.mat
-        k(p.first, p.second)
-    end
-end
-@inline probe(n::MatProbed, x, k) = _idx_probe(n.idx, x, k)
-@inline probe_any(n::MatProbed, x, k) = _idx_probe_any(n.idx, x, k)
+# ---- Indexed: the probe-side index node (Materialized/Inv/LeftCompose) ----
+@inline probe(n::Indexed, x, k) = _idx_probe(n.idx, x, k)
+@inline probe_any(n::Indexed, x, k) = _idx_probe_any(n.idx, x, k)
 
-# ---- Inv: `prepare` lowers to InvStream (driven) / InvIndexed (probed) ----
-# drive-only stream vs probe-only concrete index — `Inv` itself is never run.
+# ---- InvStream: `prepare`'s driven lowering of Inv — streaming flip ----
 @inline drive(n::InvStream, k) = drive(n.q, (a, b) -> k(b, a))
-@inline function probe(n::InvIndexed{B, A}, b, k) where {B, A}
-    vs = get(n.idx, b, nothing)
-    vs === nothing && return
-    for a in vs; k(a); end
-end
-@inline probe_any(n::InvIndexed, b, k) = _idx_probe_any(n.idx, b, k)
 
-# ---- LeftCompose: `prepare` lowers to LCStream (driven) / LCIndexed (probed) ----
-# `r ← s` drives `s` (the natural source) and probes `r` per row to compute the
-# group key. Driven → streaming; probed → a concrete `Dict{RK, Vector{SV}}`.
+# ---- LCStream: `prepare`'s driven lowering of LeftCompose ----
+# `r ← s` drives `s` (the natural source) and probes `r` per row for the key.
 @inline drive(n::LCStream, k) = drive(n.s, (d, v) -> probe(n.r, d, rk -> k(rk, v)))
-@inline function probe(n::LCIndexed, rk, k)
-    vs = get(n.idx, rk, nothing)
-    vs === nothing && return
-    for v in vs; k(v); end
-end
-@inline probe_any(n::LCIndexed, rk, k) = _idx_probe_any(n.idx, rk, k)
 # ---- LeftConj: drive r (ignoring its value), member-check materialized l ----
 @inline drive(n::LeftConj, k) =
     drive(n.r, (x, _) -> member(n.l, x) && k(x, x))
@@ -292,8 +254,7 @@ end
 @inline drive(n::ScalarP, k) = k(nothing, n.value)
 @inline probe(n::ScalarP, ::Nothing, k) = k(n.value)
 
-# MatSet prepared forms: drive-only stored keys vs probe-only membership Set.
-@inline drive(n::MatSetStream, k) = (for x in n.keys; k(x, x); end)
+# MatSet probed form: a concrete membership Set (driven form is UnaryVec).
 @inline probe(n::MatSetProbed, x, k) = (x in n.set) && (k(x); nothing)
 @inline probe_any(n::MatSetProbed, x, k) = (x in n.set) && k(x)
 
@@ -365,15 +326,11 @@ end
     false
 end
 @inline probe_any(n::Compose, x, k) = probe_any(n.a, x, m -> probe_any(n.b, m, k))
-@inline probe_any(n::Filter{D,R,A,<:FnP}, x, k) where {D,R,A} =
-    probe_any(n.a, x, y -> n.pred.f(y) && k(y))
-@inline probe_any(n::Filter{D,R,A,<:EqP}, x, k) where {D,R,A} =
-    probe_any(n.a, x, y -> isequal(y, n.pred.v) && k(y))
-@inline probe_any(n::Filter{D,R,A,<:InP}, x, k) where {D,R,A} =
-    probe_any(n.a, x, y -> (y in n.pred.vs) && k(y))
+@inline probe_any(n::Filter, x, k) =
+    probe_any(n.a, x, y -> n.pred(y) && k(y))
 @inline probe_any(n::Diff, x, k) =
     (!member(n.b, x)) && probe_any(n.a, x, k)
-# generic fallback (Prod and other shapes) — no early exit, rarely on hot paths
+# generic fallback — no early exit, rarely on hot paths
 function probe_any(q::Query, x, k)
     found = Ref(false)
     probe(q, x, y -> (k(y) && (found[] = true)))

@@ -3,7 +3,7 @@ use crate::data::Data;
 use crate::engine::*;
 use super::helpers::*;
 
-pub const ENTRIES: &[(&str, &str, fn(&Data) -> String)] = &[
+pub const ENTRIES: &[super::Entry] = &[
     ("16a", "Adams, Stan || Carol Burnett vs. Anthony Perkins", q16a),
     ("16b", "!!!, Toy || & Teller", q16b),
     ("16c", "\"Brooklyn\" Tony Danza || (#1.5)", q16c),
@@ -19,24 +19,23 @@ pub const ENTRIES: &[(&str, &str, fn(&Data) -> String)] = &[
     ("18c", "Action || 10 || #PostModem", q18c),
 ];
 
-fn q16a(d: &Data) -> String {
+// q16a/q16d differ only in the episode_nr lower bound.
+fn q16ad(d: &Data, lo: i64) -> String {
     let q = d.movie.o(
         (&d.movie_company).o((&d.company_country).eq("[us]")).k()
             .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title").k())
-            .and((&d.movie_episode_nr).ge(50).k())
+            .and((&d.movie_episode_nr).ge(lo).k())
             .and((&d.movie_episode_nr).lt(100).k())
             .o(
                 (&d.movie_cast).o((&d.cast_person).o((&d.person_aka).o(&d.akaname_name)))
                     .x(&d.movie_title)
             ),
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (name, title)| {
-        update(&mut m[0], name);
-        update(&mut m[1], title);
-    });
-    fmt2(m)
+    min_row(q)
 }
+
+fn q16a(d: &Data) -> String { q16ad(d, 50) }
+fn q16d(d: &Data) -> String { q16ad(d, 5) }
 
 fn q16b(d: &Data) -> String {
     let q = d.movie.o(
@@ -47,12 +46,7 @@ fn q16b(d: &Data) -> String {
                     .x(&d.movie_title)
             ),
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (name, title)| {
-        update(&mut m[0], name);
-        update(&mut m[1], title);
-    });
-    fmt2(m)
+    min_row(q)
 }
 
 fn q16c(d: &Data) -> String {
@@ -65,31 +59,7 @@ fn q16c(d: &Data) -> String {
                     .x(&d.movie_title)
             ),
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (name, title)| {
-        update(&mut m[0], name);
-        update(&mut m[1], title);
-    });
-    fmt2(m)
-}
-
-fn q16d(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).o((&d.company_country).eq("[us]")).k()
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title").k())
-            .and((&d.movie_episode_nr).ge(5).k())
-            .and((&d.movie_episode_nr).lt(100).k())
-            .o(
-                (&d.movie_cast).o((&d.cast_person).o((&d.person_aka).o(&d.akaname_name)))
-                    .x(&d.movie_title)
-            ),
-    );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (name, title)| {
-        update(&mut m[0], name);
-        update(&mut m[1], title);
-    });
-    fmt2(m)
+    min_row(q)
 }
 
 fn q17a(d: &Data) -> String {
@@ -100,49 +70,25 @@ fn q17a(d: &Data) -> String {
                 (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"^B")))
             ),
     );
-    let mut m: Option<&'static str> = None;
-    q.drive(|_, name| update(&mut m, name));
-    fmt1(m)
+    min_row(q)
 }
 
-fn q17b(d: &Data) -> String {
+// q17b/c/d/f differ only in the person-name regex.
+fn q17_any_co(d: &Data, re: &str) -> String {
     let q = d.movie.o(
         (&d.movie_company).k()
             .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title").k())
             .o(
-                (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"^Z")))
+                (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(re)))
             ),
     );
-    let mut m: Option<&'static str> = None;
-    q.drive(|_, name| update(&mut m, name));
-    fmt1(m)
+    min_row(q)
 }
 
-fn q17c(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).k()
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title").k())
-            .o(
-                (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"^X")))
-            ),
-    );
-    let mut m: Option<&'static str> = None;
-    q.drive(|_, name| update(&mut m, name));
-    fmt1(m)
-}
-
-fn q17d(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).k()
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title").k())
-            .o(
-                (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"Bert")))
-            ),
-    );
-    let mut m: Option<&'static str> = None;
-    q.drive(|_, name| update(&mut m, name));
-    fmt1(m)
-}
+fn q17b(d: &Data) -> String { q17_any_co(d, r"^Z") }
+fn q17c(d: &Data) -> String { q17_any_co(d, r"^X") }
+fn q17d(d: &Data) -> String { q17_any_co(d, r"Bert") }
+fn q17f(d: &Data) -> String { q17_any_co(d, r"B") }
 
 fn q17e(d: &Data) -> String {
     let q = d.movie.o(
@@ -152,22 +98,7 @@ fn q17e(d: &Data) -> String {
                 (&d.movie_cast).o((&d.cast_person).o(&d.person_name))
             ),
     );
-    let mut m: Option<&'static str> = None;
-    q.drive(|_, name| update(&mut m, name));
-    fmt1(m)
-}
-
-fn q17f(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).k()
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title").k())
-            .o(
-                (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"B")))
-            ),
-    );
-    let mut m: Option<&'static str> = None;
-    q.drive(|_, name| update(&mut m, name));
-    fmt1(m)
+    min_row(q)
 }
 
 fn ib_18a<'d>(d: &'d Data) -> impl Rel<R = &'static str, D = i64> + Drive + Probe + 'd {
@@ -196,13 +127,7 @@ fn q18a(d: &Data) -> String {
                     .x(&d.movie_title)
             ),
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((ib, dv), title)| {
-        update(&mut m[0], ib);
-        update(&mut m[1], dv);
-        update(&mut m[2], title);
-    });
-    fmt3(m)
+    min_row(q)
 }
 
 fn gf_18b<'d>(d: &'d Data) -> impl KeySet<D = i64> + DriveKeys + Member + 'd {
@@ -230,13 +155,7 @@ fn q18b(d: &Data) -> String {
                     .x(&d.movie_title)
             ),
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((ig, dr), title)| {
-        update(&mut m[0], ig);
-        update(&mut m[1], dr);
-        update(&mut m[2], title);
-    });
-    fmt3(m)
+    min_row(q)
 }
 
 fn gf_18c<'d>(d: &'d Data) -> impl KeySet<D = i64> + DriveKeys + Member + 'd {
@@ -260,11 +179,5 @@ fn q18c(d: &Data) -> String {
                     .x(&d.movie_title)
             ),
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((ig, dv), title)| {
-        update(&mut m[0], ig);
-        update(&mut m[1], dv);
-        update(&mut m[2], title);
-    });
-    fmt3(m)
+    min_row(q)
 }

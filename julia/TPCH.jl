@@ -71,7 +71,7 @@ load_df_tpch(name) = DataFrame(Parquet2.Dataset(joinpath(TPCH_BASE, name * ".par
 # PK is used directly as ID; FKs are passed through unchanged.
 
 # Push (id, val) into a Rel{D, R}, with id-shift.
-function _push_pair!(rel::Prela.Rel{ID{E}, R}, id::Int, val) where {E, R}
+function _push_pair!(rel::Prela.Staging{ID{E}, R}, id::Int, val) where {E, R}
     push!(rel.pairs, ID{E}(id) => val)
 end
 

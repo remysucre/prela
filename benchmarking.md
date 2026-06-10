@@ -131,15 +131,17 @@ Including a `tpch_queries_*.jl` file auto-runs `runall_tpch()`.
 
 ```bash
 cd julia
-julia --project=. -t1 bench.jl job                > bench/data/julia_job.txt
-QS=idiomatic julia --project=. -t1 bench.jl tpch  > bench/data/julia_tpch_idiomatic.txt
-QS=optimized julia --project=. -t1 bench.jl tpch  > bench/data/julia_tpch_optimized.txt
+julia --project=. -t1 bench.jl job                > ../rust/bench/data/julia_job.txt
+QS=idiomatic julia --project=. -t1 bench.jl tpch  > ../rust/bench/data/julia_tpch_idiomatic.txt
+QS=optimized julia --project=. -t1 bench.jl tpch  > ../rust/bench/data/julia_tpch_optimized.txt
 ```
 
 `ENGINE=interp` (default `staged`) runs the same suites through the
 interpreted value-level CPS engine instead of the `@generated` one — every
 scan in the system (index/cache builds during `prepare` and the final scan)
-goes through the selected engine.
+goes through the selected engine. `ENGINE=interp-rr` additionally relaxes
+the inference recursion limit first (see `julia/relax_recursion.jl` and
+`julia/experiments/experiment_recursion.md`).
 
 ### Rust
 
@@ -155,26 +157,24 @@ cargo run --release -- tpch    # TPC-H (QS=idiomatic|optimized|ddbcheat)
 ### Regenerate the comparison plots
 
 ```bash
-cd julia/bench
-python3 plot_tpch.py   # → tpch_scatter.png  (idiomatic + optimized vs DuckDB)
+cd rust/bench
+python3 plot_tpch.py   # → tpch_scatter.png  (Julia + Rust + DuckDB)
 python3 plot_job.py    # → job_scatter.png
 ```
 
 Both scripts read from `data/` and write the PNG next to themselves. The
-Julia timings come from the bench runs above; the DuckDB baselines
+Julia and Rust timings come from the bench runs above; the DuckDB baselines
 (`data/job_duck.txt`, `data/duckdb_st.txt`) are checked in.
 
 ### Regenerate the DuckDB baseline + TPCH oracles
 
-The capture scripts (`run_job_duck.sh`, `regen_tpch_oracles.sh`) live on the
-`rust` branch under `rust/bench/`. The baselines they produce are checked in
-here as `julia/bench/data/{job_duck,duckdb_st}.txt`.
+The capture scripts live under `rust/bench/`; the baselines they produce
+are checked in as `rust/bench/data/{job_duck,duckdb_st}.txt`.
 
 ```bash
-# on the `rust` branch:
 cd rust/bench
 ./run_job_duck.sh         # → data/job_duck.txt (canonical JOB, ST DuckDB)
-./regen_tpch_oracles.sh   # → /tmp/tpch_oracles/Q{2,7,8,...}.txt
+./regen_tpch_oracles.sh   # → ../../oracles/tpch/Q{2,7,8,...}.txt
 ```
 
 `run_job_duck.sh` runs each canonical JOB query (from `../../join-order-benchmark/`)
@@ -182,9 +182,9 @@ against a single-threaded DuckDB instance built from `~/projects/jobdata/parquet
 captures cold/warm timings, and writes them in the `Run Time (s): real …`
 format that `plot_job.py` expects.
 
-`regen_tpch_oracles.sh` rebuilds the 14 file-loaded TPCH oracles that the
-`julia/tpch_queries_*.jl` files read from `/tmp/tpch_oracles/` (the ones not
-inlined as string constants). It runs each canonical TPCH SQL against
+`regen_tpch_oracles.sh` rebuilds the 14 file-loaded TPCH oracles checked in
+under `oracles/tpch/`, which both the Julia and Rust suites read (the ones
+not inlined as string constants). It runs each canonical TPCH SQL against
 `cache/tpch/*.parquet` with `PRAGMA threads=1` (so Float64 sums are
 deterministic and the Q15 self-equality holds) and formats every decimal
 field to `%.2f` to match Julia's `_fmt(Float64)`.

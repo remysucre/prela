@@ -4,24 +4,6 @@ use crate::engine::*;
 use super::helpers::*;
 use super::sets::*;
 
-fn co_27<'d>(d: &'d Data) -> impl Rel<R = i64, D = i64> + Drive + Probe + 'd {
-    (&d.movie_company).in_s(
-        (&d.company_country).ne("[pl]").k()
-            .and(
-                (&d.company_name).rx(r"Film").k()
-                    .or((&d.company_name).rx(r"Warner").k())
-            )
-            .and(
-                (&d.company_type).o(&d.companytype_kind).eq("production companies").k()
-                    .minus((&d.company_note).k())
-            )
-    )
-}
-
-fn lk_27<'d>(d: &'d Data) -> impl Rel<R = i64, D = i64> + Drive + Probe + 'd {
-    (&d.movie_link).in_s((&d.movielink_type).o(&d.linktype_link).rx(r"follow").k())
-}
-
 fn co_28<'d>(d: &'d Data) -> impl Rel<R = i64, D = i64> + Drive + Probe + 'd {
     (&d.movie_company).in_s(
         (&d.company_country).ne("[us]").k()
@@ -30,7 +12,7 @@ fn co_28<'d>(d: &'d Data) -> impl Rel<R = i64, D = i64> + Drive + Probe + 'd {
     )
 }
 
-fn dt_28a<'d>(d: &'d Data) -> impl Rel<R = i64, D = i64> + Drive + Probe + 'd {
+fn dt_28ac<'d>(d: &'d Data) -> impl Rel<R = i64, D = i64> + Drive + Probe + 'd {
     (&d.movie_data).in_s(
         (&d.data_type).o(&d.infotype_info).eq("rating").k()
             .and((&d.data_data).lt("8.5").k())
@@ -41,13 +23,6 @@ fn dt_28b<'d>(d: &'d Data) -> impl Rel<R = i64, D = i64> + Drive + Probe + 'd {
     (&d.movie_data).in_s(
         (&d.data_type).o(&d.infotype_info).eq("rating").k()
             .and((&d.data_data).gt("6.5").k())
-    )
-}
-
-fn dt_28c<'d>(d: &'d Data) -> impl Rel<R = i64, D = i64> + Drive + Probe + 'd {
-    (&d.movie_data).in_s(
-        (&d.data_type).o(&d.infotype_info).eq("rating").k()
-            .and((&d.data_data).lt("8.5").k())
     )
 }
 
@@ -108,7 +83,7 @@ fn qlink_33c<'d>(d: &'d Data) -> impl Rel<R = i64, D = i64> + Drive + Probe + 'd
     )
 }
 
-pub const ENTRIES: &[(&str, &str, fn(&Data) -> String)] = &[
+pub const ENTRIES: &[super::Entry] = &[
     ("27a", "Det Danske Filminstitut || followed by || Spår i mörker", q27a),
     ("27b", "Filmlance International AB || followed by || Vita nätter", q27b),
     ("27c", "Det Danske Filminstitut || followed by || Spår i mörker", q27c),
@@ -137,21 +112,19 @@ fn q27a(d: &Data) -> String {
             (&d.completecast_subject).o(&d.compcasttype_kind).in_v(vec!["cast", "crew"]).k()
                 .and((&d.completecast_status).o(&d.compcasttype_kind).eq("complete").k())
         ).k()
-            .and(co_27(d).k())
+            .and(film_or_warner_co(d).k())
             .and((&d.movie_keyword).o(&d.keyword_keyword).eq("sequel").k())
-            .and(lk_27(d).k())
+            .and(follow_link(d).k())
             .and((&d.movie_info).in_s((&d.info_info).in_v(vec!["Sweden", "Germany", "Swedish", "German"]).k()).k())
             .and((&d.movie_production_year).ge(1950).k())
             .and((&d.movie_production_year).le(2000).k())
             .o(
-                co_27(d).o(&d.company_name)
-                    .x(lk_27(d).o((&d.movielink_type).o(&d.linktype_link)))
+                film_or_warner_co(d).o(&d.company_name)
+                    .x(follow_link(d).o((&d.movielink_type).o(&d.linktype_link)))
                     .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q27b(d: &Data) -> String {
@@ -160,20 +133,18 @@ fn q27b(d: &Data) -> String {
             (&d.completecast_subject).o(&d.compcasttype_kind).in_v(vec!["cast", "crew"]).k()
                 .and((&d.completecast_status).o(&d.compcasttype_kind).eq("complete").k())
         ).k()
-            .and(co_27(d).k())
+            .and(film_or_warner_co(d).k())
             .and((&d.movie_keyword).o(&d.keyword_keyword).eq("sequel").k())
-            .and(lk_27(d).k())
+            .and(follow_link(d).k())
             .and((&d.movie_info).in_s((&d.info_info).in_v(vec!["Sweden", "Germany", "Swedish", "German"]).k()).k())
             .and((&d.movie_production_year).eq(1998).k())
             .o(
-                co_27(d).o(&d.company_name)
-                    .x(lk_27(d).o((&d.movielink_type).o(&d.linktype_link)))
+                film_or_warner_co(d).o(&d.company_name)
+                    .x(follow_link(d).o((&d.movielink_type).o(&d.linktype_link)))
                     .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q27c(d: &Data) -> String {
@@ -182,21 +153,19 @@ fn q27c(d: &Data) -> String {
             (&d.completecast_subject).o(&d.compcasttype_kind).eq("cast").k()
                 .and((&d.completecast_status).o(&d.compcasttype_kind).rx(r"^complete").k())
         ).k()
-            .and(co_27(d).k())
+            .and(film_or_warner_co(d).k())
             .and((&d.movie_keyword).o(&d.keyword_keyword).eq("sequel").k())
-            .and(lk_27(d).k())
+            .and(follow_link(d).k())
             .and((&d.movie_info).in_s((&d.info_info).in_v(nordic9()).k()).k())
             .and((&d.movie_production_year).ge(1950).k())
             .and((&d.movie_production_year).le(2010).k())
             .o(
-                co_27(d).o(&d.company_name)
-                    .x(lk_27(d).o((&d.movielink_type).o(&d.linktype_link)))
+                film_or_warner_co(d).o(&d.company_name)
+                    .x(follow_link(d).o((&d.movielink_type).o(&d.linktype_link)))
                     .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q28a(d: &Data) -> String {
@@ -210,19 +179,17 @@ fn q28a(d: &Data) -> String {
                 (&d.info_type).o(&d.infotype_info).eq("countries").k()
                     .and((&d.info_info).in_v(nordic10()).k())
             ).k())
-            .and(dt_28a(d).k())
+            .and(dt_28ac(d).k())
             .and((&d.movie_keyword).o(&d.keyword_keyword).in_v(murder4()).k())
             .and((&d.movie_kind).o(&d.kind_kind).in_v(vec!["movie", "episode"]).k())
             .and((&d.movie_production_year).gt(2000).k())
             .o(
                 co_28(d).o(&d.company_name)
-                    .x(dt_28a(d).o(&d.data_data))
+                    .x(dt_28ac(d).o(&d.data_data))
                     .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q28b(d: &Data) -> String {
@@ -246,9 +213,7 @@ fn q28b(d: &Data) -> String {
                     .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q28c(d: &Data) -> String {
@@ -262,19 +227,17 @@ fn q28c(d: &Data) -> String {
                 (&d.info_type).o(&d.infotype_info).eq("countries").k()
                     .and((&d.info_info).in_v(nordic10()).k())
             ).k())
-            .and(dt_28c(d).k())
+            .and(dt_28ac(d).k())
             .and((&d.movie_keyword).o(&d.keyword_keyword).in_v(murder4()).k())
             .and((&d.movie_kind).o(&d.kind_kind).in_v(vec!["movie", "episode"]).k())
             .and((&d.movie_production_year).gt(2005).k())
             .o(
                 co_28(d).o(&d.company_name)
-                    .x(dt_28c(d).o(&d.data_data))
+                    .x(dt_28ac(d).o(&d.data_data))
                     .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q29a(d: &Data) -> String {
@@ -314,9 +277,7 @@ fn q29a(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q29b(d: &Data) -> String {
@@ -353,9 +314,7 @@ fn q29b(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q29c(d: &Data) -> String {
@@ -393,9 +352,7 @@ fn q29c(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q30a(d: &Data) -> String {
@@ -418,9 +375,7 @@ fn q30a(d: &Data) -> String {
                     ))
             )
     );
-    let mut m: [Option<&'static str>; 4] = [None; 4];
-    q.drive(|_, (((a, b), c), e)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); update(&mut m[3], e); });
-    fmt4(m)
+    min_row(q)
 }
 
 fn q30b(d: &Data) -> String {
@@ -450,9 +405,7 @@ fn q30b(d: &Data) -> String {
                     ))
             )
     );
-    let mut m: [Option<&'static str>; 4] = [None; 4];
-    q.drive(|_, (((a, b), c), e)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); update(&mut m[3], e); });
-    fmt4(m)
+    min_row(q)
 }
 
 fn q30c(d: &Data) -> String {
@@ -474,9 +427,7 @@ fn q30c(d: &Data) -> String {
                     ))
             )
     );
-    let mut m: [Option<&'static str>; 4] = [None; 4];
-    q.drive(|_, (((a, b), c), e)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); update(&mut m[3], e); });
-    fmt4(m)
+    min_row(q)
 }
 
 fn q31a(d: &Data) -> String {
@@ -495,9 +446,7 @@ fn q31a(d: &Data) -> String {
                     ))
             )
     );
-    let mut m: [Option<&'static str>; 4] = [None; 4];
-    q.drive(|_, (((a, b), c), e)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); update(&mut m[3], e); });
-    fmt4(m)
+    min_row(q)
 }
 
 fn q31b(d: &Data) -> String {
@@ -527,9 +476,7 @@ fn q31b(d: &Data) -> String {
                     ))
             )
     );
-    let mut m: [Option<&'static str>; 4] = [None; 4];
-    q.drive(|_, (((a, b), c), e)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); update(&mut m[3], e); });
-    fmt4(m)
+    min_row(q)
 }
 
 fn q31c(d: &Data) -> String {
@@ -547,14 +494,13 @@ fn q31c(d: &Data) -> String {
                     ))
             )
     );
-    let mut m: [Option<&'static str>; 4] = [None; 4];
-    q.drive(|_, (((a, b), c), e)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); update(&mut m[3], e); });
-    fmt4(m)
+    min_row(q)
 }
 
-fn q32a(d: &Data) -> String {
+// q32a/q32b differ only in the keyword constant.
+fn q32(d: &Data, kw: &'static str) -> String {
     let q = d.movie.o(
-        (&d.movie_keyword).o(&d.keyword_keyword).eq("10,000-mile-club").k()
+        (&d.movie_keyword).o(&d.keyword_keyword).eq(kw).k()
             .and((&d.movie_link).k())
             .o(
                 (&d.movie_link).o((&d.movielink_type).o(&d.linktype_link))
@@ -562,25 +508,11 @@ fn q32a(d: &Data) -> String {
                     .x((&d.movie_link).o((&d.movielink_target).o(&d.movie_title)))
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
+    min_row(q)
 }
 
-fn q32b(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title").k()
-            .and((&d.movie_link).k())
-            .o(
-                (&d.movie_link).o((&d.movielink_type).o(&d.linktype_link))
-                    .x(&d.movie_title)
-                    .x((&d.movie_link).o((&d.movielink_target).o(&d.movie_title)))
-            )
-    );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((a, b), c)| { update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c); });
-    fmt3(m)
-}
+fn q32a(d: &Data) -> String { q32(d, "10,000-mile-club") }
+fn q32b(d: &Data) -> String { q32(d, "character-name-in-title") }
 
 fn q33a(d: &Data) -> String {
     let q = d.movie.o(
@@ -600,15 +532,7 @@ fn q33a(d: &Data) -> String {
                     .x(qlink_33a(d).o((&d.movielink_target).o(&d.movie_title)))
             )
     );
-    let mut m: [Option<&'static str>; 6] = [None; 6];
-    q.drive(|_, (((((a, b), c), e), f), g)| {
-        update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c);
-        update(&mut m[3], e); update(&mut m[4], f); update(&mut m[5], g);
-    });
-    if m[0].is_none() { return "(empty)".into(); }
-    format!("{} || {} || {} || {} || {} || {}",
-            m[0].unwrap(), m[1].unwrap(), m[2].unwrap(),
-            m[3].unwrap(), m[4].unwrap(), m[5].unwrap())
+    min_row(q)
 }
 
 fn q33b(d: &Data) -> String {
@@ -629,15 +553,7 @@ fn q33b(d: &Data) -> String {
                     .x(qlink_33b(d).o((&d.movielink_target).o(&d.movie_title)))
             )
     );
-    let mut m: [Option<&'static str>; 6] = [None; 6];
-    q.drive(|_, (((((a, b), c), e), f), g)| {
-        update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c);
-        update(&mut m[3], e); update(&mut m[4], f); update(&mut m[5], g);
-    });
-    if m[0].is_none() { return "(empty)".into(); }
-    format!("{} || {} || {} || {} || {} || {}",
-            m[0].unwrap(), m[1].unwrap(), m[2].unwrap(),
-            m[3].unwrap(), m[4].unwrap(), m[5].unwrap())
+    min_row(q)
 }
 
 fn q33c(d: &Data) -> String {
@@ -658,13 +574,5 @@ fn q33c(d: &Data) -> String {
                     .x(qlink_33c(d).o((&d.movielink_target).o(&d.movie_title)))
             )
     );
-    let mut m: [Option<&'static str>; 6] = [None; 6];
-    q.drive(|_, (((((a, b), c), e), f), g)| {
-        update(&mut m[0], a); update(&mut m[1], b); update(&mut m[2], c);
-        update(&mut m[3], e); update(&mut m[4], f); update(&mut m[5], g);
-    });
-    if m[0].is_none() { return "(empty)".into(); }
-    format!("{} || {} || {} || {} || {} || {}",
-            m[0].unwrap(), m[1].unwrap(), m[2].unwrap(),
-            m[3].unwrap(), m[4].unwrap(), m[5].unwrap())
+    min_row(q)
 }

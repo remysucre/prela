@@ -13,17 +13,16 @@ mod t5;
 mod t6;
 
 use crate::data::Data;
-pub type QFn = fn(&Data) -> String;
-pub type Entry = (&'static str, &'static str, QFn);
+pub type Entry = crate::Entry<Data>;
 
 pub fn all_queries() -> Vec<Entry> {
-    let mut v: Vec<Entry> = Vec::new();
-    v.extend_from_slice(t1::ENTRIES);
-    v.extend_from_slice(t2::ENTRIES);
-    v.extend_from_slice(t3::ENTRIES);
-    v.extend_from_slice(t4::ENTRIES);
-    v.extend_from_slice(t5::ENTRIES);
-    v.extend_from_slice(t6::ENTRIES);
-    v.extend_from_slice(demo_methods::ENTRIES);
-    v
+    [
+        t1::ENTRIES,
+        t2::ENTRIES,
+        t3::ENTRIES,
+        t4::ENTRIES,
+        t5::ENTRIES,
+        t6::ENTRIES,
+        demo_methods::ENTRIES,
+    ].concat()
 }

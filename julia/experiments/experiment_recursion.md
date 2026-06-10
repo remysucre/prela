@@ -3,7 +3,7 @@
 **No.** The inference-recursion-limit failure is real and visible, but on
 relational workloads it is not where the time goes, and patching
 `recursion_relation` does not recover staged-engine behavior on the real
-combinator library (unlike on the toy CPS chains in `../why_no_inline.jl`).
+combinator library (unlike on the toy CPS chains in `why_no_inline.jl`).
 Staging is the architecture; this experiment closes the "could we just
 patch the interpreter?" question.
 
@@ -54,9 +54,10 @@ Findings:
 
 ## Field results — full JOB suite (113 queries, IMDB, warm, `-t1`)
 
-Both engines pass all 113 oracles (`ENGINE=staged|interp test_td.jl`).
-Totals over the whole suite (`bench.jl job`), plus a third run with the
-625-method `recursion_relation` patch applied before any compilation:
+Both engines pass all 113 oracles (`runall(eng = Interp())` / default staged).
+Totals over the whole suite (`bench.jl job`, engine via `ENGINE=staged|interp|
+interp-rr`), the third run being the 625-method `recursion_relation` patch
+applied before any compilation:
 
 | engine                  | total   | vs staged (median per-query) |
 |-------------------------|--------:|-----------------------------:|

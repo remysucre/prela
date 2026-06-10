@@ -5,7 +5,7 @@ use crate::data::Data;
 use crate::engine::*;
 use super::helpers::*;
 
-pub const ENTRIES: &[(&str, &str, fn(&Data) -> String)] = &[
+pub const ENTRIES: &[super::Entry] = &[
     ("6a/method", "marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert", q6a_methods),
 ];
 
@@ -33,11 +33,5 @@ pub fn q6a_methods(d: &Data) -> String {
                             (&d.person_name).rx(r"Downey.*Robert")))),
             ),
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((kw, title), name)| {
-        update(&mut m[0], kw);
-        update(&mut m[1], title);
-        update(&mut m[2], name);
-    });
-    fmt3(m)
+    min_row(q)
 }

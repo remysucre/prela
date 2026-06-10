@@ -122,7 +122,7 @@ expect("Compose probe misses (winner → cast)", winner → cast,
 
 # ===== filters ==========================================================
 
-expect("Filter FnP (year > 1951)", year > 1951,
+expect("Filter callable (year > 1951)", year > 1951,
        [F(2) => 1952, F(3) => 1985])
 
 expect("Filter EqP (title == ran)", title == "ran",
@@ -157,7 +157,7 @@ expect("Prod via ∧ in Restrict", film : (year > 1949) ∧ (title ~ r"n") → t
 expect("Disj ∨ membership", film : ((title == "ikiru") ∨ (year > 1984)) → title,
        [F(2) => "ikiru", F(3) => "ran"])
 
-# cross-column compare (Filter ∘ Prod with FnP destructuring)
+# cross-column compare (Filter ∘ Prod with tuple-destructuring predicate)
 expect("cross-column predicate (year < year+: trivially empty)", year < year,
        Tuple{Any, Any}[])
 

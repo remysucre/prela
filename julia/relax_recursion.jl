@@ -1,10 +1,13 @@
-# bench.jl's JOB warm pass, interp engine, with recursion_relation relaxed
-# on all Prela methods BEFORE any query compiles.
-ENV["PRELA_SKIP_RUNALL"] = "1"
-using Printf
-include("JOB.jl")
-include("queries.jl")
-
+# Relax Julia's inference recursion limit on every method that participates
+# in the interpreted engine's CPS tower: the protocol methods (drive/probe/
+# probe_any/member, and the generated _prod_*/_idx_probe helpers) plus every
+# closure defined in the module (the continuation lambdas inside those
+# methods). `Method.recursion_relation` returning true tells inference the
+# recursion is fine, so deep plans keep inlining instead of widening.
+#
+# Must run BEFORE any query compiles (inference results are cached; the patch
+# has no effect on already-inferred methods). Used by `bench.jl`'s
+# ENGINE=interp-rr mode and `experiments/experiment_recursion.jl`.
 function relax_recursion_limit!(mod::Module)
     world = Base.get_world_counter()
     n = 0
@@ -23,17 +26,4 @@ function relax_recursion_limit!(mod::Module)
         end
     end
     n
-end
-println(stderr, "patched ", relax_recursion_limit!(Prela), " methods")
-
-const ENG = Prela.Interp()
-qs = [(name, () -> Main._vals(f(); eng = ENG)) for (name, _oracle, f) in Main._Q]
-for (_, run) in qs
-    try run() catch end
-end
-GC.gc(true)
-for (name, run) in qs
-    t = time_ns()
-    _ = try run() catch e e end
-    @printf "%s\t%.6f\n" name ((time_ns() - t) / 1e9)
 end

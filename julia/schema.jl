@@ -19,23 +19,10 @@ end
 # Sealing replaces the per-leaf `const` binding (see `seal_entities!`), so
 # `lookup_field` and the bare-name exposures resolve to the sealed object.
 
-# dense forward index sized to the entity universe `n` (so every valid id is
-# directly indexable). Junk pairs (id < 1) are skipped.
-function _multi_fwd(pairs::Vector{Pair{ID{E}, R}}, n::Int) where {E, R}
-    empty = R[]
-    v = fill(empty, n)
-    for p in pairs
-        i = p.first.id
-        (1 <= i <= n) || continue
-        @inbounds vi = v[i]
-        vi === empty && (vi = R[]; @inbounds v[i] = vi)
-        push!(vi, p.second)
-    end
-    v
-end
-
 function seal(r::Staging{ID{E}, R}, n::Int, multi::Bool, label) where {E, R}
-    multi && return MultiRel{E, R}(_multi_fwd(r.pairs, n))
+    # multi-valued → dense forward index sized to the entity universe `n` (so
+    # every valid id is directly indexable; see `_dense_fwd` in plan.jl).
+    multi && return MultiRel{E, R}(_dense_fwd(r.pairs, n))
     vals = Vector{R}(undef, n)
     seen = falses(n)
     for p in r.pairs

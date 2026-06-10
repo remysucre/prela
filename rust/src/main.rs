@@ -1,13 +1,15 @@
-mod engine;
+mod cache;
 mod data;
+mod engine;
 mod queries;
+mod tpch;
 mod tpch_data;
-mod tpch_queries_idiomatic;
-mod tpch_queries_optimized;
-mod tpch_queries_ddbcheat;
 
 use data::Data;
 use tpch_data::TpchData;
+
+/// A registered query: (name, expected output, runner).
+pub type Entry<D> = (&'static str, &'static str, fn(&D) -> String);
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -20,6 +22,34 @@ fn main() {
     }
 }
 
+/// Two timed rounds over a query suite: run every query, diff against its
+/// oracle, report ok-counts. Per-query reporting is suite-specific.
+fn run_suite<D>(
+    d: &D,
+    qs: &[Entry<D>],
+    on_pass: impl Fn(usize, &str, f64, &str),
+    on_diff: impl Fn(&str, f64, &str, &str),
+) {
+    for round in 1..=2 {
+        eprintln!("--- run {round} ---");
+        let mut ok = 0usize;
+        let t = std::time::Instant::now();
+        for (name, oracle, f) in qs {
+            let q_t = std::time::Instant::now();
+            let got = f(d);
+            let dt = q_t.elapsed().as_secs_f64();
+            if got == *oracle {
+                ok += 1;
+                on_pass(round, name, dt, &got);
+            } else {
+                on_diff(name, dt, &got, oracle);
+            }
+        }
+        eprintln!("run {round}: {}/{} ok  total {:.2}s",
+                  ok, qs.len(), t.elapsed().as_secs_f32());
+    }
+}
+
 fn run_job() {
     let t = std::time::Instant::now();
     let d = Data::load();
@@ -29,36 +59,16 @@ fn run_job() {
     let qs = queries::all_queries();
     eprintln!("{} queries registered", qs.len());
 
-    for round in 1..=2 {
-        eprintln!("--- run {round} ---");
-        let mut ok = 0usize;
-        let mut bad: Vec<(&'static str, &'static str, String)> = Vec::new();
-        let t = std::time::Instant::now();
-        for (name, oracle, f) in &qs {
-            let q_t = std::time::Instant::now();
-            let got = f(&d);
-            let dt = q_t.elapsed().as_secs_f64();
-            let pass = got == *oracle;
-            if pass {
-                ok += 1;
-                if round == 2 || dt > 0.5 {
-                    println!("{:<5} ok  {:>8.4}s  {}", name, dt, got);
-                }
-            } else {
-                bad.push((name, oracle, got.clone()));
-                println!("{:<5} DIFF {:>8.4}s  {}", name, dt, got);
-                println!("        oracle: {oracle}");
+    run_suite(&d, &qs,
+        |round, name, dt, got| {
+            if round == 2 || dt > 0.5 {
+                println!("{:<5} ok  {:>8.4}s  {}", name, dt, got);
             }
-        }
-        eprintln!("run {round}: {}/{} ok  total {:.2}s",
-                  ok, qs.len(), t.elapsed().as_secs_f32());
-        if round == 2 && !bad.is_empty() {
-            eprintln!("\n{} diffs:", bad.len());
-            for (n, o, g) in &bad {
-                eprintln!("  {n}: got {g:?}  oracle {o:?}");
-            }
-        }
-    }
+        },
+        |name, dt, got, oracle| {
+            println!("{:<5} DIFF {:>8.4}s  {}", name, dt, got);
+            println!("        oracle: {oracle}");
+        });
 }
 
 fn run_tpch() {
@@ -70,46 +80,31 @@ fn run_tpch() {
     // QS=idiomatic|optimized|ddbcheat (default optimized)
     let variant = std::env::var("QS").unwrap_or_else(|_| "optimized".to_string());
     let qs = match variant.as_str() {
-        "idiomatic" => tpch_queries_idiomatic::all_queries(),
-        "optimized" => tpch_queries_optimized::all_queries(),
-        "ddbcheat"  => tpch_queries_ddbcheat::all_queries(),
+        "idiomatic" => tpch::idiomatic::queries(),
+        "optimized" => tpch::optimized::queries(),
+        "ddbcheat"  => tpch::ddbcheat::queries(),
         other => panic!("unknown QS variant: {other:?} (use idiomatic|optimized|ddbcheat)"),
     };
     eprintln!("{} TPC-H queries registered ({} variant)", qs.len(), variant);
 
-    for round in 1..=2 {
-        eprintln!("--- run {round} ---");
-        let mut ok = 0usize;
-        let t = std::time::Instant::now();
-        for (name, oracle, f) in &qs {
-            let q_t = std::time::Instant::now();
-            let got = f(&d);
-            let dt = q_t.elapsed().as_secs_f64();
-            let pass = got == *oracle;
-            if pass {
-                ok += 1;
-                println!("{:<5} ok    {:>8.4}s", name, dt);
-            } else {
-                println!("{:<5} DIFF  {:>8.4}s", name, dt);
-                // Write to /tmp for offline diff
-                let _ = std::fs::write(format!("/tmp/tpch_got_{name}.txt"), &got);
-                let _ = std::fs::write(format!("/tmp/tpch_oracle_{name}.txt"), oracle);
-                let got_lines: Vec<_> = got.lines().collect();
-                let oracle_lines: Vec<_> = oracle.lines().collect();
-                let n = got_lines.len().max(oracle_lines.len());
-                for i in 0..n {
-                    let g = got_lines.get(i).unwrap_or(&"");
-                    let o = oracle_lines.get(i).unwrap_or(&"");
-                    if g != o {
-                        println!("        line {}:", i + 1);
-                        println!("          got:    {g:?}");
-                        println!("          oracle: {o:?}");
-                        if i >= 3 { break; }
-                    }
+    run_suite(&d, &qs,
+        |_, name, dt, _| println!("{:<5} ok    {:>8.4}s", name, dt),
+        |name, dt, got, oracle| {
+            println!("{:<5} DIFF  {:>8.4}s", name, dt);
+            // Write to /tmp for offline diff
+            let _ = std::fs::write(format!("/tmp/tpch_got_{name}.txt"), got);
+            let _ = std::fs::write(format!("/tmp/tpch_oracle_{name}.txt"), oracle);
+            let got_lines: Vec<_> = got.lines().collect();
+            let oracle_lines: Vec<_> = oracle.lines().collect();
+            for i in 0..got_lines.len().max(oracle_lines.len()) {
+                let g = got_lines.get(i).unwrap_or(&"");
+                let o = oracle_lines.get(i).unwrap_or(&"");
+                if g != o {
+                    println!("        line {}:", i + 1);
+                    println!("          got:    {g:?}");
+                    println!("          oracle: {o:?}");
+                    if i >= 3 { break; }
                 }
             }
-        }
-        eprintln!("run {round}: {}/{} ok  total {:.2}s",
-                  ok, qs.len(), t.elapsed().as_secs_f32());
-    }
+        });
 }

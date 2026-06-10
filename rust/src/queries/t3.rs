@@ -4,7 +4,7 @@ use crate::engine::*;
 use super::helpers::*;
 use super::sets::*;
 
-pub const ENTRIES: &[(&str, &str, fn(&Data) -> String)] = &[
+pub const ENTRIES: &[super::Entry] = &[
     ("7a",  "Antonioni, Michelangelo || Dressed to Kill",                                 q7a),
     ("7b",  "De Palma, Brian || Dressed to Kill",                                         q7b),
     ("7c",  "50 Cent || \"Boo\" Arnold was born Earl Arnold in Hattiesburg, Mississippi in 1966. His father gave him the nickname 'Boo' early in life and it stuck through grade school, high school, and college. He is still known as \"Boo\" to family and friends.  Raised in central Texas, Arnold played baseball at Texas Tech University where he graduated with a BA in Advertising and Marketing. While at Texas Tech he was also a member of the Texas Epsilon chapter of Phi Delta Theta fraternity. After college he worked with Young Life, an outreach to high school students, in San Antonio, Texas.  While with Young Life Arnold began taking extension courses through Fuller Theological Seminary and ultimately went full-time to Gordon-Conwell Theological Seminary in Boston, Massachusetts. At Gordon-Conwell he completed a Master's Degree in Divinity studying Theology, Philosophy, Church History, Biblical Languages (Hebrew & Greek), and Exegetical Methods. Following seminary he was involved with reconciliation efforts in the former Yugoslavia shortly after the war ended there in1995.  Arnold started acting in his early thirties in Texas. After an encouraging visit to Los Angeles where he spent time with childhood friend George Eads (of CSI Las Vegas) he decided to move to Los Angeles in 2001 to pursue acting full-time. While in Los Angeles he has studied acting with Judith Weston at Judith Weston Studio for Actors and Directors.  Arnold's acting career has been one of steady development, booking co-star and guest-star roles in nighttime television. He guest-starred opposite of Jane Seymour on the night time television drama Justice. He played the lead, Michael Hollister, in the film The Seer, written and directed by Patrick Masset (Friday Night Lights).  He was nominated Best Actor in the168 Film Festival for the role of Phil Stevens in the short-film Useless. In Useless he played a US Marshal who must choose between mercy and justice as he confronts the man who murdered his father. Arnold's performance in Useless confirmed his ability to carry lead roles, and he continues to work toward solidifying himself as a male lead in film and television.  Arnold married fellow Texan Stacy Rudd of San Antonio in 2003 and they are now raising their three children in the Los Angeles area.", q7c),
@@ -48,12 +48,7 @@ fn q7a(d: &Data) -> String {
                 ).x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (name, title)| {
-        update(&mut m[0], name);
-        update(&mut m[1], title);
-    });
-    fmt2(m)
+    min_row(q)
 }
 
 fn q7b(d: &Data) -> String {
@@ -76,12 +71,7 @@ fn q7b(d: &Data) -> String {
                 ).x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (name, title)| {
-        update(&mut m[0], name);
-        update(&mut m[1], title);
-    });
-    fmt2(m)
+    min_row(q)
 }
 
 fn bio_filter_7c<'d>(d: &'d Data) -> impl KeySet<D = i64> + DriveKeys + Member + 'd {
@@ -119,12 +109,7 @@ fn q7c(d: &Data) -> String {
                 )
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (name, bio)| {
-        update(&mut m[0], name);
-        update(&mut m[1], bio);
-    });
-    fmt2(m)
+    min_row(q)
 }
 
 fn q8a(d: &Data) -> String {
@@ -146,12 +131,7 @@ fn q8a(d: &Data) -> String {
                 ).x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (name, title)| {
-        update(&mut m[0], name);
-        update(&mut m[1], title);
-    });
-    fmt2(m)
+    min_row(q)
 }
 
 fn q8b(d: &Data) -> String {
@@ -183,49 +163,25 @@ fn q8b(d: &Data) -> String {
                 ).x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (name, title)| {
-        update(&mut m[0], name);
-        update(&mut m[1], title);
-    });
-    fmt2(m)
+    min_row(q)
 }
 
-fn q8c(d: &Data) -> String {
+// q8c/q8d differ only in the cast role.
+fn q8cd(d: &Data, role: &'static str) -> String {
     let q = d.movie.o(
         (&d.movie_company).o((&d.company_country).eq("[us]")).k()
             .o(
                 (&d.movie_cast).o(
-                    (&d.cast_role).o(&d.roletype_role).eq("writer").k()
+                    (&d.cast_role).o(&d.roletype_role).eq(role).k()
                         .o((&d.cast_person).o((&d.person_aka).o(&d.akaname_name)))
                 ).x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (name, title)| {
-        update(&mut m[0], name);
-        update(&mut m[1], title);
-    });
-    fmt2(m)
+    min_row(q)
 }
 
-fn q8d(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).o((&d.company_country).eq("[us]")).k()
-            .o(
-                (&d.movie_cast).o(
-                    (&d.cast_role).o(&d.roletype_role).eq("costume designer").k()
-                        .o((&d.cast_person).o((&d.person_aka).o(&d.akaname_name)))
-                ).x(&d.movie_title)
-            )
-    );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (name, title)| {
-        update(&mut m[0], name);
-        update(&mut m[1], title);
-    });
-    fmt2(m)
-}
+fn q8c(d: &Data) -> String { q8cd(d, "writer") }
+fn q8d(d: &Data) -> String { q8cd(d, "costume designer") }
 
 fn q9a(d: &Data) -> String {
     let q = d.movie.o(
@@ -253,13 +209,7 @@ fn q9a(d: &Data) -> String {
                 ).x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((aka, ch), title)| {
-        update(&mut m[0], aka);
-        update(&mut m[1], ch);
-        update(&mut m[2], title);
-    });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q9b(d: &Data) -> String {
@@ -290,14 +240,7 @@ fn q9b(d: &Data) -> String {
                 ).x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 4] = [None; 4];
-    q.drive(|_, (((aka, ch), name), title)| {
-        update(&mut m[0], aka);
-        update(&mut m[1], ch);
-        update(&mut m[2], name);
-        update(&mut m[3], title);
-    });
-    fmt4(m)
+    min_row(q)
 }
 
 fn q9c(d: &Data) -> String {
@@ -319,14 +262,7 @@ fn q9c(d: &Data) -> String {
                 ).x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 4] = [None; 4];
-    q.drive(|_, (((aka, ch), name), title)| {
-        update(&mut m[0], aka);
-        update(&mut m[1], ch);
-        update(&mut m[2], name);
-        update(&mut m[3], title);
-    });
-    fmt4(m)
+    min_row(q)
 }
 
 fn q9d(d: &Data) -> String {
@@ -345,14 +281,7 @@ fn q9d(d: &Data) -> String {
                 ).x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 4] = [None; 4];
-    q.drive(|_, (((aka, name), ch), title)| {
-        update(&mut m[0], aka);
-        update(&mut m[1], name);
-        update(&mut m[2], ch);
-        update(&mut m[3], title);
-    });
-    fmt4(m)
+    min_row(q)
 }
 
 fn q10a(d: &Data) -> String {
@@ -368,12 +297,7 @@ fn q10a(d: &Data) -> String {
                 ).x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (name, title)| {
-        update(&mut m[0], name);
-        update(&mut m[1], title);
-    });
-    fmt2(m)
+    min_row(q)
 }
 
 fn q10b(d: &Data) -> String {
@@ -388,12 +312,7 @@ fn q10b(d: &Data) -> String {
                 ).x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (name, title)| {
-        update(&mut m[0], name);
-        update(&mut m[1], title);
-    });
-    fmt2(m)
+    min_row(q)
 }
 
 fn q10c(d: &Data) -> String {
@@ -407,10 +326,5 @@ fn q10c(d: &Data) -> String {
                 ).x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (name, title)| {
-        update(&mut m[0], name);
-        update(&mut m[1], title);
-    });
-    fmt2(m)
+    min_row(q)
 }

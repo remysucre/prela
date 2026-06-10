@@ -1,64 +1,15 @@
 // TPC-H data loader — reads the binary cache produced by Julia's TPCH.jl /
-// cache.jl. Same format as data.rs (JOB): bits-pair files for i64/f64/ID
-// columns (f64 reinterpreted from i64 bits), string-pair files for String
-// columns. Strings are mmap'd and leaked as &'static str.
+// cache.jl via the shared loaders in cache.rs. f64 columns are bits-pair
+// files (f64 reinterpreted from i64 bits); strings are mmap'd and leaked as
+// &'static str.
 
-#![allow(dead_code)]
-
-use memmap2::Mmap;
-use std::fs::File;
-use std::path::{Path, PathBuf};
-
+use crate::cache::{load_bits, load_strs, max_key};
 use crate::engine::{Universe, Vec1};
-
-fn cache_dir() -> PathBuf { PathBuf::from("../cache") }
-
-fn mmap_static(path: &Path) -> &'static [u8] {
-    let f = File::open(path).unwrap_or_else(|e| panic!("open {path:?}: {e}"));
-    let mmap = unsafe { Mmap::map(&f).unwrap() };
-    let leaked: &'static Mmap = Box::leak(Box::new(mmap));
-    &**leaked
-}
-
-fn load_bits(name: &str) -> &'static [[i64; 2]] {
-    let bytes = mmap_static(&cache_dir().join(format!("{name}.bin")));
-    let n = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
-    let ptr = unsafe { bytes.as_ptr().add(8) as *const [i64; 2] };
-    unsafe { std::slice::from_raw_parts(ptr, n) }
-}
-
-fn load_strs(name: &str) -> Vec<(i64, &'static str)> {
-    let bytes = mmap_static(&cache_dir().join(format!("{name}.bin")));
-    let n = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
-    let keys_off = 8;
-    let offsets_off = keys_off + n * 8;
-    let bytes_off = offsets_off + (n + 1) * 4;
-    let keys: &'static [i64] = unsafe {
-        std::slice::from_raw_parts(bytes.as_ptr().add(keys_off) as *const i64, n)
-    };
-    let offsets: &'static [u32] = unsafe {
-        std::slice::from_raw_parts(bytes.as_ptr().add(offsets_off) as *const u32, n + 1)
-    };
-    let data: &'static [u8] = &bytes[bytes_off..];
-    (0..n).map(|i| {
-        let lo = offsets[i] as usize;
-        let hi = offsets[i + 1] as usize;
-        let s: &'static str = unsafe { std::str::from_utf8_unchecked(&data[lo..hi]) };
-        (keys[i], s)
-    }).collect()
-}
-
-fn max_src_bits(p: &[[i64; 2]]) -> usize {
-    p.iter().map(|x| x[0]).max().unwrap_or(0) as usize
-}
-fn max_src_str(p: &[(i64, &str)]) -> usize {
-    p.iter().map(|x| x.0).max().unwrap_or(0) as usize
-}
 
 /// f64 fields are saved by Julia as Pair{ID, Float64} but reinterpreted as
 /// (i64, i64) at write time. Read back: same bytes, just bit-cast.
-#[inline] fn f64_from_bits_pair(p: &[i64; 2]) -> (i64, f64) {
-    (p[0], f64::from_bits(p[1] as u64))
+#[inline] fn f64_from_bits_pair(&(k, bits): &(i64, i64)) -> (i64, f64) {
+    (k, f64::from_bits(bits as u64))
 }
 
 /// "YYYY-MM-DD" → packed i64 YYYYMMDD (numeric compare preserves lexical
@@ -79,7 +30,9 @@ fn max_src_str(p: &[(i64, &str)]) -> usize {
 
 pub struct TpchData {
     // Universes
+    #[allow(dead_code)] // loaded for full-schema parity; no query reads it
     pub region:   Universe,
+    #[allow(dead_code)] // loaded for full-schema parity; no query reads it
     pub nation:   Universe,
     pub supplier: Universe,
     pub customer: Universe,
@@ -90,11 +43,13 @@ pub struct TpchData {
 
     // Region.{name, comment}
     pub re_name: Vec1<&'static str>,
+    #[allow(dead_code)] // loaded for full-schema parity; no query reads it
     pub re_comment: Vec1<&'static str>,
 
     // Nation.{name, region, comment}
     pub na_name: Vec1<&'static str>,
     pub na_region: Vec1<i64>,
+    #[allow(dead_code)] // loaded for full-schema parity; no query reads it
     pub na_comment: Vec1<&'static str>,
 
     // Supplier.{name, address, nation, phone, acctbal, comment}
@@ -121,7 +76,9 @@ pub struct TpchData {
     pub pa_type: Vec1<&'static str>,
     pub pa_size: Vec1<i64>,
     pub pa_container: Vec1<&'static str>,
+    #[allow(dead_code)] // loaded for full-schema parity; no query reads it
     pub pa_retailprice: Vec1<f64>,
+    #[allow(dead_code)] // loaded for full-schema parity; no query reads it
     pub pa_comment: Vec1<&'static str>,
 
     // PartSupp.{part, supplier, availqty, supplycost, comment}
@@ -129,6 +86,7 @@ pub struct TpchData {
     pub ps_supplier: Vec1<i64>,
     pub ps_availqty: Vec1<i64>,
     pub ps_supplycost: Vec1<f64>,
+    #[allow(dead_code)] // loaded for full-schema parity; no query reads it
     pub ps_comment: Vec1<&'static str>,
 
     // Order.{customer, status, totalprice, date, priority, clerk, shippriority, comment}
@@ -137,6 +95,7 @@ pub struct TpchData {
     pub ord_totalprice: Vec1<f64>,
     pub ord_date: Vec1<i64>,                      // YYYYMMDD
     pub ord_priority: Vec1<&'static str>,
+    #[allow(dead_code)] // loaded for full-schema parity; no query reads it
     pub ord_clerk: Vec1<&'static str>,
     pub ord_shippriority: Vec1<i64>,
     pub ord_comment: Vec1<&'static str>,
@@ -147,6 +106,7 @@ pub struct TpchData {
     pub li_order: Vec1<i64>,
     pub li_part: Vec1<i64>,
     pub li_supplier: Vec1<i64>,
+    #[allow(dead_code)] // loaded for full-schema parity; no query reads it
     pub li_number: Vec1<i64>,
     pub li_quantity: Vec1<f64>,
     pub li_extendedprice: Vec1<f64>,
@@ -159,6 +119,7 @@ pub struct TpchData {
     pub li_receiptdate: Vec1<i64>,                // YYYYMMDD
     pub li_shipinstruct: Vec1<&'static str>,
     pub li_shipmode: Vec1<&'static str>,
+    #[allow(dead_code)] // loaded for full-schema parity; no query reads it
     pub li_comment: Vec1<&'static str>,
 }
 
@@ -167,13 +128,13 @@ impl TpchData {
         // Region (str / str)
         let re_name_p = load_strs("Region_name");
         let re_comment_p = load_strs("Region_comment");
-        let n_region = max_src_str(&re_name_p);
+        let n_region = max_key(&re_name_p);
 
         // Nation (str / i64 FK / str)
         let na_name_p = load_strs("Nation_name");
         let na_region_p = load_bits("Nation_region");
         let na_comment_p = load_strs("Nation_comment");
-        let n_nation = max_src_str(&na_name_p);
+        let n_nation = max_key(&na_name_p);
 
         // Supplier
         let su_name_p = load_strs("Supplier_name");
@@ -182,7 +143,7 @@ impl TpchData {
         let su_phone_p = load_strs("Supplier_phone");
         let su_acctbal_p = load_bits("Supplier_acctbal");
         let su_comment_p = load_strs("Supplier_comment");
-        let n_supplier = max_src_str(&su_name_p);
+        let n_supplier = max_key(&su_name_p);
 
         // Customer
         let cu_name_p = load_strs("Customer_name");
@@ -192,7 +153,7 @@ impl TpchData {
         let cu_acctbal_p = load_bits("Customer_acctbal");
         let cu_mktsegment_p = load_strs("Customer_mktsegment");
         let cu_comment_p = load_strs("Customer_comment");
-        let n_customer = max_src_str(&cu_name_p);
+        let n_customer = max_key(&cu_name_p);
 
         // Part
         let pa_name_p = load_strs("Part_name");
@@ -203,7 +164,7 @@ impl TpchData {
         let pa_container_p = load_strs("Part_container");
         let pa_retailprice_p = load_bits("Part_retailprice");
         let pa_comment_p = load_strs("Part_comment");
-        let n_part = max_src_str(&pa_name_p);
+        let n_part = max_key(&pa_name_p);
 
         // PartSupp (composite-key, synthetic ID 1..N)
         let ps_part_p = load_bits("PartSupp_part");
@@ -211,7 +172,7 @@ impl TpchData {
         let ps_availqty_p = load_bits("PartSupp_availqty");
         let ps_supplycost_p = load_bits("PartSupp_supplycost");
         let ps_comment_p = load_strs("PartSupp_comment");
-        let n_partsupp = max_src_bits(ps_part_p);
+        let n_partsupp = max_key(&ps_part_p);
 
         // Orders (sparse keys — n is max orderkey, not row count)
         let ord_customer_p = load_bits("Order_customer");
@@ -222,7 +183,7 @@ impl TpchData {
         let ord_clerk_p = load_strs("Order_clerk");
         let ord_shippriority_p = load_bits("Order_shippriority");
         let ord_comment_p = load_strs("Order_comment");
-        let n_orders = max_src_bits(ord_customer_p);
+        let n_orders = max_key(&ord_customer_p);
 
         // Lineitem (composite-key, synthetic ID 1..N)
         let li_order_p = load_bits("Lineitem_order");
@@ -241,7 +202,7 @@ impl TpchData {
         let li_shipinstruct_p = load_strs("Lineitem_shipinstruct");
         let li_shipmode_p = load_strs("Lineitem_shipmode");
         let li_comment_p = load_strs("Lineitem_comment");
-        let n_lineitem = max_src_bits(li_order_p);
+        let n_lineitem = max_key(&li_order_p);
 
         TpchData {
             region:   Universe { n: n_region as i64 },
@@ -257,19 +218,19 @@ impl TpchData {
             re_comment: Vec1::from_pairs(n_region, re_comment_p.iter().copied()),
 
             na_name: Vec1::from_pairs(n_nation, na_name_p.iter().copied()),
-            na_region: Vec1::from_pairs(n_nation, na_region_p.iter().map(|p| (p[0], p[1]))),
+            na_region: Vec1::from_pairs(n_nation, na_region_p.iter().copied()),
             na_comment: Vec1::from_pairs(n_nation, na_comment_p.iter().copied()),
 
             su_name: Vec1::from_pairs(n_supplier, su_name_p.iter().copied()),
             su_address: Vec1::from_pairs(n_supplier, su_address_p.iter().copied()),
-            su_nation: Vec1::from_pairs(n_supplier, su_nation_p.iter().map(|p| (p[0], p[1]))),
+            su_nation: Vec1::from_pairs(n_supplier, su_nation_p.iter().copied()),
             su_phone: Vec1::from_pairs(n_supplier, su_phone_p.iter().copied()),
             su_acctbal: Vec1::from_pairs(n_supplier, su_acctbal_p.iter().map(f64_from_bits_pair)),
             su_comment: Vec1::from_pairs(n_supplier, su_comment_p.iter().copied()),
 
             cu_name: Vec1::from_pairs(n_customer, cu_name_p.iter().copied()),
             cu_address: Vec1::from_pairs(n_customer, cu_address_p.iter().copied()),
-            cu_nation: Vec1::from_pairs(n_customer, cu_nation_p.iter().map(|p| (p[0], p[1]))),
+            cu_nation: Vec1::from_pairs(n_customer, cu_nation_p.iter().copied()),
             cu_phone: Vec1::from_pairs(n_customer, cu_phone_p.iter().copied()),
             cu_acctbal: Vec1::from_pairs(n_customer, cu_acctbal_p.iter().map(f64_from_bits_pair)),
             cu_mktsegment: Vec1::from_pairs(n_customer, cu_mktsegment_p.iter().copied()),
@@ -279,30 +240,30 @@ impl TpchData {
             pa_mfgr: Vec1::from_pairs(n_part, pa_mfgr_p.iter().copied()),
             pa_brand: Vec1::from_pairs(n_part, pa_brand_p.iter().copied()),
             pa_type: Vec1::from_pairs(n_part, pa_type_p.iter().copied()),
-            pa_size: Vec1::from_pairs(n_part, pa_size_p.iter().map(|p| (p[0], p[1]))),
+            pa_size: Vec1::from_pairs(n_part, pa_size_p.iter().copied()),
             pa_container: Vec1::from_pairs(n_part, pa_container_p.iter().copied()),
             pa_retailprice: Vec1::from_pairs(n_part, pa_retailprice_p.iter().map(f64_from_bits_pair)),
             pa_comment: Vec1::from_pairs(n_part, pa_comment_p.iter().copied()),
 
-            ps_part: Vec1::from_pairs(n_partsupp, ps_part_p.iter().map(|p| (p[0], p[1]))),
-            ps_supplier: Vec1::from_pairs(n_partsupp, ps_supplier_p.iter().map(|p| (p[0], p[1]))),
-            ps_availqty: Vec1::from_pairs(n_partsupp, ps_availqty_p.iter().map(|p| (p[0], p[1]))),
+            ps_part: Vec1::from_pairs(n_partsupp, ps_part_p.iter().copied()),
+            ps_supplier: Vec1::from_pairs(n_partsupp, ps_supplier_p.iter().copied()),
+            ps_availqty: Vec1::from_pairs(n_partsupp, ps_availqty_p.iter().copied()),
             ps_supplycost: Vec1::from_pairs(n_partsupp, ps_supplycost_p.iter().map(f64_from_bits_pair)),
             ps_comment: Vec1::from_pairs(n_partsupp, ps_comment_p.iter().copied()),
 
-            ord_customer: Vec1::from_pairs(n_orders, ord_customer_p.iter().map(|p| (p[0], p[1]))),
+            ord_customer: Vec1::from_pairs(n_orders, ord_customer_p.iter().copied()),
             ord_status: Vec1::from_pairs(n_orders, ord_status_p.iter().copied()),
             ord_totalprice: Vec1::from_pairs(n_orders, ord_totalprice_p.iter().map(f64_from_bits_pair)),
             ord_date: Vec1::from_pairs(n_orders, ord_date_p.iter().map(|(k, s)| (*k, parse_yyyymmdd(s)))),
             ord_priority: Vec1::from_pairs(n_orders, ord_priority_p.iter().copied()),
             ord_clerk: Vec1::from_pairs(n_orders, ord_clerk_p.iter().copied()),
-            ord_shippriority: Vec1::from_pairs(n_orders, ord_shippriority_p.iter().map(|p| (p[0], p[1]))),
+            ord_shippriority: Vec1::from_pairs(n_orders, ord_shippriority_p.iter().copied()),
             ord_comment: Vec1::from_pairs(n_orders, ord_comment_p.iter().copied()),
 
-            li_order: Vec1::from_pairs(n_lineitem, li_order_p.iter().map(|p| (p[0], p[1]))),
-            li_part: Vec1::from_pairs(n_lineitem, li_part_p.iter().map(|p| (p[0], p[1]))),
-            li_supplier: Vec1::from_pairs(n_lineitem, li_supplier_p.iter().map(|p| (p[0], p[1]))),
-            li_number: Vec1::from_pairs(n_lineitem, li_number_p.iter().map(|p| (p[0], p[1]))),
+            li_order: Vec1::from_pairs(n_lineitem, li_order_p.iter().copied()),
+            li_part: Vec1::from_pairs(n_lineitem, li_part_p.iter().copied()),
+            li_supplier: Vec1::from_pairs(n_lineitem, li_supplier_p.iter().copied()),
+            li_number: Vec1::from_pairs(n_lineitem, li_number_p.iter().copied()),
             li_quantity: Vec1::from_pairs(n_lineitem, li_quantity_p.iter().map(f64_from_bits_pair)),
             li_extendedprice: Vec1::from_pairs(n_lineitem, li_extendedprice_p.iter().map(f64_from_bits_pair)),
             li_discount: Vec1::from_pairs(n_lineitem, li_discount_p.iter().map(f64_from_bits_pair)),

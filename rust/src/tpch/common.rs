@@ -1,99 +1,51 @@
-// TPC-H queries — Rust port of julia/tpch_queries.jl.
+// Baseline TPC-H implementations — direct algebraic ports of
+// julia/tpch_queries.jl — plus the oracles and the registry machinery
+// shared by all variants.
 //
-// These are mostly written imperatively (raw loops over the loaded Vec1
-// columns) rather than via the Prela algebra — the "duckdb-cheat" variant
-// exists to bound what hand-rolled SQL-shaped code can do, so it skips the
-// algebra on purpose.
-//
-// Oracle strings live under `/tmp/tpch_oracles/Q*.txt` for the long ones;
-// short ones are inlined.
+// Short oracle strings are inlined as consts; long ones live in the repo at
+// ../oracles/tpch/Q*.txt and are loaded once by `oracle()`.
 
-#![allow(dead_code)]
 #![allow(clippy::too_many_lines)]
 
-use ahash::AHashMap as HashMap;
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use crate::engine::*;
 use crate::tpch_data::{TpchData, fmt_yyyymmdd};
 
+pub type QFn = fn(&TpchData) -> String;
+pub type Entry = crate::Entry<TpchData>;
+
 // ---------- formatting ----------
 
-fn f(x: f64) -> String { format!("{x:.2}") }
-#[inline] fn split_once_contains(s: &str, a: &str, b: &str) -> bool {
-    s.split_once(a).map_or(false, |(_, rest)| rest.contains(b))
-}
+pub fn f(x: f64) -> String { format!("{x:.2}") }
 
-fn join_lines(rows: impl IntoIterator<Item = String>) -> String {
+pub fn join_lines(rows: impl IntoIterator<Item = String>) -> String {
     rows.into_iter().collect::<Vec<_>>().join("\n")
-}
-
-// ---------- packed bitset (Q22 customers-with-orders) ----------
-
-struct BitsetSet { bs: Vec<u64>, n: i64 }
-
-impl BitsetSet {
-    fn from_drive<Q: Drive<R = i64>>(n: i64, q: &Q) -> Self {
-        let words = (n as usize / 64) + 1;
-        let mut bs = vec![0u64; words];
-        q.drive(|_, c| {
-            let c = c as usize;
-            if c >= 1 && c <= n as usize { bs[c / 64] |= 1u64 << (c % 64); }
-        });
-        BitsetSet { bs, n }
-    }
-    fn empty(n: i64) -> Self {
-        BitsetSet { bs: vec![0u64; (n as usize / 64) + 1], n }
-    }
-    #[inline] fn set(&mut self, x: i64) {
-        let c = x as usize;
-        if c >= 1 && c <= self.n as usize { self.bs[c / 64] |= 1u64 << (c % 64); }
-    }
-}
-
-impl KeySet for BitsetSet { type D = i64; }
-impl DriveKeys for BitsetSet {
-    #[inline]
-    fn drivekeys<K: FnMut(i64)>(&self, mut k: K) {
-        for c in 1..=self.n {
-            let cu = c as usize;
-            if (self.bs[cu / 64] >> (cu % 64)) & 1 == 1 { k(c); }
-        }
-    }
-}
-impl Member for BitsetSet {
-    #[inline]
-    fn member(&self, x: i64) -> bool {
-        let c = x as usize;
-        c >= 1 && c <= self.n as usize
-            && (self.bs[c / 64] >> (c % 64)) & 1 == 1
-    }
 }
 
 // ---------- oracle loading ----------
 
-fn oracle(name: &str) -> &'static str {
+fn oracle(name: &'static str) -> &'static str {
+    const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../oracles/tpch");
     static CACHE: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     let map = CACHE.get_or_init(|| {
         let mut m: HashMap<&'static str, &'static str> = HashMap::new();
         for n in ["Q2", "Q7", "Q8", "Q9", "Q11", "Q13", "Q15", "Q16", "Q17", "Q18", "Q19", "Q20", "Q21", "Q22"] {
-            let path = format!("/tmp/tpch_oracles/{n}.txt");
-            if let Ok(s) = std::fs::read_to_string(&path) {
-                let leaked: &'static str = Box::leak(s.into_boxed_str());
-                m.insert(Box::leak(n.to_string().into_boxed_str()), leaked);
-            }
+            let path = format!("{DIR}/{n}.txt");
+            let s = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("read oracle {path}: {e}"));
+            m.insert(n, &*s.leak());
         }
         // Q9 cent-drift: the algebraic version's sum order matches Julia
         // (drifts on both EGYPT 1996 and MOROCCO 1997). Patch both rows.
-        if let Some(raw) = m.get("Q9") {
-            let fixed = raw
-                .replace("EGYPT|1996|47745727.55", "EGYPT|1996|47745727.54")
-                .replace("MOROCCO|1997|42698382.85", "MOROCCO|1997|42698382.86");
-            m.insert("Q9", Box::leak(fixed.into_boxed_str()));
-        }
+        let fixed = m["Q9"]
+            .replace("EGYPT|1996|47745727.55", "EGYPT|1996|47745727.54")
+            .replace("MOROCCO|1997|42698382.85", "MOROCCO|1997|42698382.86");
+        m.insert("Q9", &*fixed.leak());
         m
     });
-    map.get(name).copied().unwrap_or("")
+    map[name]
 }
 
 // ---------- Q1 — pricing summary report ----------
@@ -104,48 +56,27 @@ const Q1: &str = "A|F|37734107.00|56586554400.73|53758257134.87|55909065222.83|2
                   R|F|37719753.00|56568041380.90|53741292684.60|55889619119.83|25.51|38250.85|0.05|1478870";
 
 fn q1(d: &TpchData) -> String {
-    // ddbcheat (CP1.3 Small Group-By Keys): the group key (returnflag,
-    // linestatus) has ≤ 6 distinct values across the entire dataset. Skip
-    // the HashMap-keyed fold entirely and aggregate into a fixed-size
-    // array, indexed by packing the two single-byte fields:
-    //   idx = ((rf - b'A') << 4) | (ls - b'F')
-    // Range upper-bound: rf ∈ {A=0, N=13, R=17}, ls ∈ {F=0, O=9} → max 281.
-    // A [Acc; 288] table is sparse but the 4 hot indices stay cache-warm.
-    type Acc = (f64, f64, f64, f64, f64, i64);
-    let mut acc: [Acc; 288] = [(0.0, 0.0, 0.0, 0.0, 0.0, 0_i64); 288];
-    let mut seen: [bool; 288] = [false; 288];
-
-    for li in 1..=d.lineitem.n as usize {
-        if d.li_shipdate.values[li] > 19980902 { continue; }
-        let rf = d.li_returnflag.values[li].as_bytes()[0];
-        let ls = d.li_status.values[li].as_bytes()[0];
-        let idx = ((rf.wrapping_sub(b'A')) as usize) << 4
-                | ((ls.wrapping_sub(b'F')) as usize);
-        let q  = d.li_quantity.values[li];
-        let e  = d.li_extendedprice.values[li];
-        let dc = d.li_discount.values[li];
-        let tx = d.li_tax.values[li];
-        let dp  = e * (1.0 - dc);
-        let chg = dp * (1.0 + tx);
-        let a = &mut acc[idx];
-        a.0 += q; a.1 += e; a.2 += dc; a.3 += dp; a.4 += chg; a.5 += 1;
-        seen[idx] = true;
-    }
-
-    let mut rows: Vec<((u8, u8), Acc)> = Vec::new();
-    for idx in 0..288 {
-        if !seen[idx] { continue; }
-        let rf = (idx >> 4) as u8 + b'A';
-        let ls = (idx & 0xF) as u8 + b'F';
-        rows.push(((rf, ls), acc[idx]));
-    }
+    // Julia: ((returnflag ⊗ Li.status) ← (lineitem → shipdate <= "..." : qty ⊗ ext ⊗ disc ⊗ tax))
+    //        ▷ (cmb, ...) ↦ out
+    let live = d.lineitem.and((&d.li_shipdate).le(19980902).k());
+    let scan = live.o(
+        (&d.li_quantity).x(&d.li_extendedprice).x(&d.li_discount).x(&d.li_tax)
+    );
+    let group_key = (&d.li_returnflag).x(&d.li_status);
+    let grouped = group_key.lc(scan)
+        .fold((0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0_i64),
+              |(qty, ext, di, dp, chg, n), (((q, e), dc), tx)| {
+                  let dp_inc = e * (1.0 - dc);
+                  let chg_inc = dp_inc * (1.0 + tx);
+                  (qty + q, ext + e, di + dc, dp + dp_inc, chg + chg_inc, n + 1)
+              });
+    let mut rows: Vec<((&str, &str), (f64, f64, f64, f64, f64, i64))> = Vec::new();
+    grouped.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|a, b| a.0.cmp(&b.0));
     join_lines(rows.iter().map(|(k, (qty, ext, di, dp, chg, n))| {
         let nf = *n as f64;
-        let rf = std::str::from_utf8(std::slice::from_ref(&k.0)).unwrap();
-        let ls = std::str::from_utf8(std::slice::from_ref(&k.1)).unwrap();
         format!("{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-                rf, ls, f(*qty), f(*ext), f(*dp), f(*chg),
+                k.0, k.1, f(*qty), f(*ext), f(*dp), f(*chg),
                 f(qty / nf), f(ext / nf), f(di / nf), n)
     }))
 }
@@ -254,20 +185,16 @@ const Q4: &str = "1-URGENT|10594\n\
                   5-LOW|10487";
 
 fn q4(d: &TpchData) -> String {
-    // ddbcheat: instead of `lconj` building a HashSet from ~14M late-lineitem
-    // orderkeys then intersecting with ~750K date-filtered orders, build a
-    // packed bitset of "has-late-lineitem" indexed by orderkey in one scan.
-    // The Conj-and short-circuits against the date predicate first; only
-    // ~750K orderkeys hit the bit test.
-    let mut is_late = BitsetSet::empty(d.orders.n);
-    for li in 1..=d.lineitem.n as usize {
-        if d.li_commitdate.values[li] < d.li_receiptdate.values[li] {
-            is_late.set(d.li_order.values[li]);
-        }
-    }
-    let live = d.orders
-        .and((&d.ord_date).during(19930701, 19931001).k())
-        .and(is_late);
+    // Julia: let live = (lineitem ∧ (commitdate < receiptdate) → Li.order) ⩘
+    //                  (orders ∧ (date in during("1993-07-01", "1993-10-01")))
+    //        (live → Ord.priority)' ▷ ((a, _) -> a + 1, 0)
+    let bad_li_order = d.lineitem
+        .and((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k())
+        .o(&d.li_order);
+    let live_orders = d.orders.and(
+        (&d.ord_date).during(19930701, 19931001).k()
+    );
+    let live = bad_li_order.lconj(live_orders);
     let counts = live.o(&d.ord_priority).inv().fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(&str, i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
@@ -328,22 +255,10 @@ fn q7(d: &TpchData) -> String {
 // ---------- Q8 — market share for BRAZIL ----------
 
 fn q8(d: &TpchData) -> String {
-    // ddbcheat: hoist the 4-hop `li_order → ord_customer → cu_nation →
-    // na_region → re_name == "AMERICA"` chain into a Vec<bool> over the
-    // dense order domain. One bool index per lineitem instead of 4 array
-    // reads + a string compare.
-    let n_ord = d.orders.n as usize + 1;
-    let mut ord_is_america: Vec<bool> = vec![false; n_ord];
-    for o in 1..n_ord {
-        let cust = d.ord_customer.values[o];
-        if cust == 0 { continue; }
-        let nation = d.cu_nation.values[cust as usize];
-        let region = d.na_region.values[nation as usize];
-        ord_is_america[o] = d.re_name.values[region as usize] == "AMERICA";
-    }
     let live = (&d.lineitem)
         .and((&d.li_part).o(&d.pa_type).eq("ECONOMY ANODIZED STEEL").k())
-        .and((&d.li_order).filt(move |o: i64| ord_is_america[o as usize]).k())
+        .and((&d.li_order).o((&d.ord_customer).o((&d.cu_nation).o((&d.na_region).o(&d.re_name))))
+             .eq("AMERICA").k())
         .and((&d.li_order).o(&d.ord_date).between(19950101, 19961231).k());
     let year = (&live).o((&d.li_order).o(&d.ord_date)).map(|d: i64| d / 10000);
     let snat_name = (&live).o((&d.li_supplier).o((&d.su_nation).o(&d.na_name)));
@@ -362,22 +277,13 @@ fn q8(d: &TpchData) -> String {
 // ---------- Q9 — product type profit measure ----------
 
 fn q9(d: &TpchData) -> String {
-    // ddbcheat (CP4.3): DuckDB's plan filters `part WHERE contains(p_name,
-    // 'green')` to ~4K parts before touching lineitem. Our algebra calls
-    // `str::contains("green")` once per lineitem (60M × TwoWaySearcher
-    // ≈ 7s, the dominant cost in Q9). Materialize the predicate per part_id
-    // as a dense Vec<bool> — one array index per row instead.
-    let n_part = d.part.n as usize + 1;
-    let mut pa_is_green = vec![false; n_part];
-    for i in 1..n_part {
-        pa_is_green[i] = d.pa_name.values[i].contains("green");
-    }
+    // 2-key index: (part, supp) → supplycost via Prod-Inv → Compose → mat.
     let sc = (&d.ps_part).x(&d.ps_supplier).inv().o(&d.ps_supplycost).mat_idx();
     let live = (&d.lineitem)
-        .and((&d.li_part).filt(move |p: i64| pa_is_green[p as usize]).k());
-    let nation_id = (&live).o((&d.li_supplier).o(&d.su_nation));
-    let year      = (&live).o((&d.li_order).o(&d.ord_date)).map(|d: i64| d / 10000);
-    let groups = nation_id.x(year);
+        .and((&d.li_part).o(&d.pa_name).filt(|n: &str| n.contains("green")).k());
+    let sname = (&live).o((&d.li_supplier).o((&d.su_nation).o(&d.na_name)));
+    let year  = (&live).o((&d.li_order).o(&d.ord_date)).map(|d: i64| d / 10000);
+    let groups = sname.x(year);
     let cost_per_li = (&d.li_part).x(&d.li_supplier).o(&sc);
     let scan = (&live).o(
         (&d.li_extendedprice).x(&d.li_discount).x(&d.li_quantity).x(cost_per_li)
@@ -385,16 +291,10 @@ fn q9(d: &TpchData) -> String {
     let result = groups.lc(scan).fold(0.0_f64, |a, (((e, dc), q), cost)| {
         a + e * (1.0 - dc) - cost * q
     });
-    let mut rows: Vec<((i64, i64), f64)> = Vec::new();
+    let mut rows: Vec<((&str, i64), f64)> = Vec::new();
     result.drive(|k, v| rows.push((k, v)));
-    rows.sort_by(|a, b| {
-        let na = d.na_name.values[a.0.0 as usize];
-        let nb = d.na_name.values[b.0.0 as usize];
-        na.cmp(nb).then_with(|| b.0.1.cmp(&a.0.1))
-    });
-    join_lines(rows.iter().map(|(k, v)| {
-        format!("{}|{}|{}", d.na_name.values[k.0 as usize], k.1, f(*v))
-    }))
+    rows.sort_by(|a, b| a.0.0.cmp(b.0.0).then_with(|| b.0.1.cmp(&a.0.1)));
+    join_lines(rows.iter().map(|(k, v)| format!("{}|{}|{}", k.0, k.1, f(*v))))
 }
 
 // ---------- Q10 — returned-item reporting ----------
@@ -450,19 +350,11 @@ const Q12: &str = "MAIL|6202|9324\n\
                    SHIP|6200|9262";
 
 fn q12(d: &TpchData) -> String {
-    // ddbcheat (CP4.2d Evaluation Order in Conjunctions): predicates reordered
-    // by selectivity. Conj/`.and` chains evaluate via &&-short-circuiting
-    // member checks, so the leftmost filter sees every row. The 1-year date
-    // range (~14%) is by far the most selective; do it first.
-    //   receiptdate ∈ [1994,1995): ~14%   (most selective)
-    //   shipmode IN (MAIL, SHIP):  ~29%
-    //   shipdate < commitdate:     ~49%
-    //   commit < receipt:          ~62%   (barely filters)
     let live = (&d.lineitem)
-        .and((&d.li_receiptdate).during(19940101, 19950101).k())
         .and((&d.li_shipmode).in_v(vec!["MAIL", "SHIP"]).k())
+        .and((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k())
         .and((&d.li_shipdate).x(&d.li_commitdate).filt(|(s, c)| s < c).k())
-        .and((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k());
+        .and((&d.li_receiptdate).during(19940101, 19950101).k());
     let scan = (&live).o(&d.li_shipmode);
     let prio = (&live).o((&d.li_order).o(&d.ord_priority));
     let result = scan.lc(prio).fold((0_i64, 0_i64), |(h, l), pr| {
@@ -478,31 +370,19 @@ fn q12(d: &TpchData) -> String {
 // ---------- Q13 — customer distribution (LEFT JOIN) ----------
 
 fn q13(d: &TpchData) -> String {
-    // ddbcheat: regex `special.*requests` runs ~100ns/call via DFA, ×15M
-    // orders = the bulk of Q13. Use memchr's Finder (built once, ~5–10ns/call
-    // via NEON SIMD) plus a precomputed BitsetSet over qualifying orders so
-    // the hot path is a single bit test, not a regex evaluation.
-    use memchr::memmem;
-    let f_special  = memmem::Finder::new("special");
-    let f_requests = memmem::Finder::new("requests");
-    const SPECIAL_LEN: usize = 7;
-    let mut not_special = BitsetSet::empty(d.orders.n);
-    for o in 1..=d.orders.n as usize {
-        if d.ord_customer.values[o] == 0 { continue; }   // skip sparse gaps
-        let bytes = d.ord_comment.values[o].as_bytes();
-        let has_pattern = if let Some(pos) = f_special.find(bytes) {
-            f_requests.find(&bytes[pos + SPECIAL_LEN..]).is_some()
-        } else { false };
-        if !has_pattern { not_special.set(o as i64); }
-    }
-
-    let live_orders = (&d.orders).and(not_special);
+    // Julia algebraic part: count_per_cust = ((live_orders → Ord.customer) ←
+    //                                          (live_orders → date)) ▷ ((a, _) -> a + 1, 0)
+    // Then a Julia escape for the LEFT-JOIN zero-default (customer.n - n_with).
+    let live_orders = (&d.orders)
+        .and((&d.ord_customer).ne(0).k())   // skip sparse orderkey gaps
+        .and((&d.ord_comment).nrx("special.*requests").k());
     let count_per_cust = (&live_orders).o(&d.ord_customer)
         .lc((&live_orders).o(&d.ord_date))
         .fold(0_i64, |a, _| a + 1);
     let mut dist: HashMap<i64, i64> = HashMap::new();
     let mut n_with = 0i64;
     count_per_cust.drive(|_, c| { *dist.entry(c).or_insert(0) += 1; n_with += 1; });
+    // LEFT JOIN zero-default: customers with no qualifying orders contribute to c_count=0.
     dist.insert(0, d.customer.n - n_with);
     let mut rows: Vec<_> = dist.iter().collect();
     rows.sort_by(|a, b| b.1.cmp(a.1).then_with(|| b.0.cmp(a.0)));
@@ -554,22 +434,15 @@ fn q16(d: &TpchData) -> String {
 // ---------- Q17 — small-quantity order revenue ----------
 
 fn q17(d: &TpchData) -> String {
-    // Semi-join reduction (Boncz CP5.2 / Dreseler §4.8): the threshold
-    // avg(quantity) only matters for the ~200 parts that pass the
-    // brand+container filter, not all ~200K parts. Identify the qualifying
-    // parts up front, restrict the lineitem scan that feeds the avg fold
-    // to those parts, then the avg is computed over a tiny slice.
-    let qual_part_set = (&d.part)
-        .and((&d.pa_brand).eq("Brand#23").k())
-        .and((&d.pa_container).eq("MED BOX").k())
-        .mat_set();
-    let live_li = (&d.li_part).in_s(&qual_part_set).k();
-    let threshold_per_part = (&live_li).o(&d.li_part).lc(&d.li_quantity)
+    // Per-part (sum_q, count) → 0.2 * avg in one fused fold.
+    let threshold_per_part = (&d.li_part).lc(&d.li_quantity)
         .fold((0.0_f64, 0_i64), |(s, n), q| (s + q, n + 1))
         .map(|(s, n)| 0.2 * s / n as f64);
+    // Materialize so the cross-col compare doesn't re-fold per row.
     let tpp = threshold_per_part.mat_idx();
-    let live = d.lineitem
-        .and(&live_li)
+    let live = (&d.lineitem)
+        .and((&d.li_part).o(&d.pa_brand).eq("Brand#23").k())
+        .and((&d.li_part).o(&d.pa_container).eq("MED BOX").k())
         .and((&d.li_quantity).x((&d.li_part).o(&tpp))
              .filt(|(q, t)| q < t).k());
     let sum = live.o(&d.li_extendedprice)
@@ -580,21 +453,10 @@ fn q17(d: &TpchData) -> String {
 // ---------- Q18 — large volume customer ----------
 
 fn q18(d: &TpchData) -> String {
-    // ddbcheat: replace `HashMap<order, f64>` fold with a dense `Vec<f32>`
-    // indexed by orderkey. n_orders ≈ 60M → 240MB; sums are ≤ ~350 per
-    // order (≤7 lineitems × ≤50 qty each) so f32's 7-digit precision is
-    // ample. Skips 60M HashMap upserts.
-    let n_ord = d.orders.n as usize + 1;
-    let mut sum_qty: Vec<f32> = vec![0.0; n_ord];
-    for li in 1..=d.lineitem.n as usize {
-        let o = d.li_order.values[li] as usize;
-        sum_qty[o] += d.li_quantity.values[li] as f32;
-    }
+    let sum_qty = (&d.li_order).lc(&d.li_quantity).fold(0.0_f64, |a, q| a + q);
+    let big = sum_qty.gt(300.0);
     let mut rows: Vec<(i64, f64)> = Vec::new();
-    for o in 1..n_ord {
-        let s = sum_qty[o];
-        if s > 300.0 { rows.push((o as i64, s as f64)); }
-    }
+    big.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|a, b| {
         let oa = a.0 as usize; let ob = b.0 as usize;
         d.ord_totalprice.values[ob].partial_cmp(&d.ord_totalprice.values[oa]).unwrap()
@@ -639,44 +501,16 @@ fn q19(d: &TpchData) -> String {
 // ---------- Q20 — potential part promotion ----------
 
 fn q20(d: &TpchData) -> String {
-    // ddbcheat: dbgen lays out PartSupp consecutively, 4 PS rows per part:
-    // ps_id for part p is one of (p-1)*4 + {1,2,3,4}. So we can resolve
-    // (part, supp) → ps_id with a 4-element linear probe — no HashMap, no
-    // allocation per lookup. Verified at SF=10 against the cache layout.
-    //
-    // Pre-filter optimization: sum_qty is only consulted for ps_ids whose
-    // part passes the "forest" name filter (~5% of parts). Precompute the
-    // forest predicate per part as a dense Vec<bool> and skip non-forest
-    // lineitems in the drive — drops ~95% of the layout-probe work.
-    let n_part = d.part.n as usize + 1;
-    let mut pa_is_forest = vec![false; n_part];
-    for i in 1..n_part {
-        pa_is_forest[i] = d.pa_name.values[i].starts_with("forest");
-    }
-    let n_ps = d.partsupp.n as usize + 1;
-    // NaN sentinel: ps_ids that never see a live forest lineitem stay NaN, so
-    // the subsequent `availqty > threshold` test returns false for them
-    // (matches the original Compose-probe-miss semantics).
-    let mut sum_qty: Vec<f64> = vec![f64::NAN; n_ps];
+    // Julia: sum_qty = ((live_li : (Li.part ⊗ Li.supplier)) ← (live_li : quantity)) ▷ (+, 0.0)
+    //        threshold = ((PS.part ⊗ PS.supplier) → sum_qty) ↦ (s -> 0.5 * s)
+    //        qual_ps = partsupp ∧ (PS.part → name ~ "^forest") ∧ (availqty > threshold)
+    //        target = (qual_ps → PS.supplier) ⩘ (supplier ∧ (Su.nation → Na.name == "CANADA"))
+    //        target : (Su.name ⊗ Su.address)
     let live_li = d.lineitem.and((&d.li_shipdate).during(19940101, 19950101).k());
-    live_li.drivekeys(|li| {
-        let li = li as usize;
-        let part = d.li_part.values[li];
-        if !pa_is_forest[part as usize] { return; }
-        let supp = d.li_supplier.values[li];
-        let base = (part - 1) * 4;
-        for k in 1..=4i64 {
-            let psi = (base + k) as usize;
-            if d.ps_supplier.values[psi] == supp {
-                let s = &mut sum_qty[psi];
-                *s = if s.is_nan() { d.li_quantity.values[li] }
-                     else { *s + d.li_quantity.values[li] };
-                break;
-            }
-        }
-    });
-    let sum_qty_v = Vec1 { values: sum_qty };
-    let threshold = (&sum_qty_v).map(|s| 0.5 * s);
+    let sum_qty = (&live_li).o((&d.li_part).x(&d.li_supplier))
+        .lc((&live_li).o(&d.li_quantity))
+        .fold(0.0_f64, |a, q| a + q);
+    let threshold = (&d.ps_part).x(&d.ps_supplier).o(&sum_qty).map(|s| 0.5 * s);
     let qual_ps = (&d.partsupp)
         .and((&d.ps_part).o(&d.pa_name).filt(|n: &str| n.starts_with("forest")).k())
         .and((&d.ps_availqty).map(|q| q as f64).x(threshold).filt(|(a, t)| a > t).k());
@@ -693,60 +527,27 @@ fn q20(d: &TpchData) -> String {
 // ---------- Q21 — suppliers who kept orders waiting ----------
 
 fn q21(d: &TpchData) -> String {
-    // ddbcheat: replace the two LeftCompose lazy-HashMap builds
-    // (ord_to_supp + late_ord_to_supp, ~100M inserts of SVec<supp>) with
-    // dense per-order summary state computed in a single pass:
-    //   first_supp[o] / multi[o]            — for the EXISTS-other-supp test
-    //   late_first[o] / late_multi[o]       — for the NOT-EXISTS-other-late-supp test
-    // The bounded 2-state-per-order representation is sufficient: we only need
-    // "≥ 2 distinct suppliers" and "exactly one distinct late supp, and it's
-    // mine", neither of which requires enumerating the full set.
-    let n_ord  = d.orders.n   as usize + 1;
-    let n_supp = d.supplier.n as usize + 1;
-    let mut first_supp: Vec<i64>  = vec![0;     n_ord];
-    let mut multi:      Vec<bool> = vec![false; n_ord];
-    let mut late_first: Vec<i64>  = vec![0;     n_ord];
-    let mut late_multi: Vec<bool> = vec![false; n_ord];
-    for li in 1..=d.lineitem.n as usize {
-        let ord = d.li_order.values[li] as usize;
-        let sup = d.li_supplier.values[li];
-        if !multi[ord] {
-            let prev = first_supp[ord];
-            if prev == 0      { first_supp[ord] = sup; }
-            else if prev != sup { multi[ord] = true; }
-        }
-        let is_late = d.li_commitdate.values[li] < d.li_receiptdate.values[li];
-        if is_late && !late_multi[ord] {
-            let prev = late_first[ord];
-            if prev == 0      { late_first[ord] = sup; }
-            else if prev != sup { late_multi[ord] = true; }
-        }
-    }
-
-    // Cheap membership checks via dense Vec<bool>, same trick as Q9's
-    // pa_is_green: one byte per supplier / order instead of multi-hop probe
-    // chains in the per-row qualifying loop.
-    let mut is_saudi: Vec<bool> = vec![false; n_supp];
-    for s in 1..n_supp {
-        let nation_id = d.su_nation.values[s] as usize;
-        is_saudi[s] = d.na_name.values[nation_id] == "SAUDI ARABIA";
-    }
-    let mut is_f_ord: Vec<bool> = vec![false; n_ord];
-    for o in 1..n_ord {
-        is_f_ord[o] = d.ord_status.values[o] == "F";
-    }
-
-    let qualifying = d.lineitem
-        // Order: late filter (cross-col) → Saudi (1 byte) → F-order (1 byte)
-        // → multi (1 byte) → only-late (2 reads). Cheap-and-selective first.
-        .and((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k())
-        .and((&d.li_supplier).filt(move |s: i64| is_saudi[s as usize]).k())
-        .and((&d.li_order).filt(move |o: i64| is_f_ord[o as usize]).k())
-        .and((&d.li_order).filt(move |o: i64| multi[o as usize]).k())
-        .and((&d.li_order).x(&d.li_supplier).filt(move |(o, s)| {
-            let o = o as usize;
-            !late_multi[o] && late_first[o] == s
-        }).k());
+    // Julia:
+    //   late = lineitem ∧ (receiptdate > commitdate)
+    //   n_distinct = vs -> length(unique(vs))
+    //   multi_supp = askeys((order ← Li.supplier) ▷ n_distinct > 1)
+    //   only_late  = askeys(((late : order) ← (late : Li.supplier)) ▷ n_distinct == 1)
+    //   qualifying = late ∧ (Li.supplier → saudi) ∧ (order → f_ords ∧ multi_supp ∧ only_late)
+    //   (Li.supplier ← qualifying) ▷ ((a, _) -> a + 1, 0) ⊗ Su.name
+    let late = d.lineitem.and(
+        (&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k()
+    );
+    let multi_supp = (&d.li_order).lc(&d.li_supplier).count_distinct().gt(1).k();
+    let only_late = (&late).o(&d.li_order)
+        .lc((&late).o(&d.li_supplier))
+        .count_distinct().eq(1).k();
+    let saudi = (&d.supplier).and(
+        (&d.su_nation).o(&d.na_name).eq("SAUDI ARABIA").k()
+    );
+    let f_ords = (&d.orders).and((&d.ord_status).eq("F").k());
+    let qualifying = (&late)
+        .and((&d.li_supplier).in_s(saudi).k())
+        .and((&d.li_order).in_s(f_ords.and(multi_supp).and(only_late)).k());
     let counts = (&d.li_supplier).lcs(qualifying).fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(i64, i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
@@ -773,10 +574,7 @@ fn q22(d: &TpchData) -> String {
     let (sum_p, cnt_p) = pos.o(&d.cu_acctbal)
         .unwrap_fold((0.0_f64, 0_i64), |(s, n), v| (s + v, n + 1));
     let avg = sum_p / cnt_p as f64;
-    // Packed bitset over the dense customer universe — replaces the
-    // Inv → Keys → MatSet chain (which builds a HashMap<i64, SVec<i64>>
-    // of 60M order_customer pairs just to grab the unique keys).
-    let custs_with_orders = BitsetSet::from_drive(d.customer.n, &d.ord_customer);
+    let custs_with_orders = (&d.ord_customer).inv().k().mat_set();
     let target = (&prefix_ok).and((&d.cu_acctbal).gt(avg).k())
         .minus(custs_with_orders);
     let counts = (&prefix).lcs(target)
@@ -803,22 +601,14 @@ fn q2(d: &TpchData) -> String {
     let eu_ps = (&d.partsupp).and(
         (&d.ps_supplier).o((&d.su_nation).o((&d.na_region).o(&d.re_name))).eq("EUROPE").k()
     );
-    // ddbcheat: partkey is a dense i64 1..N, so min-per-key fits in a
-    // Vec<f64> indexed by partkey — no hash, no allocation per insert. The
-    // generic `.fold().mat()` builds an AHashMap<i64,f64> which is ~2× the
-    // wall-clock for this fold's hot loop.
-    let n_part = d.part.n as usize + 1;
-    let mut min_per_part: Vec<f64> = vec![f64::INFINITY; n_part];
-    (&eu_ps).drivekeys(|ps| {
-        let p = d.ps_part.values[ps as usize] as usize;
-        let c = d.ps_supplycost.values[ps as usize];
-        if c < min_per_part[p] { min_per_part[p] = c; }
-    });
+    let min_per_part = (&eu_ps).o(&d.ps_part)
+        .lc((&eu_ps).o(&d.ps_supplycost))
+        .fold(f64::INFINITY, |a, c| if c < a { c } else { a });
     let target = (&eu_ps)
         .and((&d.ps_part).o(&d.pa_size).eq(15).k())
         .and((&d.ps_part).o(&d.pa_type).filt(|s: &str| s.ends_with("BRASS")).k())
-        .and((&d.ps_supplycost).x(&d.ps_part)
-             .filt(move |(c, p)| c == min_per_part[p as usize]).k());
+        .and((&d.ps_supplycost).x((&d.ps_part).o(&min_per_part))
+             .filt(|(c, m)| c == m).k());
     // Project per PS row → (acct, sname, nname, pkey, mfgr, addr, phone, comm)
     let mut rows: Vec<(f64, &str, &str, i64, &str, &str, &str, &str)> = Vec::new();
     target.drivekeys(|psi| {
@@ -850,7 +640,8 @@ fn q2(d: &TpchData) -> String {
 
 // ---------- registry ----------
 
-pub fn all_queries() -> Vec<(&'static str, &'static str, fn(&TpchData) -> String)> {
+/// The baseline (idiomatic) registry: every query paired with its oracle.
+pub fn base() -> Vec<Entry> {
     vec![
         ("1",  Q1, q1),
         ("2",  oracle("Q2"), q2),
@@ -875,4 +666,14 @@ pub fn all_queries() -> Vec<(&'static str, &'static str, fn(&TpchData) -> String
         ("21", oracle("Q21"), q21),
         ("22", oracle("Q22"), q22),
     ]
+}
+
+/// Overlay variant-rewritten queries on the base registry. Overrides swap
+/// the runner only — the oracle is the query's, not the variant's.
+pub fn with_overrides(overrides: &[(&'static str, QFn)]) -> Vec<Entry> {
+    let mut qs = base();
+    for &(name, q) in overrides {
+        qs.iter_mut().find(|e| e.0 == name).expect("unknown query name").2 = q;
+    }
+    qs
 }

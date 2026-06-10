@@ -4,7 +4,7 @@ use crate::engine::*;
 use super::helpers::*;
 use super::sets::*;
 
-pub const ENTRIES: &[(&str, &str, fn(&Data) -> String)] = &[
+pub const ENTRIES: &[super::Entry] = &[
     ("22d", "(#1.1) || 2.0 || 13 Productions", q22d),
     ("5b",  "(empty)", q5b),
     ("5c",  "11,830,420", q5c),
@@ -54,13 +54,7 @@ fn q22d(d: &Data) -> String {
                     )
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((title, data), name)| {
-        update(&mut m[0], title);
-        update(&mut m[1], data);
-        update(&mut m[2], name);
-    });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q5b(d: &Data) -> String {
@@ -81,9 +75,7 @@ fn q5b(d: &Data) -> String {
             )
             .o(&d.movie_title)
     );
-    let mut m: Option<&'static str> = None;
-    q.drive(|_, v| update(&mut m, v));
-    fmt1(m)
+    min_row(q)
 }
 
 fn q5c(d: &Data) -> String {
@@ -101,9 +93,7 @@ fn q5c(d: &Data) -> String {
             )
             .o(&d.movie_title)
     );
-    let mut m: Option<&'static str> = None;
-    q.drive(|_, v| update(&mut m, v));
-    fmt1(m)
+    min_row(q)
 }
 
 fn q15a(d: &Data) -> String {
@@ -134,12 +124,7 @@ fn q15a(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (info, title)| {
-        update(&mut m[0], info);
-        update(&mut m[1], title);
-    });
-    fmt2(m)
+    min_row(q)
 }
 
 fn q15b(d: &Data) -> String {
@@ -176,12 +161,7 @@ fn q15b(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (info, title)| {
-        update(&mut m[0], info);
-        update(&mut m[1], title);
-    });
-    fmt2(m)
+    min_row(q)
 }
 
 fn q15c(d: &Data) -> String {
@@ -207,12 +187,7 @@ fn q15c(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (info, title)| {
-        update(&mut m[0], info);
-        update(&mut m[1], title);
-    });
-    fmt2(m)
+    min_row(q)
 }
 
 fn q15d(d: &Data) -> String {
@@ -233,12 +208,7 @@ fn q15d(d: &Data) -> String {
                     .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 2] = [None; 2];
-    q.drive(|_, (aka, title)| {
-        update(&mut m[0], aka);
-        update(&mut m[1], title);
-    });
-    fmt2(m)
+    min_row(q)
 }
 
 fn q11c(d: &Data) -> String {
@@ -264,13 +234,7 @@ fn q11c(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((name, note), title)| {
-        update(&mut m[0], name);
-        update(&mut m[1], note);
-        update(&mut m[2], title);
-    });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q11d(d: &Data) -> String {
@@ -292,13 +256,7 @@ fn q11d(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((name, note), title)| {
-        update(&mut m[0], name);
-        update(&mut m[1], note);
-        update(&mut m[2], title);
-    });
-    fmt3(m)
+    min_row(q)
 }
 
 fn q13d(d: &Data) -> String {
@@ -324,94 +282,36 @@ fn q13d(d: &Data) -> String {
                 .x(&d.movie_title)
             )
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((name, data), title)| {
-        update(&mut m[0], name);
-        update(&mut m[1], data);
-        update(&mut m[2], title);
-    });
-    fmt3(m)
+    min_row(q)
 }
 
-fn q6a(d: &Data) -> String {
+// q6a/c/e share the marvel-cinematic-universe keyword and q6b/d the kw8
+// list; within each pair only the year cutoff varies.
+fn q6_marvel(d: &Data, year: i64) -> String {
     let kw = || (&d.movie_keyword).o(&d.keyword_keyword).eq("marvel-cinematic-universe");
     let downey = (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"Downey.*Robert")));
     let q = d.movie.o(
-        (&d.movie_production_year).gt(2010).k().and(kw().k())
+        (&d.movie_production_year).gt(year).k().and(kw().k())
             .o(kw().x(&d.movie_title).x(downey))
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((kw, title), name)| {
-        update(&mut m[0], kw);
-        update(&mut m[1], title);
-        update(&mut m[2], name);
-    });
-    fmt3(m)
+    min_row(q)
 }
 
-fn q6b(d: &Data) -> String {
+fn q6_comic(d: &Data, year: i64) -> String {
     let kw = || (&d.movie_keyword).o(&d.keyword_keyword).in_v(kw8());
     let downey = (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"Downey.*Robert")));
     let q = d.movie.o(
-        (&d.movie_production_year).gt(2014).k().and(kw().k())
+        (&d.movie_production_year).gt(year).k().and(kw().k())
             .o(kw().x(&d.movie_title).x(downey))
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((kw, title), name)| {
-        update(&mut m[0], kw);
-        update(&mut m[1], title);
-        update(&mut m[2], name);
-    });
-    fmt3(m)
+    min_row(q)
 }
 
-fn q6c(d: &Data) -> String {
-    let kw = || (&d.movie_keyword).o(&d.keyword_keyword).eq("marvel-cinematic-universe");
-    let downey = (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"Downey.*Robert")));
-    let q = d.movie.o(
-        (&d.movie_production_year).gt(2014).k().and(kw().k())
-            .o(kw().x(&d.movie_title).x(downey))
-    );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((kw, title), name)| {
-        update(&mut m[0], kw);
-        update(&mut m[1], title);
-        update(&mut m[2], name);
-    });
-    fmt3(m)
-}
-
-fn q6d(d: &Data) -> String {
-    let kw = || (&d.movie_keyword).o(&d.keyword_keyword).in_v(kw8());
-    let downey = (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"Downey.*Robert")));
-    let q = d.movie.o(
-        (&d.movie_production_year).gt(2000).k().and(kw().k())
-            .o(kw().x(&d.movie_title).x(downey))
-    );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((kw, title), name)| {
-        update(&mut m[0], kw);
-        update(&mut m[1], title);
-        update(&mut m[2], name);
-    });
-    fmt3(m)
-}
-
-fn q6e(d: &Data) -> String {
-    let kw = || (&d.movie_keyword).o(&d.keyword_keyword).eq("marvel-cinematic-universe");
-    let downey = (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"Downey.*Robert")));
-    let q = d.movie.o(
-        (&d.movie_production_year).gt(2000).k().and(kw().k())
-            .o(kw().x(&d.movie_title).x(downey))
-    );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((kw, title), name)| {
-        update(&mut m[0], kw);
-        update(&mut m[1], title);
-        update(&mut m[2], name);
-    });
-    fmt3(m)
-}
+fn q6a(d: &Data) -> String { q6_marvel(d, 2010) }
+fn q6b(d: &Data) -> String { q6_comic(d, 2014) }
+fn q6c(d: &Data) -> String { q6_marvel(d, 2014) }
+fn q6d(d: &Data) -> String { q6_comic(d, 2000) }
+fn q6e(d: &Data) -> String { q6_marvel(d, 2000) }
 
 fn q6f(d: &Data) -> String {
     let kw = || (&d.movie_keyword).o(&d.keyword_keyword).in_v(kw8());
@@ -420,11 +320,5 @@ fn q6f(d: &Data) -> String {
         (&d.movie_production_year).gt(2000).k().and(kw().k())
             .o(kw().x(&d.movie_title).x(cast_name))
     );
-    let mut m: [Option<&'static str>; 3] = [None; 3];
-    q.drive(|_, ((kw, title), name)| {
-        update(&mut m[0], kw);
-        update(&mut m[1], title);
-        update(&mut m[2], name);
-    });
-    fmt3(m)
+    min_row(q)
 }

@@ -1,27 +1,29 @@
 #!/bin/bash
-# Regenerate the 14 file-loaded TPCH oracles consumed by julia/tpch_queries.jl:
+# Regenerate the 14 file-loaded TPCH oracles checked in under oracles/tpch/,
+# consumed by both julia/tpch_queries_*.jl and rust/src/tpch/:
 # Q19/Q11/Q17/Q13/Q7/Q8/Q9/Q18/Q22/Q16/Q15/Q2/Q20/Q21.
 #
 # Runs each canonical TPCH SQL against the parquet cache at
 # DBDIR (single-threaded, so float sums are deterministic), formats
 # numeric fields to %.2f, and writes Q$N.txt to OUTDIR with no trailing
-# newline (so Julia's `read(..., String) == got` comparison matches).
+# newline (so the `read(..., String) == got` comparison matches).
 #
 # Env knobs (defaults shown):
 #   DUCKDB=/Users/remywang/.duckdb/cli/latest/duckdb
-#   DBDIR=/Users/remywang/projects/prela/cache/tpch
+#   DBDIR=<repo>/cache/tpch
 #   QDIR=/Users/remywang/projects/duckdb/extension/tpch/dbgen/queries
-#   OUTDIR=/tmp/tpch_oracles
+#   OUTDIR=<repo>/oracles/tpch
 #
-# Q1 / Q3-6 / Q10 / Q12 / Q14 use inline oracles in tpch_queries.jl and
-# are not handled here. Q9 has two 1-cent Float64 drifts which the Julia
-# loader patches in-place — the raw DuckDB values are written here.
+# Q1 / Q3-6 / Q10 / Q12 / Q14 use inline oracles in the query files and
+# are not handled here. Q9 has two 1-cent Float64 drifts which the loaders
+# patch in-place — the raw DuckDB values are written here.
 
 set -e
+REPO=$(cd "$(dirname "$0")/../.." && pwd)
 DUCKDB=${DUCKDB:-/Users/remywang/.duckdb/cli/latest/duckdb}
-DBDIR=${DBDIR:-/Users/remywang/projects/prela/cache/tpch}
+DBDIR=${DBDIR:-$REPO/cache/tpch}
 QDIR=${QDIR:-/Users/remywang/projects/duckdb/extension/tpch/dbgen/queries}
-OUTDIR=${OUTDIR:-/tmp/tpch_oracles}
+OUTDIR=${OUTDIR:-$REPO/oracles/tpch}
 mkdir -p $OUTDIR
 
 # Format every decimal field as %.2f to match Julia's _fmt(Float64).

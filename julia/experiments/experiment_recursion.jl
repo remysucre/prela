@@ -2,7 +2,7 @@
 # slowdown — and does disabling it (Method.recursion_relation) close the gap
 # to the staged engine?
 #
-# Hypothesis (verified on toy CPS chains in ../why_no_inline.jl): the value-
+# Hypothesis (verified on toy CPS chains in why_no_inline.jl): the value-
 # level CPS protocol re-enters the same drive/probe methods with a
 # continuation type that grows one wrapper per plan level; at +3 levels
 # inference widens the signature (limit_type_size), poisons the call stack,
@@ -12,44 +12,22 @@
 # tells inference the recursion is fine.
 #
 # Run each mode in a FRESH process (inference results are cached; the patch
-# must precede first inference):
+# must precede first inference). From the julia/ dir:
 #
-#   julia --project=. experiment_recursion.jl interp
-#   julia --project=. experiment_recursion.jl interp-rr   # patched
-#   julia --project=. experiment_recursion.jl staged
+#   julia --project=. experiments/experiment_recursion.jl interp
+#   julia --project=. experiments/experiment_recursion.jl interp-rr   # patched
+#   julia --project=. experiments/experiment_recursion.jl staged
 #
 # Output: TSV  query \t seconds(min of 3, warm) \t bytes-allocated-per-run
 
-include("Prela.jl")
+include(joinpath(@__DIR__, "..", "Prela.jl"))
 using .Prela
 using .Prela: prepare, scan, Interp, Staged, ID
 
 const MODE = get(ARGS, 1, "interp")
 
-# ===== the patch ========================================================
-# Relax the recursion limit on every method that participates in the CPS
-# tower: the protocol methods (drive/probe/probe_any/member, and the
-# generated _prod_* helpers) plus every closure defined in the module (the
-# continuation lambdas inside those methods).
-function relax_recursion_limit!(mod::Module)
-    world = Base.get_world_counter()
-    n = 0
-    relax(m::Method) = (m.recursion_relation = (a...) -> true; n += 1)
-    for nm in Base.unsorted_names(mod; all = true)
-        s = String(nm)
-        t = try getglobal(mod, nm) catch; continue end
-        if t isa Type && t <: Function && startswith(s, "#")
-            ms = Base._methods_by_ftype(Tuple{t, Vararg{Any}}, -1, world)
-            ms === nothing && continue
-            foreach(mtch -> relax(mtch.method), ms)
-        elseif nm in (:drive, :probe, :probe_any, :member) ||
-               startswith(s, "_prod_") || startswith(s, "_idx_probe")
-            t isa Function || continue
-            foreach(relax, methods(t))
-        end
-    end
-    n
-end
+# The recursion-limit patch — shared with bench.jl's ENGINE=interp-rr mode.
+include(joinpath(@__DIR__, "..", "relax_recursion.jl"))
 
 const ENG = MODE == "staged" ? Staged() : Interp()
 if MODE == "interp-rr"

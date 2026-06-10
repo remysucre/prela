@@ -4,7 +4,12 @@
 #
 # Run from the julia/ dir:
 #   julia --project=. -t1 bench.jl job   > ../rust/bench/data/julia_job.txt
-#   julia --project=. -t1 bench.jl tpch  > ../rust/bench/data/julia_tpch.txt
+#   QS=idiomatic julia --project=. -t1 bench.jl tpch > ../rust/bench/data/julia_tpch_idiomatic.txt
+#   QS=optimized julia --project=. -t1 bench.jl tpch > ../rust/bench/data/julia_tpch_optimized.txt
+#
+# ENGINE=interp|interp-rr|staged selects the engine (staged default);
+# interp-rr is the interpreter with the inference recursion limit relaxed
+# (see relax_recursion.jl).
 
 using Printf
 
@@ -15,10 +20,9 @@ ENV["PRELA_SKIP_RUNALL"] = "1"
 # indexes), lowers its access mode (`prepare`, now ~free since it's type-stable),
 # and drives it to the result. Everything here is real query work — index/cache/
 # bitset building included — so it's all timed; only JIT is excluded (cold pass).
-# ENGINE=interp|staged selects the engine for every scan (builds + final);
 # `ENG` is resolved lazily inside the thunks, after Prela is loaded.
-ENG() = get(ENV, "ENGINE", "staged") == "interp" ? Main.Prela.Interp() :
-                                                   Main.Prela.Staged()
+ENG() = get(ENV, "ENGINE", "staged") in ("interp", "interp-rr") ? Main.Prela.Interp() :
+                                                                  Main.Prela.Staged()
 if suite == "job"
     include("JOB.jl")
     include("queries.jl")
@@ -40,6 +44,12 @@ elseif suite == "tpch"
     end
 else
     error("usage: julia bench.jl {job|tpch}")
+end
+
+# interp-rr: patch the recursion limit BEFORE the cold pass compiles anything.
+if get(ENV, "ENGINE", "staged") == "interp-rr"
+    include("relax_recursion.jl")
+    println(stderr, "patched ", relax_recursion_limit!(Main.Prela), " methods")
 end
 
 # Cold pass — triggers JIT/specialization; results discarded.

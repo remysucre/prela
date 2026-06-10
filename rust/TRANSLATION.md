@@ -16,9 +16,7 @@ pub const ENTRIES: &[(&str, &str, fn(&Data) -> String)] = &[
 
 fn q2a(d: &Data) -> String {
     let q = restrict(d.movie, /* ... */);
-    let mut m: Option<&'static str> = None;
-    q.drive(|_, v| update(&mut m, v));
-    fmt1(m)
+    min_row(q)
 }
 
 // ... more queries
@@ -165,6 +163,24 @@ If `x` is used only once, inline it.
 returned value to the borrows it holds on `d`. Add it whenever the helper
 borrows from `d` (which is always).
 
+When the same binding recurs across query templates (it does for the
+company/link bindings of templates 21 and 27), the helper lives once in
+`queries/helpers.rs` under a descriptive name — `film_or_warner_co`,
+`follow_link` — instead of per-file copies.
+
+Query families that differ only in constants (e.g. q2a–q2d's country code)
+are one parameterized fn plus one-line wrappers:
+
+```rust
+fn q2(d: &Data, country: &'static str) -> String { /* the query */ }
+
+fn q2a(d: &Data) -> String { q2(d, "[de]") }
+fn q2b(d: &Data) -> String { q2(d, "[nl]") }
+```
+
+Only do this when the bodies are otherwise identical — structurally
+different siblings stay separate.
+
 ## Named tuple constants — `super::sets`
 
 `kw7()`, `kw8()`, `kw10()`, `voice3()`, `voice4()`, `writer5()`, `genre6()`,
@@ -172,15 +188,16 @@ borrows from `d` (which is always).
 
 Use as: `in_vec(compose(&d.movie_keyword, &d.keyword_keyword), kw8())`.
 
-## Output formatting
+## Output formatting — query tails
 
-- 1 col: `Option<&'static str>` → `fmt1(m)`.
-- 2 cols (Prod a × b): `[Option<&'static str>; 2]`, destructure `(a, b)`, → `fmt2`.
-- 3 cols (a × b × c → `prod(prod(a,b),c)`): destructure `((a, b), c)`, → `fmt3`.
-- 4 cols (a × b × c × d → `prod(prod(prod(a,b),c),d)`): destructure `(((a, b), c), d)`, → `fmt4`.
+Every query ends with `min_row(q)` (from `super::helpers`). It drives the
+query once, accumulates the lexicographic minimum of each output column
+independently (the JOB `MIN(...)` projection), and renders the columns
+joined with `" || "` — or `"(empty)"` if no row survived.
 
-All outputs in JOB are string-valued (after the primary-field resolution).
-Empty results land as `"(empty)"` automatically when `m[0].is_none()`.
+Column shapes are handled by the `Row` trait: `&'static str`, `i64`, and
+nested `Prod` tuples thereof (`((a, b), c)` for `a × b × c`, etc.), so any
+arity and any str/int column mix works with the same one-line tail.
 
 ## Multi-conjunct nesting
 
