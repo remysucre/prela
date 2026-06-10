@@ -1,0 +1,32 @@
+[package]
+name = "prela"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ahash    = "0.8"
+memchr   = "2"
+memmap2  = "0.9"
+regex    = "1.10"
+smallvec = "1"
+parquet  = { version = "53", features = ["arrow"], optional = true }
+arrow    = { version = "53", optional = true }
+
+[features]
+default = []
+# `regen` binary needs parquet+arrow; everything else is dep-free.
+regen   = ["parquet", "arrow"]
+
+[[bin]]
+name = "prela"
+path = "src/main.rs"
+
+[[bin]]
+name = "regen"
+path = "src/bin/regen.rs"
+required-features = ["regen"]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+debug = true                     # keep symbols for `cargo asm` / perf

@@ -136,12 +136,21 @@ QS=idiomatic julia --project=. -t1 bench.jl tpch  > bench/data/julia_tpch_idioma
 QS=optimized julia --project=. -t1 bench.jl tpch  > bench/data/julia_tpch_optimized.txt
 ```
 
+`ENGINE=interp` (default `staged`) runs the same suites through the
+interpreted value-level CPS engine instead of the `@generated` one — every
+scan in the system (index/cache builds during `prepare` and the final scan)
+goes through the selected engine.
+
 ### Rust
 
-The Rust implementation lives on the `rust` branch (`git checkout rust`),
-under `rust/`, with its own build + run instructions. `main` carries only
-the Julia implementation; the plots here compare Julia against the DuckDB
-single-thread baseline.
+The Rust implementation lives in-tree under `rust/` (eager physical state,
+compile-time access modes — see `rust/src/engine.rs`).
+
+```bash
+cd rust
+cargo run --release            # JOB suite
+cargo run --release -- tpch    # TPC-H (QS=idiomatic|optimized|ddbcheat)
+```
 
 ### Regenerate the comparison plots
 
