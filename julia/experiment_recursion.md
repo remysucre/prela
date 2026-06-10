@@ -52,6 +52,24 @@ Findings:
    codegen pays on TPC-H where builds do cheaper per-row work (bitsets,
    dense folds) and hashing doesn't dominate.
 
+## Field results — full JOB suite (113 queries, IMDB, warm, `-t1`)
+
+Both engines pass all 113 oracles (`ENGINE=staged|interp test_td.jl`).
+Totals over the whole suite (`bench.jl job`), plus a third run with the
+625-method `recursion_relation` patch applied before any compilation:
+
+| engine                  | total   | vs staged (median per-query) |
+|-------------------------|--------:|-----------------------------:|
+| staged                  |  9.63 s |                          1.0× |
+| interp                  | 14.59 s |                         1.75× |
+| interp + recursion_relation | 13.95 s |                     1.64× |
+
+Unlike the latency-bound synthetic chains, real JOB queries do light
+per-row work (selective filters, folds, membership probes), so the
+interpreted engine's overhead shows: 1.5× end-to-end, 1.75× median, up to
+25× on small index-heavy queries (6c, 33a/b). The patch claws back ~4%
+end-to-end — real, but marginal against a 50% gap.
+
 Bottom line: the interpreted engine stays in-tree as the executable spec
 and as `Interp()` for A/B runs, the staged engine stays the default, and
 `recursion_relation` is retired as a performance strategy for Prela.
