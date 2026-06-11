@@ -28,15 +28,15 @@ fn q1(d: &TpchData) -> String {
     let scan = live.o(
         (&d.li_quantity).x(&d.li_extendedprice).x(&d.li_discount).x(&d.li_tax)
     );
-    // Pack (returnflag, status) single-byte values into a small i64 index
+    // Pack (returnflag, status) single-byte values into a small usize index
     // so `dense_fold` can use a `[Acc; 288]`-equivalent dense cache. The
     // packed order `(rf-'A') << 4 | (ls-'F')` preserves the (rf, ls)
-    // ascii-pair sort order under i64 comparison: rf ∈ {A=0, N=13, R=17},
-    // ls ∈ {F=0, O=9} → max 281, bound 288.
+    // ascii-pair sort order under integer comparison: rf ∈ {A=0, N=13,
+    // R=17}, ls ∈ {F=0, O=9} → max key 281, so ≥282 slots; 288 used.
     let group_key = (&d.li_returnflag).x(&d.li_status)
         .map(|(rf, ls): (&str, &str)| {
-            (((rf.as_bytes()[0].wrapping_sub(b'A')) as i64) << 4)
-                | ((ls.as_bytes()[0].wrapping_sub(b'F')) as i64)
+            ((rf.as_bytes()[0].wrapping_sub(b'A') as usize) << 4)
+                | (ls.as_bytes()[0].wrapping_sub(b'F') as usize)
         });
     let grouped = group_key.lc(scan)
         .dense_fold(288, (0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0_i64),
@@ -45,7 +45,7 @@ fn q1(d: &TpchData) -> String {
                   let chg_inc = dp_inc * (1.0 + tx);
                   (qty + q, ext + e, di + dc, dp + dp_inc, chg + chg_inc, n + 1)
               });
-    let mut rows: Vec<(i64, (f64, f64, f64, f64, f64, i64))> = Vec::new();
+    let mut rows: Vec<(usize, (f64, f64, f64, f64, f64, i64))> = Vec::new();
     grouped.drive(|k, v| rows.push((k, v)));
     rows.sort_by_key(|r| r.0);
     join_lines(rows.iter().map(|(k, (qty, ext, di, dp, chg, n))| {
@@ -81,7 +81,7 @@ fn q4(d: &TpchData) -> String {
 // ---------- Q9 — product type profit measure ----------
 
 fn q9(d: &TpchData) -> String {
-    // CP1.3 / CP1.4: group on (nation_id, year) as (i64, i64) — 16-byte
+    // CP1.3 / CP1.4: group on (nation_id, year) as (usize, i64) — 16-byte
     // integer hash key, not (&str, i64) which costs a string hash + memcmp
     // per collision. Nation name is FD'd by nation_id, looked up at output.
     let sc = (&d.ps_part).x(&d.ps_supplier).inv().o(&d.ps_supplycost).mat_idx();
@@ -103,15 +103,15 @@ fn q9(d: &TpchData) -> String {
     let result = groups.lc(scan).fold(0.0_f64, |a, (((e, dc), q), cost)| {
         a + e * (1.0 - dc) - cost * q
     });
-    let mut rows: Vec<((i64, i64), f64)> = Vec::new();
+    let mut rows: Vec<((usize, i64), f64)> = Vec::new();
     result.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|a, b| {
-        let na = d.na_name.values[a.0.0 as usize];
-        let nb = d.na_name.values[b.0.0 as usize];
+        let na = d.na_name.values[a.0.0];
+        let nb = d.na_name.values[b.0.0];
         na.cmp(nb).then_with(|| b.0.1.cmp(&a.0.1))
     });
     join_lines(rows.iter().map(|(k, v)| {
-        format!("{}|{}|{}", d.na_name.values[k.0 as usize], k.1, f(*v))
+        format!("{}|{}|{}", d.na_name.values[k.0], k.1, f(*v))
     }))
 }
 
@@ -154,7 +154,7 @@ fn q13(d: &TpchData) -> String {
     use memchr::memmem;
     let f_special = memmem::Finder::new("special");
     let live_orders = (&d.orders)
-        .and((&d.ord_customer).ne(0).k())   // skip sparse orderkey gaps
+        .and((&d.ord_customer).ne(NO_ID).k())   // skip sparse orderkey gaps (hole fill NO_ID)
         .and((&d.ord_comment).filt(move |c: &str| {
             match f_special.find(c.as_bytes()) {
                 Some(p) => !c[p + "special".len()..].contains("requests"),
@@ -168,7 +168,7 @@ fn q13(d: &TpchData) -> String {
     let mut n_with = 0i64;
     count_per_cust.drive(|_, c| { *dist.entry(c).or_insert(0) += 1; n_with += 1; });
     // LEFT JOIN zero-default: customers with no qualifying orders contribute to c_count=0.
-    dist.insert(0, d.customer.n - n_with);
+    dist.insert(0, d.customer.n as i64 - n_with);
     let mut rows: Vec<_> = dist.iter().collect();
     rows.sort_by(|a, b| b.1.cmp(a.1).then_with(|| b.0.cmp(a.0)));
     join_lines(rows.iter().map(|(k, v)| format!("{}|{}", k, v)))
@@ -205,20 +205,21 @@ pub(super) fn q17(d: &TpchData) -> String {
 fn q18(d: &TpchData) -> String {
     let sum_qty = (&d.li_order).lc(&d.li_quantity).dense_fold(d.orders.n, 0.0_f64, |a, q| a + q);
     let big = sum_qty.gt(300.0);
-    let mut rows: Vec<(i64, f64)> = Vec::new();
+    let mut rows: Vec<(usize, f64)> = Vec::new();
     big.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|a, b| {
-        let oa = a.0 as usize; let ob = b.0 as usize;
+        let (oa, ob) = (a.0, b.0);
         d.ord_totalprice.values[ob].partial_cmp(&d.ord_totalprice.values[oa]).unwrap()
             .then_with(|| d.ord_date.values[oa].cmp(&d.ord_date.values[ob]))
     });
     rows.truncate(100);
     join_lines(rows.iter().map(|(o, sum_q)| {
-        let oi = *o as usize;
+        let oi = *o;
         let cu = d.ord_customer.values[oi];
-        let cui = cu as usize;
+        let cui = cu;
+        // natural custkey / orderkey = internal id + 1
         format!("{}|{}|{}|{}|{}|{}",
-                d.cu_name.values[cui], cu, o,
+                d.cu_name.values[cui], cu + 1, o + 1,
                 fmt_yyyymmdd(d.ord_date.values[oi]), f(d.ord_totalprice.values[oi]), f(*sum_q))
     }))
 }
@@ -242,22 +243,21 @@ fn q21(d: &TpchData) -> String {
     // per group then sort-dedups — needless when we only care whether the
     // count is 0/1/>1. Replace with a constant-state fold tracking
     // `(first_supplier, saw_a_second)` per orderkey; `multi` ⇔ `saw_second`
-    // and `only_one` ⇔ `first != 0 && !saw_second`.
+    // and `only_one` ⇔ `first.is_some() && !saw_second`. "No supplier seen
+    // yet" is `None` — supplier ids are 0-based, so 0 is a live id.
+    let track = |(first, multi): (Option<usize>, bool), s: usize| match first {
+        None => (Some(s), multi),
+        Some(f) if f != s => (first, true),
+        _ => (first, multi),
+    };
     let supp_state = (&d.li_order).lc(&d.li_supplier)
-        .dense_fold(d.orders.n, (0_i64, false), |(first, multi), s| {
-            if first == 0 { (s, multi) }
-            else if first != s { (first, true) }
-            else { (first, multi) }
-        });
-    let multi_supp = supp_state.filt(|(_, m): (i64, bool)| m).k();
+        .dense_fold(d.orders.n, (None, false), track);
+    let multi_supp = supp_state.filt(|(_, m): (Option<usize>, bool)| m).k();
     let late_supp_state = (&late).o(&d.li_order)
         .lc((&late).o(&d.li_supplier))
-        .dense_fold(d.orders.n, (0_i64, false), |(first, multi), s| {
-            if first == 0 { (s, multi) }
-            else if first != s { (first, true) }
-            else { (first, multi) }
-        });
-    let only_late = late_supp_state.filt(|(first, multi): (i64, bool)| first != 0 && !multi).k();
+        .dense_fold(d.orders.n, (None, false), track);
+    let only_late = late_supp_state
+        .filt(|(first, multi): (Option<usize>, bool)| first.is_some() && !multi).k();
     let saudi = (&d.supplier).and(
         (&d.su_nation).o(&d.na_name).eq("SAUDI ARABIA").k()
     );
@@ -274,10 +274,10 @@ fn q21(d: &TpchData) -> String {
         .and((&d.li_order).in_s(&multi_supp_bs).k())
         .and((&d.li_order).in_s(&only_late_bs).k());
     let counts = (&d.li_supplier).lcs(qualifying).fold(0_i64, |a, _| a + 1);
-    let mut rows: Vec<(i64, i64)> = Vec::new();
+    let mut rows: Vec<(usize, i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
     let mut named: Vec<(&str, i64)> = rows.iter()
-        .map(|(s, c)| (d.su_name.values[*s as usize], *c)).collect();
+        .map(|(s, c)| (d.su_name.values[*s], *c)).collect();
     named.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
     named.truncate(100);
     join_lines(named.iter().map(|(n, c)| format!("{}|{}", n, c)))
@@ -307,7 +307,7 @@ pub(super) fn q22(d: &TpchData) -> String {
         .minus(custs_with_orders);
     let counts = (&prefix).lcs(target)
         .fold((0_i64, 0.0_f64), |(cnt, sm), c| {
-            let ab = d.cu_acctbal.values[c as usize];
+            let ab = d.cu_acctbal.values[c];
             (cnt + 1, sm + ab)
         });
     let mut rows: Vec<(&str, (i64, f64))> = Vec::new();
@@ -338,17 +338,15 @@ fn q2(d: &TpchData) -> String {
         .and((&d.ps_supplycost).x((&d.ps_part).o(&min_per_part))
              .filt(|(c, m)| c == m).k());
     // Project per PS row → (acct, sname, nname, pkey, mfgr, addr, phone, comm)
-    let mut rows: Vec<(f64, &str, &str, i64, &str, &str, &str, &str)> = Vec::new();
+    let mut rows: Vec<(f64, &str, &str, usize, &str, &str, &str, &str)> = Vec::new();
     target.drivekeys(|psi| {
-        let pi = d.ps_part.values[psi as usize];
-        let si = d.ps_supplier.values[psi as usize];
-        let pa = pi as usize;
-        let su = si as usize;
+        let pa = d.ps_part.values[psi];
+        let su = d.ps_supplier.values[psi];
         rows.push((
             d.su_acctbal.values[su],
             d.su_name.values[su],
-            d.na_name.values[d.su_nation.values[su] as usize],
-            pi,
+            d.na_name.values[d.su_nation.values[su]],
+            pa,
             d.pa_mfgr.values[pa],
             d.su_address.values[su],
             d.su_phone.values[su],
@@ -362,6 +360,7 @@ fn q2(d: &TpchData) -> String {
             .then(a.3.cmp(&b.3))
     });
     rows.truncate(100);
+    // natural partkey = internal id + 1
     join_lines(rows.iter().map(|r| format!("{}|{}|{}|{}|{}|{}|{}|{}",
-        f(r.0), r.1, r.2, r.3, r.4, r.5, r.6, r.7)))
+        f(r.0), r.1, r.2, r.3 + 1, r.4, r.5, r.6, r.7)))
 }

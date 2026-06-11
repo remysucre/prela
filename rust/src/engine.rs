@@ -95,10 +95,26 @@ impl<S: Member + ?Sized> Member for &S {
 }
 
 // ===== leaf storage =====================================================
-// `Vec1<R>` — total 1:1 relation; entity-id → R (one value per id). The
-// vector is 1-indexed (slot 0 is a sentinel).
+// Entity ids are 0-based `usize`: a universe of size n has ids 0..n-1,
+// indexing its dense columns directly. (The binary cache is 1-based — Julia
+// writes it — and the loaders shift at the load edge: internal id = cache
+// id − 1.) Ids are opaque dense indexes, so the id domain type is `usize`;
+// scalar value columns (years, sizes, counts, …) stay `i64`/`f64`.
+//
+// `NO_ID` is the missing-id sentinel (FK hole fill, "none seen yet" fold
+// states): it fails every `i < len` / `.get` bounds check, so a hole probes
+// to nothing for free.
+//
+// `Vec1<R>` — total 1:1 relation; entity-id → R (one value per id).
+// Keys with no pair keep the fill value (`R::default()` for `from_pairs`).
+// INVARIANT: an FK-valued column over a gappy key space (holes that a query
+// can drive or probe, e.g. TPC-H ord_customer over the sparse orderkey
+// domain) must use `from_pairs_fill` with fill `NO_ID` — a default-0 hole
+// would alias entity 0, which is a live id.
 // `Many<R>` — multi-valued / partial; dense forward index Vec<Vec<R>>
 // addressed by .id; empty slot for missing keys.
+
+pub const NO_ID: usize = usize::MAX;
 
 pub struct Vec1<R: Copy> {
     pub values: Vec<R>,
@@ -108,101 +124,99 @@ pub struct Many<R: Copy> {
     pub fwd: Vec<Vec<R>>,
 }
 
-impl<R: Copy + Default> Vec1<R> {
-    pub fn from_pairs(n: usize, pairs: impl IntoIterator<Item = (i64, R)>) -> Self {
-        let mut values = vec![R::default(); n + 1];
+impl<R: Copy> Vec1<R> {
+    pub fn from_pairs_fill(n: usize, fill: R, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
+        let mut values = vec![fill; n];
         for (k, v) in pairs {
-            values[k as usize] = v;
+            values[k] = v;
         }
         Vec1 { values }
     }
 }
 
+impl<R: Copy + Default> Vec1<R> {
+    pub fn from_pairs(n: usize, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
+        Self::from_pairs_fill(n, R::default(), pairs)
+    }
+}
+
 impl<R: Copy> Many<R> {
-    pub fn from_pairs(n: usize, pairs: impl IntoIterator<Item = (i64, R)>) -> Self {
-        let mut fwd: Vec<Vec<R>> = (0..=n).map(|_| Vec::new()).collect();
+    pub fn from_pairs(n: usize, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
+        let mut fwd: Vec<Vec<R>> = (0..n).map(|_| Vec::new()).collect();
         for (k, v) in pairs {
-            if k >= 1 && (k as usize) <= n {
-                fwd[k as usize].push(v);
+            if k < n {
+                fwd[k].push(v);
             }
         }
         Many { fwd }
     }
 }
 
-// Unsafe policy: drive loops iterate, so they use safe iterators (bounds-
-// check-free by construction). Probe loads index by *data* (a foreign key);
-// the manual `1 <= i < len` range check IS the "missing key emits nothing"
-// semantics, and the `get_unchecked` after it guarantees the optimizer
-// doesn't re-check through the i64→usize cast.
-impl<R: Copy> Rel for Vec1<R> { type D = i64; type R = R; }
+// Probe policy: drive loops iterate, so they use safe iterators (bounds-
+// check-free by construction). Probe indexes by *data* (a foreign key);
+// with `usize` keys there is no cast, and `.get` IS the single bounds
+// check — a missing-key sentinel (`NO_ID` = usize::MAX) or any
+// out-of-universe id fails it, so "missing key emits nothing" and bounds
+// safety are the same one check. No `unsafe` needed.
+impl<R: Copy> Rel for Vec1<R> { type D = usize; type R = R; }
 impl<R: Copy> Drive for Vec1<R> {
     #[inline(always)]
-    fn drive<K: FnMut(i64, R)>(&self, mut k: K) {
-        for (i, &v) in self.values.iter().enumerate().skip(1) {
-            k(i as i64, v);
+    fn drive<K: FnMut(usize, R)>(&self, mut k: K) {
+        for (i, &v) in self.values.iter().enumerate() {
+            k(i, v);
         }
     }
 }
 impl<R: Copy> Probe for Vec1<R> {
     #[inline(always)]
-    fn probe<K: FnMut(R)>(&self, x: i64, mut k: K) {
-        let i = x as usize;
-        if i >= 1 && i < self.values.len() {
-            k(unsafe { *self.values.get_unchecked(i) });
+    fn probe<K: FnMut(R)>(&self, x: usize, mut k: K) {
+        if let Some(&v) = self.values.get(x) {
+            k(v);
         }
     }
     #[inline(always)]
-    fn probe_any<K: FnMut(R) -> bool>(&self, x: i64, mut k: K) -> bool {
-        let i = x as usize;
-        i >= 1 && i < self.values.len() && k(unsafe { *self.values.get_unchecked(i) })
+    fn probe_any<K: FnMut(R) -> bool>(&self, x: usize, mut k: K) -> bool {
+        self.values.get(x).is_some_and(|&v| k(v))
     }
 }
 
-impl<R: Copy> Rel for Many<R> { type D = i64; type R = R; }
+impl<R: Copy> Rel for Many<R> { type D = usize; type R = R; }
 impl<R: Copy> Drive for Many<R> {
     #[inline(always)]
-    fn drive<K: FnMut(i64, R)>(&self, mut k: K) {
-        for (i, vs) in self.fwd.iter().enumerate().skip(1) {
-            for &v in vs { k(i as i64, v); }
+    fn drive<K: FnMut(usize, R)>(&self, mut k: K) {
+        for (i, vs) in self.fwd.iter().enumerate() {
+            for &v in vs { k(i, v); }
         }
     }
 }
 impl<R: Copy> Probe for Many<R> {
     #[inline(always)]
-    fn probe<K: FnMut(R)>(&self, x: i64, mut k: K) {
-        let i = x as usize;
-        if i >= 1 && i < self.fwd.len() {
-            for &v in unsafe { self.fwd.get_unchecked(i) } { k(v); }
+    fn probe<K: FnMut(R)>(&self, x: usize, mut k: K) {
+        if let Some(vs) = self.fwd.get(x) {
+            for &v in vs { k(v); }
         }
     }
     #[inline(always)]
-    fn probe_any<K: FnMut(R) -> bool>(&self, x: i64, mut k: K) -> bool {
-        let i = x as usize;
-        if i >= 1 && i < self.fwd.len() {
-            for &v in unsafe { self.fwd.get_unchecked(i) } {
-                if k(v) { return true; }
-            }
-        }
-        false
+    fn probe_any<K: FnMut(R) -> bool>(&self, x: usize, mut k: K) -> bool {
+        self.fwd.get(x).is_some_and(|vs| vs.iter().any(|&v| k(v)))
     }
 }
 
-// ===== Universe (KeySet over i64) =======================================
+// ===== Universe (KeySet over entity ids) ================================
 
 #[derive(Copy, Clone)]
-pub struct Universe { pub n: i64 }
+pub struct Universe { pub n: usize }
 
-impl KeySet for Universe { type D = i64; }
+impl KeySet for Universe { type D = usize; }
 impl DriveKeys for Universe {
     #[inline(always)]
-    fn drivekeys<K: FnMut(i64)>(&self, mut k: K) {
-        for i in 1..=self.n { k(i); }
+    fn drivekeys<K: FnMut(usize)>(&self, mut k: K) {
+        for i in 0..self.n { k(i); }
     }
 }
 impl Member for Universe {
     #[inline(always)]
-    fn member(&self, x: i64) -> bool { x >= 1 && x <= self.n }
+    fn member(&self, x: usize) -> bool { x < self.n }
 }
 
 // ===== Compose: a: D → M, b: M → R  ⟹  Compose: D → R ===================
@@ -240,8 +254,8 @@ pub trait Pred<R> { fn test(&self, v: R) -> bool; }
 /// Membership-in-a-KeySet predicate. Kept nominal (rather than a closure)
 /// so it can hold the set by value without naming its type.
 pub struct InSet<S: Member>(pub S);
-impl<S: Member<D = i64>> Pred<i64> for InSet<S> {
-    #[inline(always)] fn test(&self, v: i64) -> bool { self.0.member(v) }
+impl<S: Member> Pred<S::D> for InSet<S> {
+    #[inline(always)] fn test(&self, v: S::D) -> bool { self.0.member(v) }
 }
 
 /// Closure predicate — every comparison combinator below desugars to this.
@@ -447,49 +461,49 @@ impl<D: Copy + Eq + Hash> Member for MatSetSet<D> {
     fn member(&self, x: D) -> bool { self.set.contains(&x) }
 }
 
-// ===== Bitset — `Vec<u64>`-backed dense KeySet<D = i64> =================
+// ===== Bitset — `Vec<u64>`-backed dense KeySet over entity ids ==========
 //
-// Drop-in replacement for `MatSetSet` when the membership domain is `i64`
-// in `1..=n` and dense: trades the HashSet's hash+probe for one bit-test.
+// Drop-in replacement for `MatSetSet` when the membership domain is a
+// dense `0..n`: trades the HashSet's hash+probe for one bit-test.
 // `drivekeys` enumerates set bits via word-scan + `trailing_zeros` so
 // iteration cost is proportional to popcount, not the universe size.
+// `set` rejects keys ≥ n (`NO_ID` hole sentinels), so padding bits in the
+// last word stay 0 and `member`/`drivekeys` can trust the words as-is.
 
-pub struct Bitset { pub bs: Vec<u64>, pub n: i64 }
+pub struct Bitset { pub bs: Vec<u64>, pub n: usize }
 
 impl Bitset {
-    pub fn empty(n: i64) -> Self {
-        Bitset { bs: vec![0u64; (n as usize / 64) + 1], n }
+    pub fn empty(n: usize) -> Self {
+        Bitset { bs: vec![0u64; n.div_ceil(64)], n }
     }
-    /// Build by driving a `Drive<R = i64>` and setting bits at each emitted value.
-    pub fn from_drive<Q: Drive<R = i64>>(n: i64, q: &Q) -> Self {
+    /// Build by driving a `Drive<R = usize>` and setting bits at each emitted value.
+    pub fn from_drive<Q: Drive<R = usize>>(n: usize, q: &Q) -> Self {
         let mut b = Self::empty(n);
         q.drive(|_, c| b.set(c));
         b
     }
-    /// Build by driving a `DriveKeys<D = i64>` and setting bits at each key.
-    pub fn from_setq<S: DriveKeys<D = i64>>(n: i64, s: &S) -> Self {
+    /// Build by driving a `DriveKeys<D = usize>` and setting bits at each key.
+    pub fn from_setq<S: DriveKeys<D = usize>>(n: usize, s: &S) -> Self {
         let mut b = Self::empty(n);
         s.drivekeys(|c| b.set(c));
         b
     }
-    #[inline] pub fn set(&mut self, x: i64) {
-        let c = x as usize;
-        if c >= 1 && c <= self.n as usize {
-            unsafe { *self.bs.get_unchecked_mut(c / 64) |= 1u64 << (c % 64); }
+    #[inline] pub fn set(&mut self, x: usize) {
+        if x < self.n {
+            self.bs[x / 64] |= 1u64 << (x % 64);
         }
     }
 }
 
-impl KeySet for Bitset { type D = i64; }
+impl KeySet for Bitset { type D = usize; }
 impl DriveKeys for Bitset {
     #[inline]
-    fn drivekeys<K: FnMut(i64)>(&self, mut k: K) {
+    fn drivekeys<K: FnMut(usize)>(&self, mut k: K) {
         for (wi, &w) in self.bs.iter().enumerate() {
             let mut w = w;
             while w != 0 {
                 let b = w.trailing_zeros() as usize;
-                let c = (wi * 64 + b) as i64;
-                if c >= 1 && c <= self.n { k(c); }
+                k(wi * 64 + b);
                 w &= w - 1;
             }
         }
@@ -497,10 +511,8 @@ impl DriveKeys for Bitset {
 }
 impl Member for Bitset {
     #[inline]
-    fn member(&self, x: i64) -> bool {
-        let c = x as usize;
-        c >= 1 && c <= self.n as usize
-            && unsafe { (*self.bs.get_unchecked(c / 64) >> (c % 64)) & 1 == 1 }
+    fn member(&self, x: usize) -> bool {
+        self.bs.get(x / 64).is_some_and(|&w| (w >> (x % 64)) & 1 == 1)
     }
 }
 
@@ -622,10 +634,10 @@ impl<D: Copy + Eq + Hash, S: Copy> Probe for Fold<D, S> {
     }
 }
 
-// ===== DenseFold — `▷` with dense i64-keyed array cache =================
+// ===== DenseFold — `▷` with dense id-keyed array cache ==================
 //
-// Drop-in replacement for `Fold` when `D = i64` and the key range is a
-// known, dense `1..=n`. Backing store is `Vec<S>` (one slot per key) plus a
+// Drop-in replacement for `Fold` when `D = usize` and the key range is a
+// known, dense `0..n`. Backing store is `Vec<S>` (one slot per key) plus a
 // parallel `Vec<bool>` presence map. Avoids HashMap probe + entry alloc on
 // every reduce step; for Q1 (≤6 group keys via packed byte index), Q2 / Q20
 // (per-part), Q18 (per-order), the gain is ~5-10× over `Fold`.
@@ -636,49 +648,41 @@ pub struct DenseFold<S: Copy> {
 }
 
 impl<S: Copy> DenseFold<S> {
-    pub fn build<Q, OP>(q: Q, n: i64, init: S, op: OP) -> Self
-    where Q: Drive<D = i64>, OP: Fn(S, Q::R) -> S {
-        let sz = (n as usize) + 1;
-        let mut vals = vec![init; sz];
-        let mut seen = vec![false; sz];
+    pub fn build<Q, OP>(q: Q, n: usize, init: S, op: OP) -> Self
+    where Q: Drive<D = usize>, OP: Fn(S, Q::R) -> S {
+        let mut vals = vec![init; n];
+        let mut seen = vec![false; n];
         q.drive(|d, v| {
-            let i = d as usize;
-            if i < sz {
-                let s = unsafe { *vals.get_unchecked(i) };
-                unsafe {
-                    *vals.get_unchecked_mut(i) = op(s, v);
-                    *seen.get_unchecked_mut(i) = true;
-                }
+            if let Some(s) = vals.get_mut(d) {
+                *s = op(*s, v);
+                seen[d] = true;
             }
         });
         DenseFold { vals, seen }
     }
 }
 
-impl<S: Copy> Rel for DenseFold<S> { type D = i64; type R = S; }
+impl<S: Copy> Rel for DenseFold<S> { type D = usize; type R = S; }
 impl<S: Copy> Drive for DenseFold<S> {
     #[inline(always)]
-    fn drive<K: FnMut(i64, S)>(&self, mut k: K) {
+    fn drive<K: FnMut(usize, S)>(&self, mut k: K) {
         for (i, (&v, &seen)) in self.vals.iter().zip(&self.seen).enumerate() {
             if seen {
-                k(i as i64, v);
+                k(i, v);
             }
         }
     }
 }
 impl<S: Copy> Probe for DenseFold<S> {
     #[inline(always)]
-    fn probe<K: FnMut(S)>(&self, x: i64, mut k: K) {
-        let i = x as usize;
-        if i < self.vals.len() && unsafe { *self.seen.get_unchecked(i) } {
-            k(unsafe { *self.vals.get_unchecked(i) });
+    fn probe<K: FnMut(S)>(&self, x: usize, mut k: K) {
+        if let Some(&v) = self.vals.get(x) {
+            if self.seen[x] { k(v); }
         }
     }
     #[inline(always)]
-    fn probe_any<K: FnMut(S) -> bool>(&self, x: i64, mut k: K) -> bool {
-        let i = x as usize;
-        i < self.vals.len() && unsafe { *self.seen.get_unchecked(i) }
-            && k(unsafe { *self.vals.get_unchecked(i) })
+    fn probe_any<K: FnMut(S) -> bool>(&self, x: usize, mut k: K) -> bool {
+        self.vals.get(x).is_some_and(|&v| self.seen[x] && k(v))
     }
 }
 
@@ -753,8 +757,8 @@ pub trait QueryExt: Rel + Sized {
         where Self::R: PartialOrd { self.filt(move |x| x <= v) }
     #[inline(always)] fn in_v(self, vs: Vec<Self::R>) -> Filter<Self, impl Pred<Self::R>>
         where Self::R: PartialEq { self.filt(move |x| vs.iter().any(|&v| v == x)) }
-    #[inline(always)] fn in_s<S: Member<D = i64>>(self, s: S) -> Filter<Self, InSet<S>>
-        where Self: Rel<R = i64> { Filter { a: self, p: InSet(s) } }
+    #[inline(always)] fn in_s<S: Member<D = Self::R>>(self, s: S) -> Filter<Self, InSet<S>>
+        { Filter { a: self, p: InSet(s) } }
     #[inline(always)] fn rx(self, re: &str) -> Filter<Self, impl Pred<Self::R>>
         where Self: Rel<R = &'static str> {
         let re = Regex::new(re).unwrap();
@@ -799,13 +803,13 @@ pub trait QueryExt: Rel + Sized {
     fn fold<OP: Fn(S, Self::R) -> S, S: Copy>(self, init: S, op: OP) -> Fold<Self::D, S>
     where Self: Drive { Fold::build(self, init, op) }
 
-    /// `▷ (op, init)` with a dense i64-keyed `Vec<S>` cache. Use when the
-    /// key range is known to be `1..=n` and small/dense enough that
-    /// `Vec<S>` of size `n+1` beats the HashMap path of `fold`.
+    /// `▷ (op, init)` with a dense id-keyed `Vec<S>` cache. Use when the
+    /// key range is known to be `0..n` (`n` slots) and small/dense enough
+    /// that a `Vec<S>` of size `n` beats the HashMap path of `fold`.
     #[inline(always)]
-    fn dense_fold<OP: Fn(S, Self::R) -> S, S: Copy>(self, n: i64, init: S, op: OP)
+    fn dense_fold<OP: Fn(S, Self::R) -> S, S: Copy>(self, n: usize, init: S, op: OP)
         -> DenseFold<S>
-    where Self: Drive<D = i64> { DenseFold::build(self, n, init, op) }
+    where Self: Drive<D = usize> { DenseFold::build(self, n, init, op) }
 
     /// Specialized count-distinct fold — sorts + dedups the per-key SVec on
     /// finalization, avoiding the HashSet alloc per group.
@@ -856,9 +860,10 @@ impl<S: KeySet> SetExt for S {}
 mod tests {
     use super::*;
 
-    // films: 1 → 10, 2 → 20, 3 → 30 (Vec1); cast: 1 → {7, 8}, 3 → {7} (Many)
-    fn films() -> Vec1<i64> { Vec1::from_pairs(3, [(1, 10), (2, 20), (3, 30)]) }
-    fn cast() -> Many<i64> { Many::from_pairs(3, [(1, 7), (1, 8), (3, 7)]) }
+    // films: 0 → 10, 1 → 20, 2 → 30 (Vec1); cast: 0 → {7, 8}, 2 → {7} (Many)
+    // Values are id-typed (usize) so they can feed compose/lconj domains.
+    fn films() -> Vec1<usize> { Vec1::from_pairs(3, [(0, 10), (1, 20), (2, 30)]) }
+    fn cast() -> Many<usize> { Many::from_pairs(3, [(0, 7), (0, 8), (2, 7)]) }
 
     fn drive_all<Q: Drive>(q: &Q) -> Vec<(Q::D, Q::R)>
     where Q::D: Ord, Q::R: Ord {
@@ -870,13 +875,14 @@ mod tests {
 
     #[test]
     fn leaves() {
-        assert_eq!(drive_all(&films()), vec![(1, 10), (2, 20), (3, 30)]);
-        assert_eq!(drive_all(&cast()), vec![(1, 7), (1, 8), (3, 7)]);
+        assert_eq!(drive_all(&films()), vec![(0, 10), (1, 20), (2, 30)]);
+        assert_eq!(drive_all(&cast()), vec![(0, 7), (0, 8), (2, 7)]);
         let f = films();
         let mut got = Vec::new();
-        f.probe(2, |v| got.push(v));
+        f.probe(1, |v| got.push(v));
         assert_eq!(got, vec![20]);
-        assert!(cast().probe_any(3, |_| true) && !cast().probe_any(2, |_| true));
+        assert!(cast().probe_any(2, |_| true) && !cast().probe_any(1, |_| true));
+        assert!(!f.probe_any(NO_ID, |_| true) && !f.probe_any(3, |_| true));
     }
 
     #[test]
@@ -884,17 +890,17 @@ mod tests {
         let f = films();
         let c = cast();
         // cast ∘ (films probed at cast values)? — compose cast: i64→i64 with films
-        assert_eq!(drive_all(&(&c).o(&f)), vec![]); // cast values 7,8 not film keys ≤3
-        assert_eq!(drive_all(&(&f).filt(|v| v > 15)), vec![(2, 20), (3, 30)]);
+        assert_eq!(drive_all(&(&c).o(&f)), vec![]); // cast values 7,8 not film keys <3
+        assert_eq!(drive_all(&(&f).filt(|v| v > 15)), vec![(1, 20), (2, 30)]);
         let u = Universe { n: 2 };
-        assert_eq!(drive_all(&u.o(&f)), vec![(1, 10), (2, 20)]);
-        assert_eq!(drive_all(&(&f).x(&f)), vec![(1, (10, 10)), (2, (20, 20)), (3, (30, 30))]);
+        assert_eq!(drive_all(&u.o(&f)), vec![(0, 10), (1, 20)]);
+        assert_eq!(drive_all(&(&f).x(&f)), vec![(0, (10, 10)), (1, (20, 20)), (2, (30, 30))]);
     }
 
     #[test]
     fn inv_stream() {
         let f = films();
-        assert_eq!(drive_all(&(&f).inv()), vec![(10, 1), (20, 2), (30, 3)]);
+        assert_eq!(drive_all(&(&f).inv()), vec![(10, 0), (20, 1), (30, 2)]);
     }
 
     #[test]
@@ -902,7 +908,7 @@ mod tests {
         let f = films();
         let idx = (&f).filt(|v| v > 10).mat_idx();
         let mut got = Vec::new();
-        idx.probe(3, |v| got.push(v));
+        idx.probe(2, |v| got.push(v));
         assert_eq!(got, vec![30]);
         assert!(!idx.probe_any(99, |_| true));
     }
@@ -918,14 +924,14 @@ mod tests {
         // fold: count films per person
         let counts = (&c).lc(&f).fold(0i64, |a, _| a + 1);
         assert_eq!(drive_all(&counts), vec![(7, 2), (8, 1)]);
-        // dense fold over person ids 1..=8
-        let dcounts = (&c).lc(&f).dense_fold(8, 0i64, |a, _| a + 1);
+        // dense fold over person ids 0..9
+        let dcounts = (&c).lc(&f).dense_fold(9, 0i64, |a, _| a + 1);
         assert_eq!(drive_all(&dcounts), vec![(7, 2), (8, 1)]);
         // count_distinct
         let cd = (&c).lc(&f).count_distinct();
         assert_eq!(drive_all(&cd), vec![(7, 2), (8, 1)]);
         // scalar
-        assert_eq!((&f).unwrap_fold(0i64, |a, v| a + v), 60);
+        assert_eq!((&f).unwrap_fold(0usize, |a, v| a + v), 60);
     }
 
     #[test]
@@ -935,36 +941,37 @@ mod tests {
         let mut keys = Vec::new();
         people.drivekeys(|x| keys.push(x));
         keys.sort(); keys.dedup();
-        assert_eq!(keys, vec![1, 3]);
+        assert_eq!(keys, vec![0, 2]);
         let ms = (&people).mat_set();
-        assert!(ms.member(1) && !ms.member(2));
+        assert!(ms.member(0) && !ms.member(1));
         let b = Bitset::from_setq(3, &people);
-        assert!(b.member(1) && !b.member(2) && b.member(3));
+        assert!(b.member(0) && !b.member(1) && b.member(2));
+        assert!(!b.member(NO_ID) && !b.member(3));
         // conj/disj/diff over Universe
         let u2 = Universe { n: 2 };
         let mut got = Vec::new();
         u2.and(&ms).drivekeys(|x| got.push(x));
-        assert_eq!(got, vec![1]);
+        assert_eq!(got, vec![0]);
         let mut got = Vec::new();
         u2.minus(&ms).drivekeys(|x| got.push(x));
-        assert_eq!(got, vec![2]);
+        assert_eq!(got, vec![1]);
         let mut got = Vec::new();
         u2.or(&b).drivekeys(|x| { got.push(x); });
         got.sort();
-        assert_eq!(got, vec![1, 2, 3]);
+        assert_eq!(got, vec![0, 1, 2]);
     }
 
     #[test]
     fn lconj_and_map() {
         let f = films();
-        let u = Universe { n: 30 };
-        // values of films (10, 20, 30) intersected with universe 1..=30
+        let u = Universe { n: 31 };
+        // values of films (10, 20, 30) intersected with universe 0..31
         let w = (&f).lconj(&u);
         let mut got = Vec::new();
         w.drivekeys(|x| got.push(x));
         got.sort();
         assert_eq!(got, vec![10, 20, 30]);
         assert!(w.member(10) && !w.member(11));
-        assert_eq!(drive_all(&(&f).map(|v| v * 2)), vec![(1, 20), (2, 40), (3, 60)]);
+        assert_eq!(drive_all(&(&f).map(|v| v * 2)), vec![(0, 20), (1, 40), (2, 60)]);
     }
 }

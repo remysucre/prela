@@ -74,7 +74,7 @@ fn q7b(d: &Data) -> String {
     min_row(q)
 }
 
-fn bio_filter_7c<'d>(d: &'d Data) -> impl KeySet<D = i64> + DriveKeys + Member + 'd {
+fn bio_filter_7c<'d>(d: &'d Data) -> impl KeySet<D = usize> + DriveKeys + Member + 'd {
     (&d.personinfo_type).o(&d.infotype_info).eq("mini biography").k()
         .and((&d.personinfo_note).k())
 }

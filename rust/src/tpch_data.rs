@@ -3,13 +3,18 @@
 // files (f64 reinterpreted from i64 bits); strings are mmap'd and leaked as
 // &'static str.
 
-use crate::cache::{load_bits, load_strs, max_key};
-use crate::engine::{Universe, Vec1};
+use crate::cache::{ids, ids_fk, load_bits, load_strs, max_key};
+use crate::engine::{Universe, Vec1, NO_ID};
 
 /// f64 fields are saved by Julia as Pair{ID, Float64} but reinterpreted as
 /// (i64, i64) at write time. Read back: same bytes, just bit-cast.
-#[inline] fn f64_from_bits_pair(&(k, bits): &(i64, i64)) -> (i64, f64) {
+#[inline] fn f64_val((k, bits): (usize, i64)) -> (usize, f64) {
     (k, f64::from_bits(bits as u64))
+}
+
+/// "YYYY-MM-DD" string value → packed i64 date; key passes through.
+#[inline] fn date_val((k, s): (usize, &str)) -> (usize, i64) {
+    (k, parse_yyyymmdd(s))
 }
 
 /// "YYYY-MM-DD" → packed i64 YYYYMMDD (numeric compare preserves lexical
@@ -48,14 +53,14 @@ pub struct TpchData {
 
     // Nation.{name, region, comment}
     pub na_name: Vec1<&'static str>,
-    pub na_region: Vec1<i64>,
+    pub na_region: Vec1<usize>,
     #[allow(dead_code)] // loaded for full-schema parity; no query reads it
     pub na_comment: Vec1<&'static str>,
 
     // Supplier.{name, address, nation, phone, acctbal, comment}
     pub su_name: Vec1<&'static str>,
     pub su_address: Vec1<&'static str>,
-    pub su_nation: Vec1<i64>,
+    pub su_nation: Vec1<usize>,
     pub su_phone: Vec1<&'static str>,
     pub su_acctbal: Vec1<f64>,
     pub su_comment: Vec1<&'static str>,
@@ -63,7 +68,7 @@ pub struct TpchData {
     // Customer.{name, address, nation, phone, acctbal, mktsegment, comment}
     pub cu_name: Vec1<&'static str>,
     pub cu_address: Vec1<&'static str>,
-    pub cu_nation: Vec1<i64>,
+    pub cu_nation: Vec1<usize>,
     pub cu_phone: Vec1<&'static str>,
     pub cu_acctbal: Vec1<f64>,
     pub cu_mktsegment: Vec1<&'static str>,
@@ -82,15 +87,15 @@ pub struct TpchData {
     pub pa_comment: Vec1<&'static str>,
 
     // PartSupp.{part, supplier, availqty, supplycost, comment}
-    pub ps_part: Vec1<i64>,
-    pub ps_supplier: Vec1<i64>,
+    pub ps_part: Vec1<usize>,
+    pub ps_supplier: Vec1<usize>,
     pub ps_availqty: Vec1<i64>,
     pub ps_supplycost: Vec1<f64>,
     #[allow(dead_code)] // loaded for full-schema parity; no query reads it
     pub ps_comment: Vec1<&'static str>,
 
     // Order.{customer, status, totalprice, date, priority, clerk, shippriority, comment}
-    pub ord_customer: Vec1<i64>,
+    pub ord_customer: Vec1<usize>,
     pub ord_status: Vec1<&'static str>,
     pub ord_totalprice: Vec1<f64>,
     pub ord_date: Vec1<i64>,                      // YYYYMMDD
@@ -103,9 +108,9 @@ pub struct TpchData {
     // Lineitem.{order, part, supplier, number, quantity, extendedprice, discount,
     //           tax, returnflag, status, shipdate, commitdate, receiptdate,
     //           shipinstruct, shipmode, comment}
-    pub li_order: Vec1<i64>,
-    pub li_part: Vec1<i64>,
-    pub li_supplier: Vec1<i64>,
+    pub li_order: Vec1<usize>,
+    pub li_part: Vec1<usize>,
+    pub li_supplier: Vec1<usize>,
     #[allow(dead_code)] // loaded for full-schema parity; no query reads it
     pub li_number: Vec1<i64>,
     pub li_quantity: Vec1<f64>,
@@ -205,77 +210,82 @@ impl TpchData {
         let n_lineitem = max_key(&li_order_p);
 
         TpchData {
-            region:   Universe { n: n_region as i64 },
-            nation:   Universe { n: n_nation as i64 },
-            supplier: Universe { n: n_supplier as i64 },
-            customer: Universe { n: n_customer as i64 },
-            part:     Universe { n: n_part as i64 },
-            partsupp: Universe { n: n_partsupp as i64 },
-            orders:   Universe { n: n_orders as i64 },
-            lineitem: Universe { n: n_lineitem as i64 },
+            region:   Universe { n: n_region },
+            nation:   Universe { n: n_nation },
+            supplier: Universe { n: n_supplier },
+            customer: Universe { n: n_customer },
+            part:     Universe { n: n_part },
+            partsupp: Universe { n: n_partsupp },
+            orders:   Universe { n: n_orders },
+            lineitem: Universe { n: n_lineitem },
 
-            re_name: Vec1::from_pairs(n_region, re_name_p.iter().copied()),
-            re_comment: Vec1::from_pairs(n_region, re_comment_p.iter().copied()),
+            // `ids` shifts keys to 0-based usize (internal id = cache id
+            // − 1); `ids_fk` also shifts the value (FK columns). FK Vec1
+            // columns fill holes with NO_ID so a gap key (the sparse
+            // orderkey space) never aliases entity 0 — see the Vec1
+            // invariant in engine.rs.
+            re_name: Vec1::from_pairs(n_region, ids(&re_name_p)),
+            re_comment: Vec1::from_pairs(n_region, ids(&re_comment_p)),
 
-            na_name: Vec1::from_pairs(n_nation, na_name_p.iter().copied()),
-            na_region: Vec1::from_pairs(n_nation, na_region_p.iter().copied()),
-            na_comment: Vec1::from_pairs(n_nation, na_comment_p.iter().copied()),
+            na_name: Vec1::from_pairs(n_nation, ids(&na_name_p)),
+            na_region: Vec1::from_pairs_fill(n_nation, NO_ID, ids_fk(&na_region_p)),
+            na_comment: Vec1::from_pairs(n_nation, ids(&na_comment_p)),
 
-            su_name: Vec1::from_pairs(n_supplier, su_name_p.iter().copied()),
-            su_address: Vec1::from_pairs(n_supplier, su_address_p.iter().copied()),
-            su_nation: Vec1::from_pairs(n_supplier, su_nation_p.iter().copied()),
-            su_phone: Vec1::from_pairs(n_supplier, su_phone_p.iter().copied()),
-            su_acctbal: Vec1::from_pairs(n_supplier, su_acctbal_p.iter().map(f64_from_bits_pair)),
-            su_comment: Vec1::from_pairs(n_supplier, su_comment_p.iter().copied()),
+            su_name: Vec1::from_pairs(n_supplier, ids(&su_name_p)),
+            su_address: Vec1::from_pairs(n_supplier, ids(&su_address_p)),
+            su_nation: Vec1::from_pairs_fill(n_supplier, NO_ID, ids_fk(&su_nation_p)),
+            su_phone: Vec1::from_pairs(n_supplier, ids(&su_phone_p)),
+            su_acctbal: Vec1::from_pairs(n_supplier, ids(&su_acctbal_p).map(f64_val)),
+            su_comment: Vec1::from_pairs(n_supplier, ids(&su_comment_p)),
 
-            cu_name: Vec1::from_pairs(n_customer, cu_name_p.iter().copied()),
-            cu_address: Vec1::from_pairs(n_customer, cu_address_p.iter().copied()),
-            cu_nation: Vec1::from_pairs(n_customer, cu_nation_p.iter().copied()),
-            cu_phone: Vec1::from_pairs(n_customer, cu_phone_p.iter().copied()),
-            cu_acctbal: Vec1::from_pairs(n_customer, cu_acctbal_p.iter().map(f64_from_bits_pair)),
-            cu_mktsegment: Vec1::from_pairs(n_customer, cu_mktsegment_p.iter().copied()),
-            cu_comment: Vec1::from_pairs(n_customer, cu_comment_p.iter().copied()),
+            cu_name: Vec1::from_pairs(n_customer, ids(&cu_name_p)),
+            cu_address: Vec1::from_pairs(n_customer, ids(&cu_address_p)),
+            cu_nation: Vec1::from_pairs_fill(n_customer, NO_ID, ids_fk(&cu_nation_p)),
+            cu_phone: Vec1::from_pairs(n_customer, ids(&cu_phone_p)),
+            cu_acctbal: Vec1::from_pairs(n_customer, ids(&cu_acctbal_p).map(f64_val)),
+            cu_mktsegment: Vec1::from_pairs(n_customer, ids(&cu_mktsegment_p)),
+            cu_comment: Vec1::from_pairs(n_customer, ids(&cu_comment_p)),
 
-            pa_name: Vec1::from_pairs(n_part, pa_name_p.iter().copied()),
-            pa_mfgr: Vec1::from_pairs(n_part, pa_mfgr_p.iter().copied()),
-            pa_brand: Vec1::from_pairs(n_part, pa_brand_p.iter().copied()),
-            pa_type: Vec1::from_pairs(n_part, pa_type_p.iter().copied()),
-            pa_size: Vec1::from_pairs(n_part, pa_size_p.iter().copied()),
-            pa_container: Vec1::from_pairs(n_part, pa_container_p.iter().copied()),
-            pa_retailprice: Vec1::from_pairs(n_part, pa_retailprice_p.iter().map(f64_from_bits_pair)),
-            pa_comment: Vec1::from_pairs(n_part, pa_comment_p.iter().copied()),
+            pa_name: Vec1::from_pairs(n_part, ids(&pa_name_p)),
+            pa_mfgr: Vec1::from_pairs(n_part, ids(&pa_mfgr_p)),
+            pa_brand: Vec1::from_pairs(n_part, ids(&pa_brand_p)),
+            pa_type: Vec1::from_pairs(n_part, ids(&pa_type_p)),
+            pa_size: Vec1::from_pairs(n_part, ids(&pa_size_p)),
+            pa_container: Vec1::from_pairs(n_part, ids(&pa_container_p)),
+            pa_retailprice: Vec1::from_pairs(n_part, ids(&pa_retailprice_p).map(f64_val)),
+            pa_comment: Vec1::from_pairs(n_part, ids(&pa_comment_p)),
 
-            ps_part: Vec1::from_pairs(n_partsupp, ps_part_p.iter().copied()),
-            ps_supplier: Vec1::from_pairs(n_partsupp, ps_supplier_p.iter().copied()),
-            ps_availqty: Vec1::from_pairs(n_partsupp, ps_availqty_p.iter().copied()),
-            ps_supplycost: Vec1::from_pairs(n_partsupp, ps_supplycost_p.iter().map(f64_from_bits_pair)),
-            ps_comment: Vec1::from_pairs(n_partsupp, ps_comment_p.iter().copied()),
+            ps_part: Vec1::from_pairs_fill(n_partsupp, NO_ID, ids_fk(&ps_part_p)),
+            ps_supplier: Vec1::from_pairs_fill(n_partsupp, NO_ID, ids_fk(&ps_supplier_p)),
+            ps_availqty: Vec1::from_pairs(n_partsupp, ids(&ps_availqty_p)),
+            ps_supplycost: Vec1::from_pairs(n_partsupp, ids(&ps_supplycost_p).map(f64_val)),
+            ps_comment: Vec1::from_pairs(n_partsupp, ids(&ps_comment_p)),
 
-            ord_customer: Vec1::from_pairs(n_orders, ord_customer_p.iter().copied()),
-            ord_status: Vec1::from_pairs(n_orders, ord_status_p.iter().copied()),
-            ord_totalprice: Vec1::from_pairs(n_orders, ord_totalprice_p.iter().map(f64_from_bits_pair)),
-            ord_date: Vec1::from_pairs(n_orders, ord_date_p.iter().map(|(k, s)| (*k, parse_yyyymmdd(s)))),
-            ord_priority: Vec1::from_pairs(n_orders, ord_priority_p.iter().copied()),
-            ord_clerk: Vec1::from_pairs(n_orders, ord_clerk_p.iter().copied()),
-            ord_shippriority: Vec1::from_pairs(n_orders, ord_shippriority_p.iter().copied()),
-            ord_comment: Vec1::from_pairs(n_orders, ord_comment_p.iter().copied()),
+            ord_customer: Vec1::from_pairs_fill(n_orders, NO_ID, ids_fk(&ord_customer_p)),
+            ord_status: Vec1::from_pairs(n_orders, ids(&ord_status_p)),
+            ord_totalprice: Vec1::from_pairs(n_orders, ids(&ord_totalprice_p).map(f64_val)),
+            ord_date: Vec1::from_pairs(n_orders, ids(&ord_date_p).map(date_val)),
+            ord_priority: Vec1::from_pairs(n_orders, ids(&ord_priority_p)),
+            ord_clerk: Vec1::from_pairs(n_orders, ids(&ord_clerk_p)),
+            ord_shippriority: Vec1::from_pairs(n_orders, ids(&ord_shippriority_p)),
+            ord_comment: Vec1::from_pairs(n_orders, ids(&ord_comment_p)),
 
-            li_order: Vec1::from_pairs(n_lineitem, li_order_p.iter().copied()),
-            li_part: Vec1::from_pairs(n_lineitem, li_part_p.iter().copied()),
-            li_supplier: Vec1::from_pairs(n_lineitem, li_supplier_p.iter().copied()),
-            li_number: Vec1::from_pairs(n_lineitem, li_number_p.iter().copied()),
-            li_quantity: Vec1::from_pairs(n_lineitem, li_quantity_p.iter().map(f64_from_bits_pair)),
-            li_extendedprice: Vec1::from_pairs(n_lineitem, li_extendedprice_p.iter().map(f64_from_bits_pair)),
-            li_discount: Vec1::from_pairs(n_lineitem, li_discount_p.iter().map(f64_from_bits_pair)),
-            li_tax: Vec1::from_pairs(n_lineitem, li_tax_p.iter().map(f64_from_bits_pair)),
-            li_returnflag: Vec1::from_pairs(n_lineitem, li_returnflag_p.iter().copied()),
-            li_status: Vec1::from_pairs(n_lineitem, li_status_p.iter().copied()),
-            li_shipdate:    Vec1::from_pairs(n_lineitem, li_shipdate_p.iter().map(|(k, s)| (*k, parse_yyyymmdd(s)))),
-            li_commitdate:  Vec1::from_pairs(n_lineitem, li_commitdate_p.iter().map(|(k, s)| (*k, parse_yyyymmdd(s)))),
-            li_receiptdate: Vec1::from_pairs(n_lineitem, li_receiptdate_p.iter().map(|(k, s)| (*k, parse_yyyymmdd(s)))),
-            li_shipinstruct: Vec1::from_pairs(n_lineitem, li_shipinstruct_p.iter().copied()),
-            li_shipmode: Vec1::from_pairs(n_lineitem, li_shipmode_p.iter().copied()),
-            li_comment: Vec1::from_pairs(n_lineitem, li_comment_p.iter().copied()),
+            li_order: Vec1::from_pairs_fill(n_lineitem, NO_ID, ids_fk(&li_order_p)),
+            li_part: Vec1::from_pairs_fill(n_lineitem, NO_ID, ids_fk(&li_part_p)),
+            li_supplier: Vec1::from_pairs_fill(n_lineitem, NO_ID, ids_fk(&li_supplier_p)),
+            li_number: Vec1::from_pairs(n_lineitem, ids(&li_number_p)),
+            li_quantity: Vec1::from_pairs(n_lineitem, ids(&li_quantity_p).map(f64_val)),
+            li_extendedprice: Vec1::from_pairs(n_lineitem, ids(&li_extendedprice_p).map(f64_val)),
+            li_discount: Vec1::from_pairs(n_lineitem, ids(&li_discount_p).map(f64_val)),
+            li_tax: Vec1::from_pairs(n_lineitem, ids(&li_tax_p).map(f64_val)),
+            li_returnflag: Vec1::from_pairs(n_lineitem, ids(&li_returnflag_p)),
+            li_status: Vec1::from_pairs(n_lineitem, ids(&li_status_p)),
+            li_shipdate:    Vec1::from_pairs(n_lineitem, ids(&li_shipdate_p).map(date_val)),
+            li_commitdate:  Vec1::from_pairs(n_lineitem, ids(&li_commitdate_p).map(date_val)),
+            li_receiptdate: Vec1::from_pairs(n_lineitem, ids(&li_receiptdate_p).map(date_val)),
+            li_shipinstruct: Vec1::from_pairs(n_lineitem, ids(&li_shipinstruct_p)),
+            li_shipmode: Vec1::from_pairs(n_lineitem, ids(&li_shipmode_p)),
+            li_comment: Vec1::from_pairs(n_lineitem, ids(&li_comment_p)),
         }
     }
 }

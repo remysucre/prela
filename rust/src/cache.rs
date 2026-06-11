@@ -52,12 +52,34 @@ pub fn load_strs(name: &str) -> Vec<(i64, &'static str)> {
     }).collect()
 }
 
-/// Max key (source id) across a loaded column — used to size entity universes.
+// ===== id shift =========================================================
+// INTERNAL ID = CACHE ID − 1, as `usize`. Julia writes the cache with
+// 1-based `i64` ids (its arrays are 1-based); Rust ids are 0-based opaque
+// dense indexes (`usize`), and this is the one place the shift — and the
+// id-type change — happens: every pair entering the engine goes through one
+// of these two adapters. Keys are always entity ids; values are shifted
+// only when the column is itself an FK (the Data/TpchData constructors know
+// which). Scalar values keep their loaded type (`i64`, f64 bits, strings).
+
+/// Shift the KEY of each pair: (cache id, value) → (cache id − 1, value).
+pub fn ids<V: Copy>(pairs: &[(i64, V)]) -> impl Iterator<Item = (usize, V)> + '_ {
+    pairs.iter().map(|&(k, v)| ((k - 1) as usize, v))
+}
+
+/// Shift BOTH sides of an ID×ID pair — for FK-valued columns.
+pub fn ids_fk(pairs: &[(i64, i64)]) -> impl Iterator<Item = (usize, usize)> + '_ {
+    pairs.iter().map(|&(k, v)| ((k - 1) as usize, (v - 1) as usize))
+}
+
+/// Max raw (1-based) key across a loaded column — used to size entity
+/// universes. With 0-based internal ids this is directly the universe size:
+/// max cache id N ⟹ internal ids 0..N-1 ⟹ n = N.
 pub fn max_key<V>(pairs: &[(i64, V)]) -> usize {
     pairs.iter().map(|&(k, _)| k).max().unwrap_or(0) as usize
 }
 
-/// Max value across a loaded ID×ID column — for universes referenced by value.
+/// Max raw value across a loaded ID×ID column — for universes referenced by
+/// value; same "max raw id = size" identity as `max_key`.
 pub fn max_val(pairs: &[(i64, i64)]) -> usize {
     pairs.iter().map(|&(_, v)| v).max().unwrap_or(0) as usize
 }

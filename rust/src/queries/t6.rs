@@ -4,7 +4,7 @@ use crate::engine::*;
 use super::helpers::*;
 use super::sets::*;
 
-fn co_28<'d>(d: &'d Data) -> impl Rel<R = i64, D = i64> + Drive + Probe + 'd {
+fn co_28<'d>(d: &'d Data) -> impl Rel<R = usize, D = usize> + Drive + Probe + 'd {
     (&d.movie_company).in_s(
         (&d.company_country).ne("[us]").k()
             .and((&d.company_note).nrx(r"\(USA\)").k())
@@ -12,31 +12,31 @@ fn co_28<'d>(d: &'d Data) -> impl Rel<R = i64, D = i64> + Drive + Probe + 'd {
     )
 }
 
-fn dt_28ac<'d>(d: &'d Data) -> impl Rel<R = i64, D = i64> + Drive + Probe + 'd {
+fn dt_28ac<'d>(d: &'d Data) -> impl Rel<R = usize, D = usize> + Drive + Probe + 'd {
     (&d.movie_data).in_s(
         (&d.data_type).o(&d.infotype_info).eq("rating").k()
             .and((&d.data_data).lt("8.5").k())
     )
 }
 
-fn dt_28b<'d>(d: &'d Data) -> impl Rel<R = i64, D = i64> + Drive + Probe + 'd {
+fn dt_28b<'d>(d: &'d Data) -> impl Rel<R = usize, D = usize> + Drive + Probe + 'd {
     (&d.movie_data).in_s(
         (&d.data_type).o(&d.infotype_info).eq("rating").k()
             .and((&d.data_data).gt("6.5").k())
     )
 }
 
-fn gf_horror<'d>(d: &'d Data) -> impl KeySet<D = i64> + DriveKeys + Member + 'd {
+fn gf_horror<'d>(d: &'d Data) -> impl KeySet<D = usize> + DriveKeys + Member + 'd {
     (&d.info_type).o(&d.infotype_info).eq("genres").k()
         .and((&d.info_info).in_v(vec!["Horror", "Thriller"]).k())
 }
 
-fn gf_genre6<'d>(d: &'d Data) -> impl KeySet<D = i64> + DriveKeys + Member + 'd {
+fn gf_genre6<'d>(d: &'d Data) -> impl KeySet<D = usize> + DriveKeys + Member + 'd {
     (&d.info_type).o(&d.infotype_info).eq("genres").k()
         .and((&d.info_info).in_v(genre6()).k())
 }
 
-fn qlink_33a<'d>(d: &'d Data) -> impl Rel<R = i64, D = i64> + Drive + Probe + 'd {
+fn qlink_33a<'d>(d: &'d Data) -> impl Rel<R = usize, D = usize> + Drive + Probe + 'd {
     (&d.movie_link).in_s(
         (&d.movielink_type).o(&d.linktype_link).in_v(link3()).k()
             .and((&d.movielink_target).in_s(
@@ -52,7 +52,7 @@ fn qlink_33a<'d>(d: &'d Data) -> impl Rel<R = i64, D = i64> + Drive + Probe + 'd
     )
 }
 
-fn qlink_33b<'d>(d: &'d Data) -> impl Rel<R = i64, D = i64> + Drive + Probe + 'd {
+fn qlink_33b<'d>(d: &'d Data) -> impl Rel<R = usize, D = usize> + Drive + Probe + 'd {
     (&d.movie_link).in_s(
         (&d.movielink_type).o(&d.linktype_link).rx(r"follow").k()
             .and((&d.movielink_target).in_s(
@@ -67,7 +67,7 @@ fn qlink_33b<'d>(d: &'d Data) -> impl Rel<R = i64, D = i64> + Drive + Probe + 'd
     )
 }
 
-fn qlink_33c<'d>(d: &'d Data) -> impl Rel<R = i64, D = i64> + Drive + Probe + 'd {
+fn qlink_33c<'d>(d: &'d Data) -> impl Rel<R = usize, D = usize> + Drive + Probe + 'd {
     (&d.movie_link).in_s(
         (&d.movielink_type).o(&d.linktype_link).in_v(link3()).k()
             .and((&d.movielink_target).in_s(

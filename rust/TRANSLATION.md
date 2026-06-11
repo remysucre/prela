@@ -1,5 +1,29 @@
 # Julia → Rust translation guide for Prela queries
 
+## Entity ids — 0-based `usize` in Rust
+
+Rust entity ids are **0-based `usize`**: internal id = cache id − 1 =
+natural key − 1. Ids are opaque dense indexes, so the id domain type is
+`usize` throughout the engine (`Vec1`/`Many`/`Universe`/`Bitset`/`DenseFold`
+all have `D = usize`); scalar value columns (years, sizes, counts, dates,
+prices) stay `i64`/`f64` — id columns and number columns are distinct types.
+The binary cache stays 1-based `i64` (Julia — 1-based arrays — writes and
+reads it; its format must not change), and the loaders shift **and retype**
+at the load edge (`cache::ids` / `cache::ids_fk`, the latter also shifting
+FK-valued columns). Julia remains 1-based throughout. The only place a +1
+survives is output formatting of natural keys (TPC-H
+orderkey/custkey/partkey/suppkey); JOB queries print no ids. Universe sizes
+are unchanged: max raw id N ⟹ internal ids 0..N-1 ⟹ n = N.
+
+The missing-id sentinel is `engine::NO_ID` (= `usize::MAX`): FK-valued
+`Vec1` columns over gappy key spaces fill holes with `NO_ID`, never 0
+(entity 0 is live) — see the `Vec1` invariant in `src/engine.rs`. Gap
+checks compare against it (`.ne(NO_ID)` / `== NO_ID`); "no entity seen yet"
+fold states use `Option<usize>` (or `NO_ID` where state size matters, e.g.
+dense per-order arrays). Probes are safe `.get()` lookups — `NO_ID` (or any
+out-of-universe id) fails the single bounds check and emits nothing, so no
+`unsafe` is needed on the probe paths.
+
 ## Output file template
 
 ```rust

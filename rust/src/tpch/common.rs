@@ -162,17 +162,18 @@ fn q3(d: &TpchData) -> String {
         .o((&d.li_extendedprice).x(&d.li_discount));
     let revenue = (&d.li_order).lc(item)
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
-    let mut rows: Vec<(i64, f64)> = Vec::new();
+    let mut rows: Vec<(usize, f64)> = Vec::new();
     revenue.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|a, b| {
-        let oa = a.0 as usize; let ob = b.0 as usize;
+        let (oa, ob) = (a.0, b.0);
         b.1.partial_cmp(&a.1).unwrap()
             .then_with(|| d.ord_date.values[oa].cmp(&d.ord_date.values[ob]))
     });
     rows.truncate(10);
     join_lines(rows.iter().map(|(o, r)| {
-        let oi = *o as usize;
-        format!("{}|{}|{}|{}", o, f(*r), fmt_yyyymmdd(d.ord_date.values[oi]), d.ord_shippriority.values[oi])
+        let oi = *o;
+        // natural orderkey = internal id + 1 (formatting edge only)
+        format!("{}|{}|{}|{}", o + 1, f(*r), fmt_yyyymmdd(d.ord_date.values[oi]), d.ord_shippriority.values[oi])
     }))
 }
 
@@ -306,15 +307,16 @@ fn q10(d: &TpchData) -> String {
     let revenue = (&d.li_order).o(&d.ord_customer)
         .lc(live.o((&d.li_extendedprice).x(&d.li_discount)))
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
-    let mut rows: Vec<(i64, f64)> = Vec::new();
+    let mut rows: Vec<(usize, f64)> = Vec::new();
     revenue.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
     rows.truncate(20);
     join_lines(rows.iter().map(|(c, r)| {
-        let ci = *c as usize;
+        let ci = *c;
+        // natural custkey = internal id + 1
         format!("{}|{}|{}|{}|{}|{}|{}|{}",
-                c, d.cu_name.values[ci], f(*r), f(d.cu_acctbal.values[ci]),
-                d.na_name.values[d.cu_nation.values[ci] as usize],
+                c + 1, d.cu_name.values[ci], f(*r), f(d.cu_acctbal.values[ci]),
+                d.na_name.values[d.cu_nation.values[ci]],
                 d.cu_address.values[ci], d.cu_phone.values[ci], d.cu_comment.values[ci])
     }))
 }
@@ -338,10 +340,11 @@ fn q11(d: &TpchData) -> String {
     let total = value_per_part.unwrap_fold(0.0, |a, v| a + v);
     let threshold = 0.0001 * total;
     let filtered = value_per_part.gt(threshold);
-    let mut rows: Vec<(i64, f64)> = Vec::new();
+    let mut rows: Vec<(usize, f64)> = Vec::new();
     filtered.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-    join_lines(rows.iter().map(|(k, v)| format!("{}|{}", k, f(*v))))
+    // natural partkey = internal id + 1
+    join_lines(rows.iter().map(|(k, v)| format!("{}|{}", k + 1, f(*v))))
 }
 
 // ---------- Q12 — shipping modes and order priority ----------
@@ -374,7 +377,7 @@ fn q13(d: &TpchData) -> String {
     //                                          (live_orders → date)) ▷ ((a, _) -> a + 1, 0)
     // Then a Julia escape for the LEFT-JOIN zero-default (customer.n - n_with).
     let live_orders = (&d.orders)
-        .and((&d.ord_customer).ne(0).k())   // skip sparse orderkey gaps
+        .and((&d.ord_customer).ne(NO_ID).k())   // skip sparse orderkey gaps (hole fill NO_ID)
         .and((&d.ord_comment).nrx("special.*requests").k());
     let count_per_cust = (&live_orders).o(&d.ord_customer)
         .lc((&live_orders).o(&d.ord_date))
@@ -383,7 +386,7 @@ fn q13(d: &TpchData) -> String {
     let mut n_with = 0i64;
     count_per_cust.drive(|_, c| { *dist.entry(c).or_insert(0) += 1; n_with += 1; });
     // LEFT JOIN zero-default: customers with no qualifying orders contribute to c_count=0.
-    dist.insert(0, d.customer.n - n_with);
+    dist.insert(0, d.customer.n as i64 - n_with);
     let mut rows: Vec<_> = dist.iter().collect();
     rows.sort_by(|a, b| b.1.cmp(a.1).then_with(|| b.0.cmp(a.0)));
     join_lines(rows.iter().map(|(k, v)| format!("{}|{}", k, v)))
@@ -397,12 +400,13 @@ fn q15(d: &TpchData) -> String {
         .lc((&live).o((&d.li_extendedprice).x(&d.li_discount)))
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
     let max_rev = revenue.unwrap_fold(0.0, f64::max);
-    let mut rows: Vec<(i64, f64)> = Vec::new();
+    let mut rows: Vec<(usize, f64)> = Vec::new();
     revenue.drive(|k, v| if v == max_rev { rows.push((k, v)); });
     rows.sort_by_key(|r| r.0);
     join_lines(rows.iter().map(|(k, v)| {
-        let i = *k as usize;
-        format!("{}|{}|{}|{}|{}", k, d.su_name.values[i], d.su_address.values[i],
+        let i = *k;
+        // natural suppkey = internal id + 1
+        format!("{}|{}|{}|{}|{}", k + 1, d.su_name.values[i], d.su_address.values[i],
                 d.su_phone.values[i], f(*v))
     }))
 }
@@ -455,20 +459,21 @@ fn q17(d: &TpchData) -> String {
 fn q18(d: &TpchData) -> String {
     let sum_qty = (&d.li_order).lc(&d.li_quantity).fold(0.0_f64, |a, q| a + q);
     let big = sum_qty.gt(300.0);
-    let mut rows: Vec<(i64, f64)> = Vec::new();
+    let mut rows: Vec<(usize, f64)> = Vec::new();
     big.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|a, b| {
-        let oa = a.0 as usize; let ob = b.0 as usize;
+        let (oa, ob) = (a.0, b.0);
         d.ord_totalprice.values[ob].partial_cmp(&d.ord_totalprice.values[oa]).unwrap()
             .then_with(|| d.ord_date.values[oa].cmp(&d.ord_date.values[ob]))
     });
     rows.truncate(100);
     join_lines(rows.iter().map(|(o, sum_q)| {
-        let oi = *o as usize;
+        let oi = *o;
         let cu = d.ord_customer.values[oi];
-        let cui = cu as usize;
+        let cui = cu;
+        // natural custkey / orderkey = internal id + 1
         format!("{}|{}|{}|{}|{}|{}",
-                d.cu_name.values[cui], cu, o,
+                d.cu_name.values[cui], cu + 1, o + 1,
                 fmt_yyyymmdd(d.ord_date.values[oi]), f(d.ord_totalprice.values[oi]), f(*sum_q))
     }))
 }
@@ -549,10 +554,10 @@ fn q21(d: &TpchData) -> String {
         .and((&d.li_supplier).in_s(saudi).k())
         .and((&d.li_order).in_s(f_ords.and(multi_supp).and(only_late)).k());
     let counts = (&d.li_supplier).lcs(qualifying).fold(0_i64, |a, _| a + 1);
-    let mut rows: Vec<(i64, i64)> = Vec::new();
+    let mut rows: Vec<(usize, i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
     let mut named: Vec<(&str, i64)> = rows.iter()
-        .map(|(s, c)| (d.su_name.values[*s as usize], *c)).collect();
+        .map(|(s, c)| (d.su_name.values[*s], *c)).collect();
     named.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
     named.truncate(100);
     join_lines(named.iter().map(|(n, c)| format!("{}|{}", n, c)))
@@ -579,7 +584,7 @@ fn q22(d: &TpchData) -> String {
         .minus(custs_with_orders);
     let counts = (&prefix).lcs(target)
         .fold((0_i64, 0.0_f64), |(cnt, sm), c| {
-            let ab = d.cu_acctbal.values[c as usize];
+            let ab = d.cu_acctbal.values[c];
             (cnt + 1, sm + ab)
         });
     let mut rows: Vec<(&str, (i64, f64))> = Vec::new();
@@ -610,17 +615,15 @@ fn q2(d: &TpchData) -> String {
         .and((&d.ps_supplycost).x((&d.ps_part).o(&min_per_part))
              .filt(|(c, m)| c == m).k());
     // Project per PS row → (acct, sname, nname, pkey, mfgr, addr, phone, comm)
-    let mut rows: Vec<(f64, &str, &str, i64, &str, &str, &str, &str)> = Vec::new();
+    let mut rows: Vec<(f64, &str, &str, usize, &str, &str, &str, &str)> = Vec::new();
     target.drivekeys(|psi| {
-        let pi = d.ps_part.values[psi as usize];
-        let si = d.ps_supplier.values[psi as usize];
-        let pa = pi as usize;
-        let su = si as usize;
+        let pa = d.ps_part.values[psi];
+        let su = d.ps_supplier.values[psi];
         rows.push((
             d.su_acctbal.values[su],
             d.su_name.values[su],
-            d.na_name.values[d.su_nation.values[su] as usize],
-            pi,
+            d.na_name.values[d.su_nation.values[su]],
+            pa,
             d.pa_mfgr.values[pa],
             d.su_address.values[su],
             d.su_phone.values[su],
@@ -634,8 +637,9 @@ fn q2(d: &TpchData) -> String {
             .then(a.3.cmp(&b.3))
     });
     rows.truncate(100);
+    // natural partkey = internal id + 1
     join_lines(rows.iter().map(|r| format!("{}|{}|{}|{}|{}|{}|{}|{}",
-        f(r.0), r.1, r.2, r.3, r.4, r.5, r.6, r.7)))
+        f(r.0), r.1, r.2, r.3 + 1, r.4, r.5, r.6, r.7)))
 }
 
 // ---------- registry ----------

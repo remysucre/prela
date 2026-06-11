@@ -1,8 +1,8 @@
 // The JOB tables, loaded from Julia's binary cache (../cache/*.bin) via the
 // shared loaders in cache.rs.
 
-use crate::cache::{load_bits, load_strs, max_key, max_val};
-use crate::engine::{Many, Universe, Vec1};
+use crate::cache::{ids, ids_fk, load_bits, load_strs, max_key, max_val};
+use crate::engine::{Many, Universe, Vec1, NO_ID};
 
 // ===== the loaded dataset ===============================================
 
@@ -13,30 +13,30 @@ pub struct Data {
 
     // Movie.* (movie → ...)
     pub movie_title:           Vec1<&'static str>,
-    pub movie_kind:            Vec1<i64>,
+    pub movie_kind:            Vec1<usize>,
     pub movie_production_year: Many<i64>,
     pub movie_episode_nr:      Many<i64>,
-    pub movie_keyword:         Many<i64>,
-    pub movie_company:         Many<i64>,
-    pub movie_cast:            Many<i64>,
-    pub movie_info:            Many<i64>,
-    pub movie_data:            Many<i64>,
-    pub movie_complete_cast:   Many<i64>,
-    pub movie_link:            Many<i64>,
-    pub movie_linked_by:       Many<i64>,
-    pub movie_aka:             Many<i64>,
+    pub movie_keyword:         Many<usize>,
+    pub movie_company:         Many<usize>,
+    pub movie_cast:            Many<usize>,
+    pub movie_info:            Many<usize>,
+    pub movie_data:            Many<usize>,
+    pub movie_complete_cast:   Many<usize>,
+    pub movie_link:            Many<usize>,
+    pub movie_linked_by:       Many<usize>,
+    pub movie_aka:             Many<usize>,
 
     // Cast.*
-    pub cast_person:           Vec1<i64>,
-    pub cast_role:             Vec1<i64>,
+    pub cast_person:           Vec1<usize>,
+    pub cast_role:             Vec1<usize>,
     pub cast_note:             Many<&'static str>,
-    pub cast_character:        Many<i64>,
+    pub cast_character:        Many<usize>,
 
     // Person.*
     pub person_name:           Vec1<&'static str>,
     pub person_gender:         Many<&'static str>,
-    pub person_aka:            Many<i64>,
-    pub person_info:           Many<i64>,
+    pub person_aka:            Many<usize>,
+    pub person_info:           Many<usize>,
     pub person_name_pcode:     Many<&'static str>,
 
     // Keyword, Kind, RoleType, Character
@@ -49,18 +49,18 @@ pub struct Data {
     pub company_country:       Many<&'static str>,
     pub company_name:          Vec1<&'static str>,
     pub company_note:          Many<&'static str>,
-    pub company_type:          Vec1<i64>,
+    pub company_type:          Vec1<usize>,
     pub companytype_kind:      Vec1<&'static str>,
 
     // Info, Data, PersonInfo
     pub info_info:             Vec1<&'static str>,
-    pub info_type:             Vec1<i64>,
+    pub info_type:             Vec1<usize>,
     pub info_note:             Many<&'static str>,
     pub infotype_info:         Vec1<&'static str>,
     pub data_data:             Vec1<&'static str>,
-    pub data_type:             Vec1<i64>,
+    pub data_type:             Vec1<usize>,
     pub personinfo_info:       Vec1<&'static str>,
-    pub personinfo_type:       Vec1<i64>,
+    pub personinfo_type:       Vec1<usize>,
     pub personinfo_note:       Many<&'static str>,
 
     // Aka tables
@@ -68,13 +68,13 @@ pub struct Data {
     pub akatitle_title:        Vec1<&'static str>,
 
     // MovieLink, LinkType
-    pub movielink_target:      Vec1<i64>,
-    pub movielink_type:        Vec1<i64>,
+    pub movielink_target:      Vec1<usize>,
+    pub movielink_type:        Vec1<usize>,
     pub linktype_link:         Vec1<&'static str>,
 
     // CompleteCast, CompCastType
-    pub completecast_status:   Vec1<i64>,
-    pub completecast_subject:  Vec1<i64>,
+    pub completecast_status:   Vec1<usize>,
+    pub completecast_subject:  Vec1<usize>,
     pub compcasttype_kind:     Vec1<&'static str>,
 }
 
@@ -175,65 +175,69 @@ impl Data {
                           .max(max_val(&ccsub));
 
         Data {
-            movie:   Universe { n: n_movie  as i64 },
-            persons: Universe { n: n_person as i64 },
+            movie:   Universe { n: n_movie  },
+            persons: Universe { n: n_person },
 
-            movie_title:           Vec1::from_pairs(n_movie, mt.iter().copied()),
-            movie_kind:            Vec1::from_pairs(n_movie, mki.iter().copied()),
-            movie_production_year: Many::from_pairs(n_movie, py.iter().copied()),
-            movie_episode_nr:      Many::from_pairs(n_movie, men.iter().copied()),
-            movie_keyword:         Many::from_pairs(n_movie, mk.iter().copied()),
-            movie_company:         Many::from_pairs(n_movie, mcmp.iter().copied()),
-            movie_cast:            Many::from_pairs(n_movie, mcst.iter().copied()),
-            movie_info:            Many::from_pairs(n_movie, mif.iter().copied()),
-            movie_data:            Many::from_pairs(n_movie, mdt.iter().copied()),
-            movie_complete_cast:   Many::from_pairs(n_movie, mcc.iter().copied()),
-            movie_link:            Many::from_pairs(n_movie, mln.iter().copied()),
-            movie_linked_by:       Many::from_pairs(n_movie, mlnby.iter().copied()),
-            movie_aka:             Many::from_pairs(n_movie, mak.iter().copied()),
+            // `ids` shifts keys to 0-based; `ids_fk` also shifts the value
+            // (FK columns). Year/episode-nr/string values are untouched.
+            // FK-valued Vec1 columns fill holes with NO_ID (a dead id) so a
+            // key with no row never aliases entity 0 — see the Vec1 invariant.
+            movie_title:           Vec1::from_pairs(n_movie, ids(&mt)),
+            movie_kind:            Vec1::from_pairs_fill(n_movie, NO_ID, ids_fk(&mki)),
+            movie_production_year: Many::from_pairs(n_movie, ids(&py)),
+            movie_episode_nr:      Many::from_pairs(n_movie, ids(&men)),
+            movie_keyword:         Many::from_pairs(n_movie, ids_fk(&mk)),
+            movie_company:         Many::from_pairs(n_movie, ids_fk(&mcmp)),
+            movie_cast:            Many::from_pairs(n_movie, ids_fk(&mcst)),
+            movie_info:            Many::from_pairs(n_movie, ids_fk(&mif)),
+            movie_data:            Many::from_pairs(n_movie, ids_fk(&mdt)),
+            movie_complete_cast:   Many::from_pairs(n_movie, ids_fk(&mcc)),
+            movie_link:            Many::from_pairs(n_movie, ids_fk(&mln)),
+            movie_linked_by:       Many::from_pairs(n_movie, ids_fk(&mlnby)),
+            movie_aka:             Many::from_pairs(n_movie, ids_fk(&mak)),
 
-            cast_person:     Vec1::from_pairs(n_cast, cp.iter().copied()),
-            cast_role:       Vec1::from_pairs(n_cast, cr.iter().copied()),
-            cast_note:       Many::from_pairs(n_cast, cnt.iter().copied()),
-            cast_character:  Many::from_pairs(n_cast, cch.iter().copied()),
+            cast_person:     Vec1::from_pairs_fill(n_cast, NO_ID, ids_fk(&cp)),
+            cast_role:       Vec1::from_pairs_fill(n_cast, NO_ID, ids_fk(&cr)),
+            cast_note:       Many::from_pairs(n_cast, ids(&cnt)),
+            cast_character:  Many::from_pairs(n_cast, ids_fk(&cch)),
 
-            person_name:       Vec1::from_pairs(n_person, pn.iter().copied()),
-            person_gender:     Many::from_pairs(n_person, pg.iter().copied()),
-            person_aka:        Many::from_pairs(n_person, pa.iter().copied()),
-            person_info:       Many::from_pairs(n_person, pif.iter().copied()),
-            person_name_pcode: Many::from_pairs(n_person, pnp.iter().copied()),
+            person_name:       Vec1::from_pairs(n_person, ids(&pn)),
+            person_gender:     Many::from_pairs(n_person, ids(&pg)),
+            person_aka:        Many::from_pairs(n_person, ids_fk(&pa)),
+            person_info:       Many::from_pairs(n_person, ids_fk(&pif)),
+            person_name_pcode: Many::from_pairs(n_person, ids(&pnp)),
 
-            keyword_keyword: Vec1::from_pairs(n_keyword,   kk.iter().copied()),
-            kind_kind:       Vec1::from_pairs(n_kind,      kik.iter().copied()),
-            roletype_role:   Vec1::from_pairs(n_roletype,  rt.iter().copied()),
-            character_name:  Vec1::from_pairs(n_character, chn.iter().copied()),
+            keyword_keyword: Vec1::from_pairs(n_keyword,   ids(&kk)),
+            kind_kind:       Vec1::from_pairs(n_kind,      ids(&kik)),
+            roletype_role:   Vec1::from_pairs(n_roletype,  ids(&rt)),
+            character_name:  Vec1::from_pairs(n_character, ids(&chn)),
 
-            company_country: Many::from_pairs(n_company, cc.iter().copied()),
-            company_name:    Vec1::from_pairs(n_company, cmn_.iter().copied()),
-            company_note:    Many::from_pairs(n_company, cmnt.iter().copied()),
-            company_type:    Vec1::from_pairs(n_company, cty.iter().copied()),
-            companytype_kind: Vec1::from_pairs(n_comptype, cyk.iter().copied()),
+            company_country: Many::from_pairs(n_company, ids(&cc)),
+            company_name:    Vec1::from_pairs(n_company, ids(&cmn_)),
+            company_note:    Many::from_pairs(n_company, ids(&cmnt)),
+            company_type:    Vec1::from_pairs_fill(n_company, NO_ID, ids_fk(&cty)),
+            companytype_kind: Vec1::from_pairs(n_comptype, ids(&cyk)),
 
-            info_info:    Vec1::from_pairs(n_info,     ii.iter().copied()),
-            info_type:    Vec1::from_pairs(n_info,     ity.iter().copied()),
-            info_note:    Many::from_pairs(n_info,     in_.iter().copied()),
-            infotype_info: Vec1::from_pairs(n_infotype, ityp.iter().copied()),
-            data_data:    Vec1::from_pairs(n_data,     dd.iter().copied()),
-            data_type:    Vec1::from_pairs(n_data,     dty.iter().copied()),
-            personinfo_info: Vec1::from_pairs(n_pinfo,  pi.iter().copied()),
-            personinfo_type: Vec1::from_pairs(n_pinfo,  pity.iter().copied()),
-            personinfo_note: Many::from_pairs(n_pinfo,  pin.iter().copied()),
+            info_info:    Vec1::from_pairs(n_info,     ids(&ii)),
+            info_type:    Vec1::from_pairs_fill(n_info, NO_ID,     ids_fk(&ity)),
+            info_note:    Many::from_pairs(n_info,     ids(&in_)),
+            infotype_info: Vec1::from_pairs(n_infotype, ids(&ityp)),
+            data_data:    Vec1::from_pairs(n_data,     ids(&dd)),
+            data_type:    Vec1::from_pairs_fill(n_data, NO_ID,     ids_fk(&dty)),
+            personinfo_info: Vec1::from_pairs(n_pinfo,  ids(&pi)),
+            personinfo_type: Vec1::from_pairs_fill(n_pinfo, NO_ID,  ids_fk(&pity)),
+            personinfo_note: Many::from_pairs(n_pinfo,  ids(&pin)),
 
-            akaname_name:    Vec1::from_pairs(n_akaname,  an.iter().copied()),
-            akatitle_title:  Vec1::from_pairs(n_akatitle, at.iter().copied()),
+            akaname_name:    Vec1::from_pairs(n_akaname,  ids(&an)),
+            akatitle_title:  Vec1::from_pairs(n_akatitle, ids(&at)),
 
-            movielink_target: Vec1::from_pairs(n_mlink, mlt.iter().copied()),
-            movielink_type:   Vec1::from_pairs(n_mlink, mlty.iter().copied()),
-            linktype_link:    Vec1::from_pairs(n_ltype, lty.iter().copied()),
+            movielink_target: Vec1::from_pairs_fill(n_mlink, NO_ID, ids_fk(&mlt)),
+            movielink_type:   Vec1::from_pairs_fill(n_mlink, NO_ID, ids_fk(&mlty)),
+            linktype_link:    Vec1::from_pairs(n_ltype, ids(&lty)),
 
-            completecast_status:  Vec1::from_pairs(n_ccast, ccst.iter().copied()),
-            completecast_subject: Vec1::from_pairs(n_ccast, ccsub.iter().copied()),
-            compcasttype_kind:    Vec1::from_pairs(n_ccktype, cck.iter().copied()),
+            completecast_status:  Vec1::from_pairs_fill(n_ccast, NO_ID, ids_fk(&ccst)),
+            completecast_subject: Vec1::from_pairs_fill(n_ccast, NO_ID, ids_fk(&ccsub)),
+            compcasttype_kind:    Vec1::from_pairs(n_ccktype, ids(&cck)),
         }
     }
 }

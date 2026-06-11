@@ -101,7 +101,7 @@ fn q17e(d: &Data) -> String {
     min_row(q)
 }
 
-fn ib_18a<'d>(d: &'d Data) -> impl Rel<R = &'static str, D = i64> + Drive + Probe + 'd {
+fn ib_18a<'d>(d: &'d Data) -> impl Rel<R = &'static str, D = usize> + Drive + Probe + 'd {
     (&d.movie_info).o(
         (&d.info_type).o(&d.infotype_info).eq("budget").k()
             .o(&d.info_info)
@@ -130,7 +130,7 @@ fn q18a(d: &Data) -> String {
     min_row(q)
 }
 
-fn gf_18b<'d>(d: &'d Data) -> impl KeySet<D = i64> + DriveKeys + Member + 'd {
+fn gf_18b<'d>(d: &'d Data) -> impl KeySet<D = usize> + DriveKeys + Member + 'd {
     (&d.info_type).o(&d.infotype_info).eq("genres").k()
         .and((&d.info_info).in_v(vec!["Horror", "Thriller"]).k())
         .minus((&d.info_note).k())
@@ -158,7 +158,7 @@ fn q18b(d: &Data) -> String {
     min_row(q)
 }
 
-fn gf_18c<'d>(d: &'d Data) -> impl KeySet<D = i64> + DriveKeys + Member + 'd {
+fn gf_18c<'d>(d: &'d Data) -> impl KeySet<D = usize> + DriveKeys + Member + 'd {
     (&d.info_type).o(&d.infotype_info).eq("genres").k()
         .and((&d.info_info).in_v(super::sets::genre6()).k())
 }
