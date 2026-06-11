@@ -296,7 +296,7 @@ fn q20(d: &TpchData) -> String {
             }
         }
     });
-    let sum_qty_v = Vec1 { values: sum_qty };
+    let sum_qty_v = Col { values: sum_qty };
     let threshold = (&sum_qty_v).map(|s| 0.5 * s);
     let qual_ps = (&d.partsupp)
         .and((&d.ps_part).o(&d.pa_name).filt(|n: &str| n.starts_with("forest")).k())

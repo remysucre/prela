@@ -105,7 +105,7 @@ impl<S: Member + ?Sized> Member for &S {
 // states): it fails every `i < len` / `.get` bounds check, so a hole probes
 // to nothing for free.
 //
-// `Vec1<R>` — total 1:1 relation; entity-id → R (one value per id).
+// `Col<R>` — total 1:1 relation; entity-id → R (one value per id).
 // Keys with no pair keep the fill value (`R::default()` for `from_pairs`).
 // INVARIANT: an FK-valued column over a gappy key space (holes that a query
 // can drive or probe, e.g. TPC-H ord_customer over the sparse orderkey
@@ -116,7 +116,7 @@ impl<S: Member + ?Sized> Member for &S {
 
 pub const NO_ID: usize = usize::MAX;
 
-pub struct Vec1<R: Copy> {
+pub struct Col<R: Copy> {
     pub values: Vec<R>,
 }
 
@@ -124,17 +124,17 @@ pub struct Many<R: Copy> {
     pub fwd: Vec<Vec<R>>,
 }
 
-impl<R: Copy> Vec1<R> {
+impl<R: Copy> Col<R> {
     pub fn from_pairs_fill(n: usize, fill: R, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
         let mut values = vec![fill; n];
         for (k, v) in pairs {
             values[k] = v;
         }
-        Vec1 { values }
+        Col { values }
     }
 }
 
-impl<R: Copy + Default> Vec1<R> {
+impl<R: Copy + Default> Col<R> {
     pub fn from_pairs(n: usize, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
         Self::from_pairs_fill(n, R::default(), pairs)
     }
@@ -158,8 +158,8 @@ impl<R: Copy> Many<R> {
 // check — a missing-key sentinel (`NO_ID` = usize::MAX) or any
 // out-of-universe id fails it, so "missing key emits nothing" and bounds
 // safety are the same one check. No `unsafe` needed.
-impl<R: Copy> Rel for Vec1<R> { type D = usize; type R = R; }
-impl<R: Copy> Drive for Vec1<R> {
+impl<R: Copy> Rel for Col<R> { type D = usize; type R = R; }
+impl<R: Copy> Drive for Col<R> {
     #[inline(always)]
     fn drive<K: FnMut(usize, R)>(&self, mut k: K) {
         for (i, &v) in self.values.iter().enumerate() {
@@ -167,7 +167,7 @@ impl<R: Copy> Drive for Vec1<R> {
         }
     }
 }
-impl<R: Copy> Probe for Vec1<R> {
+impl<R: Copy> Probe for Col<R> {
     #[inline(always)]
     fn probe<K: FnMut(R)>(&self, x: usize, mut k: K) {
         if let Some(&v) = self.values.get(x) {
@@ -860,9 +860,9 @@ impl<S: KeySet> SetExt for S {}
 mod tests {
     use super::*;
 
-    // films: 0 → 10, 1 → 20, 2 → 30 (Vec1); cast: 0 → {7, 8}, 2 → {7} (Many)
+    // films: 0 → 10, 1 → 20, 2 → 30 (Col); cast: 0 → {7, 8}, 2 → {7} (Many)
     // Values are id-typed (usize) so they can feed compose/lconj domains.
-    fn films() -> Vec1<usize> { Vec1::from_pairs(3, [(0, 10), (1, 20), (2, 30)]) }
+    fn films() -> Col<usize> { Col::from_pairs(3, [(0, 10), (1, 20), (2, 30)]) }
     fn cast() -> Many<usize> { Many::from_pairs(3, [(0, 7), (0, 8), (2, 7)]) }
 
     fn drive_all<Q: Drive>(q: &Q) -> Vec<(Q::D, Q::R)>
