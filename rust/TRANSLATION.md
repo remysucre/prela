@@ -4,7 +4,7 @@
 
 Rust entity ids are **0-based `usize`**: internal id = cache id − 1 =
 natural key − 1. Ids are opaque dense indexes, so the id domain type is
-`usize` throughout the engine (`Col`/`Many`/`Universe`/`Bitset`/`DenseFold`
+`usize` throughout the engine (`Col`/`MultiCol`/`Universe`/`Bitset`/`DenseFold`
 all have `D = usize`); scalar value columns (years, sizes, counts, dates,
 prices) stay `i64`/`f64` — id columns and number columns are distinct types.
 The binary cache stays 1-based `i64` (Julia — 1-based arrays — writes and

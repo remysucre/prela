@@ -2,7 +2,7 @@
 // shared loaders in cache.rs.
 
 use crate::cache::{ids, ids_fk, load_bits, load_strs, max_key, max_val};
-use crate::engine::{Many, Universe, Col, NO_ID};
+use crate::engine::{MultiCol, Universe, Col, NO_ID};
 
 // ===== the loaded dataset ===============================================
 
@@ -14,30 +14,30 @@ pub struct Data {
     // Movie.* (movie → ...)
     pub movie_title:           Col<&'static str>,
     pub movie_kind:            Col<usize>,
-    pub movie_production_year: Many<i64>,
-    pub movie_episode_nr:      Many<i64>,
-    pub movie_keyword:         Many<usize>,
-    pub movie_company:         Many<usize>,
-    pub movie_cast:            Many<usize>,
-    pub movie_info:            Many<usize>,
-    pub movie_data:            Many<usize>,
-    pub movie_complete_cast:   Many<usize>,
-    pub movie_link:            Many<usize>,
-    pub movie_linked_by:       Many<usize>,
-    pub movie_aka:             Many<usize>,
+    pub movie_production_year: MultiCol<i64>,
+    pub movie_episode_nr:      MultiCol<i64>,
+    pub movie_keyword:         MultiCol<usize>,
+    pub movie_company:         MultiCol<usize>,
+    pub movie_cast:            MultiCol<usize>,
+    pub movie_info:            MultiCol<usize>,
+    pub movie_data:            MultiCol<usize>,
+    pub movie_complete_cast:   MultiCol<usize>,
+    pub movie_link:            MultiCol<usize>,
+    pub movie_linked_by:       MultiCol<usize>,
+    pub movie_aka:             MultiCol<usize>,
 
     // Cast.*
     pub cast_person:           Col<usize>,
     pub cast_role:             Col<usize>,
-    pub cast_note:             Many<&'static str>,
-    pub cast_character:        Many<usize>,
+    pub cast_note:             MultiCol<&'static str>,
+    pub cast_character:        MultiCol<usize>,
 
     // Person.*
     pub person_name:           Col<&'static str>,
-    pub person_gender:         Many<&'static str>,
-    pub person_aka:            Many<usize>,
-    pub person_info:           Many<usize>,
-    pub person_name_pcode:     Many<&'static str>,
+    pub person_gender:         MultiCol<&'static str>,
+    pub person_aka:            MultiCol<usize>,
+    pub person_info:           MultiCol<usize>,
+    pub person_name_pcode:     MultiCol<&'static str>,
 
     // Keyword, Kind, RoleType, Character
     pub keyword_keyword:       Col<&'static str>,
@@ -46,22 +46,22 @@ pub struct Data {
     pub character_name:        Col<&'static str>,
 
     // Company, CompanyType
-    pub company_country:       Many<&'static str>,
+    pub company_country:       MultiCol<&'static str>,
     pub company_name:          Col<&'static str>,
-    pub company_note:          Many<&'static str>,
+    pub company_note:          MultiCol<&'static str>,
     pub company_type:          Col<usize>,
     pub companytype_kind:      Col<&'static str>,
 
     // Info, Data, PersonInfo
     pub info_info:             Col<&'static str>,
     pub info_type:             Col<usize>,
-    pub info_note:             Many<&'static str>,
+    pub info_note:             MultiCol<&'static str>,
     pub infotype_info:         Col<&'static str>,
     pub data_data:             Col<&'static str>,
     pub data_type:             Col<usize>,
     pub personinfo_info:       Col<&'static str>,
     pub personinfo_type:       Col<usize>,
-    pub personinfo_note:       Many<&'static str>,
+    pub personinfo_note:       MultiCol<&'static str>,
 
     // Aka tables
     pub akaname_name:          Col<&'static str>,
@@ -184,49 +184,49 @@ impl Data {
             // key with no row never aliases entity 0 — see the Col invariant.
             movie_title:           Col::from_pairs(n_movie, ids(&mt)),
             movie_kind:            Col::from_pairs_fill(n_movie, NO_ID, ids_fk(&mki)),
-            movie_production_year: Many::from_pairs(n_movie, ids(&py)),
-            movie_episode_nr:      Many::from_pairs(n_movie, ids(&men)),
-            movie_keyword:         Many::from_pairs(n_movie, ids_fk(&mk)),
-            movie_company:         Many::from_pairs(n_movie, ids_fk(&mcmp)),
-            movie_cast:            Many::from_pairs(n_movie, ids_fk(&mcst)),
-            movie_info:            Many::from_pairs(n_movie, ids_fk(&mif)),
-            movie_data:            Many::from_pairs(n_movie, ids_fk(&mdt)),
-            movie_complete_cast:   Many::from_pairs(n_movie, ids_fk(&mcc)),
-            movie_link:            Many::from_pairs(n_movie, ids_fk(&mln)),
-            movie_linked_by:       Many::from_pairs(n_movie, ids_fk(&mlnby)),
-            movie_aka:             Many::from_pairs(n_movie, ids_fk(&mak)),
+            movie_production_year: MultiCol::from_pairs(n_movie, ids(&py)),
+            movie_episode_nr:      MultiCol::from_pairs(n_movie, ids(&men)),
+            movie_keyword:         MultiCol::from_pairs(n_movie, ids_fk(&mk)),
+            movie_company:         MultiCol::from_pairs(n_movie, ids_fk(&mcmp)),
+            movie_cast:            MultiCol::from_pairs(n_movie, ids_fk(&mcst)),
+            movie_info:            MultiCol::from_pairs(n_movie, ids_fk(&mif)),
+            movie_data:            MultiCol::from_pairs(n_movie, ids_fk(&mdt)),
+            movie_complete_cast:   MultiCol::from_pairs(n_movie, ids_fk(&mcc)),
+            movie_link:            MultiCol::from_pairs(n_movie, ids_fk(&mln)),
+            movie_linked_by:       MultiCol::from_pairs(n_movie, ids_fk(&mlnby)),
+            movie_aka:             MultiCol::from_pairs(n_movie, ids_fk(&mak)),
 
             cast_person:     Col::from_pairs_fill(n_cast, NO_ID, ids_fk(&cp)),
             cast_role:       Col::from_pairs_fill(n_cast, NO_ID, ids_fk(&cr)),
-            cast_note:       Many::from_pairs(n_cast, ids(&cnt)),
-            cast_character:  Many::from_pairs(n_cast, ids_fk(&cch)),
+            cast_note:       MultiCol::from_pairs(n_cast, ids(&cnt)),
+            cast_character:  MultiCol::from_pairs(n_cast, ids_fk(&cch)),
 
             person_name:       Col::from_pairs(n_person, ids(&pn)),
-            person_gender:     Many::from_pairs(n_person, ids(&pg)),
-            person_aka:        Many::from_pairs(n_person, ids_fk(&pa)),
-            person_info:       Many::from_pairs(n_person, ids_fk(&pif)),
-            person_name_pcode: Many::from_pairs(n_person, ids(&pnp)),
+            person_gender:     MultiCol::from_pairs(n_person, ids(&pg)),
+            person_aka:        MultiCol::from_pairs(n_person, ids_fk(&pa)),
+            person_info:       MultiCol::from_pairs(n_person, ids_fk(&pif)),
+            person_name_pcode: MultiCol::from_pairs(n_person, ids(&pnp)),
 
             keyword_keyword: Col::from_pairs(n_keyword,   ids(&kk)),
             kind_kind:       Col::from_pairs(n_kind,      ids(&kik)),
             roletype_role:   Col::from_pairs(n_roletype,  ids(&rt)),
             character_name:  Col::from_pairs(n_character, ids(&chn)),
 
-            company_country: Many::from_pairs(n_company, ids(&cc)),
+            company_country: MultiCol::from_pairs(n_company, ids(&cc)),
             company_name:    Col::from_pairs(n_company, ids(&cmn_)),
-            company_note:    Many::from_pairs(n_company, ids(&cmnt)),
+            company_note:    MultiCol::from_pairs(n_company, ids(&cmnt)),
             company_type:    Col::from_pairs_fill(n_company, NO_ID, ids_fk(&cty)),
             companytype_kind: Col::from_pairs(n_comptype, ids(&cyk)),
 
             info_info:    Col::from_pairs(n_info,     ids(&ii)),
             info_type:    Col::from_pairs_fill(n_info, NO_ID,     ids_fk(&ity)),
-            info_note:    Many::from_pairs(n_info,     ids(&in_)),
+            info_note:    MultiCol::from_pairs(n_info,     ids(&in_)),
             infotype_info: Col::from_pairs(n_infotype, ids(&ityp)),
             data_data:    Col::from_pairs(n_data,     ids(&dd)),
             data_type:    Col::from_pairs_fill(n_data, NO_ID,     ids_fk(&dty)),
             personinfo_info: Col::from_pairs(n_pinfo,  ids(&pi)),
             personinfo_type: Col::from_pairs_fill(n_pinfo, NO_ID,  ids_fk(&pity)),
-            personinfo_note: Many::from_pairs(n_pinfo,  ids(&pin)),
+            personinfo_note: MultiCol::from_pairs(n_pinfo,  ids(&pin)),
 
             akaname_name:    Col::from_pairs(n_akaname,  ids(&an)),
             akatitle_title:  Col::from_pairs(n_akatitle, ids(&at)),

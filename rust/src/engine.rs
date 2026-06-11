@@ -111,7 +111,7 @@ impl<S: Member + ?Sized> Member for &S {
 // can drive or probe, e.g. TPC-H ord_customer over the sparse orderkey
 // domain) must use `from_pairs_fill` with fill `NO_ID` — a default-0 hole
 // would alias entity 0, which is a live id.
-// `Many<R>` — multi-valued / partial; dense forward index Vec<Vec<R>>
+// `MultiCol<R>` — multi-valued / partial; dense forward index Vec<Vec<R>>
 // addressed by .id; empty slot for missing keys.
 
 pub const NO_ID: usize = usize::MAX;
@@ -120,7 +120,7 @@ pub struct Col<R: Copy> {
     pub values: Vec<R>,
 }
 
-pub struct Many<R: Copy> {
+pub struct MultiCol<R: Copy> {
     pub fwd: Vec<Vec<R>>,
 }
 
@@ -140,7 +140,7 @@ impl<R: Copy + Default> Col<R> {
     }
 }
 
-impl<R: Copy> Many<R> {
+impl<R: Copy> MultiCol<R> {
     pub fn from_pairs(n: usize, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
         let mut fwd: Vec<Vec<R>> = (0..n).map(|_| Vec::new()).collect();
         for (k, v) in pairs {
@@ -148,7 +148,7 @@ impl<R: Copy> Many<R> {
                 fwd[k].push(v);
             }
         }
-        Many { fwd }
+        MultiCol { fwd }
     }
 }
 
@@ -180,8 +180,8 @@ impl<R: Copy> Probe for Col<R> {
     }
 }
 
-impl<R: Copy> Rel for Many<R> { type D = usize; type R = R; }
-impl<R: Copy> Drive for Many<R> {
+impl<R: Copy> Rel for MultiCol<R> { type D = usize; type R = R; }
+impl<R: Copy> Drive for MultiCol<R> {
     #[inline(always)]
     fn drive<K: FnMut(usize, R)>(&self, mut k: K) {
         for (i, vs) in self.fwd.iter().enumerate() {
@@ -189,7 +189,7 @@ impl<R: Copy> Drive for Many<R> {
         }
     }
 }
-impl<R: Copy> Probe for Many<R> {
+impl<R: Copy> Probe for MultiCol<R> {
     #[inline(always)]
     fn probe<K: FnMut(R)>(&self, x: usize, mut k: K) {
         if let Some(vs) = self.fwd.get(x) {
@@ -860,10 +860,10 @@ impl<S: KeySet> SetExt for S {}
 mod tests {
     use super::*;
 
-    // films: 0 → 10, 1 → 20, 2 → 30 (Col); cast: 0 → {7, 8}, 2 → {7} (Many)
+    // films: 0 → 10, 1 → 20, 2 → 30 (Col); cast: 0 → {7, 8}, 2 → {7} (MultiCol)
     // Values are id-typed (usize) so they can feed compose/lconj domains.
     fn films() -> Col<usize> { Col::from_pairs(3, [(0, 10), (1, 20), (2, 30)]) }
-    fn cast() -> Many<usize> { Many::from_pairs(3, [(0, 7), (0, 8), (2, 7)]) }
+    fn cast() -> MultiCol<usize> { MultiCol::from_pairs(3, [(0, 7), (0, 8), (2, 7)]) }
 
     fn drive_all<Q: Drive>(q: &Q) -> Vec<(Q::D, Q::R)>
     where Q::D: Ord, Q::R: Ord {
