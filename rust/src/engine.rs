@@ -130,12 +130,17 @@ impl<R: Copy> Many<R> {
     }
 }
 
+// Unsafe policy: drive loops iterate, so they use safe iterators (bounds-
+// check-free by construction). Probe loads index by *data* (a foreign key);
+// the manual `1 <= i < len` range check IS the "missing key emits nothing"
+// semantics, and the `get_unchecked` after it guarantees the optimizer
+// doesn't re-check through the i64→usize cast.
 impl<R: Copy> Rel for Vec1<R> { type D = i64; type R = R; }
 impl<R: Copy> Drive for Vec1<R> {
     #[inline(always)]
     fn drive<K: FnMut(i64, R)>(&self, mut k: K) {
-        for i in 1..self.values.len() {
-            k(i as i64, unsafe { *self.values.get_unchecked(i) });
+        for (i, &v) in self.values.iter().enumerate().skip(1) {
+            k(i as i64, v);
         }
     }
 }
@@ -654,9 +659,9 @@ impl<S: Copy> Rel for DenseFold<S> { type D = i64; type R = S; }
 impl<S: Copy> Drive for DenseFold<S> {
     #[inline(always)]
     fn drive<K: FnMut(i64, S)>(&self, mut k: K) {
-        for i in 0..self.vals.len() {
-            if unsafe { *self.seen.get_unchecked(i) } {
-                k(i as i64, unsafe { *self.vals.get_unchecked(i) });
+        for (i, (&v, &seen)) in self.vals.iter().zip(&self.seen).enumerate() {
+            if seen {
+                k(i as i64, v);
             }
         }
     }
