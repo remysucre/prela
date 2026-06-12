@@ -1,9 +1,11 @@
-// The JOB tables, loaded from the binary cache (../cache/*.bin, produced
-// by `regen job`; originally by Julia's JOB.jl/cache.jl — julia-engine
-// branch) via the shared loaders in cache.rs.
+// The JOB tables, loaded from the v2 binary cache (../cache/*.bin,
+// produced by `regen job` — see src/format.rs for the format). Every file
+// already holds the final physical layout (0-based ids, NO_ID holes, CSR),
+// so loading is just "read each file into its typed field"; universe sizes
+// are the column lengths.
 
-use crate::cache::{ids, ids_fk, load_bits, load_strs, max_key, max_val};
-use crate::engine::{MultiRel, Universe, VecRel, NO_ID};
+use crate::cache::{load_ids, load_multi_i64, load_multi_ids, load_multi_strs, load_strs};
+use crate::engine::{MultiRel, Universe, VecRel};
 
 // ===== the loaded dataset ===============================================
 
@@ -81,164 +83,75 @@ pub struct Data {
 
 impl Data {
     pub fn load() -> Self {
-        // ---- bits ----
-        let py    = load_bits("Movie_production_year");
-        let men   = load_bits("Movie_episode_nr");
-        let mki   = load_bits("Movie_kind");
-        let mk    = load_bits("Movie_keyword");
-        let mcmp  = load_bits("Movie_company");
-        let mcst  = load_bits("Movie_cast");
-        let mif   = load_bits("Movie_info");
-        let mdt   = load_bits("Movie_data");
-        let mcc   = load_bits("Movie_complete_cast");
-        let mln   = load_bits("Movie_link");
-        let mlnby = load_bits("Movie_linked_by");
-        let mak   = load_bits("Movie_aka");
-        let cp    = load_bits("Cast_person");
-        let cr    = load_bits("Cast_role");
-        let cch   = load_bits("Cast_character");
-        let pa    = load_bits("Person_aka");
-        let pif   = load_bits("Person_info");
-        let cty   = load_bits("Company_type");
-        let ity   = load_bits("Info_type");
-        let dty   = load_bits("Data_type");
-        let pity  = load_bits("PersonInfo_type");
-        let mlt   = load_bits("MovieLink_target");
-        let mlty  = load_bits("MovieLink_type");
-        let ccst  = load_bits("CompleteCast_status");
-        let ccsub = load_bits("CompleteCast_subject");
+        let d = Data {
+            movie:   Universe { n: 0 }, // patched below from column lengths
+            persons: Universe { n: 0 },
 
-        // ---- strs ----
-        let mt   = load_strs("Movie_title");
-        let kk   = load_strs("Keyword_keyword");
-        let kik  = load_strs("Kind_kind");
-        let rt   = load_strs("RoleType_role");
-        let chn  = load_strs("Character_name");
-        let cc   = load_strs("Company_country");
-        let cmn_ = load_strs("Company_name");
-        let cmnt = load_strs("Company_note");
-        let cyk  = load_strs("CompanyType_kind");
-        let ii   = load_strs("Info_info");
-        let in_  = load_strs("Info_note");
-        let ityp = load_strs("InfoType_info");
-        let dd   = load_strs("Data_data");
-        let pi   = load_strs("PersonInfo_info");
-        let pin  = load_strs("PersonInfo_note");
-        let pn   = load_strs("Person_name");
-        let pg   = load_strs("Person_gender");
-        let pnp  = load_strs("Person_name_pcode_cf");
-        let cnt  = load_strs("Cast_note");
-        let an   = load_strs("AkaName_name");
-        let at   = load_strs("AkaTitle_title");
-        let lty  = load_strs("LinkType_link");
-        let cck  = load_strs("CompCastType_kind");
+            movie_title:           load_strs("Movie_title"),
+            movie_kind:            load_ids("Movie_kind"),
+            movie_production_year: load_multi_i64("Movie_production_year"),
+            movie_episode_nr:      load_multi_i64("Movie_episode_nr"),
+            movie_keyword:         load_multi_ids("Movie_keyword"),
+            movie_company:         load_multi_ids("Movie_company"),
+            movie_cast:            load_multi_ids("Movie_cast"),
+            movie_info:            load_multi_ids("Movie_info"),
+            movie_data:            load_multi_ids("Movie_data"),
+            movie_complete_cast:   load_multi_ids("Movie_complete_cast"),
+            movie_link:            load_multi_ids("Movie_link"),
+            movie_linked_by:       load_multi_ids("Movie_linked_by"),
+            movie_aka:             load_multi_ids("Movie_aka"),
 
-        // ---- entity sizes (max id seen across all references) ----
-        let n_movie     = max_key(&mt)
-                          .max(max_val(&mlt));
-        let n_person    = max_key(&pn);
-        let n_cast      = max_key(&cp);
-        let n_keyword   = max_key(&kk)
-                          .max(max_val(&mk));
-        let n_kind      = max_key(&kik).max(max_val(&mki));
-        let n_roletype  = max_key(&rt).max(max_val(&cr));
-        let n_character = max_key(&chn).max(max_val(&cch));
-        let n_company   = max_key(&cmn_)
-                          .max(max_key(&cc))
-                          .max(max_key(&cmnt))
-                          .max(max_key(&cty))
-                          .max(max_val(&mcmp));
-        let n_comptype  = max_key(&cyk).max(max_val(&cty));
-        let n_info      = max_key(&ii)
-                          .max(max_key(&ity))
-                          .max(max_key(&in_))
-                          .max(max_val(&mif));
-        let n_infotype  = max_key(&ityp).max(max_val(&ity));
-        let n_data      = max_key(&dd)
-                          .max(max_key(&dty))
-                          .max(max_val(&mdt));
-        let n_pinfo     = max_key(&pi)
-                          .max(max_key(&pity))
-                          .max(max_key(&pin))
-                          .max(max_val(&pif));
-        let n_akaname   = max_key(&an).max(max_val(&pa));
-        let n_akatitle  = max_key(&at).max(max_val(&mak));
-        let n_mlink     = max_key(&mlt)
-                          .max(max_key(&mlty))
-                          .max(max_val(&mln))
-                          .max(max_val(&mlnby));
-        let n_ltype     = max_key(&lty).max(max_val(&mlty));
-        let n_ccast     = max_key(&ccst)
-                          .max(max_key(&ccsub))
-                          .max(max_val(&mcc));
-        let n_ccktype   = max_key(&cck)
-                          .max(max_val(&ccst))
-                          .max(max_val(&ccsub));
+            cast_person:    load_ids("Cast_person"),
+            cast_role:      load_ids("Cast_role"),
+            cast_note:      load_multi_strs("Cast_note"),
+            cast_character: load_multi_ids("Cast_character"),
 
-        Data {
-            movie:   Universe { n: n_movie  },
-            persons: Universe { n: n_person },
+            person_name:       load_strs("Person_name"),
+            person_gender:     load_multi_strs("Person_gender"),
+            person_aka:        load_multi_ids("Person_aka"),
+            person_info:       load_multi_ids("Person_info"),
+            person_name_pcode: load_multi_strs("Person_name_pcode_cf"),
 
-            // `ids` shifts keys to 0-based; `ids_fk` also shifts the value
-            // (FK columns). Year/episode-nr/string values are untouched.
-            // FK-valued VecRel columns fill holes with NO_ID (a dead id) so a
-            // key with no row never aliases entity 0 — see the VecRel invariant.
-            movie_title:           VecRel::from_pairs(n_movie, ids(&mt)),
-            movie_kind:            VecRel::from_pairs_fill(n_movie, NO_ID, ids_fk(&mki)),
-            movie_production_year: MultiRel::from_pairs(n_movie, ids(&py)),
-            movie_episode_nr:      MultiRel::from_pairs(n_movie, ids(&men)),
-            movie_keyword:         MultiRel::from_pairs(n_movie, ids_fk(&mk)),
-            movie_company:         MultiRel::from_pairs(n_movie, ids_fk(&mcmp)),
-            movie_cast:            MultiRel::from_pairs(n_movie, ids_fk(&mcst)),
-            movie_info:            MultiRel::from_pairs(n_movie, ids_fk(&mif)),
-            movie_data:            MultiRel::from_pairs(n_movie, ids_fk(&mdt)),
-            movie_complete_cast:   MultiRel::from_pairs(n_movie, ids_fk(&mcc)),
-            movie_link:            MultiRel::from_pairs(n_movie, ids_fk(&mln)),
-            movie_linked_by:       MultiRel::from_pairs(n_movie, ids_fk(&mlnby)),
-            movie_aka:             MultiRel::from_pairs(n_movie, ids_fk(&mak)),
+            keyword_keyword: load_strs("Keyword_keyword"),
+            kind_kind:       load_strs("Kind_kind"),
+            roletype_role:   load_strs("RoleType_role"),
+            character_name:  load_strs("Character_name"),
 
-            cast_person:     VecRel::from_pairs_fill(n_cast, NO_ID, ids_fk(&cp)),
-            cast_role:       VecRel::from_pairs_fill(n_cast, NO_ID, ids_fk(&cr)),
-            cast_note:       MultiRel::from_pairs(n_cast, ids(&cnt)),
-            cast_character:  MultiRel::from_pairs(n_cast, ids_fk(&cch)),
+            company_country:  load_multi_strs("Company_country"),
+            company_name:     load_strs("Company_name"),
+            company_note:     load_multi_strs("Company_note"),
+            company_type:     load_ids("Company_type"),
+            companytype_kind: load_strs("CompanyType_kind"),
 
-            person_name:       VecRel::from_pairs(n_person, ids(&pn)),
-            person_gender:     MultiRel::from_pairs(n_person, ids(&pg)),
-            person_aka:        MultiRel::from_pairs(n_person, ids_fk(&pa)),
-            person_info:       MultiRel::from_pairs(n_person, ids_fk(&pif)),
-            person_name_pcode: MultiRel::from_pairs(n_person, ids(&pnp)),
+            info_info:       load_strs("Info_info"),
+            info_type:       load_ids("Info_type"),
+            info_note:       load_multi_strs("Info_note"),
+            infotype_info:   load_strs("InfoType_info"),
+            data_data:       load_strs("Data_data"),
+            data_type:       load_ids("Data_type"),
+            personinfo_info: load_strs("PersonInfo_info"),
+            personinfo_type: load_ids("PersonInfo_type"),
+            personinfo_note: load_multi_strs("PersonInfo_note"),
 
-            keyword_keyword: VecRel::from_pairs(n_keyword,   ids(&kk)),
-            kind_kind:       VecRel::from_pairs(n_kind,      ids(&kik)),
-            roletype_role:   VecRel::from_pairs(n_roletype,  ids(&rt)),
-            character_name:  VecRel::from_pairs(n_character, ids(&chn)),
+            akaname_name:   load_strs("AkaName_name"),
+            akatitle_title: load_strs("AkaTitle_title"),
 
-            company_country: MultiRel::from_pairs(n_company, ids(&cc)),
-            company_name:    VecRel::from_pairs(n_company, ids(&cmn_)),
-            company_note:    MultiRel::from_pairs(n_company, ids(&cmnt)),
-            company_type:    VecRel::from_pairs_fill(n_company, NO_ID, ids_fk(&cty)),
-            companytype_kind: VecRel::from_pairs(n_comptype, ids(&cyk)),
+            movielink_target: load_ids("MovieLink_target"),
+            movielink_type:   load_ids("MovieLink_type"),
+            linktype_link:    load_strs("LinkType_link"),
 
-            info_info:    VecRel::from_pairs(n_info,     ids(&ii)),
-            info_type:    VecRel::from_pairs_fill(n_info, NO_ID,     ids_fk(&ity)),
-            info_note:    MultiRel::from_pairs(n_info,     ids(&in_)),
-            infotype_info: VecRel::from_pairs(n_infotype, ids(&ityp)),
-            data_data:    VecRel::from_pairs(n_data,     ids(&dd)),
-            data_type:    VecRel::from_pairs_fill(n_data, NO_ID,     ids_fk(&dty)),
-            personinfo_info: VecRel::from_pairs(n_pinfo,  ids(&pi)),
-            personinfo_type: VecRel::from_pairs_fill(n_pinfo, NO_ID,  ids_fk(&pity)),
-            personinfo_note: MultiRel::from_pairs(n_pinfo,  ids(&pin)),
+            completecast_status:  load_ids("CompleteCast_status"),
+            completecast_subject: load_ids("CompleteCast_subject"),
+            compcasttype_kind:    load_strs("CompCastType_kind"),
+        };
 
-            akaname_name:    VecRel::from_pairs(n_akaname,  ids(&an)),
-            akatitle_title:  VecRel::from_pairs(n_akatitle, ids(&at)),
-
-            movielink_target: VecRel::from_pairs_fill(n_mlink, NO_ID, ids_fk(&mlt)),
-            movielink_type:   VecRel::from_pairs_fill(n_mlink, NO_ID, ids_fk(&mlty)),
-            linktype_link:    VecRel::from_pairs(n_ltype, ids(&lty)),
-
-            completecast_status:  VecRel::from_pairs_fill(n_ccast, NO_ID, ids_fk(&ccst)),
-            completecast_subject: VecRel::from_pairs_fill(n_ccast, NO_ID, ids_fk(&ccsub)),
-            compcasttype_kind:    VecRel::from_pairs(n_ccktype, ids(&cck)),
-        }
+        // Universe sizes ARE the dense column lengths (regen sizes every
+        // column of an entity to the same n); cross-check a few siblings.
+        let movie = Universe { n: d.movie_title.values.len() };
+        let persons = Universe { n: d.person_name.values.len() };
+        assert_eq!(movie.n + 1, d.movie_cast.offsets.len());
+        assert_eq!(d.cast_person.values.len() + 1, d.cast_note.offsets.len());
+        assert_eq!(persons.n + 1, d.person_aka.offsets.len());
+        Data { movie, persons, ..d }
     }
 }

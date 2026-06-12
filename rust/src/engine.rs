@@ -102,9 +102,9 @@ impl<T: Probe + ?Sized> Probe for &T {
 
 // ===== leaf storage =====================================================
 // Entity ids are 0-based `usize`: a universe of size n has ids 0..n-1,
-// indexing its dense columns directly. (The binary cache is 1-based — Julia
-// writes it — and the loaders shift at the load edge: internal id = cache
-// id − 1.) Ids are opaque dense indexes, so the id domain type is `usize`;
+// indexing its dense columns directly. (The cache stores these final
+// physical layouts — 0-based, `NO_ID` holes baked in; see src/format.rs.)
+// Ids are opaque dense indexes, so the id domain type is `usize`;
 // scalar value columns (years, sizes, counts, …) stay `i64`/`f64`.
 //
 // `NO_ID` is the missing-id sentinel (FK hole fill, "none seen yet" fold
@@ -112,13 +112,16 @@ impl<T: Probe + ?Sized> Probe for &T {
 // to nothing for free.
 //
 // `VecRel<R>` — total 1:1 relation; entity-id → R (one value per id).
-// Keys with no pair keep the fill value (`R::default()` for `from_pairs`).
 // INVARIANT: an FK-valued column over a gappy key space (holes that a query
 // can drive or probe, e.g. TPC-H ord_customer over the sparse orderkey
-// domain) must use `from_pairs_fill` with fill `NO_ID` — a default-0 hole
-// would alias entity 0, which is a live id.
-// `MultiRel<R>` — multi-valued / partial; dense forward index Vec<Vec<R>>
-// addressed by .id; empty slot for missing keys.
+// domain) holds `NO_ID` in the holes — a default-0 hole would alias entity
+// 0, which is a live id. (regen bakes the fill in; non-FK holes are
+// `Default`: 0 / 0.0 / "".)
+// `MultiRel<R>` — multi-valued / partial; CSR over the dense key space:
+// row i = `values[offsets[i]..offsets[i+1]]`, empty range for missing
+// keys. The slices are `&'static` — in production they point into the
+// leaked cache mmap (zero-copy); `from_pairs` (unit tests) leaks two small
+// Vecs to the same effect.
 
 pub const NO_ID: usize = usize::MAX;
 
@@ -126,13 +129,21 @@ pub struct VecRel<R: Copy> {
     pub values: Vec<R>,
 }
 
-pub struct MultiRel<R: Copy> {
-    pub fwd: Vec<Vec<R>>,
+pub struct MultiRel<R: Copy + 'static> {
+    /// CSR row offsets, length n+1 (u32: every cached column's value count
+    /// fits, and half-width offsets halve the footprint of sparse rows).
+    pub offsets: &'static [u32],
+    /// All rows' values, concatenated in key order.
+    pub values: &'static [R],
 }
 
-impl<R: Copy> VecRel<R> {
-    pub fn from_pairs_fill(n: usize, fill: R, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
-        let mut values = vec![fill; n];
+// Pair-stream constructors survive only as unit-test fixtures: regen bakes
+// the scatter/fill into the cache, so production loading never builds from
+// pairs.
+#[cfg(test)]
+impl<R: Copy + Default> VecRel<R> {
+    pub fn from_pairs(n: usize, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
+        let mut values = vec![R::default(); n];
         for (k, v) in pairs {
             values[k] = v;
         }
@@ -140,21 +151,46 @@ impl<R: Copy> VecRel<R> {
     }
 }
 
-impl<R: Copy + Default> VecRel<R> {
-    pub fn from_pairs(n: usize, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
-        Self::from_pairs_fill(n, R::default(), pairs)
+impl<R: Copy + 'static> MultiRel<R> {
+    /// Wrap existing CSR arrays (the cache loaders' zero-copy path).
+    pub fn from_csr(offsets: &'static [u32], values: &'static [R]) -> Self {
+        assert!(!offsets.is_empty(), "CSR offsets must have length n+1");
+        assert_eq!(*offsets.last().unwrap() as usize, values.len());
+        MultiRel { offsets, values }
     }
-}
 
-impl<R: Copy> MultiRel<R> {
+    /// Build CSR from a pair stream — small-data constructor for unit
+    /// tests (the backing Vecs are leaked). Pairs with `k >= n` are
+    /// dropped; per-key value order follows the stream.
+    #[cfg(test)]
     pub fn from_pairs(n: usize, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
-        let mut fwd: Vec<Vec<R>> = (0..n).map(|_| Vec::new()).collect();
+        let mut buckets: Vec<Vec<R>> = (0..n).map(|_| Vec::new()).collect();
         for (k, v) in pairs {
             if k < n {
-                fwd[k].push(v);
+                buckets[k].push(v);
             }
         }
-        MultiRel { fwd }
+        let mut offsets = Vec::with_capacity(n + 1);
+        let mut values = Vec::new();
+        offsets.push(0u32);
+        for b in &buckets {
+            values.extend_from_slice(b);
+            offsets.push(values.len() as u32);
+        }
+        MultiRel { offsets: Vec::leak(offsets), values: Vec::leak(values) }
+    }
+
+    /// Row slice for key `x` — empty for missing/out-of-universe keys
+    /// (`NO_ID` included: it fails the `x < n` check like any other
+    /// out-of-range id).
+    #[inline(always)]
+    fn row(&self, x: usize) -> &'static [R] {
+        // `x < len-1`, not `x+1 < len`: x = NO_ID must not overflow.
+        if x < self.offsets.len() - 1 {
+            &self.values[self.offsets[x] as usize..self.offsets[x + 1] as usize]
+        } else {
+            &[]
+        }
     }
 }
 
@@ -190,21 +226,19 @@ impl<R: Copy> Query for MultiRel<R> { type D = usize; type R = R; }
 impl<R: Copy> Drive for MultiRel<R> {
     #[inline(always)]
     fn drive<K: FnMut(usize, R)>(&self, mut k: K) {
-        for (i, vs) in self.fwd.iter().enumerate() {
-            for &v in vs { k(i, v); }
+        for (i, w) in self.offsets.windows(2).enumerate() {
+            for &v in &self.values[w[0] as usize..w[1] as usize] { k(i, v); }
         }
     }
 }
 impl<R: Copy> Probe for MultiRel<R> {
     #[inline(always)]
     fn probe<K: FnMut(R)>(&self, x: usize, mut k: K) {
-        if let Some(vs) = self.fwd.get(x) {
-            for &v in vs { k(v); }
-        }
+        for &v in self.row(x) { k(v); }
     }
     #[inline(always)]
     fn probe_any<K: FnMut(R) -> bool>(&self, x: usize, mut k: K) -> bool {
-        self.fwd.get(x).is_some_and(|vs| vs.iter().any(|&v| k(v)))
+        self.row(x).iter().any(|&v| k(v))
     }
 }
 

@@ -20,8 +20,10 @@ cargo run --release --features regen --bin regen -- job   # defaults: ../../jobd
 ```
 
 Converts the JOB parquet into a binary relation cache at
-`prela/cache/*.bin` — 49 files (~hundreds of MB total), ~6 s. The engine
-then mmaps straight from the cache at startup.
+`prela/cache/*.bin` — 48 files (~4.2 GB), ~7 s. The cache (format v2 —
+see `rust/src/format.rs`) stores the final physical layouts (0-based ids,
+holes pre-filled, CSR multi columns), so the engine startup is just
+mmap + bulk copy: the JOB tables load in ~0.2 s.
 
 ## First-time setup: TPC-H cache
 
@@ -88,7 +90,7 @@ EOF
 # Convert parquet → Rust binary cache (one-shot).
 cd rust
 cargo build --release --features regen --bin regen
-./target/release/regen ../cache/tpch ../cache
+./target/release/regen tpch ../cache/tpch ../cache
 ```
 
 For SF=10, swap `sf = 1` to `sf = 10` above. Rust + DuckDB both handle

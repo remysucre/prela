@@ -1,6 +1,7 @@
 mod cache;
 mod data;
 mod engine;
+mod format;
 mod queries;
 mod tpch;
 mod tpch_data;

@@ -8,18 +8,20 @@ historic implementation, which doubles as the algebra's reference spec.
 
 ## Entity ids — 0-based `usize` in Rust
 
-Rust entity ids are **0-based `usize`**: internal id = cache id − 1 =
-natural key − 1. Ids are opaque dense indexes, so the id domain type is
+Rust entity ids are **0-based `usize`**: internal id = natural key − 1.
+Ids are opaque dense indexes, so the id domain type is
 `usize` throughout the engine (`VecRel`/`MultiRel`/`Universe`/`Bitset`/`DenseFold`
 all have `D = usize`); scalar value columns (years, sizes, counts, dates,
 prices) stay `i64`/`f64` — id columns and number columns are distinct types.
-The binary cache stays 1-based `i64` (Julia — 1-based arrays — writes and
-reads it; its format must not change), and the loaders shift **and retype**
-at the load edge (`cache::ids` / `cache::ids_fk`, the latter also shifting
-FK-valued columns). Julia remains 1-based throughout. The only place a +1
-survives is output formatting of natural keys (TPC-H
-orderkey/custkey/partkey/suppkey); JOB queries print no ids. Universe sizes
-are unchanged: max raw id N ⟹ internal ids 0..N-1 ⟹ n = N.
+The binary cache (format v2 — `rust/src/format.rs`) stores the FINAL
+physical layouts: ids already 0-based with `NO_ID` holes baked in, dates
+pre-parsed to yyyymmdd `i64`, strings as offsets+bytes, multi columns as
+CSR. The −1 shift, FK hole filling, and date parsing all happen once, in
+`regen` (the historic 1-based pair-stream cache was a Julia-era artifact;
+see the julia-engine branch). The only place a +1 survives is output
+formatting of natural keys (TPC-H orderkey/custkey/partkey/suppkey); JOB
+queries print no ids. Universe sizes are unchanged: max raw id N ⟹
+internal ids 0..N-1 ⟹ n = N (= every column's stored length).
 
 The missing-id sentinel is `engine::NO_ID` (= `usize::MAX`): FK-valued
 Leaf names match Julia's (`VecRel`/`MultiRel` implementing `Query`, like
