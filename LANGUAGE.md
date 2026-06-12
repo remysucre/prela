@@ -37,8 +37,10 @@ There is an abstract `Movie` type instead of the integer ID `movie_id`,
 This makes is clear that `info` is a foreign key relationship between `Info` and `Movie`.
 The "struct" `Info` is in fact shorthand for declaring 3 relations:
  `info: Info -> String, type: Info -> InfoType, note: Info -> String`.
-In Julia these declarations are written with the `@entity` macro; a field
- reached with multiplicity (a movie has many info rows) is marked `Multi{...}`.
+In the Rust implementation these declarations are the typed fields of the
+ dataset struct (`movie_title: VecRel<&str>`; a field reached with
+ multiplicity — a movie has many info rows — is a `MultiRel`). The historic
+ Julia surface (`julia-engine` branch) wrote them with an `@entity` macro.
 This lets us "access fields" with simple relational composition (introduced
  formally soon): `movie → Movie.info → Info.note`. A field name that is unique
  can be bound to a bare alias (`title`); a polymorphic one (`info` lives on both
@@ -85,7 +87,7 @@ Product / parallel composition `×`: strictly binary. `r: x -> y × s: x -> z` r
 Per-`x` semantics: the cross product of tuple sets from each side. If `r` yields multiple
  `y` values and `s` yields multiple `z` values for the same `x`, every combination is emitted.
 
-Map `↦`: `r ↦ f` applies the Julia function `f` to each value, keys unchanged —
+Map `↦`: `r ↦ f` applies the host-language function `f` to each value, keys unchanged —
  post-aggregation arithmetic (ratios, means) without leaving the algebra.
 
 Primary field: each type has a designated primary field, defaulting to the first field

@@ -1,31 +1,31 @@
 ## Prerequisites
 
-- **JOB dataset cache** in `cache/`. The Rust build *reads* this cache;
-  the Julia build *generates* it. So the first-time setup is: run Julia
-  once to populate `cache/`, then the AOT builds can use it.
-- **TPC-H cache** (if you want to run TPC-H): a binary cache in `cache/`
-  (Rust) and parquet files in `cache/tpch/` (Julia). See *TPC-H setup*
-  below.
-- **Julia 1.11+** — needed to populate the JOB cache and to run the
-  Julia benchmark.
+- **JOB parquet** at `../jobdata/parquet/` (the IMDB tables) — regen
+  converts these into the binary cache in `cache/` that the engine mmaps.
+- **TPC-H cache** (if you want to run TPC-H): parquet files in
+  `cache/tpch/`, converted to the binary cache by the same regen tool.
+  See *TPC-H setup* below.
 - **Rust 1.85+** (edition 2024).
 - **DuckDB** (only if you want to run the comparison plots) — used by
   the bench scripts and to seed TPC-H parquet at any scale factor.
 
+(The historic Julia engine and its benchmark setup live on the
+`julia-engine` branch.)
+
 ## First-time setup: JOB cache
 
 ```bash
-cd julia
-julia --project=. -e 'include("JOB.jl")'
+cd rust
+cargo run --release --features regen --bin regen -- job   # defaults: ../../jobdata/parquet → ../cache
 ```
 
-Ingests the raw JOB CSVs (~9 GB) and writes a binary relation cache into
-`prela/cache/*.bin` — 48 files (~hundreds of MB total). Takes ~30 s the
-first time; subsequent runs mmap straight from the cache in ~2 s.
+Converts the JOB parquet into a binary relation cache at
+`prela/cache/*.bin` — 49 files (~hundreds of MB total), ~6 s. The engine
+then mmaps straight from the cache at startup.
 
 ## First-time setup: TPC-H cache
 
-Both the Rust regen tool and Julia load from `cache/tpch/*.parquet`.
+The regen tool loads from `cache/tpch/*.parquet`.
 Generate them via DuckDB at any scale factor (synthetic IDs go first
 because the Rust regen reads parquet via `arrow-rs` projection which
 preserves file order):
@@ -91,57 +91,13 @@ cargo build --release --features regen --bin regen
 ./target/release/regen ../cache/tpch ../cache
 ```
 
-For SF=10, swap `sf = 1` to `sf = 10` above. The Julia TPC-H loader
-currently materializes the whole DataFrame in memory, so SF=10 needs
-~30 GB — the plots check in are SF=1 for that reason. Rust + DuckDB
-both handle SF=10 fine on a 32 GB machine.
+For SF=10, swap `sf = 1` to `sf = 10` above. Rust + DuckDB both handle
+SF=10 fine on a 32 GB machine (the checked-in plots are SF=1).
 
 The Rust binary cache (`cache/*.bin`) is what `./target/release/prela tpch`
-mmaps at startup; the parquet files are what Julia reads directly via
-Parquet2.jl.
+mmaps at startup.
 
 ## Run the suites
-
-### Julia (JOB)
-
-```bash
-cd julia
-julia --project=. -e 'include("JOB.jl"); include("queries.jl"); runall()'
-```
-
-Prints each query's result + match-against-reference timing in parallel
-(`@threads`), then a `N/113 queries match reference` summary.
-
-For an interactive REPL workflow with Revise auto-reload on edits:
-
-```bash
-julia --project=. -i -e 'include("start.jl")'
-```
-
-### Julia (TPC-H)
-
-```bash
-cd julia
-julia --project=. -e 'include("TPCH.jl"); include("tpch_queries_idiomatic.jl")'   # or _optimized
-```
-
-Including a `tpch_queries_*.jl` file auto-runs `runall_tpch()`.
-
-### Julia (single-thread warm bench, used by the plot scripts)
-
-```bash
-cd julia
-julia --project=. -t1 bench.jl job                > ../rust/bench/data/julia_job.txt
-QS=idiomatic julia --project=. -t1 bench.jl tpch  > ../rust/bench/data/julia_tpch_idiomatic.txt
-QS=optimized julia --project=. -t1 bench.jl tpch  > ../rust/bench/data/julia_tpch_optimized.txt
-```
-
-`ENGINE=interp` (default `staged`) runs the same suites through the
-interpreted value-level CPS engine instead of the `@generated` one — every
-scan in the system (index/cache builds during `prepare` and the final scan)
-goes through the selected engine. `ENGINE=interp-rr` additionally relaxes
-the inference recursion limit first (see `julia/relax_recursion.jl` and
-`julia/experiments/experiment_recursion.md`).
 
 ### Rust
 
@@ -158,12 +114,14 @@ cargo run --release -- tpch    # TPC-H (QS=idiomatic|optimized|ddbcheat)
 
 ```bash
 cd rust/bench
-python3 plot_tpch.py   # → tpch_scatter.png  (Julia + Rust + DuckDB)
+python3 plot_tpch.py   # → tpch_scatter.png  (Rust + DuckDB + historic Julia)
 python3 plot_job.py    # → job_scatter.png
 ```
 
 Both scripts read from `data/` and write the PNG next to themselves. The
-Julia and Rust timings come from the bench runs above; the DuckDB baselines
+Rust timings come from the bench runs above; the Julia series
+(`data/julia_*.txt`) are historic captures from the `julia-engine` branch,
+kept for the comparison plots; the DuckDB baselines
 (`data/job_duck.txt`, `data/duckdb_st.txt`) are checked in.
 
 ### Regenerate the DuckDB baseline + TPCH oracles
@@ -183,8 +141,8 @@ captures cold/warm timings, and writes them in the `Run Time (s): real …`
 format that `plot_job.py` expects.
 
 `regen_tpch_oracles.sh` rebuilds the 14 file-loaded TPCH oracles checked in
-under `oracles/tpch/`, which both the Julia and Rust suites read (the ones
+under `oracles/tpch/`, which the suites read (the ones
 not inlined as string constants). It runs each canonical TPCH SQL against
 `cache/tpch/*.parquet` with `PRAGMA threads=1` (so Float64 sums are
 deterministic and the Q15 self-equality holds) and formats every decimal
-field to `%.2f` to match Julia's `_fmt(Float64)`.
+field to `%.2f` to match the engine's float formatting.

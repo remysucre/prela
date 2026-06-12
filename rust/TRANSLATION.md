@@ -1,4 +1,10 @@
-# Julia → Rust translation guide for Prela queries
+# Prela: algebra notation → Rust
+
+The dictionary between Prela's algebra notation — the infix surface of the
+original Julia implementation, preserved on the `julia-engine` branch and
+still used in the README and comments as the concise way to write queries
+on paper — and the executable Rust embedding. "Julia" below refers to that
+historic implementation, which doubles as the algebra's reference spec.
 
 ## Entity ids — 0-based `usize` in Rust
 

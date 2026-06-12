@@ -16,14 +16,19 @@ The implementation follows [continuation-passing style](https://en.wikipedia.org
 > [!NOTE]
 > Prela is a research prototype in early development. 
 > Expect constant and sweeping changes to both language design and implementation.
-> I'm currently focused on polishing the Julia implementation,
-> and there are ~~vibe-ported~~ *experimental* Rust and Zig ports on separate branches.
+> The implementation is in Rust (`rust/`), where the access-mode analysis
+> falls out of trait inference and CPS monomorphizes to fused loops.
+> Prela started life in Julia with an infix surface syntax; that
+> implementation is preserved on the
+> [`julia-engine`](../../tree/julia-engine) branch, and its notation lives on
+> below as the concise way to write the algebra on paper.
 
 
 ## Example
 
 Prela queries are readable even to those new to the language. 
-Consider Join Order Benchmark [22a](https://github.com/gregrahn/join-order-benchmark/blob/master/22a.sql):
+Consider Join Order Benchmark [22a](https://github.com/gregrahn/join-order-benchmark/blob/master/22a.sql),
+written in the algebra's notation:
 
 ```julia
 movie
@@ -80,6 +85,14 @@ With that in mind, let us consider a simplified version of the query above:
 
 ```julia
 movie : (production_year > 2008) → title
+```
+
+In the executable Rust embedding the same query is a method chain —
+each combinator below has a method spelling
+(`:` is `.in_s`, `→` is `.o`, and so on):
+
+```rust
+d.movie.in_s((&d.movie_production_year).gt(2008)).o(&d.movie_title)
 ```
 
 Here, `title` and `production_year` are both attributes of
@@ -244,7 +257,11 @@ Finally, `>` works as before and filters the LHS relation to keep the orders
  grouping by multiple attributes can be achieved by left-composing with a product!
  I'll leave that as an excercise for the reader.
 
-See [julia/queries.jl](./julia/queries.jl) and [julia/tpch_queries_idiomatic.jl](./julia/tpch_queries_idiomatic.jl) for more examples.
+See [rust/src/queries/](./rust/src/queries/) (all 113 JOB queries) and
+[rust/src/tpch/common.rs](./rust/src/tpch/common.rs) (TPC-H) for the
+executable forms, and [rust/TRANSLATION.md](./rust/TRANSLATION.md) for the
+notation ⇄ method-chain dictionary. The original infix-syntax query suites
+live on the [`julia-engine`](../../tree/julia-engine) branch.
 
 ## Implementation
 
@@ -340,9 +357,13 @@ We can chain together any number of steps, and after inlining,
  they will all collapse into a *sinlge* pass of iteration over the input without any intermediates.
 
 So far, this is nothing new, and has been known in functional programming for a long time.
-For Prela, this means a simple, modular CPS-style interpreter
- piggybacks on Julia's JIT and gets compiled down to tight loops
- that stream the operators without any iterator overhead. 
+For Prela, this means a simple, modular CPS-style engine —
+ each combinator a ~3-line method taking an `FnMut` continuation —
+ monomorphizes under `rustc` into the same fused loop nests a query compiler
+ would emit, without any iterator overhead.
+(We measured the alternative: an external-iterator port of the whole engine
+ matches CPS on scan-shaped plans but loses 1.3–3.5× on probe-heavy ones —
+ see `rust/experiments/pull_vs_push.md` on the `pull-experiment` branch.)
 But when combined with vector-based physical data storage,
  something incredible happens:
  *CPS automatically transforms the algebra-style queries to recover columnar query execution*!
@@ -364,9 +385,10 @@ We've taken liberty refactoring the JOB schema to make Prela queries
 Overall, the main takeaway from the numbers is that 
 *the simplicity of Prela does not hold it back from running fast*.
 
-The plots below compare the run time of both implementations —
- Julia (staged engine) and Rust — against DuckDB 1.5.3 (1 thread)
- as baseline, over TPCH and the Join Order Benchmark.
+The plots below compare the run time of the Rust implementation — plus the
+ retired Julia staged engine (`julia-engine` branch) as a historic series —
+ against DuckDB 1.5.3 (1 thread) as baseline, over TPCH and the Join Order
+ Benchmark.
 On JOB, Rust Prela runs the 113 queries in 5.0s and Julia in 9.6s vs
  DuckDB's 15.3s (3.1× and 1.6× faster, winning 99 and 83 of 113).
 On TPC-H SF=1, idiomatic Rust Prela matches DuckDB's vectorized engine

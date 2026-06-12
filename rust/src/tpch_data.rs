@@ -1,6 +1,7 @@
-// TPC-H data loader — reads the binary cache produced by Julia's TPCH.jl /
-// cache.jl via the shared loaders in cache.rs. f64 columns are bits-pair
-// files (f64 reinterpreted from i64 bits); strings are mmap'd and leaked as
+// TPC-H data loader — reads the binary cache produced by `regen tpch`
+// (originally by Julia's TPCH.jl/cache.jl — julia-engine branch) via the
+// shared loaders in cache.rs. f64 columns are bits-pair files (f64
+// reinterpreted from i64 bits); strings are mmap'd and leaked as
 // &'static str.
 
 use crate::cache::{ids, ids_fk, load_bits, load_strs, max_key};

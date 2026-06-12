@@ -1,6 +1,6 @@
 #!/bin/bash
 # Regenerate the 14 file-loaded TPCH oracles checked in under oracles/tpch/,
-# consumed by both julia/tpch_queries_*.jl and rust/src/tpch/:
+# consumed by rust/src/tpch/ (and the historic julia-engine branch):
 # Q19/Q11/Q17/Q13/Q7/Q8/Q9/Q18/Q22/Q16/Q15/Q2/Q20/Q21.
 #
 # Runs each canonical TPCH SQL against the parquet cache at

@@ -1,5 +1,5 @@
 // Baseline TPC-H implementations — direct algebraic ports of
-// julia/tpch_queries.jl — plus the oracles and the registry machinery
+// the historic julia-engine tpch_queries_*.jl — plus the oracles and the registry machinery
 // shared by all variants.
 //
 // Short oracle strings are inlined as consts; long ones live in the repo at

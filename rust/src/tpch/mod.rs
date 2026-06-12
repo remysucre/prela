@@ -1,4 +1,4 @@
-// TPC-H queries — Rust ports of julia/tpch_queries_*.jl, in three variants:
+// TPC-H queries, in three variants (originally ported from the julia-engine branch):
 //
 //   idiomatic — direct algebraic ports of the Julia queries
 //   optimized — same algebra, hand-encoding the plans a stats-driven

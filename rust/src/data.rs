@@ -1,5 +1,6 @@
-// The JOB tables, loaded from Julia's binary cache (../cache/*.bin) via the
-// shared loaders in cache.rs.
+// The JOB tables, loaded from the binary cache (../cache/*.bin, produced
+// by `regen job`; originally by Julia's JOB.jl/cache.jl — julia-engine
+// branch) via the shared loaders in cache.rs.
 
 use crate::cache::{ids, ids_fk, load_bits, load_strs, max_key, max_val};
 use crate::engine::{MultiRel, Universe, VecRel, NO_ID};

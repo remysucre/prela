@@ -290,7 +290,7 @@ impl<A: Probe, F: Fn(A::R) -> bool> Probe for Filter<A, F> {
 
 // ===== Restrict (relation × relation — `a : b`) =========================
 // Keeps a's pairs (a's VALUE flows through) where the value is a `member`
-// of b; b is consumed via `member` only (julia/interp.jl:
+// of b; b is consumed via `member` only (julia-engine branch, interp.jl:
 // `drive(n::Restrict, k) = drive(n.a, (x, m) -> member(n.b, m) && k(x, m))`,
 // probe/probe_any analogous). No `member` override: the defaulted
 // `probe_any(x, |_| true)` already reduces to
@@ -328,7 +328,7 @@ impl<A: Probe, B: Probe<D = A::R>> Probe for Restrict<A, B> {
 
 /// `a - b` — Julia's value-bearing minus: keyed on `a`'s DOMAIN, drive and
 /// probe pass `a`'s `(x, v)` pairs through unchanged, skipping keys that
-/// are members of `b` (julia/interp.jl `drive(n::Diff, k) =
+/// are members of `b` (julia-engine interp.jl `drive(n::Diff, k) =
 /// drive(n.a, (x, y) -> member(n.b, x) || k(x, y))`). For an identity `a`
 /// this degenerates to the plain set difference (emits `(x, x)`).
 pub struct Diff<A, B> { pub a: A, pub b: B }
@@ -352,7 +352,7 @@ impl<A: Probe, B: Probe<D = A::D>> Probe for Diff<A, B> {
     fn member(&self, x: A::D) -> bool { self.a.member(x) && !self.b.member(x) }
 }
 
-/// `∨` — PROBE-ONLY membership union (julia/interp.jl: "driving a union
+/// `∨` — PROBE-ONLY membership union (julia-engine interp.jl: "driving a union
 /// (dedup-while-emitting) is the one operation that would need its lhs both
 /// driven and probed, so it lives elsewhere"). There is deliberately NO
 /// `Drive` impl — driving a `Disj` is a compile error. Enumerate a union
@@ -535,7 +535,7 @@ impl Bitset {
     /// A bitset over `u`, driven from `q`: set a bit at each emitted VALUE.
     /// Identity relations send their keys through the value slot, so one
     /// constructor bit-sets a set's keys and a value-bearing query's values
-    /// alike (julia/plan.jl `build_bitset`). Out-of-universe values —
+    /// alike (julia-engine plan.jl `build_bitset`). Out-of-universe values —
     /// including `NO_ID` hole fills — are dropped by the `set` guard.
     pub fn over<Q: Drive<R = usize>>(u: Universe, q: &Q) -> Self {
         let mut b = Self::empty(u);
@@ -601,7 +601,7 @@ impl<S: Drive, R: Probe<D = S::D>> Drive for GroupBy<S, R> where R::R: Eq + Hash
 // ===== Fold (`▷`) — per-key reduce into an eager cache ==================
 // One physical type serves foldl (`.fold`) and the buffered whole-group
 // reduce (`.buf_fold`, Julia's BufFold; `.count_distinct` is an instance)
-// — they differ only in how the cache is filled (julia/interp.jl FoldP).
+// — they differ only in how the cache is filled (julia-engine interp.jl FoldP).
 
 pub struct Fold<D: Copy + Eq + Hash, S: Copy> {
     pub cache: HashMap<D, S>,
@@ -619,7 +619,7 @@ impl<D: Copy + Eq + Hash, S: Copy> Fold<D, S> {
         Fold { cache: m }
     }
 
-    /// Whole-multiset reduce (Julia's BufFold — julia/plan.jl
+    /// Whole-multiset reduce (Julia's BufFold — julia-engine plan.jl
     /// `build_buffold`): buffer every group into an `SVec`, then compute
     /// each cache entry as `f(vs)` over the whole group. For reducers that
     /// don't fit foldl's `(S, R) -> S` shape — count-distinct, median, … —
