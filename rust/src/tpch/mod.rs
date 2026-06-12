@@ -12,6 +12,7 @@
 mod common;
 pub mod ddbcheat;
 pub mod idiomatic;
+pub mod idiomatic_pull;
 pub mod optimized;
 
 pub use common::Entry;

@@ -1,7 +1,10 @@
 mod cache;
 mod data;
 mod engine;
+mod pull;
+mod pull_next;
 mod queries;
+mod queries_pull;
 mod tpch;
 mod tpch_data;
 
@@ -15,10 +18,12 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let suite = args.get(1).map(|s| s.as_str()).unwrap_or("job");
 
-    if suite == "tpch" {
-        run_tpch();
-    } else {
-        run_job();
+    match suite {
+        "tpch" => run_tpch(),
+        "job-pull" => run_job_pull(),
+        "tpch-pull" => run_tpch_pull(),
+        "pull-next" => run_pull_next(),
+        _ => run_job(),
     }
 }
 
@@ -68,6 +73,78 @@ fn run_job() {
         |name, dt, got, oracle| {
             println!("{:<5} DIFF {:>8.4}s  {}", name, dt, got);
             println!("        oracle: {oracle}");
+        });
+}
+
+/// Pull-protocol JOB suite — same harness, oracles and reporting as
+/// `run_job`, runners from queries_pull.
+fn run_job_pull() {
+    let t = std::time::Instant::now();
+    let d = Data::load();
+    eprintln!("load: {:.2}s  (movie n={}, person n={})",
+              t.elapsed().as_secs_f32(), d.movie.n, d.persons.n);
+
+    let qs = queries_pull::all_queries();
+    eprintln!("{} queries registered (pull protocol)", qs.len());
+
+    run_suite(&d, &qs,
+        |round, name, dt, got| {
+            if round == 2 || dt > 0.5 {
+                println!("{:<5} ok  {:>8.4}s  {}", name, dt, got);
+            }
+        },
+        |name, dt, got, oracle| {
+            println!("{:<5} DIFF {:>8.4}s  {}", name, dt, got);
+            println!("        oracle: {oracle}");
+        });
+}
+
+/// Pull-protocol TPC-H suite — idiomatic variant only (QS is ignored);
+/// same harness, oracles and reporting as `run_tpch`.
+fn run_tpch_pull() {
+    let t = std::time::Instant::now();
+    let d = TpchData::load();
+    eprintln!("load: {:.2}s  (li n={}, ord n={}, ps n={})",
+              t.elapsed().as_secs_f32(), d.lineitem.n, d.orders.n, d.partsupp.n);
+
+    let qs = tpch::idiomatic_pull::queries();
+    eprintln!("{} TPC-H queries registered (idiomatic, pull protocol)", qs.len());
+
+    run_suite(&d, &qs,
+        |_, name, dt, _| println!("{:<5} ok    {:>8.4}s", name, dt),
+        |name, dt, got, oracle| {
+            println!("{:<5} DIFF  {:>8.4}s", name, dt);
+            let _ = std::fs::write(format!("/tmp/tpch_pull_got_{name}.txt"), got);
+            let _ = std::fs::write(format!("/tmp/tpch_pull_oracle_{name}.txt"), oracle);
+        });
+}
+
+/// `pull-next` mini-suite — the 6-query consumption-style subset (raw
+/// `next()` loops at every sink), JOB then TPC-H, two timed rounds each.
+fn run_pull_next() {
+    let t = std::time::Instant::now();
+    let d = Data::load();
+    eprintln!("load: {:.2}s  (movie n={})", t.elapsed().as_secs_f32(), d.movie.n);
+    let qs = pull_next::job_entries();
+    eprintln!("{} JOB pull-next queries", qs.len());
+    run_suite(&d, &qs,
+        |_, name, dt, _| println!("{:<5} ok    {:>8.4}s", name, dt),
+        |name, dt, got, oracle| {
+            println!("{:<5} DIFF  {:>8.4}s  {}", name, dt, got);
+            println!("        oracle: {oracle}");
+        });
+
+    let t = std::time::Instant::now();
+    let td = TpchData::load();
+    eprintln!("load: {:.2}s  (li n={})", t.elapsed().as_secs_f32(), td.lineitem.n);
+    let tqs = pull_next::tpch_entries();
+    eprintln!("{} TPC-H pull-next queries", tqs.len());
+    run_suite(&td, &tqs,
+        |_, name, dt, _| println!("{:<5} ok    {:>8.4}s", name, dt),
+        |name, dt, got, oracle| {
+            println!("{:<5} DIFF  {:>8.4}s", name, dt);
+            let _ = std::fs::write(format!("/tmp/tpch_next_got_{name}.txt"), got);
+            let _ = std::fs::write(format!("/tmp/tpch_next_oracle_{name}.txt"), oracle);
         });
 }
 
