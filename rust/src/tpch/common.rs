@@ -58,7 +58,7 @@ const Q1: &str = "A|F|37734107.00|56586554400.73|53758257134.87|55909065222.83|2
 fn q1(d: &TpchData) -> String {
     // Julia: ((returnflag ⊗ Li.status) ← (lineitem → shipdate <= "..." : qty ⊗ ext ⊗ disc ⊗ tax))
     //        ▷ (cmb, ...) ↦ out
-    let live = d.lineitem.and((&d.li_shipdate).le(19980902).k());
+    let live = d.lineitem.in_s((&d.li_shipdate).le(19980902));
     let scan = live.o(
         (&d.li_quantity).x(&d.li_extendedprice).x(&d.li_discount).x(&d.li_tax)
     );
@@ -90,9 +90,9 @@ fn q6(d: &TpchData) -> String {
     //   (lineitem ∧ (shipdate in during(...)) ∧ (discount in (.05..0.07)) ∧ (qty < 24)
     //    : extendedprice ⊗ discount) ⊵ ((c, (e, d)) -> c + e * d, 0.0)
     let live = d.lineitem
-        .and((&d.li_shipdate).during(19940101, 19950101).k())
-        .and((&d.li_discount).between(0.05, 0.07).k())
-        .and((&d.li_quantity).lt(24.0).k());
+        .in_s((&d.li_shipdate).during(19940101, 19950101))
+        .in_s((&d.li_discount).between(0.05, 0.07))
+        .in_s((&d.li_quantity).lt(24.0));
     let sum = live.o((&d.li_extendedprice).x(&d.li_discount))
         .unwrap_fold(0.0, |acc, (e, dc)| acc + e * dc);
     f(sum)
@@ -128,7 +128,7 @@ const Q10: &str = concat!(
 fn q14(d: &TpchData) -> String {
     // Algebraic port (matches Julia _q14, just with nested tuple destructure
     // since Rust ⊗ can't type-level-flatten like Julia's).
-    let live = d.lineitem.and((&d.li_shipdate).during(19950901, 19951001).k());
+    let live = d.lineitem.in_s((&d.li_shipdate).during(19950901, 19951001));
     let scan = live.o(
         (&d.li_extendedprice).x(&d.li_discount).x((&d.li_part).o(&d.pa_type))
     );
@@ -156,9 +156,9 @@ fn q3(d: &TpchData) -> String {
     // Julia: item = lineitem ∧ (shipdate > "1995-03-15") ∧ (order → (date < ... ∧ Ord.customer → mktsegment == "BUILDING"))
     //        revenue = (Li.order ← (item : extprice ⊗ disc)) ▷ ...
     let item = (&d.lineitem)
-        .and((&d.li_shipdate).gt(19950315).k())
-        .and((&d.li_order).o(&d.ord_date).lt(19950315).k())
-        .and((&d.li_order).o((&d.ord_customer).o(&d.cu_mktsegment)).eq("BUILDING").k())
+        .in_s((&d.li_shipdate).gt(19950315))
+        .in_s((&d.li_order).o(&d.ord_date).lt(19950315))
+        .in_s((&d.li_order).o((&d.ord_customer).o(&d.cu_mktsegment)).eq("BUILDING"))
         .o((&d.li_extendedprice).x(&d.li_discount));
     let revenue = (&d.li_order).lc(item)
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
@@ -190,10 +190,10 @@ fn q4(d: &TpchData) -> String {
     //                  (orders ∧ (date in during("1993-07-01", "1993-10-01")))
     //        (live → Ord.priority)' ▷ ((a, _) -> a + 1, 0)
     let bad_li_order = d.lineitem
-        .and((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k())
+        .in_s((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r))
         .o(&d.li_order);
-    let live_orders = d.orders.and(
-        (&d.ord_date).during(19930701, 19931001).k()
+    let live_orders = d.orders.in_s(
+        (&d.ord_date).during(19930701, 19931001)
     );
     let live = bad_li_order.lconj(live_orders);
     let counts = live.o(&d.ord_priority).inv().fold(0_i64, |a, _| a + 1);
@@ -215,9 +215,9 @@ fn q5(d: &TpchData) -> String {
     let c_nation = (&d.li_order).o(&d.ord_customer).o(&d.cu_nation);
     let s_nation = (&d.li_supplier).o(&d.su_nation);
     let live = (&d.lineitem)
-        .and((&d.li_order).o(&d.ord_date).during(19940101, 19950101).k())
-        .and((&s_nation).o((&d.na_region).o(&d.re_name)).eq("ASIA").k())
-        .and((&c_nation).x(&s_nation).filt(|(c, s)| c == s).k());
+        .in_s((&d.li_order).o(&d.ord_date).during(19940101, 19950101))
+        .in_s((&s_nation).o((&d.na_region).o(&d.re_name)).eq("ASIA"))
+        .in_s((&c_nation).x(&s_nation).filt(|(c, s)| c == s));
     let groups = (&live).o((&s_nation).o(&d.na_name));
     let scan = (&live).o((&d.li_extendedprice).x(&d.li_discount));
     let result = groups.lc(scan).fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
@@ -233,10 +233,10 @@ fn q7(d: &TpchData) -> String {
     let snat = (&d.li_supplier).o((&d.su_nation).o(&d.na_name));
     let cnat = (&d.li_order).o((&d.ord_customer).o((&d.cu_nation).o(&d.na_name)));
     let live = (&d.lineitem)
-        .and((&d.li_shipdate).between(19950101, 19961231).k())
-        .and((&snat).x(&cnat).filt(|(s, c)| {
+        .in_s((&d.li_shipdate).between(19950101, 19961231))
+        .in_s((&snat).x(&cnat).filt(|(s, c)| {
             (s == "FRANCE" && c == "GERMANY") || (s == "GERMANY" && c == "FRANCE")
-        }).k());
+        }));
     let sname = (&live).o(&snat);
     let cname = (&live).o(&cnat);
     let year = (&live).o(&d.li_shipdate).map(|d: i64| d / 10000);
@@ -257,10 +257,10 @@ fn q7(d: &TpchData) -> String {
 
 fn q8(d: &TpchData) -> String {
     let live = (&d.lineitem)
-        .and((&d.li_part).o(&d.pa_type).eq("ECONOMY ANODIZED STEEL").k())
-        .and((&d.li_order).o((&d.ord_customer).o((&d.cu_nation).o((&d.na_region).o(&d.re_name))))
-             .eq("AMERICA").k())
-        .and((&d.li_order).o(&d.ord_date).between(19950101, 19961231).k());
+        .in_s((&d.li_part).o(&d.pa_type).eq("ECONOMY ANODIZED STEEL"))
+        .in_s((&d.li_order).o((&d.ord_customer).o((&d.cu_nation).o((&d.na_region).o(&d.re_name))))
+             .eq("AMERICA"))
+        .in_s((&d.li_order).o(&d.ord_date).between(19950101, 19961231));
     let year = (&live).o((&d.li_order).o(&d.ord_date)).map(|d: i64| d / 10000);
     let snat_name = (&live).o((&d.li_supplier).o((&d.su_nation).o(&d.na_name)));
     let scan = (&live).o((&d.li_extendedprice).x(&d.li_discount)).x(snat_name);
@@ -281,7 +281,7 @@ fn q9(d: &TpchData) -> String {
     // 2-key index: (part, supp) → supplycost via Prod-Inv → Compose → mat.
     let sc = (&d.ps_part).x(&d.ps_supplier).inv().o(&d.ps_supplycost).mat_idx();
     let live = (&d.lineitem)
-        .and((&d.li_part).o(&d.pa_name).filt(|n: &str| n.contains("green")).k());
+        .in_s((&d.li_part).o(&d.pa_name).filt(|n: &str| n.contains("green")));
     let sname = (&live).o((&d.li_supplier).o((&d.su_nation).o(&d.na_name)));
     let year  = (&live).o((&d.li_order).o(&d.ord_date)).map(|d: i64| d / 10000);
     let groups = sname.x(year);
@@ -302,8 +302,8 @@ fn q9(d: &TpchData) -> String {
 
 fn q10(d: &TpchData) -> String {
     let live = d.lineitem
-        .and((&d.li_returnflag).eq("R").k())
-        .and((&d.li_order).o(&d.ord_date).during(19931001, 19940101).k());
+        .in_s((&d.li_returnflag).eq("R"))
+        .in_s((&d.li_order).o(&d.ord_date).during(19931001, 19940101));
     let revenue = (&d.li_order).o(&d.ord_customer)
         .lc(live.o((&d.li_extendedprice).x(&d.li_discount)))
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
@@ -330,8 +330,8 @@ fn q11(d: &TpchData) -> String {
     //                    ▷ ((a, (c, q)) -> a + c * q, 0.0)
     //   threshold = 0.0001 * unwrap(value_per_part ⊵ (+, 0.0))
     //   value_per_part > threshold
-    let live_ps = (&d.partsupp).and(
-        (&d.ps_supplier).o((&d.su_nation).o(&d.na_name).eq("GERMANY")).k()
+    let live_ps = (&d.partsupp).in_s(
+        (&d.ps_supplier).o((&d.su_nation).o(&d.na_name).eq("GERMANY"))
     );
     let value_per_part = (&live_ps).o(&d.ps_part)
         .lc((&live_ps).o((&d.ps_supplycost).x(&d.ps_availqty)))
@@ -354,10 +354,10 @@ const Q12: &str = "MAIL|6202|9324\n\
 
 fn q12(d: &TpchData) -> String {
     let live = (&d.lineitem)
-        .and((&d.li_shipmode).in_v(vec!["MAIL", "SHIP"]).k())
-        .and((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k())
-        .and((&d.li_shipdate).x(&d.li_commitdate).filt(|(s, c)| s < c).k())
-        .and((&d.li_receiptdate).during(19940101, 19950101).k());
+        .in_s((&d.li_shipmode).in_v(vec!["MAIL", "SHIP"]))
+        .in_s((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r))
+        .in_s((&d.li_shipdate).x(&d.li_commitdate).filt(|(s, c)| s < c))
+        .in_s((&d.li_receiptdate).during(19940101, 19950101));
     let scan = (&live).o(&d.li_shipmode);
     let prio = (&live).o((&d.li_order).o(&d.ord_priority));
     let result = scan.lc(prio).fold((0_i64, 0_i64), |(h, l), pr| {
@@ -377,8 +377,8 @@ fn q13(d: &TpchData) -> String {
     //                                          (live_orders → date)) ▷ ((a, _) -> a + 1, 0)
     // Then a Julia escape for the LEFT-JOIN zero-default (customer.n - n_with).
     let live_orders = (&d.orders)
-        .and((&d.ord_customer).ne(NO_ID).k())   // skip sparse orderkey gaps (hole fill NO_ID)
-        .and((&d.ord_comment).nrx("special.*requests").k());
+        .in_s((&d.ord_customer).ne(NO_ID))   // skip sparse orderkey gaps (hole fill NO_ID)
+        .in_s((&d.ord_comment).nrx("special.*requests"));
     let count_per_cust = (&live_orders).o(&d.ord_customer)
         .lc((&live_orders).o(&d.ord_date))
         .fold(0_i64, |a, _| a + 1);
@@ -395,7 +395,7 @@ fn q13(d: &TpchData) -> String {
 // ---------- Q15 — top supplier ----------
 
 fn q15(d: &TpchData) -> String {
-    let live = d.lineitem.and((&d.li_shipdate).during(19960101, 19960401).k());
+    let live = d.lineitem.in_s((&d.li_shipdate).during(19960101, 19960401));
     let revenue = (&d.li_supplier)
         .lc((&live).o((&d.li_extendedprice).x(&d.li_discount)))
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
@@ -419,10 +419,10 @@ fn q16(d: &TpchData) -> String {
     //        ((live_ps : (PS.part → (brand ⊗ type ⊗ size))) ← (live_ps : PS.supplier))
     //        ▷ (vs -> length(unique(vs)))
     let live_ps = (&d.partsupp)
-        .and((&d.ps_part).o(&d.pa_brand).ne("Brand#45").k())
-        .and((&d.ps_part).o(&d.pa_type).filt(|s: &str| !s.starts_with("MEDIUM POLISHED")).k())
-        .and((&d.ps_part).o(&d.pa_size).in_v(vec![49, 14, 23, 45, 19, 3, 36, 9]).k())
-        .and((&d.ps_supplier).o(&d.su_comment).nrx("Customer.*Complaints").k());
+        .in_s((&d.ps_part).o(&d.pa_brand).ne("Brand#45"))
+        .in_s((&d.ps_part).o(&d.pa_type).filt(|s: &str| !s.starts_with("MEDIUM POLISHED")))
+        .in_s((&d.ps_part).o(&d.pa_size).in_v(vec![49, 14, 23, 45, 19, 3, 36, 9]))
+        .in_s((&d.ps_supplier).o(&d.su_comment).nrx("Customer.*Complaints"));
     let group = (&live_ps).o((&d.ps_part).o((&d.pa_brand).x(&d.pa_type).x(&d.pa_size)));
     let supp  = (&live_ps).o(&d.ps_supplier);
     let counts = group.lc(supp).count_distinct();
@@ -445,10 +445,10 @@ fn q17(d: &TpchData) -> String {
     // Materialize so the cross-col compare doesn't re-fold per row.
     let tpp = threshold_per_part.mat_idx();
     let live = (&d.lineitem)
-        .and((&d.li_part).o(&d.pa_brand).eq("Brand#23").k())
-        .and((&d.li_part).o(&d.pa_container).eq("MED BOX").k())
-        .and((&d.li_quantity).x((&d.li_part).o(&tpp))
-             .filt(|(q, t)| q < t).k());
+        .in_s((&d.li_part).o(&d.pa_brand).eq("Brand#23"))
+        .in_s((&d.li_part).o(&d.pa_container).eq("MED BOX"))
+        .in_s((&d.li_quantity).x((&d.li_part).o(&tpp))
+             .filt(|(q, t)| q < t));
     let sum = live.o(&d.li_extendedprice)
         .unwrap_fold(0.0_f64, |a, e| a + e);
     f(sum / 7.0)
@@ -495,9 +495,9 @@ fn q19(d: &TpchData) -> String {
                 && q >= 20.0 && q <= 30.0 && sz >= 1 && sz <= 15)
         });
     let live = (&d.lineitem)
-        .and((&d.li_shipmode).in_v(vec!["AIR", "AIR REG"]).k())
-        .and((&d.li_shipinstruct).eq("DELIVER IN PERSON").k())
-        .and(pred.k());
+        .in_s((&d.li_shipmode).in_v(vec!["AIR", "AIR REG"]))
+        .in_s((&d.li_shipinstruct).eq("DELIVER IN PERSON"))
+        .in_s(pred);
     let sum = live.o((&d.li_extendedprice).x(&d.li_discount))
         .unwrap_fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
     f(sum)
@@ -511,16 +511,16 @@ fn q20(d: &TpchData) -> String {
     //        qual_ps = partsupp ∧ (PS.part → name ~ "^forest") ∧ (availqty > threshold)
     //        target = (qual_ps → PS.supplier) ⩘ (supplier ∧ (Su.nation → Na.name == "CANADA"))
     //        target : (Su.name ⊗ Su.address)
-    let live_li = d.lineitem.and((&d.li_shipdate).during(19940101, 19950101).k());
+    let live_li = d.lineitem.in_s((&d.li_shipdate).during(19940101, 19950101));
     let sum_qty = (&live_li).o((&d.li_part).x(&d.li_supplier))
         .lc((&live_li).o(&d.li_quantity))
         .fold(0.0_f64, |a, q| a + q);
     let threshold = (&d.ps_part).x(&d.ps_supplier).o(&sum_qty).map(|s| 0.5 * s);
     let qual_ps = (&d.partsupp)
-        .and((&d.ps_part).o(&d.pa_name).filt(|n: &str| n.starts_with("forest")).k())
-        .and((&d.ps_availqty).map(|q| q as f64).x(threshold).filt(|(a, t)| a > t).k());
-    let canada_supps = (&d.supplier).and(
-        (&d.su_nation).o(&d.na_name).eq("CANADA").k()
+        .in_s((&d.ps_part).o(&d.pa_name).filt(|n: &str| n.starts_with("forest")))
+        .in_s((&d.ps_availqty).map(|q| q as f64).x(threshold).filt(|(a, t)| a > t));
+    let canada_supps = (&d.supplier).in_s(
+        (&d.su_nation).o(&d.na_name).eq("CANADA")
     );
     let target = qual_ps.o(&d.ps_supplier).lconj(canada_supps);
     let mut rows: Vec<(&str, &str)> = Vec::new();
@@ -539,21 +539,21 @@ fn q21(d: &TpchData) -> String {
     //   only_late  = askeys(((late : order) ← (late : Li.supplier)) ▷ n_distinct == 1)
     //   qualifying = late ∧ (Li.supplier → saudi) ∧ (order → f_ords ∧ multi_supp ∧ only_late)
     //   (Li.supplier ← qualifying) ▷ ((a, _) -> a + 1, 0) ⊗ Su.name
-    let late = d.lineitem.and(
-        (&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k()
+    let late = d.lineitem.in_s(
+        (&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r)
     );
-    let multi_supp = (&d.li_order).lc(&d.li_supplier).count_distinct().gt(1).k();
+    let multi_supp = (&d.li_order).lc(&d.li_supplier).count_distinct().gt(1);
     let only_late = (&late).o(&d.li_order)
         .lc((&late).o(&d.li_supplier))
-        .count_distinct().eq(1).k();
+        .count_distinct().eq(1);
     let saudi = (&d.supplier).and(
-        (&d.su_nation).o(&d.na_name).eq("SAUDI ARABIA").k()
+        (&d.su_nation).o(&d.na_name).eq("SAUDI ARABIA")
     );
-    let f_ords = (&d.orders).and((&d.ord_status).eq("F").k());
+    let f_ords = (&d.orders).and((&d.ord_status).eq("F"));
     let qualifying = (&late)
-        .and((&d.li_supplier).in_s(saudi).k())
-        .and((&d.li_order).in_s(f_ords.and(multi_supp).and(only_late)).k());
-    let counts = (&d.li_supplier).lcs(qualifying).fold(0_i64, |a, _| a + 1);
+        .in_s((&d.li_supplier).in_s(saudi))
+        .in_s((&d.li_order).in_s(f_ords.and(multi_supp).and(only_late)));
+    let counts = (&d.li_supplier).lc(qualifying).fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(usize, i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
     let mut named: Vec<(&str, i64)> = rows.iter()
@@ -574,15 +574,15 @@ fn q22(d: &TpchData) -> String {
     //   (prefix ← (target : acctbal)) ▷ ((cnt, sm), ab) -> (cnt+1, sm+ab)
     let prefix = (&d.cu_phone).map(|p: &str| &p[..2]);
     let codes = vec!["13","31","23","29","30","18","17"];
-    let prefix_ok = (&d.customer).and((&prefix).in_v(codes).k());
-    let pos = (&prefix_ok).and((&d.cu_acctbal).gt(0.0).k());
+    let prefix_ok = (&d.customer).in_s((&prefix).in_v(codes));
+    let pos = (&prefix_ok).in_s((&d.cu_acctbal).gt(0.0));
     let (sum_p, cnt_p) = pos.o(&d.cu_acctbal)
         .unwrap_fold((0.0_f64, 0_i64), |(s, n), v| (s + v, n + 1));
     let avg = sum_p / cnt_p as f64;
-    let custs_with_orders = (&d.ord_customer).inv().k().mat_set();
-    let target = (&prefix_ok).and((&d.cu_acctbal).gt(avg).k())
+    let custs_with_orders = (&d.ord_customer).mat_set();
+    let target = (&prefix_ok).in_s((&d.cu_acctbal).gt(avg))
         .minus(custs_with_orders);
-    let counts = (&prefix).lcs(target)
+    let counts = (&prefix).lc(target)
         .fold((0_i64, 0.0_f64), |(cnt, sm), c| {
             let ab = d.cu_acctbal.values[c];
             (cnt + 1, sm + ab)
@@ -603,20 +603,20 @@ fn q2(d: &TpchData) -> String {
     //                  ∧ (supplycost == (PS.part → min_per_part))
     //   target : (Su.acctbal ⊗ Su.name ⊗ Na.name ⊗ PS.part ⊗ Pa.mfgr
     //             ⊗ Su.address ⊗ Su.phone ⊗ Su.comment)
-    let eu_ps = (&d.partsupp).and(
-        (&d.ps_supplier).o((&d.su_nation).o((&d.na_region).o(&d.re_name))).eq("EUROPE").k()
+    let eu_ps = (&d.partsupp).in_s(
+        (&d.ps_supplier).o((&d.su_nation).o((&d.na_region).o(&d.re_name))).eq("EUROPE")
     );
     let min_per_part = (&eu_ps).o(&d.ps_part)
         .lc((&eu_ps).o(&d.ps_supplycost))
         .fold(f64::INFINITY, |a, c| if c < a { c } else { a });
     let target = (&eu_ps)
-        .and((&d.ps_part).o(&d.pa_size).eq(15).k())
-        .and((&d.ps_part).o(&d.pa_type).filt(|s: &str| s.ends_with("BRASS")).k())
-        .and((&d.ps_supplycost).x((&d.ps_part).o(&min_per_part))
-             .filt(|(c, m)| c == m).k());
+        .in_s((&d.ps_part).o(&d.pa_size).eq(15))
+        .in_s((&d.ps_part).o(&d.pa_type).filt(|s: &str| s.ends_with("BRASS")))
+        .in_s((&d.ps_supplycost).x((&d.ps_part).o(&min_per_part))
+             .filt(|(c, m)| c == m));
     // Project per PS row → (acct, sname, nname, pkey, mfgr, addr, phone, comm)
     let mut rows: Vec<(f64, &str, &str, usize, &str, &str, &str, &str)> = Vec::new();
-    target.drivekeys(|psi| {
+    target.drive(|psi, _| {
         let pa = d.ps_part.values[psi];
         let su = d.ps_supplier.values[psi];
         rows.push((

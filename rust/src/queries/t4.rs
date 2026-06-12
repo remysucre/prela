@@ -21,15 +21,14 @@ pub const ENTRIES: &[super::Entry] = &[
 
 // q16a/q16d differ only in the episode_nr lower bound.
 fn q16ad(d: &Data, lo: i64) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).o((&d.company_country).eq("[us]")).k()
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title").k())
-            .and((&d.movie_episode_nr).ge(lo).k())
-            .and((&d.movie_episode_nr).lt(100).k())
-            .o(
-                (&d.movie_cast).o((&d.cast_person).o((&d.person_aka).o(&d.akaname_name)))
-                    .x(&d.movie_title)
-            ),
+    let q = d.movie.in_s(
+        (&d.movie_company).o((&d.company_country).eq("[us]"))
+            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title"))
+            .and((&d.movie_episode_nr).ge(lo))
+            .and((&d.movie_episode_nr).lt(100))
+    ).o(
+        (&d.movie_cast).o((&d.cast_person).o((&d.person_aka).o(&d.akaname_name)))
+            .x(&d.movie_title)
     );
     min_row(q)
 }
@@ -38,49 +37,45 @@ fn q16a(d: &Data) -> String { q16ad(d, 50) }
 fn q16d(d: &Data) -> String { q16ad(d, 5) }
 
 fn q16b(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).o((&d.company_country).eq("[us]")).k()
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title").k())
-            .o(
-                (&d.movie_cast).o((&d.cast_person).o((&d.person_aka).o(&d.akaname_name)))
-                    .x(&d.movie_title)
-            ),
+    let q = d.movie.in_s(
+        (&d.movie_company).o((&d.company_country).eq("[us]"))
+            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title"))
+    ).o(
+        (&d.movie_cast).o((&d.cast_person).o((&d.person_aka).o(&d.akaname_name)))
+            .x(&d.movie_title)
     );
     min_row(q)
 }
 
 fn q16c(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).o((&d.company_country).eq("[us]")).k()
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title").k())
-            .and((&d.movie_episode_nr).lt(100).k())
-            .o(
-                (&d.movie_cast).o((&d.cast_person).o((&d.person_aka).o(&d.akaname_name)))
-                    .x(&d.movie_title)
-            ),
+    let q = d.movie.in_s(
+        (&d.movie_company).o((&d.company_country).eq("[us]"))
+            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title"))
+            .and((&d.movie_episode_nr).lt(100))
+    ).o(
+        (&d.movie_cast).o((&d.cast_person).o((&d.person_aka).o(&d.akaname_name)))
+            .x(&d.movie_title)
     );
     min_row(q)
 }
 
 fn q17a(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).o((&d.company_country).eq("[us]")).k()
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title").k())
-            .o(
-                (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"^B")))
-            ),
+    let q = d.movie.in_s(
+        (&d.movie_company).o((&d.company_country).eq("[us]"))
+            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title"))
+    ).o(
+        (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"^B")))
     );
     min_row(q)
 }
 
 // q17b/c/d/f differ only in the person-name regex.
 fn q17_any_co(d: &Data, re: &str) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).k()
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title").k())
-            .o(
-                (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(re)))
-            ),
+    let q = d.movie.in_s(
+        (&d.movie_company)
+            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title"))
+    ).o(
+        (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(re)))
     );
     min_row(q)
 }
@@ -91,93 +86,81 @@ fn q17d(d: &Data) -> String { q17_any_co(d, r"Bert") }
 fn q17f(d: &Data) -> String { q17_any_co(d, r"B") }
 
 fn q17e(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).o((&d.company_country).eq("[us]")).k()
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title").k())
-            .o(
-                (&d.movie_cast).o((&d.cast_person).o(&d.person_name))
-            ),
+    let q = d.movie.in_s(
+        (&d.movie_company).o((&d.company_country).eq("[us]"))
+            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title"))
+    ).o(
+        (&d.movie_cast).o((&d.cast_person).o(&d.person_name))
     );
     min_row(q)
 }
 
 fn ib_18a<'d>(d: &'d Data) -> impl Rel<R = &'static str, D = usize> + Drive + Probe + 'd {
-    (&d.movie_info).o(
-        (&d.info_type).o(&d.infotype_info).eq("budget").k()
-            .o(&d.info_info)
-    )
+    (&d.movie_info).in_s((&d.info_type).o(&d.infotype_info).eq("budget")).o(&d.info_info)
 }
 
 fn q18a(d: &Data) -> String {
-    let q = d.movie.o(
-        ib_18a(d).k()
+    let q = d.movie.in_s(
+        ib_18a(d)
             .and((&d.movie_cast).in_s(
-                (&d.cast_note).in_v(vec!["(producer)", "(executive producer)"]).k()
+                (&d.cast_note).in_v(vec!["(producer)", "(executive producer)"])
                     .and((&d.cast_person).in_s(
-                        (&d.person_gender).eq("m").k()
-                            .and((&d.person_name).rx(r"Tim").k())
-                    ).k())
-            ).k())
-            .o(
-                ib_18a(d)
-                    .x((&d.movie_data).o(
-                        (&d.data_type).o(&d.infotype_info).eq("votes").k()
-                            .o(&d.data_data)
+                        (&d.person_gender).eq("m")
+                            .and((&d.person_name).rx(r"Tim"))
                     ))
-                    .x(&d.movie_title)
-            ),
+            ))
+    ).o(
+        ib_18a(d)
+            .x((&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("votes")).o(&d.data_data))
+            .x(&d.movie_title)
     );
     min_row(q)
 }
 
-fn gf_18b<'d>(d: &'d Data) -> impl KeySet<D = usize> + DriveKeys + Member + 'd {
-    (&d.info_type).o(&d.infotype_info).eq("genres").k()
-        .and((&d.info_info).in_v(vec!["Horror", "Thriller"]).k())
-        .minus((&d.info_note).k())
+// Conjunct/diff tree (∧ = Prod, - = Diff) — consumed via `member` only, so
+// the value type stays opaque (`impl Rel<D = usize> + Probe`).
+fn gf_18b<'d>(d: &'d Data) -> impl Rel<D = usize> + Probe + 'd {
+    (&d.info_type).o(&d.infotype_info).eq("genres")
+        .and((&d.info_info).in_v(vec!["Horror", "Thriller"]))
+        .minus(&d.info_note)
 }
 
 fn q18b(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_info).in_s(gf_18b(d)).k()
-            .and((&d.movie_production_year).ge(2008).k())
-            .and((&d.movie_production_year).le(2014).k())
+    let q = d.movie.in_s(
+        (&d.movie_info).in_s(gf_18b(d))
+            .and((&d.movie_production_year).ge(2008))
+            .and((&d.movie_production_year).le(2014))
             .and((&d.movie_cast).in_s(
-                (&d.cast_note).in_v(super::sets::writer5()).k()
-                    .and((&d.cast_person).in_s((&d.person_gender).eq("f").k()).k())
-            ).k())
-            .o(
-                (&d.movie_info).o(gf_18b(d).o(&d.info_info))
-                    .x((&d.movie_data).o(
-                        (&d.data_type).o(&d.infotype_info).eq("rating").k()
-                            .and((&d.data_data).gt("8.0").k())
-                            .o(&d.data_data)
-                    ))
-                    .x(&d.movie_title)
-            ),
+                (&d.cast_note).in_v(super::sets::writer5())
+                    .and((&d.cast_person).in_s((&d.person_gender).eq("f")))
+            ))
+    ).o(
+        (&d.movie_info).in_s(gf_18b(d)).o(&d.info_info)
+            .x((&d.movie_data).in_s(
+                (&d.data_type).o(&d.infotype_info).eq("rating")
+                    .and((&d.data_data).gt("8.0"))
+            ).o(&d.data_data))
+            .x(&d.movie_title)
     );
     min_row(q)
 }
 
-fn gf_18c<'d>(d: &'d Data) -> impl KeySet<D = usize> + DriveKeys + Member + 'd {
-    (&d.info_type).o(&d.infotype_info).eq("genres").k()
-        .and((&d.info_info).in_v(super::sets::genre6()).k())
+fn gf_18c<'d>(d: &'d Data) -> impl Rel<D = usize> + Probe + 'd {
+    (&d.info_type).o(&d.infotype_info).eq("genres")
+        .and((&d.info_info).in_v(super::sets::genre6()))
 }
 
 fn q18c(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_info).in_s(gf_18c(d)).k()
+    let q = d.movie.in_s(
+        (&d.movie_info).in_s(gf_18c(d))
             .and((&d.movie_cast).in_s(
-                (&d.cast_note).in_v(super::sets::writer5()).k()
-                    .and((&d.cast_person).in_s((&d.person_gender).eq("m").k()).k())
-            ).k())
-            .o(
-                (&d.movie_info).o(gf_18c(d).o(&d.info_info))
-                    .x((&d.movie_data).o(
-                        (&d.data_type).o(&d.infotype_info).eq("votes").k()
-                            .o(&d.data_data)
-                    ))
-                    .x(&d.movie_title)
-            ),
+                (&d.cast_note).in_v(super::sets::writer5())
+                    .and((&d.cast_person).in_s((&d.person_gender).eq("m")))
+            ))
+    ).o(
+        (&d.movie_info).in_s(gf_18c(d)).o(&d.info_info)
+            .x((&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("votes")).o(&d.data_data))
+            .x(&d.movie_title)
     );
     min_row(q)
 }

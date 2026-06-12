@@ -24,7 +24,7 @@ pub fn queries() -> Vec<super::Entry> {
 fn q1(d: &TpchData) -> String {
     // Julia: ((returnflag ⊗ Li.status) ← (lineitem → shipdate <= "..." : qty ⊗ ext ⊗ disc ⊗ tax))
     //        ▷ (cmb, ...) ↦ out
-    let live = d.lineitem.and((&d.li_shipdate).le(19980902).k());
+    let live = d.lineitem.in_s((&d.li_shipdate).le(19980902));
     let scan = live.o(
         (&d.li_quantity).x(&d.li_extendedprice).x(&d.li_discount).x(&d.li_tax)
     );
@@ -65,12 +65,12 @@ fn q4(d: &TpchData) -> String {
     // Dense `Bitset` of orderkeys with a late lineitem replaces the lconj
     // path that lazy-built a HashSet from ~14M late-lineitem orderkeys.
     let bad_li_order = d.lineitem
-        .and((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k())
+        .in_s((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r))
         .o(&d.li_order);
     let is_late = Bitset::from_drive(d.orders.n, &bad_li_order);
     let live = d.orders
-        .and((&d.ord_date).during(19930701, 19931001).k())
-        .and(is_late);
+        .in_s((&d.ord_date).during(19930701, 19931001))
+        .in_s(is_late);
     let counts = live.o(&d.ord_priority).inv().fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(&str, i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
@@ -88,11 +88,11 @@ fn q9(d: &TpchData) -> String {
     // Hoist the `Part.name ~ "green"` predicate out of the 60M-row
     // lineitem scan by materializing the matching part-ids into a `Bitset`
     // (~200K Part rows scanned once). Per lineitem becomes one bit-test.
-    let green_parts = Bitset::from_setq(
+    let green_parts = Bitset::from_drive(
         d.part.n,
-        &(&d.pa_name).filt(|n: &str| n.contains("green")).k(),
+        &(&d.part).in_s((&d.pa_name).filt(|n: &str| n.contains("green"))),
     );
-    let live = (&d.lineitem).and((&d.li_part).in_s(&green_parts).k());
+    let live = (&d.lineitem).in_s((&d.li_part).in_s(&green_parts));
     let nation_id = (&live).o((&d.li_supplier).o(&d.su_nation));
     let year      = (&live).o((&d.li_order).o(&d.ord_date)).map(|d: i64| d / 10000);
     let groups = nation_id.x(year);
@@ -117,7 +117,7 @@ fn q9(d: &TpchData) -> String {
 
 fn q12(d: &TpchData) -> String {
     // Conjuncts reordered by oracle-known selectivity (most selective first)
-    // so the `.and()` short-circuit shaves rows off each downstream predicate.
+    // so each restriction shaves rows off every downstream predicate.
     // The algebra preserves whatever order the user wrote — Prela has no
     // stats-driven optimizer; here we hand-encode the order DuckDB's planner
     // would pick, to show the algebra *can* express the optimal plan.
@@ -126,10 +126,10 @@ fn q12(d: &TpchData) -> String {
     //   shipdate < commitdate:     ~49%
     //   commit  < receipt:         ~62%  (barely filters; runs last)
     let live = (&d.lineitem)
-        .and((&d.li_receiptdate).during(19940101, 19950101).k())
-        .and((&d.li_shipmode).in_v(vec!["MAIL", "SHIP"]).k())
-        .and((&d.li_shipdate).x(&d.li_commitdate).filt(|(s, c)| s < c).k())
-        .and((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k());
+        .in_s((&d.li_receiptdate).during(19940101, 19950101))
+        .in_s((&d.li_shipmode).in_v(vec!["MAIL", "SHIP"]))
+        .in_s((&d.li_shipdate).x(&d.li_commitdate).filt(|(s, c)| s < c))
+        .in_s((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r));
     let scan = (&live).o(&d.li_shipmode);
     let prio = (&live).o((&d.li_order).o(&d.ord_priority));
     let result = scan.lc(prio).fold((0_i64, 0_i64), |(h, l), pr| {
@@ -154,13 +154,13 @@ fn q13(d: &TpchData) -> String {
     use memchr::memmem;
     let f_special = memmem::Finder::new("special");
     let live_orders = (&d.orders)
-        .and((&d.ord_customer).ne(NO_ID).k())   // skip sparse orderkey gaps (hole fill NO_ID)
-        .and((&d.ord_comment).filt(move |c: &str| {
+        .in_s((&d.ord_customer).ne(NO_ID))   // skip sparse orderkey gaps (hole fill NO_ID)
+        .in_s((&d.ord_comment).filt(move |c: &str| {
             match f_special.find(c.as_bytes()) {
                 Some(p) => !c[p + "special".len()..].contains("requests"),
                 None => true,
             }
-        }).k());
+        }));
     let count_per_cust = (&live_orders).o(&d.ord_customer)
         .lc((&live_orders).o(&d.ord_date))
         .fold(0_i64, |a, _| a + 1);
@@ -183,18 +183,18 @@ pub(super) fn q17(d: &TpchData) -> String {
     // parts up front, restrict the lineitem scan that feeds the avg fold
     // to those parts, then the avg is computed over a tiny slice.
     let qual_part_set = (&d.part)
-        .and((&d.pa_brand).eq("Brand#23").k())
-        .and((&d.pa_container).eq("MED BOX").k())
+        .in_s((&d.pa_brand).eq("Brand#23"))
+        .in_s((&d.pa_container).eq("MED BOX"))
         .mat_set();
-    let live_li = (&d.li_part).in_s(&qual_part_set).k();
-    let threshold_per_part = (&live_li).o(&d.li_part).lc(&d.li_quantity)
+    let live_li = (&d.li_part).in_s(&qual_part_set);
+    let threshold_per_part = (&live_li).lc(&d.li_quantity)
         .fold((0.0_f64, 0_i64), |(s, n), q| (s + q, n + 1))
         .map(|(s, n)| 0.2 * s / n as f64);
     let tpp = threshold_per_part.mat_idx();
     let live = d.lineitem
-        .and(&live_li)
-        .and((&d.li_quantity).x((&d.li_part).o(&tpp))
-             .filt(|(q, t)| q < t).k());
+        .in_s(&live_li)
+        .in_s((&d.li_quantity).x((&d.li_part).o(&tpp))
+             .filt(|(q, t)| q < t));
     let sum = live.o(&d.li_extendedprice)
         .unwrap_fold(0.0_f64, |a, e| a + e);
     f(sum / 7.0)
@@ -234,8 +234,8 @@ fn q21(d: &TpchData) -> String {
     //   only_late  = askeys(((late : order) ← (late : Li.supplier)) ▷ n_distinct == 1)
     //   qualifying = late ∧ (Li.supplier → saudi) ∧ (order → f_ords ∧ multi_supp ∧ only_late)
     //   (Li.supplier ← qualifying) ▷ ((a, _) -> a + 1, 0) ⊗ Su.name
-    let late = d.lineitem.and(
-        (&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r).k()
+    let late = d.lineitem.in_s(
+        (&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r)
     );
     // `multi_supp`/`only_late` are SET-membership predicates over orderkeys
     // ("more than one distinct supplier" / "exactly one distinct supplier").
@@ -252,28 +252,28 @@ fn q21(d: &TpchData) -> String {
     };
     let supp_state = (&d.li_order).lc(&d.li_supplier)
         .dense_fold(d.orders.n, (None, false), track);
-    let multi_supp = supp_state.filt(|(_, m): (Option<usize>, bool)| m).k();
+    let multi_supp = (&d.orders).in_s(supp_state.filt(|(_, m): (Option<usize>, bool)| m));
     let late_supp_state = (&late).o(&d.li_order)
         .lc((&late).o(&d.li_supplier))
         .dense_fold(d.orders.n, (None, false), track);
-    let only_late = late_supp_state
-        .filt(|(first, multi): (Option<usize>, bool)| first.is_some() && !multi).k();
-    let saudi = (&d.supplier).and(
-        (&d.su_nation).o(&d.na_name).eq("SAUDI ARABIA").k()
+    let only_late = (&d.orders).in_s(late_supp_state
+        .filt(|(first, multi): (Option<usize>, bool)| first.is_some() && !multi));
+    let saudi = (&d.supplier).in_s(
+        (&d.su_nation).o(&d.na_name).eq("SAUDI ARABIA")
     );
-    let f_ords = (&d.orders).and((&d.ord_status).eq("F").k());
+    let f_ords = (&d.orders).in_s((&d.ord_status).eq("F"));
     // Hoist each per-row membership probe into a dense `Bitset` over its
-    // domain — collapses the 5-deep Conj chain on `qualifying` to ~5 ALU ops.
-    let saudi_bs      = Bitset::from_setq(d.supplier.n, &saudi);
-    let f_ords_bs     = Bitset::from_setq(d.orders.n,   &f_ords);
-    let multi_supp_bs = Bitset::from_setq(d.orders.n,   &multi_supp);
-    let only_late_bs  = Bitset::from_setq(d.orders.n,   &only_late);
+    // domain — collapses the 5-deep restriction chain on `qualifying` to ~5 ALU ops.
+    let saudi_bs      = Bitset::from_drive(d.supplier.n, &saudi);
+    let f_ords_bs     = Bitset::from_drive(d.orders.n,   &f_ords);
+    let multi_supp_bs = Bitset::from_drive(d.orders.n,   &multi_supp);
+    let only_late_bs  = Bitset::from_drive(d.orders.n,   &only_late);
     let qualifying = (&late)
-        .and((&d.li_supplier).in_s(&saudi_bs).k())
-        .and((&d.li_order).in_s(&f_ords_bs).k())
-        .and((&d.li_order).in_s(&multi_supp_bs).k())
-        .and((&d.li_order).in_s(&only_late_bs).k());
-    let counts = (&d.li_supplier).lcs(qualifying).fold(0_i64, |a, _| a + 1);
+        .in_s((&d.li_supplier).in_s(&saudi_bs))
+        .in_s((&d.li_order).in_s(&f_ords_bs))
+        .in_s((&d.li_order).in_s(&multi_supp_bs))
+        .in_s((&d.li_order).in_s(&only_late_bs));
+    let counts = (&d.li_supplier).lc(qualifying).fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(usize, i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
     let mut named: Vec<(&str, i64)> = rows.iter()
@@ -294,18 +294,18 @@ pub(super) fn q22(d: &TpchData) -> String {
     //   (prefix ← (target : acctbal)) ▷ ((cnt, sm), ab) -> (cnt+1, sm+ab)
     let prefix = (&d.cu_phone).map(|p: &str| &p[..2]);
     let codes = vec!["13","31","23","29","30","18","17"];
-    let prefix_ok = (&d.customer).and((&prefix).in_v(codes).k());
-    let pos = (&prefix_ok).and((&d.cu_acctbal).gt(0.0).k());
+    let prefix_ok = (&d.customer).in_s((&prefix).in_v(codes));
+    let pos = (&prefix_ok).in_s((&d.cu_acctbal).gt(0.0));
     let (sum_p, cnt_p) = pos.o(&d.cu_acctbal)
         .unwrap_fold((0.0_f64, 0_i64), |(s, n), v| (s + v, n + 1));
     let avg = sum_p / cnt_p as f64;
     // Packed bitset over the dense customer universe — replaces the
-    // Inv → Keys → MatSet chain (which builds a HashMap<i64, SVec<i64>>
-    // of 60M order_customer pairs just to grab the unique keys).
+    // baseline's `mat_set` (a HashSet built from every order's customer)
+    // with one bit per customer.
     let custs_with_orders = Bitset::from_drive(d.customer.n, &d.ord_customer);
-    let target = (&prefix_ok).and((&d.cu_acctbal).gt(avg).k())
+    let target = (&prefix_ok).in_s((&d.cu_acctbal).gt(avg))
         .minus(custs_with_orders);
-    let counts = (&prefix).lcs(target)
+    let counts = (&prefix).lc(target)
         .fold((0_i64, 0.0_f64), |(cnt, sm), c| {
             let ab = d.cu_acctbal.values[c];
             (cnt + 1, sm + ab)
@@ -326,20 +326,20 @@ fn q2(d: &TpchData) -> String {
     //                  ∧ (supplycost == (PS.part → min_per_part))
     //   target : (Su.acctbal ⊗ Su.name ⊗ Na.name ⊗ PS.part ⊗ Pa.mfgr
     //             ⊗ Su.address ⊗ Su.phone ⊗ Su.comment)
-    let eu_ps = (&d.partsupp).and(
-        (&d.ps_supplier).o((&d.su_nation).o((&d.na_region).o(&d.re_name))).eq("EUROPE").k()
+    let eu_ps = (&d.partsupp).in_s(
+        (&d.ps_supplier).o((&d.su_nation).o((&d.na_region).o(&d.re_name))).eq("EUROPE")
     );
     let min_per_part = (&eu_ps).o(&d.ps_part)
         .lc((&eu_ps).o(&d.ps_supplycost))
         .dense_fold(d.part.n, f64::INFINITY, |a, c| if c < a { c } else { a });
     let target = (&eu_ps)
-        .and((&d.ps_part).o(&d.pa_size).eq(15).k())
-        .and((&d.ps_part).o(&d.pa_type).filt(|s: &str| s.ends_with("BRASS")).k())
-        .and((&d.ps_supplycost).x((&d.ps_part).o(&min_per_part))
-             .filt(|(c, m)| c == m).k());
+        .in_s((&d.ps_part).o(&d.pa_size).eq(15))
+        .in_s((&d.ps_part).o(&d.pa_type).filt(|s: &str| s.ends_with("BRASS")))
+        .in_s((&d.ps_supplycost).x((&d.ps_part).o(&min_per_part))
+             .filt(|(c, m)| c == m));
     // Project per PS row → (acct, sname, nname, pkey, mfgr, addr, phone, comm)
     let mut rows: Vec<(f64, &str, &str, usize, &str, &str, &str, &str)> = Vec::new();
-    target.drivekeys(|psi| {
+    target.drive(|psi, _| {
         let pa = d.ps_part.values[psi];
         let su = d.ps_supplier.values[psi];
         rows.push((

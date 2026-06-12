@@ -24,263 +24,242 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 fn q22d(d: &Data) -> String {
-    let q = d.movie.o(
+    let q = d.movie.in_s(
         (&d.movie_info).in_s(
-            (&d.info_type).o(&d.infotype_info).eq("countries").k()
-                .and((&d.info_info).in_v(nordic10()).k())
-        ).k()
+            (&d.info_type).o(&d.infotype_info).eq("countries")
+                .and((&d.info_info).in_v(nordic10()))
+        )
             .and(
-                (&d.movie_keyword).o(&d.keyword_keyword).in_v(murder4()).k()
+                (&d.movie_keyword).o(&d.keyword_keyword).in_v(murder4())
                     .and(
-                        (&d.movie_production_year).gt(2005).k()
-                            .and((&d.movie_kind).o(&d.kind_kind).in_v(vec!["movie","episode"]).k())
+                        (&d.movie_production_year).gt(2005)
+                            .and((&d.movie_kind).o(&d.kind_kind).in_v(vec!["movie","episode"]))
                     )
             )
-            .o(
-                (&d.movie_title)
-                    .x(
-                        (&d.movie_data).o(
-                            (&d.data_data).lt("8.5").k()
-                                .and((&d.data_type).o(&d.infotype_info).eq("rating").k())
-                                .o(&d.data_data)
-                        )
-                    )
-                    .x(
-                        (&d.movie_company).o(
-                            (&d.company_country).ne("[us]").k()
-                                .and((&d.company_type).o(&d.companytype_kind).eq("production companies").k())
-                                .o(&d.company_name)
-                        )
-                    )
+    ).o(
+        (&d.movie_title)
+            .x(
+                (&d.movie_data).in_s(
+                    (&d.data_data).lt("8.5")
+                        .and((&d.data_type).o(&d.infotype_info).eq("rating"))
+                ).o(&d.data_data)
+            )
+            .x(
+                (&d.movie_company).in_s(
+                    (&d.company_country).ne("[us]")
+                        .and((&d.company_type).o(&d.companytype_kind).eq("production companies"))
+                ).o(&d.company_name)
             )
     );
     min_row(q)
 }
 
 fn q5b(d: &Data) -> String {
-    let q = d.movie.o(
+    let q = d.movie.in_s(
         (&d.movie_company).in_s(
-            (&d.company_type).o(&d.companytype_kind).eq("production companies").k()
+            (&d.company_type).o(&d.companytype_kind).eq("production companies")
                 .and(
-                    (&d.company_note).rx(r"\(VHS\)").k()
+                    (&d.company_note).rx(r"\(VHS\)")
                         .and(
-                            (&d.company_note).rx(r"\(USA\)").k()
-                                .and((&d.company_note).rx(r"\(1994\)").k())
+                            (&d.company_note).rx(r"\(USA\)")
+                                .and((&d.company_note).rx(r"\(1994\)"))
                         )
                 )
-        ).k()
+        )
             .and(
-                (&d.movie_info).o((&d.info_info).in_v(vec!["USA","America"])).k()
-                    .and((&d.movie_production_year).gt(2010).k())
+                (&d.movie_info).o((&d.info_info).in_v(vec!["USA","America"]))
+                    .and((&d.movie_production_year).gt(2010))
             )
-            .o(&d.movie_title)
-    );
+    ).o(&d.movie_title);
     min_row(q)
 }
 
 fn q5c(d: &Data) -> String {
-    let q = d.movie.o(
+    let q = d.movie.in_s(
         (&d.movie_company).in_s(
-            (&d.company_type).o(&d.companytype_kind).eq("production companies").k()
+            (&d.company_type).o(&d.companytype_kind).eq("production companies")
                 .and(
-                    (&d.company_note).nrx(r"\(TV\)").k()
-                        .and((&d.company_note).rx(r"\(USA\)").k())
+                    (&d.company_note).nrx(r"\(TV\)")
+                        .and((&d.company_note).rx(r"\(USA\)"))
                 )
-        ).k()
+        )
             .and(
-                (&d.movie_info).o((&d.info_info).in_v(nordic10())).k()
-                    .and((&d.movie_production_year).gt(1990).k())
+                (&d.movie_info).o((&d.info_info).in_v(nordic10()))
+                    .and((&d.movie_production_year).gt(1990))
             )
-            .o(&d.movie_title)
-    );
+    ).o(&d.movie_title);
     min_row(q)
 }
 
 fn q15a(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_production_year).gt(2000).k()
+    let q = d.movie.in_s(
+        (&d.movie_production_year).gt(2000)
             .and(
                 (&d.movie_company).in_s(
-                    (&d.company_country).eq("[us]").k()
+                    (&d.company_country).eq("[us]")
                         .and(
-                            (&d.company_note).rx(r"\(200.*\)").k()
-                                .and((&d.company_note).rx(r"\(worldwide\)").k())
+                            (&d.company_note).rx(r"\(200.*\)")
+                                .and((&d.company_note).rx(r"\(worldwide\)"))
                         )
-                ).k()
+                )
                     .and(
-                        (&d.movie_keyword).k()
-                            .and((&d.movie_aka).k())
+                        (&d.movie_keyword)
+                            .and(&d.movie_aka)
                     )
             )
-            .o(
-                (&d.movie_info).o(
-                    (&d.info_type).o(&d.infotype_info).eq("release dates").k()
-                        .and(
-                            (&d.info_info).rx(r"^USA:.* 200").k()
-                                .and((&d.info_note).rx(r"internet").k())
-                        )
-                        .o(&d.info_info)
+    ).o(
+        (&d.movie_info).in_s(
+            (&d.info_type).o(&d.infotype_info).eq("release dates")
+                .and(
+                    (&d.info_info).rx(r"^USA:.* 200")
+                        .and((&d.info_note).rx(r"internet"))
                 )
-                .x(&d.movie_title)
-            )
+        ).o(&d.info_info)
+        .x(&d.movie_title)
     );
     min_row(q)
 }
 
 fn q15b(d: &Data) -> String {
-    let q = d.movie.o(
+    let q = d.movie.in_s(
         (&d.movie_company).in_s(
-            (&d.company_country).eq("[us]").k()
+            (&d.company_country).eq("[us]")
                 .and(
-                    (&d.company_name).eq("YouTube").k()
+                    (&d.company_name).eq("YouTube")
                         .and(
-                            (&d.company_note).rx(r"\(200.*\)").k()
-                                .and((&d.company_note).rx(r"\(worldwide\)").k())
+                            (&d.company_note).rx(r"\(200.*\)")
+                                .and((&d.company_note).rx(r"\(worldwide\)"))
                         )
                 )
-        ).k()
+        )
             .and(
-                (&d.movie_keyword).k()
+                (&d.movie_keyword)
                     .and(
-                        (&d.movie_aka).k()
+                        (&d.movie_aka)
                             .and(
-                                (&d.movie_production_year).ge(2005).k()
-                                    .and((&d.movie_production_year).le(2010).k())
+                                (&d.movie_production_year).ge(2005)
+                                    .and((&d.movie_production_year).le(2010))
                             )
                     )
             )
-            .o(
-                (&d.movie_info).o(
-                    (&d.info_type).o(&d.infotype_info).eq("release dates").k()
-                        .and(
-                            (&d.info_info).rx(r"^USA:.* 200").k()
-                                .and((&d.info_note).rx(r"internet").k())
-                        )
-                        .o(&d.info_info)
+    ).o(
+        (&d.movie_info).in_s(
+            (&d.info_type).o(&d.infotype_info).eq("release dates")
+                .and(
+                    (&d.info_info).rx(r"^USA:.* 200")
+                        .and((&d.info_note).rx(r"internet"))
                 )
-                .x(&d.movie_title)
-            )
+        ).o(&d.info_info)
+        .x(&d.movie_title)
     );
     min_row(q)
 }
 
 fn q15c(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).o((&d.company_country).eq("[us]")).k()
+    let q = d.movie.in_s(
+        (&d.movie_company).o((&d.company_country).eq("[us]"))
             .and(
-                (&d.movie_keyword).k()
+                (&d.movie_keyword)
                     .and(
-                        (&d.movie_aka).k()
-                            .and((&d.movie_production_year).gt(1990).k())
+                        (&d.movie_aka)
+                            .and((&d.movie_production_year).gt(1990))
                     )
             )
-            .o(
-                (&d.movie_info).o(
-                    (&d.info_type).o(&d.infotype_info).eq("release dates").k()
-                        .and(
-                            (&d.info_info).rx(r"^USA:.* 199").k()
-                                .or((&d.info_info).rx(r"^USA:.* 200").k())
-                                .and((&d.info_note).rx(r"internet").k())
-                        )
-                        .o(&d.info_info)
+    ).o(
+        (&d.movie_info).in_s(
+            (&d.info_type).o(&d.infotype_info).eq("release dates")
+                .and(
+                    (&d.info_info).rx(r"^USA:.* 199")
+                        .or((&d.info_info).rx(r"^USA:.* 200"))
+                        .and((&d.info_note).rx(r"internet"))
                 )
-                .x(&d.movie_title)
-            )
+        ).o(&d.info_info)
+        .x(&d.movie_title)
     );
     min_row(q)
 }
 
 fn q15d(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).o((&d.company_country).eq("[us]")).k()
+    let q = d.movie.in_s(
+        (&d.movie_company).o((&d.company_country).eq("[us]"))
             .and(
-                (&d.movie_keyword).k()
+                (&d.movie_keyword)
                     .and(
                         (&d.movie_info).in_s(
-                            (&d.info_type).o(&d.infotype_info).eq("release dates").k()
-                                .and((&d.info_note).rx(r"internet").k())
-                        ).k()
-                            .and((&d.movie_production_year).gt(1990).k())
+                            (&d.info_type).o(&d.infotype_info).eq("release dates")
+                                .and((&d.info_note).rx(r"internet"))
+                        )
+                            .and((&d.movie_production_year).gt(1990))
                     )
             )
-            .o(
-                (&d.movie_aka).o(&d.akatitle_title)
-                    .x(&d.movie_title)
-            )
+    ).o(
+        (&d.movie_aka).o(&d.akatitle_title)
+            .x(&d.movie_title)
     );
     min_row(q)
 }
 
 fn q11c(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_keyword).o(&d.keyword_keyword).in_v(vec!["sequel","revenge","based-on-novel"]).k()
+    let q = d.movie.in_s(
+        (&d.movie_keyword).o(&d.keyword_keyword).in_v(vec!["sequel","revenge","based-on-novel"])
             .and(
-                (&d.movie_production_year).gt(1950).k()
-                    .and((&d.movie_link).k())
+                (&d.movie_production_year).gt(1950)
+                    .and(&d.movie_link)
             )
-            .o(
-                (&d.movie_company).o(
-                    (&d.company_country).ne("[pl]").k()
+    ).o(
+        (&d.movie_company).in_s(
+            (&d.company_country).ne("[pl]")
+                .and(
+                    (&d.company_name).rx(r"^20th Century Fox")
+                        .or((&d.company_name).rx(r"^Twentieth Century Fox"))
                         .and(
-                            (&d.company_name).rx(r"^20th Century Fox").k()
-                                .or((&d.company_name).rx(r"^Twentieth Century Fox").k())
-                                .and(
-                                    (&d.company_type).o(&d.companytype_kind).ne("production companies").k()
-                                        .and((&d.company_note).k())
-                                )
+                            (&d.company_type).o(&d.companytype_kind).ne("production companies")
+                                .and(&d.company_note)
                         )
-                        .o((&d.company_name).x(&d.company_note))
                 )
-                .x(&d.movie_title)
-            )
+        ).o((&d.company_name).x(&d.company_note))
+        .x(&d.movie_title)
     );
     min_row(q)
 }
 
 fn q11d(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_keyword).o(&d.keyword_keyword).in_v(vec!["sequel","revenge","based-on-novel"]).k()
+    let q = d.movie.in_s(
+        (&d.movie_keyword).o(&d.keyword_keyword).in_v(vec!["sequel","revenge","based-on-novel"])
             .and(
-                (&d.movie_production_year).gt(1950).k()
-                    .and((&d.movie_link).k())
+                (&d.movie_production_year).gt(1950)
+                    .and(&d.movie_link)
             )
-            .o(
-                (&d.movie_company).o(
-                    (&d.company_country).ne("[pl]").k()
-                        .and(
-                            (&d.company_type).o(&d.companytype_kind).ne("production companies").k()
-                                .and((&d.company_note).k())
-                        )
-                        .o((&d.company_name).x(&d.company_note))
+    ).o(
+        (&d.movie_company).in_s(
+            (&d.company_country).ne("[pl]")
+                .and(
+                    (&d.company_type).o(&d.companytype_kind).ne("production companies")
+                        .and(&d.company_note)
                 )
-                .x(&d.movie_title)
-            )
+        ).o((&d.company_name).x(&d.company_note))
+        .x(&d.movie_title)
     );
     min_row(q)
 }
 
 fn q13d(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_kind).o(&d.kind_kind).eq("movie").k()
+    let q = d.movie.in_s(
+        (&d.movie_kind).o(&d.kind_kind).eq("movie")
             .and(
                 (&d.movie_info).o(
                     (&d.info_type).o(&d.infotype_info).eq("release dates")
-                ).k()
-            )
-            .o(
-                (&d.movie_company).o(
-                    (&d.company_country).eq("[us]").k()
-                        .and((&d.company_type).o(&d.companytype_kind).eq("production companies").k())
-                        .o(&d.company_name)
                 )
-                .x(
-                    (&d.movie_data).o(
-                        (&d.data_type).o(&d.infotype_info).eq("rating").k()
-                            .o(&d.data_data)
-                    )
-                )
-                .x(&d.movie_title)
             )
+    ).o(
+        (&d.movie_company).in_s(
+            (&d.company_country).eq("[us]")
+                .and((&d.company_type).o(&d.companytype_kind).eq("production companies"))
+        ).o(&d.company_name)
+        .x(
+            (&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("rating")).o(&d.data_data)
+        )
+        .x(&d.movie_title)
     );
     min_row(q)
 }
@@ -290,20 +269,16 @@ fn q13d(d: &Data) -> String {
 fn q6_marvel(d: &Data, year: i64) -> String {
     let kw = || (&d.movie_keyword).o(&d.keyword_keyword).eq("marvel-cinematic-universe");
     let downey = (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"Downey.*Robert")));
-    let q = d.movie.o(
-        (&d.movie_production_year).gt(year).k().and(kw().k())
-            .o(kw().x(&d.movie_title).x(downey))
-    );
+    let q = d.movie.in_s((&d.movie_production_year).gt(year).and(kw()))
+        .o(kw().x(&d.movie_title).x(downey));
     min_row(q)
 }
 
 fn q6_comic(d: &Data, year: i64) -> String {
     let kw = || (&d.movie_keyword).o(&d.keyword_keyword).in_v(kw8());
     let downey = (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"Downey.*Robert")));
-    let q = d.movie.o(
-        (&d.movie_production_year).gt(year).k().and(kw().k())
-            .o(kw().x(&d.movie_title).x(downey))
-    );
+    let q = d.movie.in_s((&d.movie_production_year).gt(year).and(kw()))
+        .o(kw().x(&d.movie_title).x(downey));
     min_row(q)
 }
 
@@ -316,9 +291,7 @@ fn q6e(d: &Data) -> String { q6_marvel(d, 2000) }
 fn q6f(d: &Data) -> String {
     let kw = || (&d.movie_keyword).o(&d.keyword_keyword).in_v(kw8());
     let cast_name = (&d.movie_cast).o((&d.cast_person).o(&d.person_name));
-    let q = d.movie.o(
-        (&d.movie_production_year).gt(2000).k().and(kw().k())
-            .o(kw().x(&d.movie_title).x(cast_name))
-    );
+    let q = d.movie.in_s((&d.movie_production_year).gt(2000).and(kw()))
+        .o(kw().x(&d.movie_title).x(cast_name));
     min_row(q)
 }

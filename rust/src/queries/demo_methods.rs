@@ -9,29 +9,32 @@ pub const ENTRIES: &[super::Entry] = &[
     ("6a/method", "marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert", q6a_methods),
 ];
 
-// q6a — movie → (year > 2010) ∧ (keyword == "marvel-...")
-//             : (keyword == "marvel-...") × title
+// q6a — movie : (year > 2010) ∧ (keyword == "marvel-...")
+//             → (keyword == "marvel-...") × title
 //             × (cast → person → name ~ "Downey…")
 //
-// Operator legend (engine.rs::QueryExt / SetQExt):
-//   .o(b)    composition (Query∘Query or SetQ∘Query — same algebra)
-//   .k()     keys (Query → SetQ)
+// Operator legend (engine.rs::QueryExt):
+//   .o(b)    composition (a set is an identity relation, so set∘Query is
+//            the same Compose — no keyset projection)
 //   .x(b)    product (×)
-//   .and / .or / .minus  set algebra
-//   .eq / .ne / .gt / .lt / .ge / .le / .in_v / .in_s / .rx / .nrx  predicates
+//   .and     ∧ — alias for the product; conjunct trees are consumed via
+//            the flat short-circuit `member` (restriction = `.in_s`)
+//   .or      ∨ — probe-only membership union (drive with `.union`)
+//   .minus   value-bearing difference (key-based member test)
+//   .in_s    restriction (Julia `:`) — keep rows whose value is a member
+//   .eq / .ne / .gt / .lt / .ge / .le / .in_v / .rx / .nrx  predicates
 pub fn q6a_methods(d: &Data) -> String {
     let kw_marvel = || (&d.movie_keyword).o(&d.keyword_keyword)
                                           .eq("marvel-cinematic-universe");
-    let q = d.movie.o(
-        (&d.movie_production_year).gt(2010).k()
-            .and(kw_marvel().k())
-            .o(
-                kw_marvel()
-                    .x(&d.movie_title)
-                    .x((&d.movie_cast).o(
-                        (&d.cast_person).o(
-                            (&d.person_name).rx(r"Downey.*Robert")))),
-            ),
+    let q = d.movie.in_s(
+        (&d.movie_production_year).gt(2010)
+            .and(kw_marvel()),
+    ).o(
+        kw_marvel()
+            .x(&d.movie_title)
+            .x((&d.movie_cast).o(
+                (&d.cast_person).o(
+                    (&d.person_name).rx(r"Downey.*Robert")))),
     );
     min_row(q)
 }

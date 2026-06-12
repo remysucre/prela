@@ -1,16 +1,27 @@
 // Top-down CPS engine — eager physical state, compile-time access modes.
 //
-// Two trait families mirror prela's Driven/Probed access modes:
+// One trait family mirrors prela's Driven/Probed access modes:
 //
 //   Rel    { type D; type R; }              — a binary relation D → R
 //   Drive:  Rel + fn drive(&self, k)        — can be scanned (k(d, r) per pair)
-//   Probe:  Rel + fn probe / probe_any      — can be looked up by key
+//   Probe:  Rel + fn probe / probe_any /    — can be looked up by key;
+//                  fn member                  member(x) = probe_any(x, |_| true)
 //
-// and for key-sets (the Unary side of the Julia algebra):
+// There is no separate key-set family: a set IS an identity relation D → D
+// (Julia's `Unary{D} <: Query{D, D}`). Set-shaped nodes (Universe, Bitset,
+// MatSetSet, Disj) emit `(x, x)` from drive and yield `x` from
+// probe iff member — so they compose, product and left-compose like any
+// other relation, with no keyset projection in between. Membership is part
+// of the relation protocol: `member(q, x)` defaults to
+// `probe_any(x, |_| true)` for ANY probe-able query and is overridden where
+// a direct test is cheaper (Bitset bit-test, Universe bound check, MatSetSet
+// hash lookup).
 //
-//   KeySet    { type D; }
-//   DriveKeys: KeySet + fn drivekeys        — can enumerate members
-//   Member:    KeySet + fn member           — can test membership
+// Set algebra mirrors Julia exactly: `∧`/`.and` is an ALIAS for the product
+// (`member(Prod)` short-circuits flat across the legs without building the
+// pair value); `-`/`.minus` is the value-bearing `Diff` (key-based test);
+// `∨`/`.or` is the probe-only membership union `Disj` (driving it is a
+// compile error); the enumerable bag union is the separate `Union` node.
 //
 // A node implements exactly the modes it supports, with bounds that propagate
 // the mode rule through the plan (a Compose drives its lhs and probes its
@@ -56,18 +67,14 @@ pub trait Drive: Rel {
 pub trait Probe: Rel {
     fn probe<K: FnMut(Self::R)>(&self, x: Self::D, k: K);
     fn probe_any<K: FnMut(Self::R) -> bool>(&self, x: Self::D, k: K) -> bool;
-}
-
-pub trait KeySet {
-    type D: Copy + Eq + Hash;
-}
-
-pub trait DriveKeys: KeySet {
-    fn drivekeys<K: FnMut(Self::D)>(&self, k: K);
-}
-
-pub trait Member: KeySet {
-    fn member(&self, x: Self::D) -> bool;
+    /// Domain-membership test — "is `x` in the domain of this relation?".
+    /// The default is the universal definition (`probe_any` with a
+    /// trivially-true continuation, which short-circuits at the first
+    /// value); leaves with a cheaper direct test override it.
+    #[inline(always)]
+    fn member(&self, x: Self::D) -> bool {
+        self.probe_any(x, |_| true)
+    }
 }
 
 // blanket: &T inherits T's modes.
@@ -83,15 +90,8 @@ impl<T: Probe + ?Sized> Probe for &T {
     fn probe_any<K: FnMut(T::R) -> bool>(&self, x: T::D, k: K) -> bool {
         (**self).probe_any(x, k)
     }
-}
-impl<S: KeySet + ?Sized> KeySet for &S { type D = S::D; }
-impl<S: DriveKeys + ?Sized> DriveKeys for &S {
     #[inline(always)]
-    fn drivekeys<K: FnMut(S::D)>(&self, k: K) { (**self).drivekeys(k); }
-}
-impl<S: Member + ?Sized> Member for &S {
-    #[inline(always)]
-    fn member(&self, x: S::D) -> bool { (**self).member(x) }
+    fn member(&self, x: T::D) -> bool { (**self).member(x) }
 }
 
 // ===== leaf storage =====================================================
@@ -202,19 +202,27 @@ impl<R: Copy> Probe for MultiCol<R> {
     }
 }
 
-// ===== Universe (KeySet over entity ids) ================================
+// ===== Universe — identity relation over the dense entity ids ===========
 
 #[derive(Copy, Clone)]
 pub struct Universe { pub n: usize }
 
-impl KeySet for Universe { type D = usize; }
-impl DriveKeys for Universe {
+impl Rel for Universe { type D = usize; type R = usize; }
+impl Drive for Universe {
     #[inline(always)]
-    fn drivekeys<K: FnMut(usize)>(&self, mut k: K) {
-        for i in 0..self.n { k(i); }
+    fn drive<K: FnMut(usize, usize)>(&self, mut k: K) {
+        for i in 0..self.n { k(i, i); }
     }
 }
-impl Member for Universe {
+impl Probe for Universe {
+    #[inline(always)]
+    fn probe<K: FnMut(usize)>(&self, x: usize, mut k: K) {
+        if x < self.n { k(x); }
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut(usize) -> bool>(&self, x: usize, mut k: K) -> bool {
+        x < self.n && k(x)
+    }
     #[inline(always)]
     fn member(&self, x: usize) -> bool { x < self.n }
 }
@@ -251,10 +259,12 @@ pub struct Filter<A, P> { pub a: A, pub p: P }
 
 pub trait Pred<R> { fn test(&self, v: R) -> bool; }
 
-/// Membership-in-a-KeySet predicate. Kept nominal (rather than a closure)
-/// so it can hold the set by value without naming its type.
-pub struct InSet<S: Member>(pub S);
-impl<S: Member> Pred<S::D> for InSet<S> {
+/// Membership predicate — `member` over any probe-able relation (the Julia
+/// restriction `a : b`, which consumes `b` via `member` directly). Kept
+/// nominal (rather than a closure) so it can hold the operand by value
+/// without naming its type.
+pub struct InSet<S: Probe>(pub S);
+impl<S: Probe> Pred<S::D> for InSet<S> {
     #[inline(always)] fn test(&self, v: S::D) -> bool { self.0.member(v) }
 }
 
@@ -285,93 +295,82 @@ impl<A: Probe, P: Pred<A::R>> Probe for Filter<A, P> {
     }
 }
 
-// ===== Restrict (KeySet : Query) ========================================
+// ===== Diff / Disj / Union — set algebra ================================
+// Conjunction needs no node at all: `∧` IS the product (Julia:
+// `∧(a, b) = ⊗(a, b)`), and `member(Prod)` short-circuits flat across the
+// legs without building the pair value — see Prod below. The remaining set
+// operators take ANY member-capable rhs (no projection of a value-bearing
+// operand to a "keyset" node).
 
-pub struct Restrict<A: KeySet, B> { pub a: A, pub b: B }
-
-impl<A: KeySet, B: Rel<D = A::D>> Rel for Restrict<A, B> {
-    type D = A::D;
-    type R = B::R;
-}
-impl<A: DriveKeys, B: Probe<D = A::D>> Drive for Restrict<A, B> {
+/// `a - b` — Julia's value-bearing minus: keyed on `a`'s DOMAIN, drive and
+/// probe pass `a`'s `(x, v)` pairs through unchanged, skipping keys that
+/// are members of `b` (julia/interp.jl `drive(n::Diff, k) =
+/// drive(n.a, (x, y) -> member(n.b, x) || k(x, y))`). For an identity `a`
+/// this degenerates to the plain set difference (emits `(x, x)`).
+pub struct Diff<A, B> { pub a: A, pub b: B }
+impl<A: Rel, B: Rel<D = A::D>> Rel for Diff<A, B> { type D = A::D; type R = A::R; }
+impl<A: Drive, B: Probe<D = A::D>> Drive for Diff<A, B> {
     #[inline(always)]
-    fn drive<K: FnMut(A::D, B::R)>(&self, mut k: K) {
-        self.a.drivekeys(|x| self.b.probe(x, |r| k(x, r)));
+    fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
+        self.a.drive(|x, v| if !self.b.member(x) { k(x, v); });
     }
 }
-impl<A: Member, B: Probe<D = A::D>> Probe for Restrict<A, B> {
+impl<A: Probe, B: Probe<D = A::D>> Probe for Diff<A, B> {
     #[inline(always)]
-    fn probe<K: FnMut(B::R)>(&self, x: A::D, k: K) {
-        if self.a.member(x) { self.b.probe(x, k); }
+    fn probe<K: FnMut(A::R)>(&self, x: A::D, k: K) {
+        if !self.b.member(x) { self.a.probe(x, k); }
     }
     #[inline(always)]
-    fn probe_any<K: FnMut(B::R) -> bool>(&self, x: A::D, k: K) -> bool {
-        self.a.member(x) && self.b.probe_any(x, k)
+    fn probe_any<K: FnMut(A::R) -> bool>(&self, x: A::D, k: K) -> bool {
+        !self.b.member(x) && self.a.probe_any(x, k)
     }
-}
-
-// ===== Keys (Query → KeySet) ============================================
-
-pub struct Keys<Q> { pub q: Q }
-
-impl<Q: Rel> KeySet for Keys<Q> { type D = Q::D; }
-impl<Q: Drive> DriveKeys for Keys<Q> {
-    #[inline(always)]
-    fn drivekeys<K: FnMut(Q::D)>(&self, mut k: K) {
-        self.q.drive(|x, _| k(x));
-    }
-}
-impl<Q: Probe> Member for Keys<Q> {
-    #[inline(always)]
-    fn member(&self, x: Q::D) -> bool {
-        self.q.probe_any(x, |_| true)
-    }
-}
-
-// ===== Conj / Disj / SetDiff ============================================
-
-pub struct Conj<A, B> { pub a: A, pub b: B }
-impl<A: KeySet, B: KeySet<D = A::D>> KeySet for Conj<A, B> { type D = A::D; }
-impl<A: DriveKeys, B: Member<D = A::D>> DriveKeys for Conj<A, B> {
-    #[inline(always)]
-    fn drivekeys<K: FnMut(A::D)>(&self, mut k: K) {
-        self.a.drivekeys(|x| if self.b.member(x) { k(x); });
-    }
-}
-impl<A: Member, B: Member<D = A::D>> Member for Conj<A, B> {
-    #[inline(always)]
-    fn member(&self, x: A::D) -> bool { self.a.member(x) && self.b.member(x) }
-}
-
-pub struct SetDiff<A, B> { pub a: A, pub b: B }
-impl<A: KeySet, B: KeySet<D = A::D>> KeySet for SetDiff<A, B> { type D = A::D; }
-impl<A: DriveKeys, B: Member<D = A::D>> DriveKeys for SetDiff<A, B> {
-    #[inline(always)]
-    fn drivekeys<K: FnMut(A::D)>(&self, mut k: K) {
-        self.a.drivekeys(|x| if !self.b.member(x) { k(x); });
-    }
-}
-impl<A: Member, B: Member<D = A::D>> Member for SetDiff<A, B> {
     #[inline(always)]
     fn member(&self, x: A::D) -> bool { self.a.member(x) && !self.b.member(x) }
 }
 
+/// `∨` — PROBE-ONLY membership union (julia/interp.jl: "driving a union
+/// (dedup-while-emitting) is the one operation that would need its lhs both
+/// driven and probed, so it lives elsewhere"). There is deliberately NO
+/// `Drive` impl — driving a `Disj` is a compile error. Enumerate a union
+/// with `Union` (bag-concat) instead, materializing first if the sink does
+/// not dedup.
 pub struct Disj<A, B> { pub a: A, pub b: B }
-impl<A: KeySet, B: KeySet<D = A::D>> KeySet for Disj<A, B> { type D = A::D; }
-impl<A: DriveKeys + Member, B: DriveKeys<D = A::D>> DriveKeys for Disj<A, B> {
+impl<A: Rel, B: Rel<D = A::D>> Rel for Disj<A, B> { type D = A::D; type R = A::D; }
+impl<A: Probe, B: Probe<D = A::D>> Probe for Disj<A, B> {
     #[inline(always)]
-    fn drivekeys<K: FnMut(A::D)>(&self, mut k: K) {
-        self.a.drivekeys(&mut k);
-        self.b.drivekeys(|x| if !self.a.member(x) { k(x); });
+    fn probe<K: FnMut(A::D)>(&self, x: A::D, mut k: K) {
+        if self.member(x) { k(x); }
     }
-}
-impl<A: Member, B: Member<D = A::D>> Member for Disj<A, B> {
+    #[inline(always)]
+    fn probe_any<K: FnMut(A::D) -> bool>(&self, x: A::D, mut k: K) -> bool {
+        self.member(x) && k(x)
+    }
     #[inline(always)]
     fn member(&self, x: A::D) -> bool { self.a.member(x) || self.b.member(x) }
 }
 
-// ===== Prod (×) — binary; n-ary by nesting ==============================
+/// Enumerable BAG union: drive `a` fully, then `b` fully — NO dedup and no
+/// membership pretense (drive-only; no `Probe`). The legs must agree on
+/// domain AND value type. A key in both legs is emitted by both, so feed a
+/// `Union` only to deduping sinks (`Bitset::from_drive`, `.mat_set()`, …)
+/// or fold through `.mat_set()` first when duplicates would change results.
+/// Julia leaves this node as a design note next to `drive(::Disj)`; Rust
+/// implements it. Built with `.union(b)`.
+pub struct Union<A, B> { pub a: A, pub b: B }
+impl<A: Rel, B: Rel<D = A::D, R = A::R>> Rel for Union<A, B> { type D = A::D; type R = A::R; }
+impl<A: Drive, B: Drive<D = A::D, R = A::R>> Drive for Union<A, B> {
+    #[inline(always)]
+    fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
+        self.a.drive(&mut k);
+        self.b.drive(k);
+    }
+}
+
+// ===== Prod (× / ⊗, and ∧) — binary; n-ary by nesting ===================
 // Mode rule: like Compose — drive the first leg, probe the rest.
+// `∧` is an alias for `⊗` (Julia algebra.jl): a conjunction IS a product,
+// consumed in member position via the flat short-circuit `member` override
+// below, which never builds the pair value (Julia's `_prod_member`).
 
 pub struct Prod<A, B> { pub a: A, pub b: B }
 
@@ -394,6 +393,11 @@ impl<A: Probe, B: Probe<D = A::D>> Probe for Prod<A, B> {
     fn probe_any<K: FnMut((A::R, B::R)) -> bool>(&self, x: A::D, mut k: K) -> bool {
         self.a.probe_any(x, |a| self.b.probe_any(x, |b| k((a, b))))
     }
+    /// Flat short-circuit AND of the per-leg `member`s — the conj-position
+    /// fast path (Julia `_prod_member`). Unlike the default (which threads
+    /// the pair through `probe_any`), no pair value is ever built.
+    #[inline(always)]
+    fn member(&self, x: A::D) -> bool { self.a.member(x) && self.b.member(x) }
 }
 
 // ===== InvStream — `q'` in drive position: flip pairs, no state =========
@@ -445,30 +449,41 @@ impl<K: Copy + Eq + Hash, V: Copy> Probe for HashIdx<K, V> {
     }
 }
 
-// ===== MatSetSet — materialized membership key-set ======================
+// ===== MatSetSet — materialized membership set (probe-only identity) ====
 
 pub struct MatSetSet<D: Copy + Eq + Hash> { pub set: HashSet<D> }
 impl<D: Copy + Eq + Hash> MatSetSet<D> {
-    pub fn build<S: DriveKeys<D = D>>(s: S) -> Self {
+    /// Drive the input and collect the VALUE slot. Identity relations send
+    /// their keys through the value slot, so one constructor materializes a
+    /// set's keys and a value-bearing query's values alike.
+    pub fn build<S: Drive<R = D>>(s: S) -> Self {
         let mut set = HashSet::new();
-        s.drivekeys(|x| { set.insert(x); });
+        s.drive(|_, v| { set.insert(v); });
         MatSetSet { set }
     }
 }
-impl<D: Copy + Eq + Hash> KeySet for MatSetSet<D> { type D = D; }
-impl<D: Copy + Eq + Hash> Member for MatSetSet<D> {
+impl<D: Copy + Eq + Hash> Rel for MatSetSet<D> { type D = D; type R = D; }
+impl<D: Copy + Eq + Hash> Probe for MatSetSet<D> {
+    #[inline(always)]
+    fn probe<K: FnMut(D)>(&self, x: D, mut k: K) {
+        if self.set.contains(&x) { k(x); }
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut(D) -> bool>(&self, x: D, mut k: K) -> bool {
+        self.set.contains(&x) && k(x)
+    }
     #[inline(always)]
     fn member(&self, x: D) -> bool { self.set.contains(&x) }
 }
 
-// ===== Bitset — `Vec<u64>`-backed dense KeySet over entity ids ==========
+// ===== Bitset — `Vec<u64>`-backed dense identity relation ===============
 //
 // Drop-in replacement for `MatSetSet` when the membership domain is a
 // dense `0..n`: trades the HashSet's hash+probe for one bit-test.
-// `drivekeys` enumerates set bits via word-scan + `trailing_zeros` so
+// `drive` enumerates set bits via word-scan + `trailing_zeros` so
 // iteration cost is proportional to popcount, not the universe size.
 // `set` rejects keys ≥ n (`NO_ID` hole sentinels), so padding bits in the
-// last word stay 0 and `member`/`drivekeys` can trust the words as-is.
+// last word stay 0 and `member`/`drive` can trust the words as-is.
 
 pub struct Bitset { pub bs: Vec<u64>, pub n: usize }
 
@@ -476,16 +491,13 @@ impl Bitset {
     pub fn empty(n: usize) -> Self {
         Bitset { bs: vec![0u64; n.div_ceil(64)], n }
     }
-    /// Build by driving a `Drive<R = usize>` and setting bits at each emitted value.
+    /// Drive the input and set a bit at each emitted VALUE. Identity
+    /// relations send their keys through the value slot, so one constructor
+    /// bit-sets a set's keys and a value-bearing query's values alike
+    /// (julia/plan.jl `build_bitset`).
     pub fn from_drive<Q: Drive<R = usize>>(n: usize, q: &Q) -> Self {
         let mut b = Self::empty(n);
         q.drive(|_, c| b.set(c));
-        b
-    }
-    /// Build by driving a `DriveKeys<D = usize>` and setting bits at each key.
-    pub fn from_setq<S: DriveKeys<D = usize>>(n: usize, s: &S) -> Self {
-        let mut b = Self::empty(n);
-        s.drivekeys(|c| b.set(c));
         b
     }
     #[inline] pub fn set(&mut self, x: usize) {
@@ -495,21 +507,30 @@ impl Bitset {
     }
 }
 
-impl KeySet for Bitset { type D = usize; }
-impl DriveKeys for Bitset {
+impl Rel for Bitset { type D = usize; type R = usize; }
+impl Drive for Bitset {
     #[inline]
-    fn drivekeys<K: FnMut(usize)>(&self, mut k: K) {
+    fn drive<K: FnMut(usize, usize)>(&self, mut k: K) {
         for (wi, &w) in self.bs.iter().enumerate() {
             let mut w = w;
             while w != 0 {
                 let b = w.trailing_zeros() as usize;
-                k(wi * 64 + b);
+                let x = wi * 64 + b;
+                k(x, x);
                 w &= w - 1;
             }
         }
     }
 }
-impl Member for Bitset {
+impl Probe for Bitset {
+    #[inline]
+    fn probe<K: FnMut(usize)>(&self, x: usize, mut k: K) {
+        if self.member(x) { k(x); }
+    }
+    #[inline]
+    fn probe_any<K: FnMut(usize) -> bool>(&self, x: usize, mut k: K) -> bool {
+        self.member(x) && k(x)
+    }
     #[inline]
     fn member(&self, x: usize) -> bool {
         self.bs.get(x / 64).is_some_and(|&w| (w >> (x % 64)) & 1 == 1)
@@ -532,55 +553,10 @@ impl<R: Probe, S: Drive<D = R::D>> Drive for LCStream<R, S> where R::R: Eq + Has
     }
 }
 
-// `r ← s` with `s : KeySet` — drive s's keys, probe r per key. The key is
-// re-emitted as the value (preserving the domain for downstream composition).
-
-pub struct LCSetStream<R, S> { pub r: R, pub s: S }
-
-impl<R: Rel, S: KeySet<D = R::D>> Rel for LCSetStream<R, S> where R::R: Eq + Hash {
-    type D = R::R;
-    type R = S::D;
-}
-impl<R: Probe, S: DriveKeys<D = R::D>> Drive for LCSetStream<R, S> where R::R: Eq + Hash {
-    #[inline(always)]
-    fn drive<K: FnMut(R::R, S::D)>(&self, mut k: K) {
-        self.s.drivekeys(|d| self.r.probe(d, |rk| k(rk, d)));
-    }
-}
-
-// ===== LeftConj (`l ⩘ r`) ===============================================
-// Materializes the *value-set* of `l` eagerly (auto-invert, mirroring `←`),
-// then intersects with `r`: drivekeys drives `r` filtered by the set;
-// member checks both.
-
-pub struct LeftConj<D: Copy + Eq + Hash, R> {
-    pub vset: HashSet<D>,
-    pub r: R,
-}
-
-impl<D: Copy + Eq + Hash, R: KeySet<D = D>> LeftConj<D, R> {
-    pub fn build<L: Drive<R = D>>(l: L, r: R) -> Self {
-        let mut vset = HashSet::new();
-        l.drive(|_, v| { vset.insert(v); });
-        LeftConj { vset, r }
-    }
-}
-
-impl<D: Copy + Eq + Hash, R: KeySet<D = D>> KeySet for LeftConj<D, R> { type D = D; }
-impl<D: Copy + Eq + Hash, R: DriveKeys<D = D>> DriveKeys for LeftConj<D, R> {
-    #[inline(always)]
-    fn drivekeys<K: FnMut(D)>(&self, mut k: K) {
-        self.r.drivekeys(|x| if self.vset.contains(&x) { k(x); });
-    }
-}
-impl<D: Copy + Eq + Hash, R: Member<D = D>> Member for LeftConj<D, R> {
-    #[inline(always)]
-    fn member(&self, x: D) -> bool { self.vset.contains(&x) && self.r.member(x) }
-}
-
 // ===== Fold (`▷`) — per-key reduce into an eager cache ==================
-// One physical type serves foldl (`.fold`) and count-distinct
-// (`.count_distinct`) — they differ only in how the cache is filled.
+// One physical type serves foldl (`.fold`) and the buffered whole-group
+// reduce (`.buf_fold`, Julia's BufFold; `.count_distinct` is an instance)
+// — they differ only in how the cache is filled (julia/interp.jl FoldP).
 
 pub struct Fold<D: Copy + Eq + Hash, S: Copy> {
     pub cache: HashMap<D, S>,
@@ -597,22 +573,17 @@ impl<D: Copy + Eq + Hash, S: Copy> Fold<D, S> {
         });
         Fold { cache: m }
     }
-}
 
-impl<D: Copy + Eq + Hash> Fold<D, i64> {
-    /// Specialized count-distinct: per-key sort+dedup of an SVec — much
-    /// faster than a HashSet per group for the typical small-group case.
-    pub fn build_count_distinct<Q>(q: Q) -> Self
-    where Q: Drive<D = D>, Q::R: Ord {
+    /// Whole-multiset reduce (Julia's BufFold — julia/plan.jl
+    /// `build_buffold`): buffer every group into an `SVec`, then compute
+    /// each cache entry as `f(vs)` over the whole group. For reducers that
+    /// don't fit foldl's `(S, R) -> S` shape — count-distinct, median, … —
+    /// where `build` is the per-key foldl.
+    pub fn build_buf<Q, F>(q: Q, f: F) -> Self
+    where Q: Drive<D = D>, F: Fn(SVec<Q::R>) -> S {
         let mut buf: HashMap<D, SVec<Q::R>> = HashMap::new();
         q.drive(|d, v| buf.entry(d).or_default().push(v));
-        Fold {
-            cache: buf.into_iter().map(|(d, mut vs)| {
-                vs.sort_unstable();
-                vs.dedup();
-                (d, vs.len() as i64)
-            }).collect(),
-        }
+        Fold { cache: buf.into_iter().map(|(d, vs)| (d, f(vs))).collect() }
     }
 }
 
@@ -734,13 +705,34 @@ pub trait QueryExt: Rel + Sized {
     #[inline(always)]
     fn inv(self) -> InvStream<Self> where Self::R: Eq + Hash { InvStream { q: self } }
 
-    /// Reify the key set.
+    /// `∧` — alias for the product (Julia: `∧(a, b) = ⊗(a, b)`). In member
+    /// position (a conjunct tree fed to `.in_s`, `.minus`'s rhs, …) the
+    /// `member` override short-circuits flat across the legs without
+    /// building pair values; in drive/probe position it IS `⊗` and emits
+    /// nested-pair values — restrict-then-project is `a.in_s(p).o(b)`.
     #[inline(always)]
-    fn k(self) -> Keys<Self> { Keys { q: self } }
+    fn and<B: Rel<D = Self::D>>(self, b: B) -> Prod<Self, B> { Prod { a: self, b } }
+
+    /// `∨` — probe-only membership union (`member` = a OR b). Driving it is
+    /// a compile error; enumerate with `.union(b)` instead.
+    #[inline(always)]
+    fn or<B: Rel<D = Self::D>>(self, b: B) -> Disj<Self, B> { Disj { a: self, b } }
+
+    /// `-` — value-bearing difference: self's pairs whose KEY is not a
+    /// member of `b` (identity self ⟹ plain set difference).
+    #[inline(always)]
+    fn minus<B: Rel<D = Self::D>>(self, b: B) -> Diff<Self, B> { Diff { a: self, b } }
 
     /// Cartesian product (× / ⊗).
     #[inline(always)]
     fn x<B: Rel<D = Self::D>>(self, b: B) -> Prod<Self, B> { Prod { a: self, b } }
+
+    /// Enumerable bag union — drive self fully, then `b` fully, NO dedup
+    /// (the drive-position complement of the probe-only `.or`). Feed it to
+    /// deduping sinks, or `.mat_set()` it when duplicates would matter.
+    #[allow(dead_code)] // no suite query drives a union today (every `∨` is member-position); kept as the sanctioned enumerable form, exercised by unit tests
+    #[inline(always)]
+    fn union<B: Rel<D = Self::D, R = Self::R>>(self, b: B) -> Union<Self, B> { Union { a: self, b } }
 
     // Predicate filters — all captured-closure forms of `filt`.
     #[inline(always)] fn eq(self, v: Self::R) -> Filter<Self, impl Pred<Self::R>>
@@ -757,7 +749,7 @@ pub trait QueryExt: Rel + Sized {
         where Self::R: PartialOrd { self.filt(move |x| x <= v) }
     #[inline(always)] fn in_v(self, vs: Vec<Self::R>) -> Filter<Self, impl Pred<Self::R>>
         where Self::R: PartialEq { self.filt(move |x| vs.iter().any(|&v| v == x)) }
-    #[inline(always)] fn in_s<S: Member<D = Self::R>>(self, s: S) -> Filter<Self, InSet<S>>
+    #[inline(always)] fn in_s<S: Probe<D = Self::R>>(self, s: S) -> Filter<Self, InSet<S>>
         { Filter { a: self, p: InSet(s) } }
     #[inline(always)] fn rx(self, re: &str) -> Filter<Self, impl Pred<Self::R>>
         where Self: Rel<R = &'static str> {
@@ -783,25 +775,35 @@ pub trait QueryExt: Rel + Sized {
     #[inline(always)]
     fn mat_idx(self) -> HashIdx<Self::D, Self::R> where Self: Drive { HashIdx::mat(self) }
 
-    /// `r ← s` in drive position — drives s, probes r per row.
+    /// `r ← s` in drive position — drives s, probes r per row. (With sets
+    /// now identity relations, `r ← (set)` is just this general form: the
+    /// set's key flows through the value slot.)
     #[inline(always)]
     fn lc<S: Rel<D = Self::D>>(self, s: S) -> LCStream<Self, S>
     where Self::R: Eq + Hash { LCStream { r: self, s } }
 
-    /// `r ← s` where s is a KeySet — drives s's keys, probes r, value = key.
+    /// `l ⩘ r` — left-driving wedge: restrict `r` by `l`'s value-set. Pure
+    /// sugar, no dedicated node (Julia: `⩘(l, r) = Restrict(r, l')`):
+    /// materialize `l`'s values with `.mat_set()` and feed them to `.in_s`.
+    /// `r` is identity-shaped (`D = R = l`'s value type), so this keeps the
+    /// keys of `r` that are values of `l`.
     #[inline(always)]
-    fn lcs<S: KeySet<D = Self::D>>(self, s: S) -> LCSetStream<Self, S>
-    where Self::R: Eq + Hash { LCSetStream { r: self, s } }
-
-    /// `l ⩘ r` — left-driving wedge: materialize l's value-set, intersect r.
-    #[inline(always)]
-    fn lconj<R: KeySet<D = Self::R>>(self, r: R) -> LeftConj<Self::R, R>
-    where Self: Drive, Self::R: Eq + Hash { LeftConj::build(self, r) }
+    fn lconj<R: Rel<D = Self::R, R = Self::R>>(self, r: R)
+        -> Filter<R, InSet<MatSetSet<Self::R>>>
+    where Self: Drive, Self::R: Eq + Hash { r.in_s(self.mat_set()) }
 
     /// `▷ (op, init)` — per-key foldl into an eager cache.
     #[inline(always)]
     fn fold<OP: Fn(S, Self::R) -> S, S: Copy>(self, init: S, op: OP) -> Fold<Self::D, S>
     where Self: Drive { Fold::build(self, init, op) }
+
+    /// `▷ f` with a callable — per-key whole-multiset reduce (Julia's
+    /// BufFold): buffer each group, then cache `f(group)`. For reducers
+    /// that need the whole group (count-distinct, median, …) rather than
+    /// foldl's streaming `(S, R) -> S` shape.
+    #[inline(always)]
+    fn buf_fold<F: Fn(SVec<Self::R>) -> S, S: Copy>(self, f: F) -> Fold<Self::D, S>
+    where Self: Drive { Fold::build_buf(self, f) }
 
     /// `▷ (op, init)` with a dense id-keyed `Vec<S>` cache. Use when the
     /// key range is known to be `0..n` (`n` slots) and small/dense enough
@@ -811,17 +813,27 @@ pub trait QueryExt: Rel + Sized {
         -> DenseFold<S>
     where Self: Drive<D = usize> { DenseFold::build(self, n, init, op) }
 
-    /// Specialized count-distinct fold — sorts + dedups the per-key SVec on
-    /// finalization, avoiding the HashSet alloc per group.
+    /// Count-distinct — the `length ∘ unique` instance of `.buf_fold`. The
+    /// closure sorts + dedups the per-key SVec on finalization — much
+    /// faster than a HashSet per group for the typical small-group case.
     #[inline(always)]
     fn count_distinct(self) -> Fold<Self::D, i64>
-    where Self: Drive, Self::R: Ord { Fold::build_count_distinct(self) }
+    where Self: Drive, Self::R: Ord {
+        self.buf_fold(|mut vs| { vs.sort_unstable(); vs.dedup(); vs.len() as i64 })
+    }
 
     /// `↦ f` — per-row map.
     #[inline(always)]
     fn map<F: Fn(Self::R) -> S, S: Copy>(self, f: F) -> Map<Self, F, S> {
         Map::new(self, f)
     }
+
+    /// Materialize in member position — eager membership HashSet over the
+    /// VALUE slot (a set input contributes its keys, which it sends through
+    /// the value slot; a value-bearing input contributes its values).
+    #[inline(always)]
+    fn mat_set(self) -> MatSetSet<Self::R>
+    where Self: Drive, Self::R: Eq + Hash { MatSetSet::build(self) }
 
     /// `⊵ (op, init)` — no-group foldl. Drives the whole query, returns scalar.
     #[inline(always)]
@@ -833,26 +845,6 @@ pub trait QueryExt: Rel + Sized {
     }
 }
 impl<Q: Rel> QueryExt for Q {}
-
-pub trait SetExt: KeySet + Sized {
-    /// `s : q` — restrict q to s's keys.
-    #[inline(always)]
-    fn o<B: Rel<D = Self::D>>(self, b: B) -> Restrict<Self, B> { Restrict { a: self, b } }
-
-    #[inline(always)]
-    fn and<B: KeySet<D = Self::D>>(self, b: B) -> Conj<Self, B> { Conj { a: self, b } }
-
-    #[inline(always)]
-    fn or<B: KeySet<D = Self::D>>(self, b: B) -> Disj<Self, B> { Disj { a: self, b } }
-
-    #[inline(always)]
-    fn minus<B: KeySet<D = Self::D>>(self, b: B) -> SetDiff<Self, B> { SetDiff { a: self, b } }
-
-    /// Materialize in member position — eager membership HashSet.
-    #[inline(always)]
-    fn mat_set(self) -> MatSetSet<Self::D> where Self: DriveKeys { MatSetSet::build(self) }
-}
-impl<S: KeySet> SetExt for S {}
 
 // ===== tests — tiny inline data, every node in every mode ===============
 
@@ -886,7 +878,7 @@ mod tests {
     }
 
     #[test]
-    fn compose_filter_restrict_prod() {
+    fn compose_filter_prod() {
         let f = films();
         let c = cast();
         // cast ∘ (films probed at cast values)? — compose cast: i64→i64 with films
@@ -927,50 +919,135 @@ mod tests {
         // dense fold over person ids 0..9
         let dcounts = (&c).lc(&f).dense_fold(9, 0i64, |a, _| a + 1);
         assert_eq!(drive_all(&dcounts), vec![(7, 2), (8, 1)]);
-        // count_distinct
-        let cd = (&c).lc(&f).count_distinct();
+        // buf_fold: whole-group reduce the foldl shape can't express —
+        // person 7 saw film values {10, 30} (range 20), person 8 {10}
+        let range = (&c).lc(&f).buf_fold(|vs| {
+            let mn = *vs.iter().min().unwrap();
+            let mx = *vs.iter().max().unwrap();
+            (mx - mn) as i64
+        });
+        assert_eq!(drive_all(&range), vec![(7, 20), (8, 0)]);
+        // median via buf_fold (an order-statistic — needs the whole group)
+        let med = (&c).lc(&f).buf_fold(|mut vs| {
+            vs.sort_unstable();
+            vs[vs.len() / 2]
+        });
+        assert_eq!(drive_all(&med), vec![(7, 30), (8, 10)]);
+        // count_distinct = buf_fold's `length ∘ unique` instance; the
+        // duplicate (7, 10) row collapses
+        let cd = (&c).lc(&f).union((&c).lc(&f).filt(|v| v == 10)).count_distinct();
         assert_eq!(drive_all(&cd), vec![(7, 2), (8, 1)]);
         // scalar
         assert_eq!((&f).unwrap_fold(0usize, |a, v| a + v), 60);
     }
 
     #[test]
-    fn sets_and_bitset() {
+    fn member_default_and_overrides() {
+        let f = films();
         let c = cast();
-        let people = (&c).k(); // keyset of cast = films with cast
-        let mut keys = Vec::new();
-        people.drivekeys(|x| keys.push(x));
-        keys.sort(); keys.dedup();
-        assert_eq!(keys, vec![0, 2]);
+        // default member = probe_any(x, |_| true) on leaves and chains
+        assert!(f.member(1) && !f.member(3) && !f.member(NO_ID));
+        assert!(c.member(0) && !c.member(1));
+        assert!((&f).filt(|v| v > 15).member(1) && !(&f).filt(|v| v > 15).member(0));
+        // overrides: Universe bound check, MatSetSet hash, Bitset bit test
+        let u = Universe { n: 2 };
+        assert!(u.member(1) && !u.member(2));
+        let ms = (&f).mat_set(); // value-set of films: {10, 20, 30}
+        assert!(ms.member(10) && !ms.member(11));
+    }
+
+    #[test]
+    fn identity_sets_and_bitset() {
+        let c = cast();
+        let u3 = Universe { n: 3 };
+        // films-with-cast as an identity relation: restrict the universe by
+        // membership in cast (the post-unification spelling of Julia's `:`).
+        let people = u3.in_s(&c);
+        assert_eq!(drive_all(&people), vec![(0, 0), (2, 2)]);
+        assert!(people.member(0) && !people.member(1));
+        // identity sets send keys through the value slot, so one mat_set /
+        // from_drive constructor serves sets and value-bearing queries alike
         let ms = (&people).mat_set();
         assert!(ms.member(0) && !ms.member(1));
-        let b = Bitset::from_setq(3, &people);
+        let b = Bitset::from_drive(3, &people);
         assert!(b.member(0) && !b.member(1) && b.member(2));
         assert!(!b.member(NO_ID) && !b.member(3));
-        // conj/disj/diff over Universe
+        let vb = Bitset::from_drive(9, &c); // values of cast: {7, 8}
+        assert!(vb.member(7) && vb.member(8) && !vb.member(0));
+        // restrict/diff over Universe — drive emits (x, x)
         let u2 = Universe { n: 2 };
+        assert_eq!(drive_all(&u2.in_s(&ms)), vec![(0, 0)]);
+        assert_eq!(drive_all(&u2.minus(&ms)), vec![(1, 1)]);
+        // ∨ is PROBE-ONLY (no Drive impl — `drive_all(&u2.or(&b))` would be
+        // a compile error by design; `.union` is the enumerable form):
+        // probe yields x iff member of either leg.
         let mut got = Vec::new();
-        u2.and(&ms).drivekeys(|x| got.push(x));
-        assert_eq!(got, vec![0]);
+        u2.or(&b).probe(2, |x| got.push(x));
+        u2.or(&b).probe(5, |x| got.push(x));
+        assert_eq!(got, vec![2]);
+        assert!(u2.or(&b).member(2) && !u2.or(&b).member(5));
+        assert!(u2.minus(&ms).member(1) && !u2.minus(&ms).member(0));
+        // identity composes like any relation (the old Restrict)
+        let f = films();
+        assert_eq!(drive_all(&(&people).o(&f)), vec![(0, 10), (2, 30)]);
+    }
+
+    #[test]
+    fn prod_member_is_flat_short_circuit_and() {
+        let f = films();
+        let c = cast();
+        // ∧ = ⊗: member is the flat AND of the per-leg members
+        let conj = (&f).filt(|v| v > 15).and(&c);
+        assert!(conj.member(2));   // film 2: 30 > 15, has cast
+        assert!(!conj.member(1));  // film 1: no cast row
+        assert!(!conj.member(0));  // film 0: 10 fails the filter
+        // short-circuit: a false first leg never consults the second
+        let never = (&f).filt(|_| false);
+        let trap = (&f).filt(|_| -> bool { panic!("second leg must not be probed") });
+        assert!(!(&never).and(&trap).member(1));
+        // in drive position ∧ IS the product: pair values, lhs multiplicity
+        assert_eq!(drive_all(&(&c).and(&f)),
+                   vec![(0, (7, 10)), (0, (8, 10)), (2, (7, 30))]);
+    }
+
+    #[test]
+    fn diff_is_value_bearing_and_key_based() {
+        let c = cast();
+        let u1 = Universe { n: 1 }; // key set {0}
+        // value-bearing lhs: pairs pass through with their VALUES; the
+        // exclusion test is on the KEY (film id), not the value
+        let dd = (&c).minus(u1);
+        assert_eq!(drive_all(&dd), vec![(2, 7)]);
+        assert!(dd.member(2) && !dd.member(0) && !dd.member(1));
         let mut got = Vec::new();
-        u2.minus(&ms).drivekeys(|x| got.push(x));
-        assert_eq!(got, vec![1]);
-        let mut got = Vec::new();
-        u2.or(&b).drivekeys(|x| { got.push(x); });
-        got.sort();
-        assert_eq!(got, vec![0, 1, 2]);
+        dd.probe(2, |v| got.push(v));
+        dd.probe(0, |v| got.push(v));
+        assert_eq!(got, vec![7]);
+    }
+
+    #[test]
+    fn union_is_bag_concat() {
+        let c = cast();
+        let u2 = Universe { n: 2 };
+        // duplicates are preserved: each leg emits all its rows
+        assert_eq!(drive_all(&(&c).union(&c)),
+                   vec![(0, 7), (0, 7), (0, 8), (0, 8), (2, 7), (2, 7)]);
+        // identity legs: the overlap is emitted twice; a deduping sink
+        // (Bitset / mat_set) collapses the bag back to a set
+        let both = u2.union(Universe { n: 1 });
+        assert_eq!(drive_all(&both), vec![(0, 0), (0, 0), (1, 1)]);
+        let b = Bitset::from_drive(2, &both);
+        assert!(b.member(0) && b.member(1));
     }
 
     #[test]
     fn lconj_and_map() {
         let f = films();
         let u = Universe { n: 31 };
-        // values of films (10, 20, 30) intersected with universe 0..31
+        // `⩘` is sugar for `u.in_s((&f).mat_set())`: the universe 0..31
+        // restricted by films' value-set {10, 20, 30}
         let w = (&f).lconj(&u);
-        let mut got = Vec::new();
-        w.drivekeys(|x| got.push(x));
-        got.sort();
-        assert_eq!(got, vec![10, 20, 30]);
+        assert_eq!(drive_all(&w), vec![(10, 10), (20, 20), (30, 30)]);
         assert!(w.member(10) && !w.member(11));
         assert_eq!(drive_all(&(&f).map(|v| v * 2)), vec![(0, 20), (1, 40), (2, 60)]);
     }

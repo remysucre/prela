@@ -39,33 +39,76 @@ pub const ENTRIES: &[(&str, &str, fn(&Data) -> String)] = &[
 ];
 
 fn q2a(d: &Data) -> String {
-    let q = restrict(d.movie, /* ... */);
+    let q = d.movie.o(/* ... */);
     min_row(q)
 }
 
 // ... more queries
 ```
 
-## Operators (engine.rs exports)
+## Sets are identity relations — there is no keyset type
+
+Mirroring Julia's `Unary{D} <: Query{D, D}`, Rust has ONE trait family
+(`Rel` / `Drive` / `Probe`). A set-shaped node (`Universe`, `Bitset`,
+`MatSetSet`, `Disj`) is an identity relation `D → D`: `drive`
+emits `(x, x)`, `probe` yields `x` iff member. Membership is part of the
+relation protocol — `member(q, x)` is defined for ANY probe-able query as
+`probe_any(x, |_| true)`, with cheaper overrides on the set leaves (Bitset
+bit-test, Universe bound check, MatSetSet hash lookup) and on `Prod` (the
+flat short-circuit AND below).
+
+Consequences:
+
+- There is no `.k()` / `keys()` projection. A value-bearing query is used
+  as a set operand directly: `.in_s(rel)`, `a.and(rel)`, `a.minus(rel)` all
+  consume `rel` via `member` only.
+- `s : q` (set ∘ query) is plain `Compose` — `s.o(q)` — because the
+  identity's value IS the key.
+- Identity relations send their keys through the value slot of `drive`, so
+  the one `Bitset::from_drive` / `.mat_set()` constructor serves sets and
+  value-bearing queries alike (a set contributes its keys, a query its
+  values).
+
+## Conjunction IS the product; restriction carries it
+
+Julia aliases `∧` to `⊗` (`algebra.jl`: `∧(a, b) = ⊗(a, b)`), and Rust
+mirrors that exactly: `.and(b)` builds the same `Prod` node as `.x(b)`. The
+two faces of the one node:
+
+- **member position** (the argument of `.in_s`, a `.minus` rhs, a nested
+  conjunct): `member(Prod)` is the flat short-circuit AND of the per-leg
+  `member`s (Julia's `_prod_member`) — no pair value is ever built, so a
+  conjunct tree costs exactly what a dedicated Conj node would.
+- **drive/probe position**: it is the product and emits nested-pair values.
+
+So a restricted scan is never written `a.and(p).o(b)` (that would compose
+on the PAIR value and not type-check); it is `a.in_s(p).o(b)` — drive `a`,
+member-check `p`, probe `b` — the post-unification spelling of Julia's
+`a : p → b`.
+
+## Operators (engine.rs::QueryExt)
 
 | Julia               | Rust                                      | Notes |
 |---------------------|-------------------------------------------|-------|
-| `a → b` (Q ∘ Q)     | `compose(a, b)`                           | a must yield i64 (entity id) |
-| `a → s` (Q → SetQ)  | `in_set(a, s)`                            | filter Q by value ∈ s; a yields i64 |
-| `s : q`             | `restrict(s, q)`                          | SetQ : Query |
-| `(movie → …)`       | `restrict(d.movie, …)`                    | Universe : Query (or wrapped SetQ : projection) |
-| `a ∧ b`             | `conj(a, b)`                              | both SetQ; wrap Query with `keys()` |
-| `a ∨ b`             | `disj(a, b)`                              | both SetQ |
-| `a - b`             | `set_diff(a, b)`                          | both SetQ; wrap Query with `keys()` |
-| `a × b × c`         | `prod(prod(a, b), c)`                     | left-nested binary |
-| `a == v`            | `eq(a, v)`                                | a: Query; for `Type.field == v` see ELISION |
-| `a != v`            | `ne(a, v)`                                |  |
-| `>, <, >=, <=`      | `gt`, `lt`, `ge`, `le`                    | Works on i64 and &str (lex) |
-| `a in (v1, …)`      | `in_vec(a, vec![v1, …])`                  | named ones live in `super::sets` |
-| `a ~ r"…"`          | `regex_match(a, r"…")`                    |  |
-| `a ≁ r"…"`          | `regex_not(a, r"…")`                      |  |
-| `Keys(q)`           | `keys(q)`                                 | Query → SetQ (forgets values) |
-| `Universe`          | `d.movie`, `d.persons`                    | Copy |
+| `a → b` (Q ∘ Q)     | `a.o(b)`                                  | bridge = a's value type |
+| `a : b` (restrict)  | `a.in_s(b)`                               | keep rows of a whose value is a `member` of b — any probe-able b |
+| `s : q` (s a set)   | `s.o(q)`                                  | identity relation composes like any other |
+| `(movie → …)`       | `d.movie.o(…)`                            | Universe ∘ Query |
+| `a ∧ b`             | `a.and(b)`                                | alias for `⊗` (= `Prod`); in member position the `member` fast path short-circuits flat without building pairs |
+| `a ∨ b`             | `a.or(b)`                                 | probe-only membership union (`Disj`); driving it is a COMPILE error |
+| (enumerable union)  | `a.union(b)`                              | bag-concat `Union` (drive a then b, NO dedup); Julia has this only as a design note next to `drive(::Disj)` — Rust implements it. Feed it to deduping sinks (`Bitset::from_drive`, `.mat_set()`), or materialize first when duplicates would change results |
+| `a - b`             | `a.minus(b)`                              | value-bearing `Diff`: a's pairs whose KEY is not a member of b (identity a ⟹ set difference) |
+| `a × b × c`         | `a.x(b).x(c)`                             | left-nested binary |
+| `l ⩘ r`             | `l.lconj(r)`                              | left-driving wedge — in BOTH languages pure sugar for restricting `r` by `l`'s value-set, no dedicated node. Julia: `⩘(l, r) = Restrict(r, l')`, materialized lazily through the mode system (the `Inv` sits in probed position, so `prepare` self-indexes it); Rust has no lazy `Inv` node, so the sugar materializes eagerly: `l.lconj(r)` ≡ `r.in_s(l.mat_set())` (`r` identity-shaped) |
+| `q ▷ (op, init)`    | `q.fold(init, op)`                        | per-key foldl into an eager cache |
+| `q ▷ f` (callable)  | `q.buf_fold(f)`                           | `BufFold` — per-key whole-multiset reduce: buffer each group, cache `f(group)`. For reducers that don't fit foldl's `(S, R) → S` shape; `▷ (vs -> length(unique(vs)))` ⇒ `.count_distinct()`, the `length ∘ unique` instance |
+| `a == v`            | `a.eq(v)`                                 | for `Type.field == v` see ELISION |
+| `a != v`            | `a.ne(v)`                                 |  |
+| `>, <, >=, <=`      | `.gt`, `.lt`, `.ge`, `.le`                | Works on i64 and &str (lex) |
+| `a in (v1, …)`      | `a.in_v(vec![v1, …])`                     | named ones live in `super::sets` |
+| `a ~ r"…"`          | `a.rx(r"…")`                              |  |
+| `a ≁ r"…"`          | `a.nrx(r"…")`                             |  |
+| `Universe`          | `d.movie`, `d.persons`                    | Copy; identity relation over 0..n |
 
 ## Schema fields → `d.<field>`
 
@@ -122,41 +165,41 @@ fn q2a(d: &Data) -> String {
 ## CRITICAL — Primary-field elision
 
 Julia writes `keyword == "x"` but means "the keyword id, resolved to its primary
-string field, equals x". Rust must spell out the resolve step with a `compose`:
+string field, equals x". Rust must spell out the resolve step with a compose:
 
 | Julia                                | Rust                                                                       |
 |--------------------------------------|----------------------------------------------------------------------------|
-| `keyword == "x"`                     | `eq(compose(&d.movie_keyword, &d.keyword_keyword), "x")`                  |
-| `keyword in (...)`                   | `in_vec(compose(&d.movie_keyword, &d.keyword_keyword), vec![...])`         |
-| `role == "x"` (cast)                 | `eq(compose(&d.cast_role, &d.roletype_role), "x")`                         |
-| `kind == "x"` (movie)                | `eq(compose(&d.movie_kind, &d.kind_kind), "x")`                            |
-| `Info.type == "x"`                   | `eq(compose(&d.info_type, &d.infotype_info), "x")`                         |
-| `Company.type == "x"`                | `eq(compose(&d.company_type, &d.companytype_kind), "x")`                   |
-| `Data.type == "x"`                   | `eq(compose(&d.data_type, &d.infotype_info), "x")` (Data.type points to InfoType) |
-| `MovieLink.type == "x"`              | `eq(compose(&d.movielink_type, &d.linktype_link), "x")`                    |
-| `PersonInfo.type == "x"`             | `eq(compose(&d.personinfo_type, &d.infotype_info), "x")`                   |
-| `CompleteCast.status == "x"`         | `eq(compose(&d.completecast_status, &d.compcasttype_kind), "x")`           |
-| `CompleteCast.subject == "x"`        | `eq(compose(&d.completecast_subject, &d.compcasttype_kind), "x")`          |
+| `keyword == "x"`                     | `(&d.movie_keyword).o(&d.keyword_keyword).eq("x")`                         |
+| `keyword in (...)`                   | `(&d.movie_keyword).o(&d.keyword_keyword).in_v(vec![...])`                 |
+| `role == "x"` (cast)                 | `(&d.cast_role).o(&d.roletype_role).eq("x")`                               |
+| `kind == "x"` (movie)                | `(&d.movie_kind).o(&d.kind_kind).eq("x")`                                  |
+| `Info.type == "x"`                   | `(&d.info_type).o(&d.infotype_info).eq("x")`                               |
+| `Company.type == "x"`                | `(&d.company_type).o(&d.companytype_kind).eq("x")`                         |
+| `Data.type == "x"`                   | `(&d.data_type).o(&d.infotype_info).eq("x")` (Data.type points to InfoType) |
+| `MovieLink.type == "x"`              | `(&d.movielink_type).o(&d.linktype_link).eq("x")`                          |
+| `PersonInfo.type == "x"`             | `(&d.personinfo_type).o(&d.infotype_info).eq("x")`                         |
+| `CompleteCast.status == "x"`         | `(&d.completecast_status).o(&d.compcasttype_kind).eq("x")`                 |
+| `CompleteCast.subject == "x"`        | `(&d.completecast_subject).o(&d.compcasttype_kind).eq("x")`                |
 
 Same pattern for `~`, `≁`, `>`, `<`, `in`, etc. — the LHS becomes the
-`compose(id-rel, primary-rel)` chain.
+`id-rel.o(primary-rel)` chain.
 
 ## Multi-hop traversal
 
 | Julia in context                   | Rust                                                                             |
 |------------------------------------|----------------------------------------------------------------------------------|
-| `person.name` (cast context)       | `compose(&d.cast_person, &d.person_name)`                                        |
-| `person.aka.name` (cast)           | `compose(&d.cast_person, compose(&d.person_aka, &d.akaname_name))`               |
-| `Person.aka.name` (person context) | `compose(&d.person_aka, &d.akaname_name)`                                        |
-| `character.name` (cast)            | `compose(&d.cast_character, &d.character_name)`                                  |
+| `person.name` (cast context)       | `(&d.cast_person).o(&d.person_name)`                                             |
+| `person.aka.name` (cast)           | `(&d.cast_person).o((&d.person_aka).o(&d.akaname_name))`                         |
+| `Person.aka.name` (person context) | `(&d.person_aka).o(&d.akaname_name)`                                             |
+| `character.name` (cast)            | `(&d.cast_character).o(&d.character_name)`                                       |
 
 ## Implicit primary on outputs
 
 When the OUTPUT of a query column is an ID (not a string), Julia auto-resolves
 to the entity's primary field at print time. In Rust make it explicit:
 
-- `co × title` where `co` yields Company-id → `prod(compose(co, &d.company_name), &d.movie_title)`
-- `lk × …` where `lk` yields MovieLink-id → `compose(lk, compose(&d.movielink_type, &d.linktype_link))`
+- `co × title` where `co` yields Company-id → `co.o(&d.company_name).x(&d.movie_title)`
+- `lk × …` where `lk` yields MovieLink-id → `lk.o((&d.movielink_type).o(&d.linktype_link))`
 - `info → (gf : Info.info)` → already string-valued, no further resolution.
 
 If a let-bound query is named after an entity (`co`, `lk`, etc.) and used in
@@ -169,23 +212,27 @@ Julia `let x = …, y = …; body` where `x` is used twice in `body`. In Rust:
 define a helper fn that returns a fresh instance:
 
 ```rust
-fn co_27<'d>(d: &'d Data) -> impl Query<R = i64> + 'd {
-    in_set(&d.movie_company, conj(
-        keys(ne(&d.company_country, "[pl]")),
-        // … the rest of the Company-side conjunction …
-    ))
+fn co_27<'d>(d: &'d Data) -> impl Rel<D = usize, R = usize> + Drive + Probe + 'd {
+    (&d.movie_company).in_s(
+        (&d.company_country).ne("[pl]")
+            .and(/* … the rest of the Company-side conjunction … */)
+    )
 }
 ```
 
-Use `co_27(d)` once for the conjunct (wrap in `keys(...)`) and once for the
-projection (e.g. `compose(co_27(d), &d.company_name)`). Each call builds a
-fresh value — that's fine, the structures are cheap.
+Use `co_27(d)` once as a conjunct (`.and(co_27(d))` — no projection needed)
+and once for the projection (e.g. `co_27(d).o(&d.company_name)`). Each call
+builds a fresh value — that's fine, the structures are cheap.
 
 If `x` is used only once, inline it.
 
-`impl Query<R = i64> + 'd` (or `impl SetQ + 'd`) — the `'d` lifetime ties the
-returned value to the borrows it holds on `d`. Add it whenever the helper
-borrows from `d` (which is always).
+`impl Rel<D = usize, R = usize> + Drive + Probe + 'd` — the `'d` lifetime
+ties the returned value to the borrows it holds on `d`. Add it whenever the
+helper borrows from `d` (which is always). Value-bearing projections name
+the value's type (e.g. `R = &'static str`). Conjunct-tree helpers (rooted
+at `.and` / `.minus`) are consumed via `member` only, so they leave `R`
+opaque: `impl Rel<D = usize> + Probe + 'd` (the pair-valued `R` of a `Prod`
+is an implementation detail).
 
 When the same binding recurs across query templates (it does for the
 company/link bindings of templates 21 and 27), the helper lives once in
@@ -210,7 +257,7 @@ different siblings stay separate.
 `kw7()`, `kw8()`, `kw10()`, `voice3()`, `voice4()`, `writer5()`, `genre6()`,
 `murder4()`, `nordic8()`, `nordic9()`, `nordic10()`, `link3()`.
 
-Use as: `in_vec(compose(&d.movie_keyword, &d.keyword_keyword), kw8())`.
+Use as: `(&d.movie_keyword).o(&d.keyword_keyword).in_v(kw8())`.
 
 ## Output formatting — query tails
 
@@ -225,36 +272,36 @@ arity and any str/int column mix works with the same one-line tail.
 
 ## Multi-conjunct nesting
 
-`a ∧ b ∧ c ∧ d` → `conj(a, conj(b, conj(c, d)))` (right-nest). Same for ∨.
+`a ∧ b ∧ c ∧ d` → `a.and(b).and(c).and(d)` (left-chained; the operands are
+used via `member` only, so association doesn't matter). Same for `.or`.
+When the chain restricts a DRIVEN relation, each conjunct can equally be
+its own restriction — `u.in_s(a).in_s(b)` ≡ `u.in_s(a.and(b))` (identical
+member order and short-circuit).
 
 ## Common patterns
 
 ### Movie-rooted (templates 1-5, 11-15, 22)
 ```rust
 fn qXa(d: &Data) -> String {
-    let q = restrict(d.movie, restrict(
-        conj(/* movie conjuncts */),
-        /* projection — usually prod(...) */,
-    ));
-    // collect mins via q.drive(|_, tuple| { … });
-    // return fmtK(m).
+    let q = d.movie.in_s(
+        /* movie conjunct tree: a.and(b).and(c)… (member-checked) */
+    ).o(/* projection — usually a .x(…) product */);
+    min_row(q)
 }
 ```
 
 ### Movie + cast filter + cast projection (templates 6-10, 16-20)
 ```rust
 fn qXa(d: &Data) -> String {
-    let q = restrict(d.movie, restrict(
-        conj(/* movie conjuncts */),
-        prod(
-            compose(&d.movie_cast, restrict(
-                conj(/* cast conjuncts as keys(...) */),
-                /* cast projection — `person.name`, `character.name`, etc. */,
-            )),
-            &d.movie_title,
-        ),
-    ));
-    // …
+    let q = d.movie.in_s(
+        /* movie conjunct tree */
+    ).o(
+        (&d.movie_cast).in_s(
+            /* cast conjunct tree */
+        ).o(/* cast projection — `person.name`, etc. */)
+        .x(&d.movie_title)
+    );
+    min_row(q)
 }
 ```
 
@@ -264,13 +311,19 @@ ENTRIES key is the exact Julia name string ("2a", "11d", "22c").
 ENTRIES oracle is the exact second-arg string from `_q("name", "oracle")`.
 
 ## Pitfalls
-- Always borrow leaves with `&` in operator args (`compose(&d.foo, …)`).
+- Always borrow leaves with `&` as method receivers (`(&d.foo).o(…)`).
   `d.movie` (Universe) is the only exception — it's Copy.
-- `conj(keys(...), keys(...))` — wrap Query in `keys()` when it's used as a
-  SetQ conjunct.
-- `set_diff(a, keys(b))` — same for the RHS of `-` if it's a Query.
+- Conjuncts need NO projection: `a.and(b)` consumes `b` via `member`, so a
+  value-bearing filter (`(&d.movie_production_year).gt(2000)`) is a valid
+  operand as-is. Same for `.minus`'s RHS and `.in_s`'s argument.
+- A conjunct tree is member-position ONLY. To compose or drive past it,
+  hoist it into the upstream restriction: `x.in_s(a.and(b)).o(body)`, never
+  `x.o(a.and(b).o(body))` — `.and` is the product, so the latter would try
+  to compose on the pair value (compile error at best).
+- `.or` cannot be driven (no `Drive` impl, by design — Julia's `∨` is
+  probe-only). The enumerable union is `.union` (bag-concat, no dedup).
 - For `(production_year >= X) ∧ (production_year <= Y)` use
-  `conj(keys(ge(&d.movie_production_year, X)), keys(le(&d.movie_production_year, Y)))`
-  — each comparison is its own `keys(Filter)` conjunct.
-- Don't forget the OUTERMOST `restrict(d.movie, …)` — the query is anchored at
-  the movie universe.
+  `(&d.movie_production_year).ge(X).and((&d.movie_production_year).le(Y))`
+  — each comparison is its own Filter conjunct.
+- Don't forget the OUTERMOST `d.movie.in_s(…)` / `d.movie.o(…)` — the query
+  is anchored at the movie universe.

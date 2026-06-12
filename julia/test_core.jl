@@ -182,9 +182,9 @@ expect("LeftCompose probed (people → (director ← title))",
        people → (director ← title),
        [P(1) => "rashomon", P(1) => "ikiru", P(1) => "ran"])
 
-# ===== LeftConj ⩘ =======================================================
+# ===== ⩘ (restrict by materialized value-set) ==========================
 
-expect("LeftConj (cast ⩘ people: people appearing in some cast)",
+expect("⩘ (cast ⩘ people: people appearing in some cast)",
        cast ⩘ people,
        [P(2) => P(2), P(3) => P(3)])
 

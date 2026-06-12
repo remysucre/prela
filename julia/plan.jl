@@ -193,10 +193,6 @@ prepare(eng::Engine, n::Prod, m::Mode) =
           map(o -> prepare(eng, o, Probed()), Base.tail(n.ops))...))
 prepare(eng::Engine, n::Map{D,R,S,Q,F}, m::Mode) where {D,R,S,Q,F} =
     (pq = prepare(eng, n.q, m); Map{D,R,S,typeof(pq),F}(pq, n.f))
-prepare(eng::Engine, n::LeftConj{D,ML,R}, m::Mode) where {D,ML,R} =
-    (pl = prepare(eng, n.l, Probed()); pr = prepare(eng, n.r, m);
-     LeftConj{D, typeof(pl), typeof(pr)}(pl, pr))
-
 # LeftCompose: stream-or-index split, like Inv.
 prepare(eng::Engine, n::LeftCompose{D,RK,SV,QR,QS}, ::Driven) where {D,RK,SV,QR,QS} =
     (pr = prepare(eng, n.r, Probed()); ps = prepare(eng, n.s, Driven());

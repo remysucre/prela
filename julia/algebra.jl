@@ -25,7 +25,7 @@ function lookup_field end
 # Every node is a `Query{D, R}` — a lazy binary relation D → R. `Unary{D}`
 # is the abstract marker for *identity* relations `D → D`, the home of
 # leaf set-shaped things (Universe, UnaryVec) and of Booleanesque nodes
-# whose value side is just the key (Disj, MatSet, Bitset, LeftConj). The
+# whose value side is just the key (Disj, MatSet, Bitset). The
 # old `() → T` encoding is gone: a "unary" emits `(x, x)` not `(x, ())`,
 # so it composes with `←` and `→` without a special unary-on-right path.
 # Restriction never projects a value-bearing query to a "keyset" node —
@@ -302,16 +302,6 @@ struct LCStream{D, RK, SV, QR, QS} <: Query{RK, SV}
     s::QS
 end
 
-# `LeftConj(l, r)` — left-driving conjunction. `l ⩓ r` materializes `l`
-# so its `member` is O(1), then drives `r` (ignoring its value) and
-# member-checks `l` per row. Lets a user-written `∧`-style expression
-# put a Query-shaped predicate (like an `Inv` for EXISTS) on the left
-# without needing an explicit `!` — the operator does the materialization.
-struct LeftConj{D, ML, R} <: Unary{D}
-    l::ML  # already materialized predicate (MatSet) — fast probe_any
-    r::R   # predicate to drive
-end
-
 # constructors — extract D/M/R via dispatch
 Compose(a::Query{D, M}, b::Query{M, R}) where {D, M, R} =
     Compose{D, M, R, typeof(a), typeof(b)}(a, b)
@@ -390,21 +380,13 @@ function ←(r::Query{D, RK}, s::Query{D, SV}) where {D, RK, SV}
 end
 export ←
 
-# `⩘` — left-driving wedge (\bigslopedwedge). `l ⩘ r` materializes the
-# *value-set* of `l` (auto-invert, mirroring `←`), then drives `r` and
-# member-checks per row. For an identity `l` (`Unary{D}`), invert is a
-# no-op so we materialize directly.
-function ⩘(l::Unary{D}, r) where {D}
-    ml = materialize(l)
-    LeftConj{_domof(r), typeof(ml), typeof(r)}(ml, r)   # drive r ignoring its value
-end
-function ⩘(l::Query{D, R}, r) where {D, R}
-    # Materialize the adjoint: for an entity-keyed value type this gives `ml` a
-    # dense-array membership index (vs the `Inv`'s `Dict`), ~13% faster on q20's
-    # per-row member-check. (The `Inv` self-caches too, but only as a hash.)
-    ml = materialize(Base.adjoint(l))
-    LeftConj{_domof(r), typeof(ml), typeof(r)}(ml, r)
-end
+# `⩘` — left-driving wedge (\bigslopedwedge). `l ⩘ r` restricts `r` by the
+# *value-set* of `l` (auto-invert, mirroring `←`): pure sugar for `r : l'`.
+# No explicit materialize — the `Inv` sits in Probed position, so `prepare`
+# builds its eager index through the mode split anyway. (That index is a hash;
+# an entity-keyed `l'` could use a dense array instead — that physical choice
+# belongs to the planned physical-type annotations, not to this operator.)
+⩘(l::Query{D, R}, r) where {D, R} = Restrict(r, Base.adjoint(l))
 export ⩘
 
 # Prefix `!` is the terse spelling of `materialize` — `!(q)` ≡ `materialize(q)`.

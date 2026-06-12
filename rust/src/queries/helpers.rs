@@ -53,14 +53,14 @@ pub fn min_row<Q: Drive>(q: Q) -> String where Q::R: Row {
 /// a note — the `co` binding of queries 21a-c and 27a-c.
 pub fn film_or_warner_co<'d>(d: &'d Data) -> impl Rel<R = usize, D = usize> + Drive + Probe + 'd {
     (&d.movie_company).in_s(
-        (&d.company_country).ne("[pl]").k()
+        (&d.company_country).ne("[pl]")
             .and(
-                (&d.company_name).rx(r"Film").k()
-                    .or((&d.company_name).rx(r"Warner").k())
+                (&d.company_name).rx(r"Film")
+                    .or((&d.company_name).rx(r"Warner"))
             )
             .and(
-                (&d.company_type).o(&d.companytype_kind).eq("production companies").k()
-                    .minus((&d.company_note).k())
+                (&d.company_type).o(&d.companytype_kind).eq("production companies")
+                    .minus(&d.company_note)
             )
     )
 }
@@ -69,6 +69,6 @@ pub fn film_or_warner_co<'d>(d: &'d Data) -> impl Rel<R = usize, D = usize> + Dr
 /// queries 21a-c and 27a-c.
 pub fn follow_link<'d>(d: &'d Data) -> impl Rel<R = usize, D = usize> + Drive + Probe + 'd {
     (&d.movie_link).in_s(
-        (&d.movielink_type).o(&d.linktype_link).rx(r"follow").k()
+        (&d.movielink_type).o(&d.linktype_link).rx(r"follow")
     )
 }

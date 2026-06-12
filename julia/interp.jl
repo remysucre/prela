@@ -203,14 +203,6 @@ end
 # ---- LCStream: `prepare`'s driven lowering of LeftCompose ----
 # `r ← s` drives `s` (the natural source) and probes `r` per row for the key.
 @inline drive(n::LCStream, k) = drive(n.s, (d, v) -> probe(n.r, d, rk -> k(rk, v)))
-# ---- LeftConj: drive r (ignoring its value), member-check materialized l ----
-@inline drive(n::LeftConj, k) =
-    drive(n.r, (x, _) -> member(n.l, x) && k(x, x))
-@inline probe(n::LeftConj, x, k) =
-    member(n.l, x) && member(n.r, x) && (k(x); nothing)
-@inline probe_any(n::LeftConj, x, k) =
-    member(n.l, x) && member(n.r, x) && k(x)
-
 # ---- FoldP: prepared per-key group cache (Fold + BufFold). drive iterates,
 # probe looks up. The cache is built eagerly in `prepare`.
 @inline function drive(n::FoldP, k)

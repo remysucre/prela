@@ -194,17 +194,6 @@ function _drive_body(::Type{<:Map{D, R, S, Q, F}}, q_expr, body) where {D, R, S,
     _drive_body(Q, :(($q_expr).q), wrapped)
 end
 
-# LeftConj drive (identity Unary): drive r, member-check l per row.
-function _drive_body(::Type{<:LeftConj{D, ML, R}}, q_expr, body) where {D, ML, R}
-    pred = _probe_any_body(ML, :(($q_expr).l), :_x)
-    wrap = quote
-        if $pred
-            $body
-        end
-    end
-    _drive_body(R, :(($q_expr).r), wrap)
-end
-
 # ---- prepared streams (driven side; pure wrappers / stored streams) ----
 # InvStream drive: flip the inner's pairs.
 function _drive_body(::Type{<:InvStream{B, A, Q}}, q_expr, body) where {B, A, Q}
@@ -294,7 +283,7 @@ end
 # =====================================================================
 
 const SingleValued = Union{VecRel, SparseRel, Universe, Bitset, MatSetProbed,
-                           FoldP, DenseFoldP, ScalarP, Disj, LeftConj}
+                           FoldP, DenseFoldP, ScalarP, Disj}
 const MultiValued  = Union{MultiRel, Indexed}
 
 _let(setup, body) = isempty(setup) ? body : Expr(:let, Expr(:block, setup...), body)
@@ -327,10 +316,6 @@ _access(::Type{<:ScalarP}, q, x) = (Expr[], true, :(($q).value))
 _access(::Type{<:Disj{D, A, B}}, q, x) where {D, A, B} = (
     Expr[],
     :($(_probe_any_body(A, :(($q).a), x)) || $(_probe_any_body(B, :(($q).b), x))),
-    x)
-_access(::Type{<:LeftConj{D, ML, R}}, q, x) where {D, ML, R} = (
-    Expr[],
-    :($(_probe_any_body(ML, :(($q).l), x)) && $(_probe_any_body(R, :(($q).r), x))),
     x)
 
 _access_multi(::Type{<:MultiRel}, q, x) = (

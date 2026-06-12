@@ -22,161 +22,155 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 fn q7a(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_production_year).ge(1980).k()
-            .and((&d.movie_production_year).le(1995).k())
+    let q = d.movie.in_s(
+        (&d.movie_production_year).ge(1980)
+            .and((&d.movie_production_year).le(1995))
             .and((&d.movie_linked_by).o(
-                (&d.movielink_type).o(&d.linktype_link).eq("features")).k())
-            .o(
-                (&d.movie_cast).o(
-                    (&d.cast_person).in_s(
-                        (&d.person_aka).o(&d.akaname_name).rx(r"a").k()
-                            .and((&d.person_name_pcode).ge("A").k())
-                            .and((&d.person_name_pcode).le("F").k())
-                            .and(
-                                (&d.person_gender).eq("m").k()
-                                    .or(
-                                        (&d.person_gender).eq("f").k()
-                                            .and((&d.person_name).rx(r"^B").k())
-                                    )
+                (&d.movielink_type).o(&d.linktype_link).eq("features")))
+    ).o(
+        (&d.movie_cast).o(
+            (&d.cast_person).in_s(
+                (&d.person_aka).o(&d.akaname_name).rx(r"a")
+                    .and((&d.person_name_pcode).ge("A"))
+                    .and((&d.person_name_pcode).le("F"))
+                    .and(
+                        (&d.person_gender).eq("m")
+                            .or(
+                                (&d.person_gender).eq("f")
+                                    .and((&d.person_name).rx(r"^B"))
                             )
-                            .and((&d.person_info).in_s(
-                                (&d.personinfo_type).o(&d.infotype_info).eq("mini biography").k()
-                                    .and((&d.personinfo_note).eq("Volker Boehm").k())
-                            ).k())
-                    ).k().o((&d.cast_person).o(&d.person_name))
-                ).x(&d.movie_title)
-            )
+                    )
+                    .and((&d.person_info).in_s(
+                        (&d.personinfo_type).o(&d.infotype_info).eq("mini biography")
+                            .and((&d.personinfo_note).eq("Volker Boehm"))
+                    ))
+            ).o(&d.person_name)
+        ).x(&d.movie_title)
     );
     min_row(q)
 }
 
 fn q7b(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_production_year).ge(1980).k()
-            .and((&d.movie_production_year).le(1984).k())
+    let q = d.movie.in_s(
+        (&d.movie_production_year).ge(1980)
+            .and((&d.movie_production_year).le(1984))
             .and((&d.movie_linked_by).o(
-                (&d.movielink_type).o(&d.linktype_link).eq("features")).k())
-            .o(
-                (&d.movie_cast).o(
-                    (&d.cast_person).in_s(
-                        (&d.person_aka).o(&d.akaname_name).rx(r"a").k()
-                            .and((&d.person_name_pcode).rx(r"^D").k())
-                            .and((&d.person_gender).eq("m").k())
-                            .and((&d.person_info).in_s(
-                                (&d.personinfo_type).o(&d.infotype_info).eq("mini biography").k()
-                                    .and((&d.personinfo_note).eq("Volker Boehm").k())
-                            ).k())
-                    ).k().o((&d.cast_person).o(&d.person_name))
-                ).x(&d.movie_title)
-            )
+                (&d.movielink_type).o(&d.linktype_link).eq("features")))
+    ).o(
+        (&d.movie_cast).o(
+            (&d.cast_person).in_s(
+                (&d.person_aka).o(&d.akaname_name).rx(r"a")
+                    .and((&d.person_name_pcode).rx(r"^D"))
+                    .and((&d.person_gender).eq("m"))
+                    .and((&d.person_info).in_s(
+                        (&d.personinfo_type).o(&d.infotype_info).eq("mini biography")
+                            .and((&d.personinfo_note).eq("Volker Boehm"))
+                    ))
+            ).o(&d.person_name)
+        ).x(&d.movie_title)
     );
     min_row(q)
 }
 
-fn bio_filter_7c<'d>(d: &'d Data) -> impl KeySet<D = usize> + DriveKeys + Member + 'd {
-    (&d.personinfo_type).o(&d.infotype_info).eq("mini biography").k()
-        .and((&d.personinfo_note).k())
+// Conjunct tree (∧ = Prod) — consumed via `member` only, so the value
+// type stays opaque (`impl Rel<D = usize> + Probe`).
+fn bio_filter_7c<'d>(d: &'d Data) -> impl Rel<D = usize> + Probe + 'd {
+    (&d.personinfo_type).o(&d.infotype_info).eq("mini biography")
+        .and(&d.personinfo_note)
 }
 
 fn q7c(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_production_year).ge(1980).k()
-            .and((&d.movie_production_year).le(2010).k())
+    let q = d.movie.in_s(
+        (&d.movie_production_year).ge(1980)
+            .and((&d.movie_production_year).le(2010))
             .and((&d.movie_linked_by).o(
                 (&d.movielink_type).o(&d.linktype_link).in_v(
-                    vec!["references","referenced in","features","featured in"])).k())
-            .o(
-                (&d.movie_cast).o(
-                    (&d.cast_person).in_s(
-                        (&d.person_aka).o(&d.akaname_name).rx(r"a|^A").k()
-                            .and((&d.person_name_pcode).ge("A").k())
-                            .and((&d.person_name_pcode).le("F").k())
-                            .and(
-                                (&d.person_gender).eq("m").k()
-                                    .or(
-                                        (&d.person_gender).eq("f").k()
-                                            .and((&d.person_name).rx(r"^A").k())
-                                    )
+                    vec!["references","referenced in","features","featured in"])))
+    ).o(
+        (&d.movie_cast).o(
+            (&d.cast_person).in_s(
+                (&d.person_aka).o(&d.akaname_name).rx(r"a|^A")
+                    .and((&d.person_name_pcode).ge("A"))
+                    .and((&d.person_name_pcode).le("F"))
+                    .and(
+                        (&d.person_gender).eq("m")
+                            .or(
+                                (&d.person_gender).eq("f")
+                                    .and((&d.person_name).rx(r"^A"))
                             )
-                            .and((&d.person_info).in_s(bio_filter_7c(d)).k())
-                    ).k().o(
-                        (&d.cast_person).o(&d.person_name)
-                            .x((&d.cast_person).o(
-                                (&d.person_info).o(
-                                    bio_filter_7c(d).o(&d.personinfo_info))))
                     )
-                )
+                    .and((&d.person_info).in_s(bio_filter_7c(d)))
+            ).o(
+                (&d.person_name)
+                    .x((&d.person_info).in_s(bio_filter_7c(d))
+                        .o(&d.personinfo_info))
             )
+        )
     );
     min_row(q)
 }
 
 fn q8a(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).in_s(
-            (&d.company_country).eq("[jp]").k()
-                .and((&d.company_note).rx(r"\(Japan\)").k())
-                .and((&d.company_note).nrx(r"\(USA\)").k())
-        ).k()
+    let q = d.movie
+        .in_s((&d.movie_company).in_s(
+            (&d.company_country).eq("[jp]")
+                .and((&d.company_note).rx(r"\(Japan\)"))
+                .and((&d.company_note).nrx(r"\(USA\)"))
+        ))
             .o(
-                (&d.movie_cast).o(
-                    (&d.cast_note).eq("(voice: English version)").k()
-                        .and((&d.cast_role).o(&d.roletype_role).eq("actress").k())
+                (&d.movie_cast).in_s(
+                    (&d.cast_note).eq("(voice: English version)")
+                        .and((&d.cast_role).o(&d.roletype_role).eq("actress"))
                         .and((&d.cast_person).in_s(
-                            (&d.person_name).rx(r"Yo").k()
-                                .and((&d.person_name).nrx(r"Yu").k())
-                        ).k())
-                        .o((&d.cast_person).o((&d.person_aka).o(&d.akaname_name)))
-                ).x(&d.movie_title)
-            )
-    );
+                            (&d.person_name).rx(r"Yo")
+                                .and((&d.person_name).nrx(r"Yu"))
+                        ))
+                ).o((&d.cast_person).o((&d.person_aka).o(&d.akaname_name)))
+                .x(&d.movie_title)
+            );
     min_row(q)
 }
 
 fn q8b(d: &Data) -> String {
-    let q = d.movie.o(
+    let q = d.movie.in_s(
         (&d.movie_company).in_s(
-            (&d.company_country).eq("[jp]").k()
-                .and((&d.company_note).rx(r"\(Japan\)").k())
-                .and((&d.company_note).nrx(r"\(USA\)").k())
+            (&d.company_country).eq("[jp]")
+                .and((&d.company_note).rx(r"\(Japan\)"))
+                .and((&d.company_note).nrx(r"\(USA\)"))
                 .and(
-                    (&d.company_note).rx(r"\(2006\)").k()
-                        .or((&d.company_note).rx(r"\(2007\)").k())
+                    (&d.company_note).rx(r"\(2006\)")
+                        .or((&d.company_note).rx(r"\(2007\)"))
                 )
-        ).k()
-            .and((&d.movie_production_year).ge(2006).k())
-            .and((&d.movie_production_year).le(2007).k())
+        )
+            .and((&d.movie_production_year).ge(2006))
+            .and((&d.movie_production_year).le(2007))
             .and(
-                (&d.movie_title).rx(r"^One Piece").k()
-                    .or((&d.movie_title).rx(r"^Dragon Ball Z").k())
+                (&d.movie_title).rx(r"^One Piece")
+                    .or((&d.movie_title).rx(r"^Dragon Ball Z"))
             )
-            .o(
-                (&d.movie_cast).o(
-                    (&d.cast_note).eq("(voice: English version)").k()
-                        .and((&d.cast_role).o(&d.roletype_role).eq("actress").k())
-                        .and((&d.cast_person).in_s(
-                            (&d.person_name).rx(r"Yo").k()
-                                .and((&d.person_name).nrx(r"Yu").k())
-                        ).k())
-                        .o((&d.cast_person).o((&d.person_aka).o(&d.akaname_name)))
-                ).x(&d.movie_title)
-            )
+    ).o(
+        (&d.movie_cast).in_s(
+            (&d.cast_note).eq("(voice: English version)")
+                .and((&d.cast_role).o(&d.roletype_role).eq("actress"))
+                .and((&d.cast_person).in_s(
+                    (&d.person_name).rx(r"Yo")
+                        .and((&d.person_name).nrx(r"Yu"))
+                ))
+        ).o((&d.cast_person).o((&d.person_aka).o(&d.akaname_name)))
+        .x(&d.movie_title)
     );
     min_row(q)
 }
 
 // q8c/q8d differ only in the cast role.
 fn q8cd(d: &Data, role: &'static str) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).o((&d.company_country).eq("[us]")).k()
+    let q = d.movie
+        .in_s((&d.movie_company).o((&d.company_country).eq("[us]")))
             .o(
-                (&d.movie_cast).o(
-                    (&d.cast_role).o(&d.roletype_role).eq(role).k()
-                        .o((&d.cast_person).o((&d.person_aka).o(&d.akaname_name)))
-                ).x(&d.movie_title)
-            )
-    );
+                (&d.movie_cast).in_s((&d.cast_role).o(&d.roletype_role).eq(role))
+                    .o((&d.cast_person).o((&d.person_aka).o(&d.akaname_name)))
+                    .x(&d.movie_title)
+            );
     min_row(q)
 }
 
@@ -184,147 +178,139 @@ fn q8c(d: &Data) -> String { q8cd(d, "writer") }
 fn q8d(d: &Data) -> String { q8cd(d, "costume designer") }
 
 fn q9a(d: &Data) -> String {
-    let q = d.movie.o(
+    let q = d.movie.in_s(
         (&d.movie_company).in_s(
-            (&d.company_country).eq("[us]").k()
+            (&d.company_country).eq("[us]")
                 .and(
-                    (&d.company_note).rx(r"\(USA\)").k()
-                        .or((&d.company_note).rx(r"\(worldwide\)").k())
+                    (&d.company_note).rx(r"\(USA\)")
+                        .or((&d.company_note).rx(r"\(worldwide\)"))
                 )
-        ).k()
-            .and((&d.movie_production_year).ge(2005).k())
-            .and((&d.movie_production_year).le(2015).k())
-            .o(
-                (&d.movie_cast).o(
-                    (&d.cast_note).in_v(voice4()).k()
-                        .and((&d.cast_role).o(&d.roletype_role).eq("actress").k())
-                        .and((&d.cast_person).in_s(
-                            (&d.person_gender).eq("f").k()
-                                .and((&d.person_name).rx(r"Ang").k())
-                        ).k())
-                        .o(
-                            (&d.cast_person).o((&d.person_aka).o(&d.akaname_name))
-                                .x((&d.cast_character).o(&d.character_name))
-                        )
-                ).x(&d.movie_title)
-            )
+        )
+            .and((&d.movie_production_year).ge(2005))
+            .and((&d.movie_production_year).le(2015))
+    ).o(
+        (&d.movie_cast).in_s(
+            (&d.cast_note).in_v(voice4())
+                .and((&d.cast_role).o(&d.roletype_role).eq("actress"))
+                .and((&d.cast_person).in_s(
+                    (&d.person_gender).eq("f")
+                        .and((&d.person_name).rx(r"Ang"))
+                ))
+        ).o(
+            (&d.cast_person).o((&d.person_aka).o(&d.akaname_name))
+                .x((&d.cast_character).o(&d.character_name))
+        )
+        .x(&d.movie_title)
     );
     min_row(q)
 }
 
 fn q9b(d: &Data) -> String {
-    let q = d.movie.o(
+    let q = d.movie.in_s(
         (&d.movie_company).in_s(
-            (&d.company_country).eq("[us]").k()
-                .and((&d.company_note).rx(r"\(200.*\)").k())
+            (&d.company_country).eq("[us]")
+                .and((&d.company_note).rx(r"\(200.*\)"))
                 .and(
-                    (&d.company_note).rx(r"\(USA\)").k()
-                        .or((&d.company_note).rx(r"\(worldwide\)").k())
+                    (&d.company_note).rx(r"\(USA\)")
+                        .or((&d.company_note).rx(r"\(worldwide\)"))
                 )
-        ).k()
-            .and((&d.movie_production_year).ge(2007).k())
-            .and((&d.movie_production_year).le(2010).k())
-            .o(
-                (&d.movie_cast).o(
-                    (&d.cast_note).eq("(voice)").k()
-                        .and((&d.cast_role).o(&d.roletype_role).eq("actress").k())
-                        .and((&d.cast_person).in_s(
-                            (&d.person_gender).eq("f").k()
-                                .and((&d.person_name).rx(r"Angel").k())
-                        ).k())
-                        .o(
-                            (&d.cast_person).o((&d.person_aka).o(&d.akaname_name))
-                                .x((&d.cast_character).o(&d.character_name))
-                                .x((&d.cast_person).o(&d.person_name))
-                        )
-                ).x(&d.movie_title)
-            )
+        )
+            .and((&d.movie_production_year).ge(2007))
+            .and((&d.movie_production_year).le(2010))
+    ).o(
+        (&d.movie_cast).in_s(
+            (&d.cast_note).eq("(voice)")
+                .and((&d.cast_role).o(&d.roletype_role).eq("actress"))
+                .and((&d.cast_person).in_s(
+                    (&d.person_gender).eq("f")
+                        .and((&d.person_name).rx(r"Angel"))
+                ))
+        ).o(
+            (&d.cast_person).o((&d.person_aka).o(&d.akaname_name))
+                .x((&d.cast_character).o(&d.character_name))
+                .x((&d.cast_person).o(&d.person_name))
+        )
+        .x(&d.movie_title)
     );
     min_row(q)
 }
 
 fn q9c(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).o((&d.company_country).eq("[us]")).k()
+    let q = d.movie
+        .in_s((&d.movie_company).o((&d.company_country).eq("[us]")))
             .o(
-                (&d.movie_cast).o(
-                    (&d.cast_note).in_v(voice4()).k()
-                        .and((&d.cast_role).o(&d.roletype_role).eq("actress").k())
+                (&d.movie_cast).in_s(
+                    (&d.cast_note).in_v(voice4())
+                        .and((&d.cast_role).o(&d.roletype_role).eq("actress"))
                         .and((&d.cast_person).in_s(
-                            (&d.person_gender).eq("f").k()
-                                .and((&d.person_name).rx(r"An").k())
-                        ).k())
-                        .o(
-                            (&d.cast_person).o((&d.person_aka).o(&d.akaname_name))
-                                .x((&d.cast_character).o(&d.character_name))
-                                .x((&d.cast_person).o(&d.person_name))
-                        )
-                ).x(&d.movie_title)
-            )
-    );
+                            (&d.person_gender).eq("f")
+                                .and((&d.person_name).rx(r"An"))
+                        ))
+                ).o(
+                    (&d.cast_person).o((&d.person_aka).o(&d.akaname_name))
+                        .x((&d.cast_character).o(&d.character_name))
+                        .x((&d.cast_person).o(&d.person_name))
+                )
+                .x(&d.movie_title)
+            );
     min_row(q)
 }
 
 fn q9d(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).o((&d.company_country).eq("[us]")).k()
+    let q = d.movie
+        .in_s((&d.movie_company).o((&d.company_country).eq("[us]")))
             .o(
-                (&d.movie_cast).o(
-                    (&d.cast_note).in_v(voice4()).k()
-                        .and((&d.cast_role).o(&d.roletype_role).eq("actress").k())
-                        .and((&d.cast_person).o((&d.person_gender).eq("f")).k())
-                        .o(
-                            (&d.cast_person).o((&d.person_aka).o(&d.akaname_name))
-                                .x((&d.cast_person).o(&d.person_name))
-                                .x((&d.cast_character).o(&d.character_name))
-                        )
-                ).x(&d.movie_title)
-            )
-    );
+                (&d.movie_cast).in_s(
+                    (&d.cast_note).in_v(voice4())
+                        .and((&d.cast_role).o(&d.roletype_role).eq("actress"))
+                        .and((&d.cast_person).o((&d.person_gender).eq("f")))
+                ).o(
+                    (&d.cast_person).o((&d.person_aka).o(&d.akaname_name))
+                        .x((&d.cast_person).o(&d.person_name))
+                        .x((&d.cast_character).o(&d.character_name))
+                )
+                .x(&d.movie_title)
+            );
     min_row(q)
 }
 
 fn q10a(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).o((&d.company_country).eq("[ru]")).k()
-            .and((&d.movie_production_year).gt(2005).k())
-            .o(
-                (&d.movie_cast).o(
-                    (&d.cast_note).rx(r"\(voice\)").k()
-                        .and((&d.cast_note).rx(r"\(uncredited\)").k())
-                        .and((&d.cast_role).o(&d.roletype_role).eq("actor").k())
-                        .o((&d.cast_character).o(&d.character_name))
-                ).x(&d.movie_title)
-            )
+    let q = d.movie.in_s(
+        (&d.movie_company).o((&d.company_country).eq("[ru]"))
+            .and((&d.movie_production_year).gt(2005))
+    ).o(
+        (&d.movie_cast).in_s(
+            (&d.cast_note).rx(r"\(voice\)")
+                .and((&d.cast_note).rx(r"\(uncredited\)"))
+                .and((&d.cast_role).o(&d.roletype_role).eq("actor"))
+        ).o((&d.cast_character).o(&d.character_name))
+        .x(&d.movie_title)
     );
     min_row(q)
 }
 
 fn q10b(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).o((&d.company_country).eq("[ru]")).k()
-            .and((&d.movie_production_year).gt(2010).k())
-            .o(
-                (&d.movie_cast).o(
-                    (&d.cast_note).rx(r"\(producer\)").k()
-                        .and((&d.cast_role).o(&d.roletype_role).eq("actor").k())
-                        .o((&d.cast_character).o(&d.character_name))
-                ).x(&d.movie_title)
-            )
+    let q = d.movie.in_s(
+        (&d.movie_company).o((&d.company_country).eq("[ru]"))
+            .and((&d.movie_production_year).gt(2010))
+    ).o(
+        (&d.movie_cast).in_s(
+            (&d.cast_note).rx(r"\(producer\)")
+                .and((&d.cast_role).o(&d.roletype_role).eq("actor"))
+        ).o((&d.cast_character).o(&d.character_name))
+        .x(&d.movie_title)
     );
     min_row(q)
 }
 
 fn q10c(d: &Data) -> String {
-    let q = d.movie.o(
-        (&d.movie_company).o((&d.company_country).eq("[us]")).k()
-            .and((&d.movie_production_year).gt(1990).k())
-            .o(
-                (&d.movie_cast).o(
-                    (&d.cast_note).rx(r"\(producer\)").k()
-                        .o((&d.cast_character).o(&d.character_name))
-                ).x(&d.movie_title)
-            )
+    let q = d.movie.in_s(
+        (&d.movie_company).o((&d.company_country).eq("[us]"))
+            .and((&d.movie_production_year).gt(1990))
+    ).o(
+        (&d.movie_cast).in_s((&d.cast_note).rx(r"\(producer\)"))
+            .o((&d.cast_character).o(&d.character_name))
+            .x(&d.movie_title)
     );
     min_row(q)
 }
