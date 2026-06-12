@@ -39,7 +39,7 @@ pub const ENTRIES: &[super::Entry] = &[
 
 // q2a–q2d differ only in the company country code.
 fn q2(cc: &'static str) -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         keyword().text().eq("character-name-in-title")
             .and(company().country().eq(cc))
     ).title())
@@ -51,7 +51,7 @@ fn q2c() -> String { q2("[sm]") }
 fn q2d() -> String { q2("[us]") }
 
 fn q3b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         keyword().text().rx(r"sequel")
             .and(info().info().eq("Bulgaria")
                 .and(production_year().gt(2010)))
@@ -60,7 +60,7 @@ fn q3b() -> String {
 
 // q4a–q4c differ only in the year cutoff and rating threshold.
 fn q4(year: i64, rating: &'static str) -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         keyword().text().rx(r"sequel")
             .and(production_year().gt(year))
     ).o(
@@ -77,7 +77,7 @@ fn q4b() -> String { q4(2010, "9.0") }
 fn q4c() -> String { q4(1990, "2.0") }
 
 fn q13a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().in_s(
             country().eq("[de]")
                 .and(Company::ty().text().eq("production companies"))
@@ -91,7 +91,7 @@ fn q13a() -> String {
 }
 
 fn q11a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         keyword().text().eq("sequel")
             .and(production_year().ge(1950)
                 .and(production_year().le(2000)))
@@ -109,7 +109,7 @@ fn q11a() -> String {
 }
 
 fn q22a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         info().in_s(
             Info::ty().text().eq("countries")
                 .and(Info::info().is_in(["Germany", "German", "USA", "American"]))
@@ -133,7 +133,7 @@ fn q22a() -> String {
 }
 
 fn q1a() -> String {
-    min_row(movies()
+    min_row(movie()
         .in_s(data().ty().text().eq("top 250 rank"))
             .o(
                 company().in_s(
@@ -148,7 +148,7 @@ fn q1a() -> String {
 }
 
 fn q5a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().in_s(
             Company::ty().text().eq("production companies")
                 .and(Company::note().rx(r"\(theatrical\)")
@@ -160,7 +160,7 @@ fn q5a() -> String {
 }
 
 fn q12a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         info().in_s(
             Info::ty().text().eq("genres")
                 .and(Info::info().is_in(["Drama", "Horror"]))
@@ -181,7 +181,7 @@ fn q12a() -> String {
 }
 
 fn q14a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         keyword().text().is_in(murder4())
             .and(kind().text().eq("movie")
                 .and(info().in_s(
@@ -199,7 +199,7 @@ fn q14a() -> String {
 }
 
 fn q1b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         data().ty().text().eq("bottom 10 rank")
             .and(production_year().ge(2005)
                 .and(production_year().le(2010)))
@@ -215,7 +215,7 @@ fn q1b() -> String {
 
 // q3a/q3c differ only in the country list and the year cutoff.
 fn q3ac(countries: Vec<&'static str>, year: i64) -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         keyword().text().rx(r"sequel")
             .and(info().info().is_in(countries)
                 .and(production_year().gt(year)))
@@ -228,7 +228,7 @@ fn q3c() -> String {
 }
 
 fn q11b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         keyword().text().eq("sequel")
             .and(production_year().eq(1998)
                 .and(title().rx(r"Money")))
@@ -246,7 +246,7 @@ fn q11b() -> String {
 }
 
 fn q13b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         kind().text().eq("movie")
             .and(info().ty().text().eq("release dates")
                 .and(title().ne("")
@@ -263,7 +263,7 @@ fn q13b() -> String {
 }
 
 fn q1c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         data().ty().text().eq("top 250 rank")
             .and(production_year().gt(2010))
     ).o(
@@ -278,7 +278,7 @@ fn q1c() -> String {
 }
 
 fn q1d() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         data().ty().text().eq("bottom 10 rank")
             .and(production_year().gt(2000))
     ).o(
@@ -292,7 +292,7 @@ fn q1d() -> String {
 }
 
 fn q12b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().in_s(
             country().eq("[us]")
                 .and(Company::ty().text().is_in(["production companies", "distributors"]))
@@ -308,7 +308,7 @@ fn q12b() -> String {
 }
 
 fn q12c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         info().in_s(
             Info::ty().text().eq("genres")
                 .and(Info::info().is_in(["Drama", "Horror", "Western", "Family"]))
@@ -329,7 +329,7 @@ fn q12c() -> String {
 }
 
 fn q13c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         kind().text().eq("movie")
             .and(info().ty().text().eq("release dates")
                 .and(title().ne("")
@@ -346,7 +346,7 @@ fn q13c() -> String {
 }
 
 fn q14b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         keyword().text().is_in(["murder", "murder-in-title"])
             .and(kind().text().eq("movie")
                 .and(info().in_s(
@@ -367,7 +367,7 @@ fn q14b() -> String {
 }
 
 fn q14c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         keyword().text().is_in(murder4())
             .and(kind().text().is_in(["movie", "episode"])
                 .and(info().in_s(
@@ -385,7 +385,7 @@ fn q14c() -> String {
 }
 
 fn q22b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         info().in_s(
             Info::ty().text().eq("countries")
                 .and(Info::info().is_in(["Germany", "German", "USA", "American"]))
@@ -409,7 +409,7 @@ fn q22b() -> String {
 }
 
 fn q22c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         info().in_s(
             Info::ty().text().eq("countries")
                 .and(Info::info().is_in(nordic10()))

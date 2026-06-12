@@ -13,7 +13,7 @@
 //   - a BARE accessor fn (`production_year()`) for fields marked `pub` —
 //     explicit, like Julia's selective `@expose`, because macro_rules
 //     cannot detect cross-entity name collisions;
-//   - a bare universe accessor (`pub fn movies() -> Universe<Id<Movie>>`)
+//   - a bare universe accessor (`pub fn movie() -> Universe<Id<Movie>>`)
 //     when the entity is declared `Movie(movies)` — explicit because
 //     macro_rules cannot lowercase idents. Universe size = the entity's
 //     first column's key count;

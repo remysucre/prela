@@ -111,7 +111,7 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 fn q27a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().in_s(
             subject().text().is_in(["cast", "crew"])
                 .and(status().text().eq("complete"))
@@ -130,7 +130,7 @@ fn q27a() -> String {
 }
 
 fn q27b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().in_s(
             subject().text().is_in(["cast", "crew"])
                 .and(status().text().eq("complete"))
@@ -148,7 +148,7 @@ fn q27b() -> String {
 }
 
 fn q27c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().in_s(
             subject().text().eq("cast")
                 .and(status().text().rx(r"^complete"))
@@ -167,7 +167,7 @@ fn q27c() -> String {
 }
 
 fn q28a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().in_s(
             subject().text().eq("crew")
                 .and(status().text().ne("complete+verified"))
@@ -189,7 +189,7 @@ fn q28a() -> String {
 }
 
 fn q28b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().in_s(
             subject().text().eq("crew")
                 .and(status().text().ne("complete+verified"))
@@ -211,7 +211,7 @@ fn q28b() -> String {
 }
 
 fn q28c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().in_s(
             subject().text().eq("cast")
                 .and(status().text().eq("complete"))
@@ -233,7 +233,7 @@ fn q28c() -> String {
 }
 
 fn q29a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().in_s(
             subject().text().eq("cast")
                 .and(status().text().eq("complete+verified"))
@@ -268,7 +268,7 @@ fn q29a() -> String {
 }
 
 fn q29b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().in_s(
             subject().text().eq("cast")
                 .and(status().text().eq("complete+verified"))
@@ -302,7 +302,7 @@ fn q29b() -> String {
 }
 
 fn q29c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().in_s(
             subject().text().eq("cast")
                 .and(status().text().eq("complete+verified"))
@@ -335,7 +335,7 @@ fn q29c() -> String {
 }
 
 fn q30a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().in_s(
             subject().text().is_in(["cast", "crew"])
                 .and(status().text().eq("complete+verified"))
@@ -355,7 +355,7 @@ fn q30a() -> String {
 }
 
 fn q30b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().in_s(
             subject().text().is_in(["cast", "crew"])
                 .and(status().text().eq("complete+verified"))
@@ -378,7 +378,7 @@ fn q30b() -> String {
 }
 
 fn q30c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().in_s(
             subject().text().eq("cast")
                 .and(status().text().eq("complete+verified"))
@@ -397,7 +397,7 @@ fn q30c() -> String {
 }
 
 fn q31a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().name().rx(r"^Lionsgate")
             .and(info().in_s(gf_horror()))
             .and(keyword().text().is_in(kw7()))
@@ -413,7 +413,7 @@ fn q31a() -> String {
 }
 
 fn q31b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().in_s(
             Company::name().rx(r"^Lionsgate")
                 .and(Company::note().rx(r"\(Blu-ray\)"))
@@ -436,7 +436,7 @@ fn q31b() -> String {
 }
 
 fn q31c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().name().rx(r"^Lionsgate")
             .and(info().in_s(gf_genre6()))
             .and(keyword().text().is_in(kw7()))
@@ -451,7 +451,7 @@ fn q31c() -> String {
 
 // q32a/q32b differ only in the keyword constant.
 fn q32(kw: &'static str) -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         keyword().text().eq(kw)
             .and(link())
     ).o(
@@ -465,7 +465,7 @@ fn q32a() -> String { q32("10,000-mile-club") }
 fn q32b() -> String { q32("character-name-in-title") }
 
 fn q33a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         kind().text().eq("tv series")
             .and(company().country().eq("[us]"))
             .and(qlink_33a())
@@ -483,7 +483,7 @@ fn q33a() -> String {
 }
 
 fn q33b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         kind().text().eq("tv series")
             .and(company().country().eq("[nl]"))
             .and(qlink_33b())
@@ -501,7 +501,7 @@ fn q33b() -> String {
 }
 
 fn q33c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         kind().text().is_in(["tv series", "episode"])
             .and(company().country().ne("[us]"))
             .and(qlink_33c())

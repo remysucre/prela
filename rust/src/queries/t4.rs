@@ -23,7 +23,7 @@ pub const ENTRIES: &[super::Entry] = &[
 
 // q16a/q16d differ only in the episode_nr lower bound.
 fn q16ad(lo: i64) -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().country().eq("[us]")
             .and(keyword().text().eq("character-name-in-title"))
             .and(episode_nr().ge(lo))
@@ -38,7 +38,7 @@ fn q16a() -> String { q16ad(50) }
 fn q16d() -> String { q16ad(5) }
 
 fn q16b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().country().eq("[us]")
             .and(keyword().text().eq("character-name-in-title"))
     ).o(
@@ -48,7 +48,7 @@ fn q16b() -> String {
 }
 
 fn q16c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().country().eq("[us]")
             .and(keyword().text().eq("character-name-in-title"))
             .and(episode_nr().lt(100))
@@ -59,7 +59,7 @@ fn q16c() -> String {
 }
 
 fn q17a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().country().eq("[us]")
             .and(keyword().text().eq("character-name-in-title"))
     ).o(
@@ -69,7 +69,7 @@ fn q17a() -> String {
 
 // q17b/c/d/f differ only in the person-name regex.
 fn q17_any_co(re: &str) -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company()
             .and(keyword().text().eq("character-name-in-title"))
     ).o(
@@ -83,7 +83,7 @@ fn q17d() -> String { q17_any_co(r"Bert") }
 fn q17f() -> String { q17_any_co(r"B") }
 
 fn q17e() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().country().eq("[us]")
             .and(keyword().text().eq("character-name-in-title"))
     ).o(
@@ -96,7 +96,7 @@ fn ib_18a() -> impl Query<R = &'static str, D = Id<Movie>> + Drive + Probe {
 }
 
 fn q18a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         ib_18a()
             .and(cast().in_s(
                 Cast::note().is_in(["(producer)", "(executive producer)"])
@@ -121,7 +121,7 @@ fn gf_18b() -> impl Query<D = Id<Info>> + Probe {
 }
 
 fn q18b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         info().in_s(gf_18b())
             .and(production_year().ge(2008))
             .and(production_year().le(2014))
@@ -145,7 +145,7 @@ fn gf_18c() -> impl Query<D = Id<Info>> + Probe {
 }
 
 fn q18c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         info().in_s(gf_18c())
             .and(cast().in_s(
                 Cast::note().is_in(writer5())

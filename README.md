@@ -92,7 +92,7 @@ each combinator below has a method spelling
 (`:` is `.in_s`, `→` is `.o`, and so on):
 
 ```rust
-movies().in_s(production_year().gt(2008)).o(title())
+movie().in_s(production_year().gt(2008)).o(title())
 ```
 
 Here, `title` and `production_year` are both attributes of

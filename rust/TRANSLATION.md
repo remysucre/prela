@@ -45,7 +45,7 @@ entity tag (`struct Movie`), the typed columns (loaded from the v2 cache by
 the generated `init`), entity-qualified accessors for every field
 (`Movie::title()`, `Info::ty()`), a BARE accessor for fields marked
 `pub` (`production_year()`), a bare universe accessor when declared
-`Movie(movies)` (`movies()` — the identity relation over the entity's
+`Movie(movies)` (`movie()` — the identity relation over the entity's
 ids), and a NAVIGATION trait (`Movie(movies) / MovieNav`) with one method
 per field, blanket-implemented for every query whose value type is the
 entity's id — so any `Id<Movie>`-valued chain can continue `.title()`,
@@ -69,7 +69,7 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 fn q2a() -> String {
-    min_row(movies().in_s(/* ... */).o(/* ... */))
+    min_row(movie().in_s(/* ... */).o(/* ... */))
 }
 
 // ... more queries
@@ -122,7 +122,7 @@ member-check `p`, probe `b` — the post-unification spelling of Julia's
 | `a → b` (Q ∘ Q)     | `a.o(b)`                                  | bridge = a's value type |
 | `a : b` (restrict)  | `a.in_s(b)`                               | builds the dedicated `Restrict` node — node-for-node with Julia. Keep rows of a whose VALUE is a `member` of b (any probe-able b); a's value flows through unchanged |
 | `s : q` (s a set)   | `s.o(q)`                                  | identity relation composes like any other |
-| `(movie → …)`       | `movies().o(…)`                           | Universe ∘ Query |
+| `(movie → …)`       | `movie().o(…)`                           | Universe ∘ Query |
 | `a ∧ b`             | `a.and(b)`                                | alias for `⊗` (= `Prod`); in member position the `member` fast path short-circuits flat without building pairs |
 | `a ∨ b`             | `a.or(b)`                                 | probe-only membership union (`Disj`); driving it is a COMPILE error |
 | (enumerable union)  | `a.union(b)`                              | bag-concat `Union` (drive a then b, NO dedup); Julia has this only as a design note next to `drive(::Disj)` — Rust implements it. Feed it to deduping sinks (`Bitset::over`, `.collect::<MatSet<_>>()`), or materialize first when duplicates would change results |
@@ -138,7 +138,7 @@ member-check `p`, probe `b` — the post-unification spelling of Julia's
 | `a in (v1, …)`      | `a.is_in([v1, …])`                        | any `IntoIterator` — arrays, slices, the named set fns in `super::sets` |
 | `a ~ r"…"`          | `a.rx(r"…")`                              |  |
 | `a ≁ r"…"`          | `a.nrx(r"…")`                             |  |
-| `Universe`          | `movies()`, `persons()`                   | Copy; identity relation over `Id<Movie>` / `Id<Person>` |
+| `Universe`          | `movie()`, `persons()`                   | Copy; identity relation over `Id<Movie>` / `Id<Person>` |
 
 ## No hidden materialization — `collect` names the physical type
 
@@ -324,7 +324,7 @@ member order and short-circuit).
 ### Movie-rooted (templates 1-5, 11-15, 22)
 ```rust
 fn qXa() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         /* movie conjunct tree: a.and(b).and(c)… (member-checked) */
     ).o(/* projection — usually a .x(…) product */))
 }
@@ -333,7 +333,7 @@ fn qXa() -> String {
 ### Movie + cast filter + cast projection (templates 6-10, 16-20)
 ```rust
 fn qXa() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         /* movie conjunct tree */
     ).o(
         cast().in_s(
@@ -368,5 +368,5 @@ ENTRIES oracle is the exact second-arg string from `_q("name", "oracle")`.
   where the chain is valued in an entity whose schema declares `text`. On a
   string-valued (or wrong-entity) query it does not resolve (compile
   error), which is the type system catching a wrong hop.
-- Don't forget the OUTERMOST `movies().in_s(…)` / `movies().o(…)` — the
+- Don't forget the OUTERMOST `movie().in_s(…)` / `movie().o(…)` — the
   query is anchored at the movie universe.

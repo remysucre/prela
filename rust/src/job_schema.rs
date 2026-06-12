@@ -18,7 +18,10 @@
 use crate::schema::schema;
 
 schema! { JOB / JobSchema / job_init:
-    Movie(movies) / MovieNav {
+    // Universe is singular `movie()` — Cast has no stored movie back-pointer
+    // (movie→cast traversal uses the Movie.cast edge), so the name is free.
+    // `persons()` IS plural: `person()` is the hot bare Cast.person accessor.
+    Movie(movie) / MovieNav {
         pub title: str,
         pub kind: Kind,
         pub production_year: Multi<i64>,
@@ -92,7 +95,7 @@ mod tests {
         job_init(dir);
 
         // universe sizes = first-column key counts
-        assert_eq!(movies().n, load_strs("Movie_title").n_keys());
+        assert_eq!(movie().n, load_strs("Movie_title").n_keys());
         assert_eq!(persons().n, load_strs("Person_name").n_keys());
 
         // dense str / dense id / CSR id columns
@@ -111,7 +114,7 @@ mod tests {
         }
 
         // a typed end-to-end drive (nav spelling) matches the untyped one
-        let typed = movies().in_s(kind().text().eq("movie"));
+        let typed = movie().in_s(kind().text().eq("movie"));
         let mut n_typed = 0usize;
         typed.drive(|_, _| n_typed += 1);
         let kk = load_strs("Kind_text");

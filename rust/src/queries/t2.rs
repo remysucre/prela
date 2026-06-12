@@ -25,7 +25,7 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 fn q22d() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         info().in_s(
             Info::ty().text().eq("countries")
                 .and(Info::info().is_in(nordic10()))
@@ -47,7 +47,7 @@ fn q22d() -> String {
 }
 
 fn q5b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().in_s(
             Company::ty().text().eq("production companies")
                 .and(Company::note().rx(r"\(VHS\)")
@@ -60,7 +60,7 @@ fn q5b() -> String {
 }
 
 fn q5c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().in_s(
             Company::ty().text().eq("production companies")
                 .and(Company::note().nrx(r"\(TV\)")
@@ -72,7 +72,7 @@ fn q5c() -> String {
 }
 
 fn q15a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         production_year().gt(2000)
             .and(company().in_s(
                 country().eq("[us]")
@@ -92,7 +92,7 @@ fn q15a() -> String {
 }
 
 fn q15b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().in_s(
             country().eq("[us]")
                 .and(Company::name().eq("YouTube")
@@ -114,7 +114,7 @@ fn q15b() -> String {
 }
 
 fn q15c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().country().eq("[us]")
             .and(keyword()
                 .and(aka()
@@ -131,7 +131,7 @@ fn q15c() -> String {
 }
 
 fn q15d() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().country().eq("[us]")
             .and(keyword()
                 .and(info().in_s(
@@ -146,7 +146,7 @@ fn q15d() -> String {
 }
 
 fn q11c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         keyword().text().is_in(["sequel", "revenge", "based-on-novel"])
             .and(production_year().gt(1950)
                 .and(link()))
@@ -163,7 +163,7 @@ fn q11c() -> String {
 }
 
 fn q11d() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         keyword().text().is_in(["sequel", "revenge", "based-on-novel"])
             .and(production_year().gt(1950)
                 .and(link()))
@@ -178,7 +178,7 @@ fn q11d() -> String {
 }
 
 fn q13d() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         kind().text().eq("movie")
             .and(info().ty().text().eq("release dates"))
     ).o(
@@ -196,14 +196,14 @@ fn q13d() -> String {
 fn q6_marvel(year: i64) -> String {
     let kw = || keyword().text().eq("marvel-cinematic-universe");
     let downey = cast().person().name().rx(r"Downey.*Robert");
-    min_row(movies().in_s(production_year().gt(year).and(kw()))
+    min_row(movie().in_s(production_year().gt(year).and(kw()))
         .o(kw().x(title()).x(downey)))
 }
 
 fn q6_comic(year: i64) -> String {
     let kw = || keyword().text().is_in(kw8());
     let downey = cast().person().name().rx(r"Downey.*Robert");
-    min_row(movies().in_s(production_year().gt(year).and(kw()))
+    min_row(movie().in_s(production_year().gt(year).and(kw()))
         .o(kw().x(title()).x(downey)))
 }
 
@@ -216,6 +216,6 @@ fn q6e() -> String { q6_marvel(2000) }
 fn q6f() -> String {
     let kw = || keyword().text().is_in(kw8());
     let cast_name = cast().person().name();
-    min_row(movies().in_s(production_year().gt(2000).and(kw()))
+    min_row(movie().in_s(production_year().gt(2000).and(kw()))
         .o(kw().x(title()).x(cast_name)))
 }

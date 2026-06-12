@@ -41,7 +41,7 @@ fn run_job() {
     let t = std::time::Instant::now();
     job_schema::job_init(std::path::Path::new("../cache"));
     eprintln!("load: {:.2}s  (movie n={}, person n={})",
-              t.elapsed().as_secs_f32(), job_schema::movies().n, job_schema::persons().n);
+              t.elapsed().as_secs_f32(), job_schema::movie().n, job_schema::persons().n);
 
     let qs = queries::all_queries();
     eprintln!("{} queries registered", qs.len());

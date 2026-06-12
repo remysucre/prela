@@ -23,7 +23,7 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 fn q7a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         production_year().ge(1980)
             .and(production_year().le(1995))
             .and(linked_by().ty().text().eq("features"))
@@ -48,7 +48,7 @@ fn q7a() -> String {
 }
 
 fn q7b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         production_year().ge(1980)
             .and(production_year().le(1984))
             .and(linked_by().ty().text().eq("features"))
@@ -75,7 +75,7 @@ fn bio_filter_7c() -> impl Query<D = Id<PersonInfo>> + Probe {
 }
 
 fn q7c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         production_year().ge(1980)
             .and(production_year().le(2010))
             .and(linked_by().ty().text().is_in(
@@ -102,7 +102,7 @@ fn q7c() -> String {
 }
 
 fn q8a() -> String {
-    min_row(movies()
+    min_row(movie()
         .in_s(company().in_s(
             country().eq("[jp]")
                 .and(Company::note().rx(r"\(Japan\)"))
@@ -122,7 +122,7 @@ fn q8a() -> String {
 }
 
 fn q8b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().in_s(
             country().eq("[jp]")
                 .and(Company::note().rx(r"\(Japan\)"))
@@ -149,7 +149,7 @@ fn q8b() -> String {
 
 // q8c/q8d differ only in the cast role.
 fn q8cd(role_: &'static str) -> String {
-    min_row(movies()
+    min_row(movie()
         .in_s(company().country().eq("[us]"))
             .o(
                 cast().in_s(role().text().eq(role_))
@@ -162,7 +162,7 @@ fn q8c() -> String { q8cd("writer") }
 fn q8d() -> String { q8cd("costume designer") }
 
 fn q9a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().in_s(
             country().eq("[us]")
                 .and(Company::note().rx(r"\(USA\)")
@@ -187,7 +187,7 @@ fn q9a() -> String {
 }
 
 fn q9b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().in_s(
             country().eq("[us]")
                 .and(Company::note().rx(r"\(200.*\)"))
@@ -214,7 +214,7 @@ fn q9b() -> String {
 }
 
 fn q9c() -> String {
-    min_row(movies()
+    min_row(movie()
         .in_s(company().country().eq("[us]"))
             .o(
                 cast().in_s(
@@ -234,7 +234,7 @@ fn q9c() -> String {
 }
 
 fn q9d() -> String {
-    min_row(movies()
+    min_row(movie()
         .in_s(company().country().eq("[us]"))
             .o(
                 cast().in_s(
@@ -251,7 +251,7 @@ fn q9d() -> String {
 }
 
 fn q10a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().country().eq("[ru]")
             .and(production_year().gt(2005))
     ).o(
@@ -265,7 +265,7 @@ fn q10a() -> String {
 }
 
 fn q10b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().country().eq("[ru]")
             .and(production_year().gt(2010))
     ).o(
@@ -278,7 +278,7 @@ fn q10b() -> String {
 }
 
 fn q10c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().country().eq("[us]")
             .and(production_year().gt(1990))
     ).o(

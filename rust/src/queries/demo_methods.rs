@@ -30,7 +30,7 @@ pub const ENTRIES: &[super::Entry] = &[
 pub fn q6a_methods() -> String {
     let kw_marvel = || keyword().text()
                                 .eq("marvel-cinematic-universe");
-    let q = movies().in_s(
+    let q = movie().in_s(
         production_year().gt(2010)
             .and(kw_marvel()),
     ).o(

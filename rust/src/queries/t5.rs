@@ -52,7 +52,7 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 fn q19a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().in_s(
             country().eq("[us]")
                 .and(Company::note().rx(r"\(USA\)")
@@ -81,7 +81,7 @@ fn q19a() -> String {
 }
 
 fn q19b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().in_s(
             country().eq("[us]")
                 .and(Company::note().rx(r"\(200.*\)")
@@ -112,7 +112,7 @@ fn q19b() -> String {
 }
 
 fn q19c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().country().eq("[us]")
             .and(info().in_s(
                 Info::ty().text().eq("release dates")
@@ -136,7 +136,7 @@ fn q19c() -> String {
 }
 
 fn q19d() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().country().eq("[us]")
             .and(info().ty().text().eq("release dates")
                 .and(production_year().gt(2000)))
@@ -155,7 +155,7 @@ fn q19d() -> String {
 }
 
 fn q20a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().in_s(
             subject().text().eq("cast")
                 .and(status().text().rx(r"complete"))
@@ -174,7 +174,7 @@ fn q20a() -> String {
 }
 
 fn q20b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().in_s(
             subject().text().eq("cast")
                 .and(status().text().rx(r"complete"))
@@ -194,7 +194,7 @@ fn q20b() -> String {
 }
 
 fn q20c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().in_s(
             subject().text().eq("cast")
                 .and(status().text().rx(r"complete"))
@@ -211,7 +211,7 @@ fn q20c() -> String {
 
 // q21a/b/c differ only in the country list and year range.
 fn q21(countries: Vec<&'static str>, ylo: i64, yhi: i64) -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         film_or_warner_co()
             .and(keyword().text().eq("sequel")
                 .and(follow_link()
@@ -230,7 +230,7 @@ fn q21b() -> String { q21(vec!["Germany", "German"], 2000, 2010) }
 fn q21c() -> String { q21(nordic9(), 1950, 2010) }
 
 fn q23a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().status().text().eq("complete+verified")
             .and(company().country().eq("[us]")
                 .and(info().in_s(
@@ -246,7 +246,7 @@ fn q23a() -> String {
 }
 
 fn q23b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().status().text().eq("complete+verified")
             .and(company().country().eq("[us]")
                 .and(info().in_s(
@@ -262,7 +262,7 @@ fn q23b() -> String {
 }
 
 fn q23c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().status().text().eq("complete+verified")
             .and(company().country().eq("[us]")
                 .and(info().in_s(
@@ -278,7 +278,7 @@ fn q23c() -> String {
 }
 
 fn q24a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().country().eq("[us]")
             .and(info().in_s(
                 Info::ty().text().eq("release dates")
@@ -306,7 +306,7 @@ fn q24a() -> String {
 }
 
 fn q24b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         company().in_s(
             country().eq("[us]")
                 .and(Company::name().eq("DreamWorks Animation"))
@@ -338,7 +338,7 @@ fn q24b() -> String {
 }
 
 fn q25a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         info().in_s(gf_25ab())
             .and(keyword().text()
                 .is_in(["murder", "blood", "gore", "death", "female-nudity"]))
@@ -354,7 +354,7 @@ fn q25a() -> String {
 }
 
 fn q25b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         info().in_s(gf_25ab())
             .and(keyword().text()
                 .is_in(["murder", "blood", "gore", "death", "female-nudity"])
@@ -372,7 +372,7 @@ fn q25b() -> String {
 }
 
 fn q25c() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         info().in_s(gf_25c())
             .and(keyword().text().is_in(kw7()))
     ).o(
@@ -387,7 +387,7 @@ fn q25c() -> String {
 }
 
 fn q26a() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().in_s(
             subject().text().eq("cast")
                 .and(status().text().rx(r"complete"))
@@ -410,7 +410,7 @@ fn q26a() -> String {
 }
 
 fn q26b() -> String {
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().in_s(
             subject().text().eq("cast")
                 .and(status().text().rx(r"complete"))
@@ -432,7 +432,7 @@ fn q26b() -> String {
 
 fn q26c() -> String {
     let rd = data().in_s(Data::ty().text().eq("rating")).text();
-    min_row(movies().in_s(
+    min_row(movie().in_s(
         complete_cast().in_s(
             subject().text().eq("cast")
                 .and(status().text().rx(r"complete"))
