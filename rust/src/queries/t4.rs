@@ -95,7 +95,7 @@ fn q17e(d: &Data) -> String {
     min_row(q)
 }
 
-fn ib_18a<'d>(d: &'d Data) -> impl Rel<R = &'static str, D = usize> + Drive + Probe + 'd {
+fn ib_18a<'d>(d: &'d Data) -> impl Query<R = &'static str, D = usize> + Drive + Probe + 'd {
     (&d.movie_info).in_s((&d.info_type).o(&d.infotype_info).eq("budget")).o(&d.info_info)
 }
 
@@ -118,8 +118,8 @@ fn q18a(d: &Data) -> String {
 }
 
 // Conjunct/diff tree (∧ = Prod, - = Diff) — consumed via `member` only, so
-// the value type stays opaque (`impl Rel<D = usize> + Probe`).
-fn gf_18b<'d>(d: &'d Data) -> impl Rel<D = usize> + Probe + 'd {
+// the value type stays opaque (`impl Query<D = usize> + Probe`).
+fn gf_18b<'d>(d: &'d Data) -> impl Query<D = usize> + Probe + 'd {
     (&d.info_type).o(&d.infotype_info).eq("genres")
         .and((&d.info_info).in_v(vec!["Horror", "Thriller"]))
         .minus(&d.info_note)
@@ -145,7 +145,7 @@ fn q18b(d: &Data) -> String {
     min_row(q)
 }
 
-fn gf_18c<'d>(d: &'d Data) -> impl Rel<D = usize> + Probe + 'd {
+fn gf_18c<'d>(d: &'d Data) -> impl Query<D = usize> + Probe + 'd {
     (&d.info_type).o(&d.infotype_info).eq("genres")
         .and((&d.info_info).in_v(super::sets::genre6()))
 }

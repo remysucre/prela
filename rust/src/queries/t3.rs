@@ -73,8 +73,8 @@ fn q7b(d: &Data) -> String {
 }
 
 // Conjunct tree (∧ = Prod) — consumed via `member` only, so the value
-// type stays opaque (`impl Rel<D = usize> + Probe`).
-fn bio_filter_7c<'d>(d: &'d Data) -> impl Rel<D = usize> + Probe + 'd {
+// type stays opaque (`impl Query<D = usize> + Probe`).
+fn bio_filter_7c<'d>(d: &'d Data) -> impl Query<D = usize> + Probe + 'd {
     (&d.personinfo_type).o(&d.infotype_info).eq("mini biography")
         .and(&d.personinfo_note)
 }

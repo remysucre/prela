@@ -2,9 +2,9 @@
 //
 // One trait family mirrors prela's Driven/Probed access modes:
 //
-//   Rel    { type D; type R; }              — a binary relation D → R
-//   Drive:  Rel + fn drive(&self, k)        — can be scanned (k(d, r) per pair)
-//   Probe:  Rel + fn probe / probe_any /    — can be looked up by key;
+//   Query    { type D; type R; }              — a binary relation D → R
+//   Drive:  Query + fn drive(&self, k)        — can be scanned (k(d, r) per pair)
+//   Probe:  Query + fn probe / probe_any /    — can be looked up by key;
 //                  fn member                  member(x) = probe_any(x, |_| true)
 //
 // There is no separate key-set family: a set IS an identity relation D → D
@@ -37,7 +37,7 @@
 //
 // NO HIDDEN MATERIALIZATION: a drive-only node in probe position is a compile
 // error, and the fix is an explicit `collect` whose target type names the
-// physical structure (the `FromRel` mirror of Iterator's `FromIterator`) —
+// physical structure (the `FromQuery` mirror of Iterator's `FromIterator`) —
 // every index/set build is visible in the query text.
 //
 // State is EAGER: every index/cache-holding node builds its state in its
@@ -61,16 +61,16 @@ type SVec<T> = SmallVec<[T; 4]>;
 
 // ===== the mode traits ==================================================
 
-pub trait Rel {
+pub trait Query {
     type D: Copy + Eq + Hash;
     type R: Copy;
 }
 
-pub trait Drive: Rel {
+pub trait Drive: Query {
     fn drive<K: FnMut(Self::D, Self::R)>(&self, k: K);
 }
 
-pub trait Probe: Rel {
+pub trait Probe: Query {
     fn probe<K: FnMut(Self::R)>(&self, x: Self::D, k: K);
     fn probe_any<K: FnMut(Self::R) -> bool>(&self, x: Self::D, k: K) -> bool;
     /// Domain-membership test — "is `x` in the domain of this relation?".
@@ -84,7 +84,7 @@ pub trait Probe: Rel {
 }
 
 // blanket: &T inherits T's modes.
-impl<T: Rel + ?Sized> Rel for &T { type D = T::D; type R = T::R; }
+impl<T: Query + ?Sized> Query for &T { type D = T::D; type R = T::R; }
 impl<T: Drive + ?Sized> Drive for &T {
     #[inline(always)]
     fn drive<K: FnMut(T::D, T::R)>(&self, k: K) { (**self).drive(k); }
@@ -111,42 +111,42 @@ impl<T: Probe + ?Sized> Probe for &T {
 // states): it fails every `i < len` / `.get` bounds check, so a hole probes
 // to nothing for free.
 //
-// `Col<R>` — total 1:1 relation; entity-id → R (one value per id).
+// `VecRel<R>` — total 1:1 relation; entity-id → R (one value per id).
 // Keys with no pair keep the fill value (`R::default()` for `from_pairs`).
 // INVARIANT: an FK-valued column over a gappy key space (holes that a query
 // can drive or probe, e.g. TPC-H ord_customer over the sparse orderkey
 // domain) must use `from_pairs_fill` with fill `NO_ID` — a default-0 hole
 // would alias entity 0, which is a live id.
-// `MultiCol<R>` — multi-valued / partial; dense forward index Vec<Vec<R>>
+// `MultiRel<R>` — multi-valued / partial; dense forward index Vec<Vec<R>>
 // addressed by .id; empty slot for missing keys.
 
 pub const NO_ID: usize = usize::MAX;
 
-pub struct Col<R: Copy> {
+pub struct VecRel<R: Copy> {
     pub values: Vec<R>,
 }
 
-pub struct MultiCol<R: Copy> {
+pub struct MultiRel<R: Copy> {
     pub fwd: Vec<Vec<R>>,
 }
 
-impl<R: Copy> Col<R> {
+impl<R: Copy> VecRel<R> {
     pub fn from_pairs_fill(n: usize, fill: R, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
         let mut values = vec![fill; n];
         for (k, v) in pairs {
             values[k] = v;
         }
-        Col { values }
+        VecRel { values }
     }
 }
 
-impl<R: Copy + Default> Col<R> {
+impl<R: Copy + Default> VecRel<R> {
     pub fn from_pairs(n: usize, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
         Self::from_pairs_fill(n, R::default(), pairs)
     }
 }
 
-impl<R: Copy> MultiCol<R> {
+impl<R: Copy> MultiRel<R> {
     pub fn from_pairs(n: usize, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
         let mut fwd: Vec<Vec<R>> = (0..n).map(|_| Vec::new()).collect();
         for (k, v) in pairs {
@@ -154,7 +154,7 @@ impl<R: Copy> MultiCol<R> {
                 fwd[k].push(v);
             }
         }
-        MultiCol { fwd }
+        MultiRel { fwd }
     }
 }
 
@@ -164,8 +164,8 @@ impl<R: Copy> MultiCol<R> {
 // check — a missing-key sentinel (`NO_ID` = usize::MAX) or any
 // out-of-universe id fails it, so "missing key emits nothing" and bounds
 // safety are the same one check. No `unsafe` needed.
-impl<R: Copy> Rel for Col<R> { type D = usize; type R = R; }
-impl<R: Copy> Drive for Col<R> {
+impl<R: Copy> Query for VecRel<R> { type D = usize; type R = R; }
+impl<R: Copy> Drive for VecRel<R> {
     #[inline(always)]
     fn drive<K: FnMut(usize, R)>(&self, mut k: K) {
         for (i, &v) in self.values.iter().enumerate() {
@@ -173,7 +173,7 @@ impl<R: Copy> Drive for Col<R> {
         }
     }
 }
-impl<R: Copy> Probe for Col<R> {
+impl<R: Copy> Probe for VecRel<R> {
     #[inline(always)]
     fn probe<K: FnMut(R)>(&self, x: usize, mut k: K) {
         if let Some(&v) = self.values.get(x) {
@@ -186,8 +186,8 @@ impl<R: Copy> Probe for Col<R> {
     }
 }
 
-impl<R: Copy> Rel for MultiCol<R> { type D = usize; type R = R; }
-impl<R: Copy> Drive for MultiCol<R> {
+impl<R: Copy> Query for MultiRel<R> { type D = usize; type R = R; }
+impl<R: Copy> Drive for MultiRel<R> {
     #[inline(always)]
     fn drive<K: FnMut(usize, R)>(&self, mut k: K) {
         for (i, vs) in self.fwd.iter().enumerate() {
@@ -195,7 +195,7 @@ impl<R: Copy> Drive for MultiCol<R> {
         }
     }
 }
-impl<R: Copy> Probe for MultiCol<R> {
+impl<R: Copy> Probe for MultiRel<R> {
     #[inline(always)]
     fn probe<K: FnMut(R)>(&self, x: usize, mut k: K) {
         if let Some(vs) = self.fwd.get(x) {
@@ -213,7 +213,7 @@ impl<R: Copy> Probe for MultiCol<R> {
 #[derive(Copy, Clone)]
 pub struct Universe { pub n: usize }
 
-impl Rel for Universe { type D = usize; type R = usize; }
+impl Query for Universe { type D = usize; type R = usize; }
 impl Drive for Universe {
     #[inline(always)]
     fn drive<K: FnMut(usize, usize)>(&self, mut k: K) {
@@ -238,7 +238,7 @@ impl Probe for Universe {
 
 pub struct Compose<A, B> { pub a: A, pub b: B }
 
-impl<A: Rel, B: Rel<D = A::R>> Rel for Compose<A, B> {
+impl<A: Query, B: Query<D = A::R>> Query for Compose<A, B> {
     type D = A::D;
     type R = B::R;
 }
@@ -267,7 +267,7 @@ impl<A: Probe, B: Probe<D = A::R>> Probe for Compose<A, B> {
 
 pub struct Filter<A, F> { pub a: A, pub p: F }
 
-impl<A: Rel, F> Rel for Filter<A, F> {
+impl<A: Query, F> Query for Filter<A, F> {
     type D = A::D;
     type R = A::R;
 }
@@ -298,7 +298,7 @@ impl<A: Probe, F: Fn(A::R) -> bool> Probe for Filter<A, F> {
 
 pub struct Restrict<A, B> { pub a: A, pub b: B }
 
-impl<A: Rel, B: Rel<D = A::R>> Rel for Restrict<A, B> {
+impl<A: Query, B: Query<D = A::R>> Query for Restrict<A, B> {
     type D = A::D;
     type R = A::R;
 }
@@ -332,7 +332,7 @@ impl<A: Probe, B: Probe<D = A::R>> Probe for Restrict<A, B> {
 /// drive(n.a, (x, y) -> member(n.b, x) || k(x, y))`). For an identity `a`
 /// this degenerates to the plain set difference (emits `(x, x)`).
 pub struct Diff<A, B> { pub a: A, pub b: B }
-impl<A: Rel, B: Rel<D = A::D>> Rel for Diff<A, B> { type D = A::D; type R = A::R; }
+impl<A: Query, B: Query<D = A::D>> Query for Diff<A, B> { type D = A::D; type R = A::R; }
 impl<A: Drive, B: Probe<D = A::D>> Drive for Diff<A, B> {
     #[inline(always)]
     fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
@@ -359,7 +359,7 @@ impl<A: Probe, B: Probe<D = A::D>> Probe for Diff<A, B> {
 /// with `Union` (bag-concat) instead, materializing first if the sink does
 /// not dedup.
 pub struct Disj<A, B> { pub a: A, pub b: B }
-impl<A: Rel, B: Rel<D = A::D>> Rel for Disj<A, B> { type D = A::D; type R = A::D; }
+impl<A: Query, B: Query<D = A::D>> Query for Disj<A, B> { type D = A::D; type R = A::D; }
 impl<A: Probe, B: Probe<D = A::D>> Probe for Disj<A, B> {
     #[inline(always)]
     fn probe<K: FnMut(A::D)>(&self, x: A::D, mut k: K) {
@@ -382,7 +382,7 @@ impl<A: Probe, B: Probe<D = A::D>> Probe for Disj<A, B> {
 /// Julia leaves this node as a design note next to `drive(::Disj)`; Rust
 /// implements it. Built with `.union(b)`.
 pub struct Union<A, B> { pub a: A, pub b: B }
-impl<A: Rel, B: Rel<D = A::D, R = A::R>> Rel for Union<A, B> { type D = A::D; type R = A::R; }
+impl<A: Query, B: Query<D = A::D, R = A::R>> Query for Union<A, B> { type D = A::D; type R = A::R; }
 impl<A: Drive, B: Drive<D = A::D, R = A::R>> Drive for Union<A, B> {
     #[inline(always)]
     fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
@@ -399,7 +399,7 @@ impl<A: Drive, B: Drive<D = A::D, R = A::R>> Drive for Union<A, B> {
 
 pub struct Prod<A, B> { pub a: A, pub b: B }
 
-impl<A: Rel, B: Rel<D = A::D>> Rel for Prod<A, B> {
+impl<A: Query, B: Query<D = A::D>> Query for Prod<A, B> {
     type D = A::D;
     type R = (A::R, B::R);
 }
@@ -429,7 +429,7 @@ impl<A: Probe, B: Probe<D = A::D>> Probe for Prod<A, B> {
 
 pub struct InvStream<Q> { pub q: Q }
 
-impl<Q: Rel> Rel for InvStream<Q> where Q::R: Eq + Hash {
+impl<Q: Query> Query for InvStream<Q> where Q::R: Eq + Hash {
     type D = Q::R;
     type R = Q::D;
 }
@@ -440,16 +440,16 @@ impl<Q: Drive> Drive for InvStream<Q> where Q::R: Eq + Hash {
     }
 }
 
-// ===== FromRel / collect — explicit materialization ======================
+// ===== FromQuery / collect — explicit materialization ======================
 // The relation mirror of `FromIterator`/`Iterator::collect`: `q.collect()`
 // drives `q` once into the physical structure named by the target type
 // (turbofish or `let` annotation). This is the ONLY way a stream becomes
 // probe-side state, so every materialization is visible in the query text.
-// `Bitset` deliberately does not implement `FromRel`: it needs the universe
+// `Bitset` deliberately does not implement `FromQuery`: it needs the universe
 // size `n` — part of the physical choice — so it keeps the explicit
 // `Bitset::over(universe, q)` constructor.
 
-pub trait FromRel<Q: Drive>: Sized {
+pub trait FromQuery<Q: Drive>: Sized {
     fn from_rel(q: Q) -> Self;
 }
 
@@ -462,7 +462,7 @@ pub struct HashIdx<K: Copy + Eq + Hash, V: Copy> {
 }
 
 /// Forward index: bucket q's values by key.
-impl<Q: Drive> FromRel<Q> for HashIdx<Q::D, Q::R> {
+impl<Q: Drive> FromQuery<Q> for HashIdx<Q::D, Q::R> {
     fn from_rel(q: Q) -> Self {
         let mut m: HashMap<Q::D, SVec<Q::R>> = HashMap::new();
         q.drive(|d, r| m.entry(d).or_default().push(r));
@@ -470,7 +470,7 @@ impl<Q: Drive> FromRel<Q> for HashIdx<Q::D, Q::R> {
     }
 }
 
-impl<K: Copy + Eq + Hash, V: Copy> Rel for HashIdx<K, V> { type D = K; type R = V; }
+impl<K: Copy + Eq + Hash, V: Copy> Query for HashIdx<K, V> { type D = K; type R = V; }
 impl<K: Copy + Eq + Hash, V: Copy> Probe for HashIdx<K, V> {
     #[inline(always)]
     fn probe<F: FnMut(V)>(&self, x: K, mut k: F) {
@@ -493,7 +493,7 @@ pub struct MatSet<D: Copy + Eq + Hash> { pub set: HashSet<D> }
 /// Drive the input and collect the VALUE slot. Identity relations send
 /// their keys through the value slot, so one impl materializes a set's
 /// keys and a value-bearing query's values alike.
-impl<Q: Drive> FromRel<Q> for MatSet<Q::R>
+impl<Q: Drive> FromQuery<Q> for MatSet<Q::R>
 where Q::R: Eq + Hash {
     fn from_rel(q: Q) -> Self {
         let mut set = HashSet::new();
@@ -501,7 +501,7 @@ where Q::R: Eq + Hash {
         MatSet { set }
     }
 }
-impl<D: Copy + Eq + Hash> Rel for MatSet<D> { type D = D; type R = D; }
+impl<D: Copy + Eq + Hash> Query for MatSet<D> { type D = D; type R = D; }
 impl<D: Copy + Eq + Hash> Probe for MatSet<D> {
     #[inline(always)]
     fn probe<K: FnMut(D)>(&self, x: D, mut k: K) {
@@ -524,7 +524,7 @@ impl<D: Copy + Eq + Hash> Probe for MatSet<D> {
 // `set` rejects keys ≥ n (`NO_ID` hole sentinels), so padding bits in the
 // last word stay 0 and `member`/`drive` can trust the words as-is.
 
-// Not a `FromRel` target: the universe size `n` is part of the physical
+// Not a `FromQuery` target: the universe size `n` is part of the physical
 // choice, so construction stays explicit via `Bitset::over(universe, q)`.
 pub struct Bitset { pub bs: Vec<u64>, pub n: usize }
 
@@ -549,7 +549,7 @@ impl Bitset {
     }
 }
 
-impl Rel for Bitset { type D = usize; type R = usize; }
+impl Query for Bitset { type D = usize; type R = usize; }
 impl Drive for Bitset {
     #[inline]
     fn drive<K: FnMut(usize, usize)>(&self, mut k: K) {
@@ -587,7 +587,7 @@ impl Probe for Bitset {
 
 pub struct GroupBy<S, R> { pub src: S, pub key: R }
 
-impl<S: Rel, R: Rel<D = S::D>> Rel for GroupBy<S, R> where R::R: Eq + Hash {
+impl<S: Query, R: Query<D = S::D>> Query for GroupBy<S, R> where R::R: Eq + Hash {
     type D = R::R;
     type R = S::R;
 }
@@ -632,7 +632,7 @@ impl<D: Copy + Eq + Hash, S: Copy> Fold<D, S> {
     }
 }
 
-impl<D: Copy + Eq + Hash, S: Copy> Rel for Fold<D, S> { type D = D; type R = S; }
+impl<D: Copy + Eq + Hash, S: Copy> Query for Fold<D, S> { type D = D; type R = S; }
 impl<D: Copy + Eq + Hash, S: Copy> Drive for Fold<D, S> {
     #[inline(always)]
     fn drive<K: FnMut(D, S)>(&self, mut k: K) {
@@ -678,7 +678,7 @@ impl<S: Copy> DenseFold<S> {
     }
 }
 
-impl<S: Copy> Rel for DenseFold<S> { type D = usize; type R = S; }
+impl<S: Copy> Query for DenseFold<S> { type D = usize; type R = S; }
 impl<S: Copy> Drive for DenseFold<S> {
     #[inline(always)]
     fn drive<K: FnMut(usize, S)>(&self, mut k: K) {
@@ -710,11 +710,11 @@ pub struct Map<Q, F, S: Copy> {
     _phantom: std::marker::PhantomData<S>,
 }
 
-impl<Q: Rel, F: Fn(Q::R) -> S, S: Copy> Map<Q, F, S> {
+impl<Q: Query, F: Fn(Q::R) -> S, S: Copy> Map<Q, F, S> {
     pub fn new(q: Q, f: F) -> Self { Map { q, f, _phantom: std::marker::PhantomData } }
 }
 
-impl<Q: Rel, F: Fn(Q::R) -> S, S: Copy> Rel for Map<Q, F, S> {
+impl<Q: Query, F: Fn(Q::R) -> S, S: Copy> Query for Map<Q, F, S> {
     type D = Q::D;
     type R = S;
 }
@@ -741,10 +741,10 @@ impl<Q: Probe, F: Fn(Q::R) -> S, S: Copy> Probe for Map<Q, F, S> {
 // constructors drive their input right here — those require `Self: Drive`
 // and consume their input, exactly like prela's `build_*` inside `prepare`.
 
-pub trait QueryExt: Rel + Sized {
+pub trait QueryExt: Query + Sized {
     /// Compose two queries (bridge type = self's value type).
     #[inline(always)]
-    fn o<B: Rel<D = Self::R>>(self, b: B) -> Compose<Self, B> { Compose { a: self, b } }
+    fn o<B: Query<D = Self::R>>(self, b: B) -> Compose<Self, B> { Compose { a: self, b } }
 
     /// Postfix adjoint in drive position — streams flipped pairs, no state.
     #[inline(always)]
@@ -756,28 +756,28 @@ pub trait QueryExt: Rel + Sized {
     /// building pair values; in drive/probe position it IS `⊗` and emits
     /// nested-pair values — restrict-then-project is `a.in_s(p).o(b)`.
     #[inline(always)]
-    fn and<B: Rel<D = Self::D>>(self, b: B) -> Prod<Self, B> { Prod { a: self, b } }
+    fn and<B: Query<D = Self::D>>(self, b: B) -> Prod<Self, B> { Prod { a: self, b } }
 
     /// `∨` — probe-only membership union (`member` = a OR b). Driving it is
     /// a compile error; enumerate with `.union(b)` instead.
     #[inline(always)]
-    fn or<B: Rel<D = Self::D>>(self, b: B) -> Disj<Self, B> { Disj { a: self, b } }
+    fn or<B: Query<D = Self::D>>(self, b: B) -> Disj<Self, B> { Disj { a: self, b } }
 
     /// `-` — value-bearing difference: self's pairs whose KEY is not a
     /// member of `b` (identity self ⟹ plain set difference).
     #[inline(always)]
-    fn minus<B: Rel<D = Self::D>>(self, b: B) -> Diff<Self, B> { Diff { a: self, b } }
+    fn minus<B: Query<D = Self::D>>(self, b: B) -> Diff<Self, B> { Diff { a: self, b } }
 
     /// Cartesian product (× / ⊗).
     #[inline(always)]
-    fn x<B: Rel<D = Self::D>>(self, b: B) -> Prod<Self, B> { Prod { a: self, b } }
+    fn x<B: Query<D = Self::D>>(self, b: B) -> Prod<Self, B> { Prod { a: self, b } }
 
     /// Enumerable bag union — drive self fully, then `b` fully, NO dedup
     /// (the drive-position complement of the probe-only `.or`). Feed it to
     /// deduping sinks, or collect it into a `MatSet` when duplicates would matter.
     #[allow(dead_code)] // no suite query drives a union today (every `∨` is member-position); kept as the sanctioned enumerable form, exercised by unit tests
     #[inline(always)]
-    fn union<B: Rel<D = Self::D, R = Self::R>>(self, b: B) -> Union<Self, B> { Union { a: self, b } }
+    fn union<B: Query<D = Self::D, R = Self::R>>(self, b: B) -> Union<Self, B> { Union { a: self, b } }
 
     // Predicate filters — all captured-closure forms of `filt`.
     #[inline(always)] fn eq(self, v: Self::R) -> Filter<Self, impl Fn(Self::R) -> bool>
@@ -800,12 +800,12 @@ pub trait QueryExt: Rel + Sized {
     #[inline(always)] fn in_s<S: Probe<D = Self::R>>(self, s: S) -> Restrict<Self, S>
         { Restrict { a: self, b: s } }
     #[inline(always)] fn rx(self, re: &str) -> Filter<Self, impl Fn(Self::R) -> bool>
-        where Self: Rel<R = &'static str> {
+        where Self: Query<R = &'static str> {
         let re = Regex::new(re).unwrap();
         self.filt(move |s| re.is_match(s))
     }
     #[inline(always)] fn nrx(self, re: &str) -> Filter<Self, impl Fn(Self::R) -> bool>
-        where Self: Rel<R = &'static str> {
+        where Self: Query<R = &'static str> {
         let re = Regex::new(re).unwrap();
         self.filt(move |s| !re.is_match(s))
     }
@@ -820,19 +820,19 @@ pub trait QueryExt: Rel + Sized {
         where Self::R: PartialOrd { self.filt(move |x| x >= lo && x <= hi) }
 
     /// Materialize — drive self once into the physical structure named by
-    /// the target type (`FromRel`, the relation mirror of `FromIterator`):
+    /// the target type (`FromQuery`, the relation mirror of `FromIterator`):
     /// `.collect::<HashIdx<_, _>>()` for a forward index, `.collect::<
     /// MatSet<_>>()` for a membership set (Julia: `prepare` probing a
     /// `Materialized`). The type annotation IS the visible physical choice.
     #[inline(always)]
-    fn collect<T: FromRel<Self>>(self) -> T where Self: Drive { T::from_rel(self) }
+    fn collect<T: FromQuery<Self>>(self) -> T where Self: Drive { T::from_rel(self) }
 
     /// Julia's `r ← s` in drive position — drives self, probes `key` per
     /// row, emits (key-value, self-value). (With sets now identity
     /// relations, grouping by a set is just this general form: the set's
     /// key flows through the value slot.)
     #[inline(always)]
-    fn group_by<R: Rel<D = Self::D>>(self, key: R) -> GroupBy<Self, R>
+    fn group_by<R: Query<D = Self::D>>(self, key: R) -> GroupBy<Self, R>
     where R::R: Eq + Hash { GroupBy { src: self, key } }
 
     /// `▷ (op, init)` — per-key foldl into an eager cache.
@@ -880,7 +880,7 @@ pub trait QueryExt: Rel + Sized {
         acc
     }
 }
-impl<Q: Rel> QueryExt for Q {}
+impl<Q: Query> QueryExt for Q {}
 
 // ===== tests — tiny inline data, every node in every mode ===============
 
@@ -888,10 +888,10 @@ impl<Q: Rel> QueryExt for Q {}
 mod tests {
     use super::*;
 
-    // films: 0 → 10, 1 → 20, 2 → 30 (Col); cast: 0 → {7, 8}, 2 → {7} (MultiCol)
+    // films: 0 → 10, 1 → 20, 2 → 30 (VecRel); cast: 0 → {7, 8}, 2 → {7} (MultiRel)
     // Values are id-typed (usize) so they can feed compose/restrict domains.
-    fn films() -> Col<usize> { Col::from_pairs(3, [(0, 10), (1, 20), (2, 30)]) }
-    fn cast() -> MultiCol<usize> { MultiCol::from_pairs(3, [(0, 7), (0, 8), (2, 7)]) }
+    fn films() -> VecRel<usize> { VecRel::from_pairs(3, [(0, 10), (1, 20), (2, 30)]) }
+    fn cast() -> MultiRel<usize> { MultiRel::from_pairs(3, [(0, 7), (0, 8), (2, 7)]) }
 
     fn drive_all<Q: Drive>(q: &Q) -> Vec<(Q::D, Q::R)>
     where Q::D: Ord, Q::R: Ord {
@@ -1002,7 +1002,7 @@ mod tests {
         let people = u3.in_s(&c);
         assert_eq!(drive_all(&people), vec![(0, 0), (2, 2)]);
         assert!(people.member(0) && !people.member(1));
-        // identity sets send keys through the value slot, so one FromRel /
+        // identity sets send keys through the value slot, so one FromQuery /
         // from_drive impl serves sets and value-bearing queries alike
         let ms: MatSet<_> = (&people).collect();
         assert!(ms.member(0) && !ms.member(1));
@@ -1035,7 +1035,7 @@ mod tests {
         // restriction must pass a's pairs through untouched — the membership
         // test is on a's VALUE against b's DOMAIN, and b's values never flow.
         let f = films(); // 0 → 10, 1 → 20, 2 → 30
-        let b = MultiCol::from_pairs(31, [(10, 99usize), (20, 88)]);
+        let b = MultiRel::from_pairs(31, [(10, 99usize), (20, 88)]);
         let r = (&f).in_s(&b);
         assert_eq!(drive_all(&r), vec![(0, 10), (1, 20)]); // not (0, 99) …
         // probe keeps a's value too
@@ -1050,14 +1050,14 @@ mod tests {
         // member(Restrict, x) = a has some value at x that is a member of b
         // (the defaulted probe_any(x, |_| true) path)
         let f = films();
-        let b = MultiCol::from_pairs(31, [(10, 99usize), (20, 88)]);
+        let b = MultiRel::from_pairs(31, [(10, 99usize), (20, 88)]);
         let r = (&f).in_s(&b);
         assert!(r.member(0) && r.member(1));
         assert!(!r.member(2));     // 30 fails the membership test
         assert!(!r.member(3));     // outside a's domain entirely
         // multi-valued a: film 0 has cast {7, 8}; restrict by value-set {8}
         let c = cast();
-        let only8 = MultiCol::from_pairs(9, [(8, 0usize)]);
+        let only8 = MultiRel::from_pairs(9, [(8, 0usize)]);
         let rc = (&c).in_s(&only8);
         assert!(rc.member(0) && !rc.member(2)); // film 2's only cast is 7
     }

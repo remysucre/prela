@@ -4,7 +4,7 @@
 
 Rust entity ids are **0-based `usize`**: internal id = cache id − 1 =
 natural key − 1. Ids are opaque dense indexes, so the id domain type is
-`usize` throughout the engine (`Col`/`MultiCol`/`Universe`/`Bitset`/`DenseFold`
+`usize` throughout the engine (`VecRel`/`MultiRel`/`Universe`/`Bitset`/`DenseFold`
 all have `D = usize`); scalar value columns (years, sizes, counts, dates,
 prices) stay `i64`/`f64` — id columns and number columns are distinct types.
 The binary cache stays 1-based `i64` (Julia — 1-based arrays — writes and
@@ -16,8 +16,12 @@ orderkey/custkey/partkey/suppkey); JOB queries print no ids. Universe sizes
 are unchanged: max raw id N ⟹ internal ids 0..N-1 ⟹ n = N.
 
 The missing-id sentinel is `engine::NO_ID` (= `usize::MAX`): FK-valued
-`Col` columns over gappy key spaces fill holes with `NO_ID`, never 0
-(entity 0 is live) — see the `Col` invariant in `src/engine.rs`. Gap
+Leaf names match Julia's (`VecRel`/`MultiRel` implementing `Query`, like
+`VecRel`/`MultiRel <: Query{D,R}`), with one collapse: Rust's `VecRel` covers
+both Julia's `VecRel` AND `SparseRel` — gappy columns use fill values instead
+of a separate presence-map type.
+`VecRel` columns over gappy key spaces fill holes with `NO_ID`, never 0
+(entity 0 is live) — see the `VecRel` invariant in `src/engine.rs`. Gap
 checks compare against it (`.ne(NO_ID)` / `== NO_ID`); "no entity seen yet"
 fold states use `Option<usize>` (or `NO_ID` where state size matters, e.g.
 dense per-order arrays). Probes are safe `.get()` lookups — `NO_ID` (or any
@@ -49,7 +53,7 @@ fn q2a(d: &Data) -> String {
 ## Sets are identity relations — there is no keyset type
 
 Mirroring Julia's `Unary{D} <: Query{D, D}`, Rust has ONE trait family
-(`Rel` / `Drive` / `Probe`). A set-shaped node (`Universe`, `Bitset`,
+(`Query` / `Drive` / `Probe`). A set-shaped node (`Universe`, `Bitset`,
 `MatSet`, `Disj`) is an identity relation `D → D`: `drive`
 emits `(x, x)`, `probe` yields `x` iff member. Membership is part of the
 relation protocol — `member(q, x)` is defined for ANY probe-able query as
@@ -65,7 +69,7 @@ Consequences:
 - `s : q` (set ∘ query) is plain `Compose` — `s.o(q)` — because the
   identity's value IS the key.
 - Identity relations send their keys through the value slot of `drive`, so
-  the one `Bitset::over` / `MatSet` `FromRel` impl serves sets and
+  the one `Bitset::over` / `MatSet` `FromQuery` impl serves sets and
   value-bearing queries alike (a set contributes its keys, a query its
   values).
 
@@ -114,14 +118,14 @@ member-check `p`, probe `b` — the post-unification spelling of Julia's
 ## No hidden materialization — `collect` names the physical type
 
 Every index/set build is visible in the query text. `q.collect()` (the
-`FromRel` mirror of `Iterator::collect`/`FromIterator`) drives `q` once into
+`FromQuery` mirror of `Iterator::collect`/`FromIterator`) drives `q` once into
 the physical structure named by the target type — turbofish inline
 (`.collect::<MatSet<_>>()`) or a `let` annotation
 (`let idx: HashIdx<_, _> = (…).collect();`). This is the ONLY way a stream
 becomes probe-side state; a drive-only node (`InvStream`, `GroupBy`, `Union`)
 in probe position is a compile error, and the fix is an explicit `collect`
 where Julia's `prepare` would auto-index through the mode system. `Bitset`
-is deliberately NOT a `FromRel` target: it needs the universe size `n` —
+is deliberately NOT a `FromQuery` target: it needs the universe size `n` —
 part of the physical choice — so it keeps `Bitset::over(universe, q)`, taking
 the `Universe` itself (self-documenting, typo-proof) rather than a bare `n`.
 
@@ -235,7 +239,7 @@ Julia `let x = …, y = …; body` where `x` is used twice in `body`. In Rust:
 define a helper fn that returns a fresh instance:
 
 ```rust
-fn co_27<'d>(d: &'d Data) -> impl Rel<D = usize, R = usize> + Drive + Probe + 'd {
+fn co_27<'d>(d: &'d Data) -> impl Query<D = usize, R = usize> + Drive + Probe + 'd {
     (&d.movie_company).in_s(
         (&d.company_country).ne("[pl]")
             .and(/* … the rest of the Company-side conjunction … */)
@@ -249,12 +253,12 @@ builds a fresh value — that's fine, the structures are cheap.
 
 If `x` is used only once, inline it.
 
-`impl Rel<D = usize, R = usize> + Drive + Probe + 'd` — the `'d` lifetime
+`impl Query<D = usize, R = usize> + Drive + Probe + 'd` — the `'d` lifetime
 ties the returned value to the borrows it holds on `d`. Add it whenever the
 helper borrows from `d` (which is always). Value-bearing projections name
 the value's type (e.g. `R = &'static str`). Conjunct-tree helpers (rooted
 at `.and` / `.minus`) are consumed via `member` only, so they leave `R`
-opaque: `impl Rel<D = usize> + Probe + 'd` (the pair-valued `R` of a `Prod`
+opaque: `impl Query<D = usize> + Probe + 'd` (the pair-valued `R` of a `Prod`
 is an implementation detail).
 
 When the same binding recurs across query templates (it does for the

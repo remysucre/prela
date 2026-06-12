@@ -4,23 +4,23 @@ use crate::engine::*;
 use super::helpers::*;
 use super::sets::*;
 
-fn k_23ab<'d>(d: &'d Data) -> impl Rel<R = &'static str, D = usize> + Drive + Probe + 'd {
+fn k_23ab<'d>(d: &'d Data) -> impl Query<R = &'static str, D = usize> + Drive + Probe + 'd {
     (&d.movie_kind).o(&d.kind_kind).eq("movie")
 }
 
-fn k_23c<'d>(d: &'d Data) -> impl Rel<R = &'static str, D = usize> + Drive + Probe + 'd {
+fn k_23c<'d>(d: &'d Data) -> impl Query<R = &'static str, D = usize> + Drive + Probe + 'd {
     (&d.movie_kind).o(&d.kind_kind)
         .in_v(vec!["movie", "tv movie", "video movie", "video game"])
 }
 
 // Conjunct trees (∧ = Prod) — consumed via `member` only, so the value
-// type stays opaque (`impl Rel<D = usize> + Probe`).
-fn gf_25ab<'d>(d: &'d Data) -> impl Rel<D = usize> + Probe + 'd {
+// type stays opaque (`impl Query<D = usize> + Probe`).
+fn gf_25ab<'d>(d: &'d Data) -> impl Query<D = usize> + Probe + 'd {
     (&d.info_type).o(&d.infotype_info).eq("genres")
         .and((&d.info_info).eq("Horror"))
 }
 
-fn gf_25c<'d>(d: &'d Data) -> impl Rel<D = usize> + Probe + 'd {
+fn gf_25c<'d>(d: &'d Data) -> impl Query<D = usize> + Probe + 'd {
     (&d.info_type).o(&d.infotype_info).eq("genres")
         .and((&d.info_info).in_v(genre6()))
 }

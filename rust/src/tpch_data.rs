@@ -4,7 +4,7 @@
 // &'static str.
 
 use crate::cache::{ids, ids_fk, load_bits, load_strs, max_key};
-use crate::engine::{Universe, Col, NO_ID};
+use crate::engine::{Universe, VecRel, NO_ID};
 
 /// f64 fields are saved by Julia as Pair{ID, Float64} but reinterpreted as
 /// (i64, i64) at write time. Read back: same bytes, just bit-cast.
@@ -47,85 +47,85 @@ pub struct TpchData {
     pub lineitem: Universe,
 
     // Region.{name, comment}
-    pub re_name: Col<&'static str>,
+    pub re_name: VecRel<&'static str>,
     #[allow(dead_code)] // loaded for full-schema parity; no query reads it
-    pub re_comment: Col<&'static str>,
+    pub re_comment: VecRel<&'static str>,
 
     // Nation.{name, region, comment}
-    pub na_name: Col<&'static str>,
-    pub na_region: Col<usize>,
+    pub na_name: VecRel<&'static str>,
+    pub na_region: VecRel<usize>,
     #[allow(dead_code)] // loaded for full-schema parity; no query reads it
-    pub na_comment: Col<&'static str>,
+    pub na_comment: VecRel<&'static str>,
 
     // Supplier.{name, address, nation, phone, acctbal, comment}
-    pub su_name: Col<&'static str>,
-    pub su_address: Col<&'static str>,
-    pub su_nation: Col<usize>,
-    pub su_phone: Col<&'static str>,
-    pub su_acctbal: Col<f64>,
-    pub su_comment: Col<&'static str>,
+    pub su_name: VecRel<&'static str>,
+    pub su_address: VecRel<&'static str>,
+    pub su_nation: VecRel<usize>,
+    pub su_phone: VecRel<&'static str>,
+    pub su_acctbal: VecRel<f64>,
+    pub su_comment: VecRel<&'static str>,
 
     // Customer.{name, address, nation, phone, acctbal, mktsegment, comment}
-    pub cu_name: Col<&'static str>,
-    pub cu_address: Col<&'static str>,
-    pub cu_nation: Col<usize>,
-    pub cu_phone: Col<&'static str>,
-    pub cu_acctbal: Col<f64>,
-    pub cu_mktsegment: Col<&'static str>,
-    pub cu_comment: Col<&'static str>,
+    pub cu_name: VecRel<&'static str>,
+    pub cu_address: VecRel<&'static str>,
+    pub cu_nation: VecRel<usize>,
+    pub cu_phone: VecRel<&'static str>,
+    pub cu_acctbal: VecRel<f64>,
+    pub cu_mktsegment: VecRel<&'static str>,
+    pub cu_comment: VecRel<&'static str>,
 
     // Part.{name, mfgr, brand, type, size, container, retailprice, comment}
-    pub pa_name: Col<&'static str>,
-    pub pa_mfgr: Col<&'static str>,
-    pub pa_brand: Col<&'static str>,
-    pub pa_type: Col<&'static str>,
-    pub pa_size: Col<i64>,
-    pub pa_container: Col<&'static str>,
+    pub pa_name: VecRel<&'static str>,
+    pub pa_mfgr: VecRel<&'static str>,
+    pub pa_brand: VecRel<&'static str>,
+    pub pa_type: VecRel<&'static str>,
+    pub pa_size: VecRel<i64>,
+    pub pa_container: VecRel<&'static str>,
     #[allow(dead_code)] // loaded for full-schema parity; no query reads it
-    pub pa_retailprice: Col<f64>,
+    pub pa_retailprice: VecRel<f64>,
     #[allow(dead_code)] // loaded for full-schema parity; no query reads it
-    pub pa_comment: Col<&'static str>,
+    pub pa_comment: VecRel<&'static str>,
 
     // PartSupp.{part, supplier, availqty, supplycost, comment}
-    pub ps_part: Col<usize>,
-    pub ps_supplier: Col<usize>,
-    pub ps_availqty: Col<i64>,
-    pub ps_supplycost: Col<f64>,
+    pub ps_part: VecRel<usize>,
+    pub ps_supplier: VecRel<usize>,
+    pub ps_availqty: VecRel<i64>,
+    pub ps_supplycost: VecRel<f64>,
     #[allow(dead_code)] // loaded for full-schema parity; no query reads it
-    pub ps_comment: Col<&'static str>,
+    pub ps_comment: VecRel<&'static str>,
 
     // Order.{customer, status, totalprice, date, priority, clerk, shippriority, comment}
-    pub ord_customer: Col<usize>,
-    pub ord_status: Col<&'static str>,
-    pub ord_totalprice: Col<f64>,
-    pub ord_date: Col<i64>,                      // YYYYMMDD
-    pub ord_priority: Col<&'static str>,
+    pub ord_customer: VecRel<usize>,
+    pub ord_status: VecRel<&'static str>,
+    pub ord_totalprice: VecRel<f64>,
+    pub ord_date: VecRel<i64>,                      // YYYYMMDD
+    pub ord_priority: VecRel<&'static str>,
     #[allow(dead_code)] // loaded for full-schema parity; no query reads it
-    pub ord_clerk: Col<&'static str>,
-    pub ord_shippriority: Col<i64>,
-    pub ord_comment: Col<&'static str>,
+    pub ord_clerk: VecRel<&'static str>,
+    pub ord_shippriority: VecRel<i64>,
+    pub ord_comment: VecRel<&'static str>,
 
     // Lineitem.{order, part, supplier, number, quantity, extendedprice, discount,
     //           tax, returnflag, status, shipdate, commitdate, receiptdate,
     //           shipinstruct, shipmode, comment}
-    pub li_order: Col<usize>,
-    pub li_part: Col<usize>,
-    pub li_supplier: Col<usize>,
+    pub li_order: VecRel<usize>,
+    pub li_part: VecRel<usize>,
+    pub li_supplier: VecRel<usize>,
     #[allow(dead_code)] // loaded for full-schema parity; no query reads it
-    pub li_number: Col<i64>,
-    pub li_quantity: Col<f64>,
-    pub li_extendedprice: Col<f64>,
-    pub li_discount: Col<f64>,
-    pub li_tax: Col<f64>,
-    pub li_returnflag: Col<&'static str>,
-    pub li_status: Col<&'static str>,
-    pub li_shipdate: Col<i64>,                   // YYYYMMDD
-    pub li_commitdate: Col<i64>,                 // YYYYMMDD
-    pub li_receiptdate: Col<i64>,                // YYYYMMDD
-    pub li_shipinstruct: Col<&'static str>,
-    pub li_shipmode: Col<&'static str>,
+    pub li_number: VecRel<i64>,
+    pub li_quantity: VecRel<f64>,
+    pub li_extendedprice: VecRel<f64>,
+    pub li_discount: VecRel<f64>,
+    pub li_tax: VecRel<f64>,
+    pub li_returnflag: VecRel<&'static str>,
+    pub li_status: VecRel<&'static str>,
+    pub li_shipdate: VecRel<i64>,                   // YYYYMMDD
+    pub li_commitdate: VecRel<i64>,                 // YYYYMMDD
+    pub li_receiptdate: VecRel<i64>,                // YYYYMMDD
+    pub li_shipinstruct: VecRel<&'static str>,
+    pub li_shipmode: VecRel<&'static str>,
     #[allow(dead_code)] // loaded for full-schema parity; no query reads it
-    pub li_comment: Col<&'static str>,
+    pub li_comment: VecRel<&'static str>,
 }
 
 impl TpchData {
@@ -220,72 +220,72 @@ impl TpchData {
             lineitem: Universe { n: n_lineitem },
 
             // `ids` shifts keys to 0-based usize (internal id = cache id
-            // − 1); `ids_fk` also shifts the value (FK columns). FK Col
+            // − 1); `ids_fk` also shifts the value (FK columns). FK VecRel
             // columns fill holes with NO_ID so a gap key (the sparse
-            // orderkey space) never aliases entity 0 — see the Col
+            // orderkey space) never aliases entity 0 — see the VecRel
             // invariant in engine.rs.
-            re_name: Col::from_pairs(n_region, ids(&re_name_p)),
-            re_comment: Col::from_pairs(n_region, ids(&re_comment_p)),
+            re_name: VecRel::from_pairs(n_region, ids(&re_name_p)),
+            re_comment: VecRel::from_pairs(n_region, ids(&re_comment_p)),
 
-            na_name: Col::from_pairs(n_nation, ids(&na_name_p)),
-            na_region: Col::from_pairs_fill(n_nation, NO_ID, ids_fk(&na_region_p)),
-            na_comment: Col::from_pairs(n_nation, ids(&na_comment_p)),
+            na_name: VecRel::from_pairs(n_nation, ids(&na_name_p)),
+            na_region: VecRel::from_pairs_fill(n_nation, NO_ID, ids_fk(&na_region_p)),
+            na_comment: VecRel::from_pairs(n_nation, ids(&na_comment_p)),
 
-            su_name: Col::from_pairs(n_supplier, ids(&su_name_p)),
-            su_address: Col::from_pairs(n_supplier, ids(&su_address_p)),
-            su_nation: Col::from_pairs_fill(n_supplier, NO_ID, ids_fk(&su_nation_p)),
-            su_phone: Col::from_pairs(n_supplier, ids(&su_phone_p)),
-            su_acctbal: Col::from_pairs(n_supplier, ids(&su_acctbal_p).map(f64_val)),
-            su_comment: Col::from_pairs(n_supplier, ids(&su_comment_p)),
+            su_name: VecRel::from_pairs(n_supplier, ids(&su_name_p)),
+            su_address: VecRel::from_pairs(n_supplier, ids(&su_address_p)),
+            su_nation: VecRel::from_pairs_fill(n_supplier, NO_ID, ids_fk(&su_nation_p)),
+            su_phone: VecRel::from_pairs(n_supplier, ids(&su_phone_p)),
+            su_acctbal: VecRel::from_pairs(n_supplier, ids(&su_acctbal_p).map(f64_val)),
+            su_comment: VecRel::from_pairs(n_supplier, ids(&su_comment_p)),
 
-            cu_name: Col::from_pairs(n_customer, ids(&cu_name_p)),
-            cu_address: Col::from_pairs(n_customer, ids(&cu_address_p)),
-            cu_nation: Col::from_pairs_fill(n_customer, NO_ID, ids_fk(&cu_nation_p)),
-            cu_phone: Col::from_pairs(n_customer, ids(&cu_phone_p)),
-            cu_acctbal: Col::from_pairs(n_customer, ids(&cu_acctbal_p).map(f64_val)),
-            cu_mktsegment: Col::from_pairs(n_customer, ids(&cu_mktsegment_p)),
-            cu_comment: Col::from_pairs(n_customer, ids(&cu_comment_p)),
+            cu_name: VecRel::from_pairs(n_customer, ids(&cu_name_p)),
+            cu_address: VecRel::from_pairs(n_customer, ids(&cu_address_p)),
+            cu_nation: VecRel::from_pairs_fill(n_customer, NO_ID, ids_fk(&cu_nation_p)),
+            cu_phone: VecRel::from_pairs(n_customer, ids(&cu_phone_p)),
+            cu_acctbal: VecRel::from_pairs(n_customer, ids(&cu_acctbal_p).map(f64_val)),
+            cu_mktsegment: VecRel::from_pairs(n_customer, ids(&cu_mktsegment_p)),
+            cu_comment: VecRel::from_pairs(n_customer, ids(&cu_comment_p)),
 
-            pa_name: Col::from_pairs(n_part, ids(&pa_name_p)),
-            pa_mfgr: Col::from_pairs(n_part, ids(&pa_mfgr_p)),
-            pa_brand: Col::from_pairs(n_part, ids(&pa_brand_p)),
-            pa_type: Col::from_pairs(n_part, ids(&pa_type_p)),
-            pa_size: Col::from_pairs(n_part, ids(&pa_size_p)),
-            pa_container: Col::from_pairs(n_part, ids(&pa_container_p)),
-            pa_retailprice: Col::from_pairs(n_part, ids(&pa_retailprice_p).map(f64_val)),
-            pa_comment: Col::from_pairs(n_part, ids(&pa_comment_p)),
+            pa_name: VecRel::from_pairs(n_part, ids(&pa_name_p)),
+            pa_mfgr: VecRel::from_pairs(n_part, ids(&pa_mfgr_p)),
+            pa_brand: VecRel::from_pairs(n_part, ids(&pa_brand_p)),
+            pa_type: VecRel::from_pairs(n_part, ids(&pa_type_p)),
+            pa_size: VecRel::from_pairs(n_part, ids(&pa_size_p)),
+            pa_container: VecRel::from_pairs(n_part, ids(&pa_container_p)),
+            pa_retailprice: VecRel::from_pairs(n_part, ids(&pa_retailprice_p).map(f64_val)),
+            pa_comment: VecRel::from_pairs(n_part, ids(&pa_comment_p)),
 
-            ps_part: Col::from_pairs_fill(n_partsupp, NO_ID, ids_fk(&ps_part_p)),
-            ps_supplier: Col::from_pairs_fill(n_partsupp, NO_ID, ids_fk(&ps_supplier_p)),
-            ps_availqty: Col::from_pairs(n_partsupp, ids(&ps_availqty_p)),
-            ps_supplycost: Col::from_pairs(n_partsupp, ids(&ps_supplycost_p).map(f64_val)),
-            ps_comment: Col::from_pairs(n_partsupp, ids(&ps_comment_p)),
+            ps_part: VecRel::from_pairs_fill(n_partsupp, NO_ID, ids_fk(&ps_part_p)),
+            ps_supplier: VecRel::from_pairs_fill(n_partsupp, NO_ID, ids_fk(&ps_supplier_p)),
+            ps_availqty: VecRel::from_pairs(n_partsupp, ids(&ps_availqty_p)),
+            ps_supplycost: VecRel::from_pairs(n_partsupp, ids(&ps_supplycost_p).map(f64_val)),
+            ps_comment: VecRel::from_pairs(n_partsupp, ids(&ps_comment_p)),
 
-            ord_customer: Col::from_pairs_fill(n_orders, NO_ID, ids_fk(&ord_customer_p)),
-            ord_status: Col::from_pairs(n_orders, ids(&ord_status_p)),
-            ord_totalprice: Col::from_pairs(n_orders, ids(&ord_totalprice_p).map(f64_val)),
-            ord_date: Col::from_pairs(n_orders, ids(&ord_date_p).map(date_val)),
-            ord_priority: Col::from_pairs(n_orders, ids(&ord_priority_p)),
-            ord_clerk: Col::from_pairs(n_orders, ids(&ord_clerk_p)),
-            ord_shippriority: Col::from_pairs(n_orders, ids(&ord_shippriority_p)),
-            ord_comment: Col::from_pairs(n_orders, ids(&ord_comment_p)),
+            ord_customer: VecRel::from_pairs_fill(n_orders, NO_ID, ids_fk(&ord_customer_p)),
+            ord_status: VecRel::from_pairs(n_orders, ids(&ord_status_p)),
+            ord_totalprice: VecRel::from_pairs(n_orders, ids(&ord_totalprice_p).map(f64_val)),
+            ord_date: VecRel::from_pairs(n_orders, ids(&ord_date_p).map(date_val)),
+            ord_priority: VecRel::from_pairs(n_orders, ids(&ord_priority_p)),
+            ord_clerk: VecRel::from_pairs(n_orders, ids(&ord_clerk_p)),
+            ord_shippriority: VecRel::from_pairs(n_orders, ids(&ord_shippriority_p)),
+            ord_comment: VecRel::from_pairs(n_orders, ids(&ord_comment_p)),
 
-            li_order: Col::from_pairs_fill(n_lineitem, NO_ID, ids_fk(&li_order_p)),
-            li_part: Col::from_pairs_fill(n_lineitem, NO_ID, ids_fk(&li_part_p)),
-            li_supplier: Col::from_pairs_fill(n_lineitem, NO_ID, ids_fk(&li_supplier_p)),
-            li_number: Col::from_pairs(n_lineitem, ids(&li_number_p)),
-            li_quantity: Col::from_pairs(n_lineitem, ids(&li_quantity_p).map(f64_val)),
-            li_extendedprice: Col::from_pairs(n_lineitem, ids(&li_extendedprice_p).map(f64_val)),
-            li_discount: Col::from_pairs(n_lineitem, ids(&li_discount_p).map(f64_val)),
-            li_tax: Col::from_pairs(n_lineitem, ids(&li_tax_p).map(f64_val)),
-            li_returnflag: Col::from_pairs(n_lineitem, ids(&li_returnflag_p)),
-            li_status: Col::from_pairs(n_lineitem, ids(&li_status_p)),
-            li_shipdate:    Col::from_pairs(n_lineitem, ids(&li_shipdate_p).map(date_val)),
-            li_commitdate:  Col::from_pairs(n_lineitem, ids(&li_commitdate_p).map(date_val)),
-            li_receiptdate: Col::from_pairs(n_lineitem, ids(&li_receiptdate_p).map(date_val)),
-            li_shipinstruct: Col::from_pairs(n_lineitem, ids(&li_shipinstruct_p)),
-            li_shipmode: Col::from_pairs(n_lineitem, ids(&li_shipmode_p)),
-            li_comment: Col::from_pairs(n_lineitem, ids(&li_comment_p)),
+            li_order: VecRel::from_pairs_fill(n_lineitem, NO_ID, ids_fk(&li_order_p)),
+            li_part: VecRel::from_pairs_fill(n_lineitem, NO_ID, ids_fk(&li_part_p)),
+            li_supplier: VecRel::from_pairs_fill(n_lineitem, NO_ID, ids_fk(&li_supplier_p)),
+            li_number: VecRel::from_pairs(n_lineitem, ids(&li_number_p)),
+            li_quantity: VecRel::from_pairs(n_lineitem, ids(&li_quantity_p).map(f64_val)),
+            li_extendedprice: VecRel::from_pairs(n_lineitem, ids(&li_extendedprice_p).map(f64_val)),
+            li_discount: VecRel::from_pairs(n_lineitem, ids(&li_discount_p).map(f64_val)),
+            li_tax: VecRel::from_pairs(n_lineitem, ids(&li_tax_p).map(f64_val)),
+            li_returnflag: VecRel::from_pairs(n_lineitem, ids(&li_returnflag_p)),
+            li_status: VecRel::from_pairs(n_lineitem, ids(&li_status_p)),
+            li_shipdate:    VecRel::from_pairs(n_lineitem, ids(&li_shipdate_p).map(date_val)),
+            li_commitdate:  VecRel::from_pairs(n_lineitem, ids(&li_commitdate_p).map(date_val)),
+            li_receiptdate: VecRel::from_pairs(n_lineitem, ids(&li_receiptdate_p).map(date_val)),
+            li_shipinstruct: VecRel::from_pairs(n_lineitem, ids(&li_shipinstruct_p)),
+            li_shipmode: VecRel::from_pairs(n_lineitem, ids(&li_shipmode_p)),
+            li_comment: VecRel::from_pairs(n_lineitem, ids(&li_comment_p)),
         }
     }
 }
