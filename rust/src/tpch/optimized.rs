@@ -67,7 +67,7 @@ fn q4(d: &TpchData) -> String {
     let bad_li_order = d.lineitem
         .in_s((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r))
         .o(&d.li_order);
-    let is_late = Bitset::from_drive(d.orders.n, &bad_li_order);
+    let is_late = Bitset::over(d.orders, &bad_li_order);
     let live = d.orders
         .in_s((&d.ord_date).during(19930701, 19931001))
         .in_s(is_late);
@@ -88,8 +88,8 @@ fn q9(d: &TpchData) -> String {
     // Hoist the `Part.name ~ "green"` predicate out of the 60M-row
     // lineitem scan by materializing the matching part-ids into a `Bitset`
     // (~200K Part rows scanned once). Per lineitem becomes one bit-test.
-    let green_parts = Bitset::from_drive(
-        d.part.n,
+    let green_parts = Bitset::over(
+        d.part,
         &(&d.part).in_s((&d.pa_name).filt(|n: &str| n.contains("green"))),
     );
     let live = (&d.lineitem).in_s((&d.li_part).in_s(&green_parts));
@@ -264,10 +264,10 @@ fn q21(d: &TpchData) -> String {
     let f_ords = (&d.orders).in_s((&d.ord_status).eq("F"));
     // Hoist each per-row membership probe into a dense `Bitset` over its
     // domain — collapses the 5-deep restriction chain on `qualifying` to ~5 ALU ops.
-    let saudi_bs      = Bitset::from_drive(d.supplier.n, &saudi);
-    let f_ords_bs     = Bitset::from_drive(d.orders.n,   &f_ords);
-    let multi_supp_bs = Bitset::from_drive(d.orders.n,   &multi_supp);
-    let only_late_bs  = Bitset::from_drive(d.orders.n,   &only_late);
+    let saudi_bs      = Bitset::over(d.supplier, &saudi);
+    let f_ords_bs     = Bitset::over(d.orders, &f_ords);
+    let multi_supp_bs = Bitset::over(d.orders, &multi_supp);
+    let only_late_bs  = Bitset::over(d.orders, &only_late);
     let qualifying = (&late)
         .in_s((&d.li_supplier).in_s(&saudi_bs))
         .in_s((&d.li_order).in_s(&f_ords_bs))
@@ -302,7 +302,7 @@ pub(super) fn q22(d: &TpchData) -> String {
     // Packed bitset over the dense customer universe — replaces the
     // baseline's collected `MatSet` (a HashSet built from every order's customer)
     // with one bit per customer.
-    let custs_with_orders = Bitset::from_drive(d.customer.n, &d.ord_customer);
+    let custs_with_orders = Bitset::over(d.customer, &d.ord_customer);
     let target = (&prefix_ok).in_s((&d.cu_acctbal).gt(avg))
         .minus(custs_with_orders);
     let counts = target.group_by(&prefix)

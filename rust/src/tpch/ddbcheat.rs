@@ -75,7 +75,7 @@ fn q4(d: &TpchData) -> String {
     // packed bitset of "has-late-lineitem" indexed by orderkey in one scan.
     // The chained restriction short-circuits against the date predicate
     // first; only ~750K orderkeys hit the bit test.
-    let mut is_late = Bitset::empty(d.orders.n);
+    let mut is_late = Bitset::empty(d.orders);
     for li in 0..d.lineitem.n {
         if d.li_commitdate.values[li] < d.li_receiptdate.values[li] {
             is_late.set(d.li_order.values[li]);
@@ -201,7 +201,7 @@ fn q13(d: &TpchData) -> String {
     let f_special  = memmem::Finder::new("special");
     let f_requests = memmem::Finder::new("requests");
     const SPECIAL_LEN: usize = 7;
-    let mut not_special = Bitset::empty(d.orders.n);
+    let mut not_special = Bitset::empty(d.orders);
     for o in 0..d.orders.n {
         if d.ord_customer.values[o] == NO_ID { continue; }   // skip sparse gaps (hole fill NO_ID)
         let bytes = d.ord_comment.values[o].as_bytes();

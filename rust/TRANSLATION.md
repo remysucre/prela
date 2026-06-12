@@ -65,7 +65,7 @@ Consequences:
 - `s : q` (set ∘ query) is plain `Compose` — `s.o(q)` — because the
   identity's value IS the key.
 - Identity relations send their keys through the value slot of `drive`, so
-  the one `Bitset::from_drive` / `MatSet` `FromRel` impl serves sets and
+  the one `Bitset::over` / `MatSet` `FromRel` impl serves sets and
   value-bearing queries alike (a set contributes its keys, a query its
   values).
 
@@ -96,7 +96,7 @@ member-check `p`, probe `b` — the post-unification spelling of Julia's
 | `(movie → …)`       | `d.movie.o(…)`                            | Universe ∘ Query |
 | `a ∧ b`             | `a.and(b)`                                | alias for `⊗` (= `Prod`); in member position the `member` fast path short-circuits flat without building pairs |
 | `a ∨ b`             | `a.or(b)`                                 | probe-only membership union (`Disj`); driving it is a COMPILE error |
-| (enumerable union)  | `a.union(b)`                              | bag-concat `Union` (drive a then b, NO dedup); Julia has this only as a design note next to `drive(::Disj)` — Rust implements it. Feed it to deduping sinks (`Bitset::from_drive`, `.collect::<MatSet<_>>()`), or materialize first when duplicates would change results |
+| (enumerable union)  | `a.union(b)`                              | bag-concat `Union` (drive a then b, NO dedup); Julia has this only as a design note next to `drive(::Disj)` — Rust implements it. Feed it to deduping sinks (`Bitset::over`, `.collect::<MatSet<_>>()`), or materialize first when duplicates would change results |
 | `a - b`             | `a.minus(b)`                              | value-bearing `Diff`: a's pairs whose KEY is not a member of b (identity a ⟹ set difference) |
 | `a × b × c`         | `a.x(b).x(c)`                             | left-nested binary |
 | `l ⩘ r`             | `r.in_s(l.collect::<MatSet<_>>())`        | left-driving wedge — in BOTH languages a `Restrict` of `r` by `l`'s value-set, with no dedicated node or sugar. Julia: `⩘(l, r) = Restrict(r, l')`, materialized lazily through the mode system (the `Inv` sits in probed position, so `prepare` self-indexes it); Rust has no lazy `Inv` node, so the collect materializes eagerly — visible in the query text |
@@ -122,7 +122,8 @@ becomes probe-side state; a drive-only node (`InvStream`, `GroupBy`, `Union`)
 in probe position is a compile error, and the fix is an explicit `collect`
 where Julia's `prepare` would auto-index through the mode system. `Bitset`
 is deliberately NOT a `FromRel` target: it needs the universe size `n` —
-part of the physical choice — so it keeps `Bitset::from_drive(n, q)`.
+part of the physical choice — so it keeps `Bitset::over(universe, q)`, taking
+the `Universe` itself (self-documenting, typo-proof) rather than a bare `n`.
 
 The scalar comparisons (`.eq`/`.ne`/`.gt`/`.lt`/`.ge`/`.le`/`.in_v`/`.rx`/
 `.nrx`/`.during`/`.between`) are all captured-closure forms of `.filt`: each

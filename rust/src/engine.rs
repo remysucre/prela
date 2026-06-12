@@ -376,7 +376,7 @@ impl<A: Probe, B: Probe<D = A::D>> Probe for Disj<A, B> {
 /// Enumerable BAG union: drive `a` fully, then `b` fully — NO dedup and no
 /// membership pretense (drive-only; no `Probe`). The legs must agree on
 /// domain AND value type. A key in both legs is emitted by both, so feed a
-/// `Union` only to deduping sinks (`Bitset::from_drive`,
+/// `Union` only to deduping sinks (`Bitset::over`,
 /// `.collect::<MatSet<_>>()`, …) or collect into a set first when
 /// duplicates would change results.
 /// Julia leaves this node as a design note next to `drive(::Disj)`; Rust
@@ -447,7 +447,7 @@ impl<Q: Drive> Drive for InvStream<Q> where Q::R: Eq + Hash {
 // probe-side state, so every materialization is visible in the query text.
 // `Bitset` deliberately does not implement `FromRel`: it needs the universe
 // size `n` — part of the physical choice — so it keeps the explicit
-// `Bitset::from_drive(n, q)` constructor.
+// `Bitset::over(universe, q)` constructor.
 
 pub trait FromRel<Q: Drive>: Sized {
     fn from_rel(q: Q) -> Self;
@@ -525,19 +525,20 @@ impl<D: Copy + Eq + Hash> Probe for MatSet<D> {
 // last word stay 0 and `member`/`drive` can trust the words as-is.
 
 // Not a `FromRel` target: the universe size `n` is part of the physical
-// choice, so construction stays explicit via `Bitset::from_drive(n, q)`.
+// choice, so construction stays explicit via `Bitset::over(universe, q)`.
 pub struct Bitset { pub bs: Vec<u64>, pub n: usize }
 
 impl Bitset {
-    pub fn empty(n: usize) -> Self {
-        Bitset { bs: vec![0u64; n.div_ceil(64)], n }
+    pub fn empty(u: Universe) -> Self {
+        Bitset { bs: vec![0u64; u.n.div_ceil(64)], n: u.n }
     }
-    /// Drive the input and set a bit at each emitted VALUE. Identity
-    /// relations send their keys through the value slot, so one constructor
-    /// bit-sets a set's keys and a value-bearing query's values alike
-    /// (julia/plan.jl `build_bitset`).
-    pub fn from_drive<Q: Drive<R = usize>>(n: usize, q: &Q) -> Self {
-        let mut b = Self::empty(n);
+    /// A bitset over `u`, driven from `q`: set a bit at each emitted VALUE.
+    /// Identity relations send their keys through the value slot, so one
+    /// constructor bit-sets a set's keys and a value-bearing query's values
+    /// alike (julia/plan.jl `build_bitset`). Out-of-universe values —
+    /// including `NO_ID` hole fills — are dropped by the `set` guard.
+    pub fn over<Q: Drive<R = usize>>(u: Universe, q: &Q) -> Self {
+        let mut b = Self::empty(u);
         q.drive(|_, c| b.set(c));
         b
     }
@@ -1005,10 +1006,10 @@ mod tests {
         // from_drive impl serves sets and value-bearing queries alike
         let ms: MatSet<_> = (&people).collect();
         assert!(ms.member(0) && !ms.member(1));
-        let b = Bitset::from_drive(3, &people);
+        let b = Bitset::over(Universe { n: 3 }, &people);
         assert!(b.member(0) && !b.member(1) && b.member(2));
         assert!(!b.member(NO_ID) && !b.member(3));
-        let vb = Bitset::from_drive(9, &c); // values of cast: {7, 8}
+        let vb = Bitset::over(Universe { n: 9 }, &c); // values of cast: {7, 8}
         assert!(vb.member(7) && vb.member(8) && !vb.member(0));
         // restrict/diff over Universe — drive emits (x, x)
         let u2 = Universe { n: 2 };
@@ -1105,7 +1106,7 @@ mod tests {
         // (Bitset / MatSet collect) collapses the bag back to a set
         let both = u2.union(Universe { n: 1 });
         assert_eq!(drive_all(&both), vec![(0, 0), (0, 0), (1, 1)]);
-        let b = Bitset::from_drive(2, &both);
+        let b = Bitset::over(Universe { n: 2 }, &both);
         assert!(b.member(0) && b.member(1));
     }
 
