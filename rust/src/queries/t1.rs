@@ -1,8 +1,9 @@
 // queries: queries.jl lines 107..413 (templates 1-5, 11-15, 22 — movie-only)
-use crate::data::Data;
+
 use crate::engine::*;
-use super::helpers::*;
-use super::sets::*;
+use crate::job_schema::*;
+use crate::queries::helpers::min_row;
+use crate::queries::sets::{murder4, nordic8, nordic10};
 
 pub const ENTRIES: &[super::Entry] = &[
     ("2a",  "'Doc'",                                                                    q2a),
@@ -37,533 +38,396 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 // q2a–q2d differ only in the company country code.
-fn q2(d: &Data, country: &'static str) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title")
-            .and((&d.movie_company).o((&d.company_country).eq(country)))
-    ).o(&d.movie_title);
-    min_row(q)
+fn q2(cc: &'static str) -> String {
+    min_row(movies().in_s(
+        keyword().text().eq("character-name-in-title")
+            .and(company().country().eq(cc))
+    ).title())
 }
 
-fn q2a(d: &Data) -> String { q2(d, "[de]") }
-fn q2b(d: &Data) -> String { q2(d, "[nl]") }
-fn q2c(d: &Data) -> String { q2(d, "[sm]") }
-fn q2d(d: &Data) -> String { q2(d, "[us]") }
+fn q2a() -> String { q2("[de]") }
+fn q2b() -> String { q2("[nl]") }
+fn q2c() -> String { q2("[sm]") }
+fn q2d() -> String { q2("[us]") }
 
-fn q3b(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_keyword).o(&d.keyword_keyword).rx(r"sequel")
-            .and(
-                (&d.movie_info).o((&d.info_info).eq("Bulgaria"))
-                    .and((&d.movie_production_year).gt(2010))
-            )
-    ).o(&d.movie_title);
-    min_row(q)
+fn q3b() -> String {
+    min_row(movies().in_s(
+        keyword().text().rx(r"sequel")
+            .and(info().info().eq("Bulgaria")
+                .and(production_year().gt(2010)))
+    ).title())
 }
 
 // q4a–q4c differ only in the year cutoff and rating threshold.
-fn q4(d: &Data, year: i64, rating: &'static str) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_keyword).o(&d.keyword_keyword).rx(r"sequel")
-            .and((&d.movie_production_year).gt(year))
+fn q4(year: i64, rating: &'static str) -> String {
+    min_row(movies().in_s(
+        keyword().text().rx(r"sequel")
+            .and(production_year().gt(year))
     ).o(
-        (&d.movie_data).in_s(
-            (&d.data_type).o(&d.infotype_info).eq("rating")
-                .and((&d.data_data).gt(rating))
-        ).o(&d.data_data)
-        .x(&d.movie_title)
-    );
-    min_row(q)
+        data().in_s(
+            Data::ty().text().eq("rating")
+                .and(Data::text().gt(rating))
+        ).text()
+        .x(title())
+    ))
 }
 
-fn q4a(d: &Data) -> String { q4(d, 2005, "5.0") }
-fn q4b(d: &Data) -> String { q4(d, 2010, "9.0") }
-fn q4c(d: &Data) -> String { q4(d, 1990, "2.0") }
+fn q4a() -> String { q4(2005, "5.0") }
+fn q4b() -> String { q4(2010, "9.0") }
+fn q4c() -> String { q4(1990, "2.0") }
 
-fn q13a(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_company).in_s(
-            (&d.company_country).eq("[de]")
-                .and((&d.company_type).o(&d.companytype_kind).eq("production companies"))
+fn q13a() -> String {
+    min_row(movies().in_s(
+        company().in_s(
+            country().eq("[de]")
+                .and(Company::ty().text().eq("production companies"))
         )
-            .and((&d.movie_kind).o(&d.kind_kind).eq("movie"))
+            .and(kind().text().eq("movie"))
     ).o(
-        (&d.movie_info).in_s((&d.info_type).o(&d.infotype_info).eq("release dates")).o(&d.info_info)
-        .x(
-            (&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("rating")).o(&d.data_data)
-        )
-        .x(&d.movie_title)
-    );
-    min_row(q)
+        info().in_s(Info::ty().text().eq("release dates")).info()
+        .x(data().in_s(Data::ty().text().eq("rating")).text())
+        .x(title())
+    ))
 }
 
-fn q11a(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_keyword).o(&d.keyword_keyword).eq("sequel")
-            .and(
-                (&d.movie_production_year).ge(1950)
-                    .and((&d.movie_production_year).le(2000))
-            )
+fn q11a() -> String {
+    min_row(movies().in_s(
+        keyword().text().eq("sequel")
+            .and(production_year().ge(1950)
+                .and(production_year().le(2000)))
     ).o(
-        (&d.movie_company).in_s(
-            (&d.company_country).ne("[pl]")
-                .and(
-                    (&d.company_name).rx(r"Film")
-                        .or((&d.company_name).rx(r"Warner"))
-                        .and((&d.company_type).o(&d.companytype_kind).eq("production companies"))
-                )
-                .minus(&d.company_note)
-        ).o(&d.company_name)
-        .x(
-            (&d.movie_link).o((&d.movielink_type).o(&d.linktype_link).rx(r"follow"))
-        )
-        .x(&d.movie_title)
-    );
-    min_row(q)
+        company().in_s(
+            country().ne("[pl]")
+                .and(Company::name().rx(r"Film")
+                    .or(Company::name().rx(r"Warner"))
+                    .and(Company::ty().text().eq("production companies")))
+                .minus(Company::note())
+        ).name()
+        .x(link().ty().text().rx(r"follow"))
+        .x(title())
+    ))
 }
 
-fn q22a(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_info).in_s(
-            (&d.info_type).o(&d.infotype_info).eq("countries")
-                .and((&d.info_info).in_v(vec!["Germany","German","USA","American"]))
+fn q22a() -> String {
+    min_row(movies().in_s(
+        info().in_s(
+            Info::ty().text().eq("countries")
+                .and(Info::info().is_in(["Germany", "German", "USA", "American"]))
         )
-            .and(
-                (&d.movie_keyword).o(&d.keyword_keyword).in_v(murder4())
-                    .and(
-                        (&d.movie_production_year).gt(2008)
-                            .and((&d.movie_kind).o(&d.kind_kind).in_v(vec!["movie","episode"]))
-                    )
-            )
+            .and(keyword().text().is_in(murder4())
+                .and(production_year().gt(2008)
+                    .and(kind().text().is_in(["movie", "episode"]))))
     ).o(
-        (&d.movie_title)
-            .x(
-                (&d.movie_data).in_s(
-                    (&d.data_data).lt("7.0")
-                        .and((&d.data_type).o(&d.infotype_info).eq("rating"))
-                ).o(&d.data_data)
-            )
-            .x(
-                (&d.movie_company).in_s(
-                    (&d.company_note).nrx(r"\(USA\)")
-                        .and(
-                            (&d.company_note).rx(r"\(200.*\)")
-                                .and(
-                                    (&d.company_country).ne("[us]")
-                                        .and((&d.company_type).o(&d.companytype_kind).eq("production companies"))
-                                )
-                        )
-                ).o(&d.company_name)
-            )
-    );
-    min_row(q)
+        title()
+            .x(data().in_s(
+                Data::text().lt("7.0")
+                    .and(Data::ty().text().eq("rating"))
+            ).text())
+            .x(company().in_s(
+                Company::note().nrx(r"\(USA\)")
+                    .and(Company::note().rx(r"\(200.*\)")
+                        .and(country().ne("[us]")
+                            .and(Company::ty().text().eq("production companies"))))
+            ).name())
+    ))
 }
 
-fn q1a(d: &Data) -> String {
-    let q = d.movie
-        .in_s((&d.movie_data).o((&d.data_type).o(&d.infotype_info).eq("top 250 rank")))
+fn q1a() -> String {
+    min_row(movies()
+        .in_s(data().ty().text().eq("top 250 rank"))
             .o(
-                (&d.movie_company).in_s(
-                    (&d.company_type).o(&d.companytype_kind).eq("production companies")
-                        .and(
-                            (&d.company_note).nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)")
-                                .and(
-                                    (&d.company_note).rx(r"\(co-production\)")
-                                        .or((&d.company_note).rx(r"\(presents\)"))
-                                )
-                        )
-                ).o(&d.company_note)
-                .x(&d.movie_title)
-                .x(&d.movie_production_year)
-            );
-    min_row(q)
+                company().in_s(
+                    Company::ty().text().eq("production companies")
+                        .and(Company::note().nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)")
+                            .and(Company::note().rx(r"\(co-production\)")
+                                .or(Company::note().rx(r"\(presents\)"))))
+                ).note()
+                .x(title())
+                .x(production_year())
+            ))
 }
 
-fn q5a(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_company).in_s(
-            (&d.company_type).o(&d.companytype_kind).eq("production companies")
-                .and(
-                    (&d.company_note).rx(r"\(theatrical\)")
-                        .and((&d.company_note).rx(r"\(France\)"))
+fn q5a() -> String {
+    min_row(movies().in_s(
+        company().in_s(
+            Company::ty().text().eq("production companies")
+                .and(Company::note().rx(r"\(theatrical\)")
+                    .and(Company::note().rx(r"\(France\)")))
+        )
+            .and(info().info().is_in(nordic8())
+                .and(production_year().gt(2005)))
+    ).title())
+}
+
+fn q12a() -> String {
+    min_row(movies().in_s(
+        info().in_s(
+            Info::ty().text().eq("genres")
+                .and(Info::info().is_in(["Drama", "Horror"]))
+        )
+            .and(production_year().ge(2005)
+                .and(production_year().le(2008)))
+    ).o(
+        company().in_s(
+            country().eq("[us]")
+                .and(Company::ty().text().eq("production companies"))
+        ).name()
+        .x(data().in_s(
+            Data::ty().text().eq("rating")
+                .and(Data::text().gt("8.0"))
+        ).text())
+        .x(title())
+    ))
+}
+
+fn q14a() -> String {
+    min_row(movies().in_s(
+        keyword().text().is_in(murder4())
+            .and(kind().text().eq("movie")
+                .and(info().in_s(
+                    Info::ty().text().eq("countries")
+                        .and(Info::info().is_in(["Sweden","Norway","Germany","Denmark","Swedish","Denish","Norwegian","German","USA","American"]))
                 )
-        )
-            .and(
-                (&d.movie_info).o((&d.info_info).in_v(nordic8()))
-                    .and((&d.movie_production_year).gt(2005))
-            )
-    ).o(&d.movie_title);
-    min_row(q)
+                    .and(production_year().gt(2010))))
+    ).o(
+        data().in_s(
+            Data::ty().text().eq("rating")
+                .and(Data::text().lt("8.5"))
+        ).text()
+        .x(title())
+    ))
 }
 
-fn q12a(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_info).in_s(
-            (&d.info_type).o(&d.infotype_info).eq("genres")
-                .and((&d.info_info).in_v(vec!["Drama","Horror"]))
-        )
-            .and(
-                (&d.movie_production_year).ge(2005)
-                    .and((&d.movie_production_year).le(2008))
-            )
+fn q1b() -> String {
+    min_row(movies().in_s(
+        data().ty().text().eq("bottom 10 rank")
+            .and(production_year().ge(2005)
+                .and(production_year().le(2010)))
     ).o(
-        (&d.movie_company).in_s(
-            (&d.company_country).eq("[us]")
-                .and((&d.company_type).o(&d.companytype_kind).eq("production companies"))
-        ).o(&d.company_name)
-        .x(
-            (&d.movie_data).in_s(
-                (&d.data_type).o(&d.infotype_info).eq("rating")
-                    .and((&d.data_data).gt("8.0"))
-            ).o(&d.data_data)
-        )
-        .x(&d.movie_title)
-    );
-    min_row(q)
-}
-
-fn q14a(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_keyword).o(&d.keyword_keyword).in_v(murder4())
-            .and(
-                (&d.movie_kind).o(&d.kind_kind).eq("movie")
-                    .and(
-                        (&d.movie_info).in_s(
-                            (&d.info_type).o(&d.infotype_info).eq("countries")
-                                .and((&d.info_info).in_v(vec!["Sweden","Norway","Germany","Denmark","Swedish","Denish","Norwegian","German","USA","American"]))
-                        )
-                            .and((&d.movie_production_year).gt(2010))
-                    )
-            )
-    ).o(
-        (&d.movie_data).in_s(
-            (&d.data_type).o(&d.infotype_info).eq("rating")
-                .and((&d.data_data).lt("8.5"))
-        ).o(&d.data_data)
-        .x(&d.movie_title)
-    );
-    min_row(q)
-}
-
-fn q1b(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_data).o((&d.data_type).o(&d.infotype_info).eq("bottom 10 rank"))
-            .and(
-                (&d.movie_production_year).ge(2005)
-                    .and((&d.movie_production_year).le(2010))
-            )
-    ).o(
-        (&d.movie_company).in_s(
-            (&d.company_type).o(&d.companytype_kind).eq("production companies")
-                .and((&d.company_note).nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)"))
-        ).o(&d.company_note)
-        .x(&d.movie_title)
-        .x(&d.movie_production_year)
-    );
-    min_row(q)
+        company().in_s(
+            Company::ty().text().eq("production companies")
+                .and(Company::note().nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)"))
+        ).note()
+        .x(title())
+        .x(production_year())
+    ))
 }
 
 // q3a/q3c differ only in the country list and the year cutoff.
-fn q3ac(d: &Data, countries: Vec<&'static str>, year: i64) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_keyword).o(&d.keyword_keyword).rx(r"sequel")
-            .and(
-                (&d.movie_info).o((&d.info_info).in_v(countries))
-                    .and((&d.movie_production_year).gt(year))
-            )
-    ).o(&d.movie_title);
-    min_row(q)
+fn q3ac(countries: Vec<&'static str>, year: i64) -> String {
+    min_row(movies().in_s(
+        keyword().text().rx(r"sequel")
+            .and(info().info().is_in(countries)
+                .and(production_year().gt(year)))
+    ).title())
 }
 
-fn q3a(d: &Data) -> String { q3ac(d, nordic8(), 2005) }
-fn q3c(d: &Data) -> String {
-    q3ac(d, vec!["Sweden","Norway","Germany","Denmark","Swedish","Denish","Norwegian","German","USA","American"], 1990)
+fn q3a() -> String { q3ac(nordic8(), 2005) }
+fn q3c() -> String {
+    q3ac(vec!["Sweden","Norway","Germany","Denmark","Swedish","Denish","Norwegian","German","USA","American"], 1990)
 }
 
-fn q11b(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_keyword).o(&d.keyword_keyword).eq("sequel")
-            .and(
-                (&d.movie_production_year).eq(1998)
-                    .and((&d.movie_title).rx(r"Money"))
-            )
+fn q11b() -> String {
+    min_row(movies().in_s(
+        keyword().text().eq("sequel")
+            .and(production_year().eq(1998)
+                .and(title().rx(r"Money")))
     ).o(
-        (&d.movie_company).in_s(
-            (&d.company_country).ne("[pl]")
-                .and(
-                    (&d.company_name).rx(r"Film")
-                        .or((&d.company_name).rx(r"Warner"))
-                        .and((&d.company_type).o(&d.companytype_kind).eq("production companies"))
+        company().in_s(
+            country().ne("[pl]")
+                .and(Company::name().rx(r"Film")
+                    .or(Company::name().rx(r"Warner"))
+                    .and(Company::ty().text().eq("production companies")))
+                .minus(Company::note())
+        ).name()
+        .x(link().ty().text().rx(r"follows"))
+        .x(title())
+    ))
+}
+
+fn q13b() -> String {
+    min_row(movies().in_s(
+        kind().text().eq("movie")
+            .and(info().ty().text().eq("release dates")
+                .and(title().ne("")
+                    .and(title().rx(r"Champion")
+                        .or(title().rx(r"Loser")))))
+    ).o(
+        company().in_s(
+            country().eq("[us]")
+                .and(Company::ty().text().eq("production companies"))
+        ).name()
+        .x(data().in_s(Data::ty().text().eq("rating")).text())
+        .x(title())
+    ))
+}
+
+fn q1c() -> String {
+    min_row(movies().in_s(
+        data().ty().text().eq("top 250 rank")
+            .and(production_year().gt(2010))
+    ).o(
+        company().in_s(
+            Company::ty().text().eq("production companies")
+                .and(Company::note().nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)")
+                    .and(Company::note().rx(r"\(co-production\)")))
+        ).note()
+        .x(title())
+        .x(production_year())
+    ))
+}
+
+fn q1d() -> String {
+    min_row(movies().in_s(
+        data().ty().text().eq("bottom 10 rank")
+            .and(production_year().gt(2000))
+    ).o(
+        company().in_s(
+            Company::ty().text().eq("production companies")
+                .and(Company::note().nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)"))
+        ).note()
+        .x(title())
+        .x(production_year())
+    ))
+}
+
+fn q12b() -> String {
+    min_row(movies().in_s(
+        company().in_s(
+            country().eq("[us]")
+                .and(Company::ty().text().is_in(["production companies", "distributors"]))
+        )
+            .and(data().ty().text().eq("bottom 10 rank")
+                .and(production_year().gt(2000)
+                    .and(title().rx(r"^Birdemic")
+                        .or(title().rx(r"Movie")))))
+    ).o(
+        info().in_s(Info::ty().text().eq("budget")).info()
+        .x(title())
+    ))
+}
+
+fn q12c() -> String {
+    min_row(movies().in_s(
+        info().in_s(
+            Info::ty().text().eq("genres")
+                .and(Info::info().is_in(["Drama", "Horror", "Western", "Family"]))
+        )
+            .and(production_year().ge(2000)
+                .and(production_year().le(2010)))
+    ).o(
+        company().in_s(
+            country().eq("[us]")
+                .and(Company::ty().text().eq("production companies"))
+        ).name()
+        .x(data().in_s(
+            Data::ty().text().eq("rating")
+                .and(Data::text().gt("7.0"))
+        ).text())
+        .x(title())
+    ))
+}
+
+fn q13c() -> String {
+    min_row(movies().in_s(
+        kind().text().eq("movie")
+            .and(info().ty().text().eq("release dates")
+                .and(title().ne("")
+                    .and(title().rx(r"^Champion")
+                        .or(title().rx(r"^Loser")))))
+    ).o(
+        company().in_s(
+            country().eq("[us]")
+                .and(Company::ty().text().eq("production companies"))
+        ).name()
+        .x(data().in_s(Data::ty().text().eq("rating")).text())
+        .x(title())
+    ))
+}
+
+fn q14b() -> String {
+    min_row(movies().in_s(
+        keyword().text().is_in(["murder", "murder-in-title"])
+            .and(kind().text().eq("movie")
+                .and(info().in_s(
+                    Info::ty().text().eq("countries")
+                        .and(Info::info().is_in(["Sweden","Norway","Germany","Denmark","Swedish","Denish","Norwegian","German","USA","American"]))
                 )
-                .minus(&d.company_note)
-        ).o(&d.company_name)
-        .x(
-            (&d.movie_link).o((&d.movielink_type).o(&d.linktype_link).rx(r"follows"))
-        )
-        .x(&d.movie_title)
-    );
-    min_row(q)
+                    .and(production_year().gt(2010)
+                        .and(title().rx(r"murder")
+                            .or(title().rx(r"Murder")
+                                .or(title().rx(r"Mord")))))))
+    ).o(
+        data().in_s(
+            Data::ty().text().eq("rating")
+                .and(Data::text().gt("6.0"))
+        ).text()
+        .x(title())
+    ))
 }
 
-fn q13b(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_kind).o(&d.kind_kind).eq("movie")
-            .and(
-                (&d.movie_info).o((&d.info_type).o(&d.infotype_info).eq("release dates"))
-                    .and(
-                        (&d.movie_title).ne("")
-                            .and(
-                                (&d.movie_title).rx(r"Champion")
-                                    .or((&d.movie_title).rx(r"Loser"))
-                            )
-                    )
-            )
-    ).o(
-        (&d.movie_company).in_s(
-            (&d.company_country).eq("[us]")
-                .and((&d.company_type).o(&d.companytype_kind).eq("production companies"))
-        ).o(&d.company_name)
-        .x(
-            (&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("rating")).o(&d.data_data)
-        )
-        .x(&d.movie_title)
-    );
-    min_row(q)
-}
-
-fn q1c(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_data).o((&d.data_type).o(&d.infotype_info).eq("top 250 rank"))
-            .and((&d.movie_production_year).gt(2010))
-    ).o(
-        (&d.movie_company).in_s(
-            (&d.company_type).o(&d.companytype_kind).eq("production companies")
-                .and(
-                    (&d.company_note).nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)")
-                        .and((&d.company_note).rx(r"\(co-production\)"))
+fn q14c() -> String {
+    min_row(movies().in_s(
+        keyword().text().is_in(murder4())
+            .and(kind().text().is_in(["movie", "episode"])
+                .and(info().in_s(
+                    Info::ty().text().eq("countries")
+                        .and(Info::info().is_in(nordic10()))
                 )
-        ).o(&d.company_note)
-        .x(&d.movie_title)
-        .x(&d.movie_production_year)
-    );
-    min_row(q)
-}
-
-fn q1d(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_data).o((&d.data_type).o(&d.infotype_info).eq("bottom 10 rank"))
-            .and((&d.movie_production_year).gt(2000))
+                    .and(production_year().gt(2005))))
     ).o(
-        (&d.movie_company).in_s(
-            (&d.company_type).o(&d.companytype_kind).eq("production companies")
-                .and((&d.company_note).nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)"))
-        ).o(&d.company_note)
-        .x(&d.movie_title)
-        .x(&d.movie_production_year)
-    );
-    min_row(q)
+        data().in_s(
+            Data::ty().text().eq("rating")
+                .and(Data::text().lt("8.5"))
+        ).text()
+        .x(title())
+    ))
 }
 
-fn q12b(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_company).in_s(
-            (&d.company_country).eq("[us]")
-                .and((&d.company_type).o(&d.companytype_kind).in_v(vec!["production companies","distributors"]))
+fn q22b() -> String {
+    min_row(movies().in_s(
+        info().in_s(
+            Info::ty().text().eq("countries")
+                .and(Info::info().is_in(["Germany", "German", "USA", "American"]))
         )
-            .and(
-                (&d.movie_data).o((&d.data_type).o(&d.infotype_info).eq("bottom 10 rank"))
-                    .and(
-                        (&d.movie_production_year).gt(2000)
-                            .and(
-                                (&d.movie_title).rx(r"^Birdemic")
-                                    .or((&d.movie_title).rx(r"Movie"))
-                            )
-                    )
-            )
+            .and(keyword().text().is_in(murder4())
+                .and(production_year().gt(2009)
+                    .and(kind().text().is_in(["movie", "episode"]))))
     ).o(
-        (&d.movie_info).in_s((&d.info_type).o(&d.infotype_info).eq("budget")).o(&d.info_info)
-        .x(&d.movie_title)
-    );
-    min_row(q)
+        title()
+            .x(data().in_s(
+                Data::text().lt("7.0")
+                    .and(Data::ty().text().eq("rating"))
+            ).text())
+            .x(company().in_s(
+                Company::note().nrx(r"\(USA\)")
+                    .and(Company::note().rx(r"\(200.*\)")
+                        .and(country().ne("[us]")
+                            .and(Company::ty().text().eq("production companies"))))
+            ).name())
+    ))
 }
 
-fn q12c(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_info).in_s(
-            (&d.info_type).o(&d.infotype_info).eq("genres")
-                .and((&d.info_info).in_v(vec!["Drama","Horror","Western","Family"]))
+fn q22c() -> String {
+    min_row(movies().in_s(
+        info().in_s(
+            Info::ty().text().eq("countries")
+                .and(Info::info().is_in(nordic10()))
         )
-            .and(
-                (&d.movie_production_year).ge(2000)
-                    .and((&d.movie_production_year).le(2010))
-            )
+            .and(keyword().text().is_in(murder4())
+                .and(production_year().gt(2005)
+                    .and(kind().text().is_in(["movie", "episode"]))))
     ).o(
-        (&d.movie_company).in_s(
-            (&d.company_country).eq("[us]")
-                .and((&d.company_type).o(&d.companytype_kind).eq("production companies"))
-        ).o(&d.company_name)
-        .x(
-            (&d.movie_data).in_s(
-                (&d.data_type).o(&d.infotype_info).eq("rating")
-                    .and((&d.data_data).gt("7.0"))
-            ).o(&d.data_data)
-        )
-        .x(&d.movie_title)
-    );
-    min_row(q)
-}
-
-fn q13c(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_kind).o(&d.kind_kind).eq("movie")
-            .and(
-                (&d.movie_info).o((&d.info_type).o(&d.infotype_info).eq("release dates"))
-                    .and(
-                        (&d.movie_title).ne("")
-                            .and(
-                                (&d.movie_title).rx(r"^Champion")
-                                    .or((&d.movie_title).rx(r"^Loser"))
-                            )
-                    )
-            )
-    ).o(
-        (&d.movie_company).in_s(
-            (&d.company_country).eq("[us]")
-                .and((&d.company_type).o(&d.companytype_kind).eq("production companies"))
-        ).o(&d.company_name)
-        .x(
-            (&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("rating")).o(&d.data_data)
-        )
-        .x(&d.movie_title)
-    );
-    min_row(q)
-}
-
-fn q14b(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_keyword).o(&d.keyword_keyword).in_v(vec!["murder","murder-in-title"])
-            .and(
-                (&d.movie_kind).o(&d.kind_kind).eq("movie")
-                    .and(
-                        (&d.movie_info).in_s(
-                            (&d.info_type).o(&d.infotype_info).eq("countries")
-                                .and((&d.info_info).in_v(vec!["Sweden","Norway","Germany","Denmark","Swedish","Denish","Norwegian","German","USA","American"]))
-                        )
-                            .and(
-                                (&d.movie_production_year).gt(2010)
-                                    .and(
-                                        (&d.movie_title).rx(r"murder")
-                                            .or(
-                                                (&d.movie_title).rx(r"Murder")
-                                                    .or((&d.movie_title).rx(r"Mord"))
-                                            )
-                                    )
-                            )
-                    )
-            )
-    ).o(
-        (&d.movie_data).in_s(
-            (&d.data_type).o(&d.infotype_info).eq("rating")
-                .and((&d.data_data).gt("6.0"))
-        ).o(&d.data_data)
-        .x(&d.movie_title)
-    );
-    min_row(q)
-}
-
-fn q14c(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_keyword).o(&d.keyword_keyword).in_v(murder4())
-            .and(
-                (&d.movie_kind).o(&d.kind_kind).in_v(vec!["movie","episode"])
-                    .and(
-                        (&d.movie_info).in_s(
-                            (&d.info_type).o(&d.infotype_info).eq("countries")
-                                .and((&d.info_info).in_v(nordic10()))
-                        )
-                            .and((&d.movie_production_year).gt(2005))
-                    )
-            )
-    ).o(
-        (&d.movie_data).in_s(
-            (&d.data_type).o(&d.infotype_info).eq("rating")
-                .and((&d.data_data).lt("8.5"))
-        ).o(&d.data_data)
-        .x(&d.movie_title)
-    );
-    min_row(q)
-}
-
-fn q22b(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_info).in_s(
-            (&d.info_type).o(&d.infotype_info).eq("countries")
-                .and((&d.info_info).in_v(vec!["Germany","German","USA","American"]))
-        )
-            .and(
-                (&d.movie_keyword).o(&d.keyword_keyword).in_v(murder4())
-                    .and(
-                        (&d.movie_production_year).gt(2009)
-                            .and((&d.movie_kind).o(&d.kind_kind).in_v(vec!["movie","episode"]))
-                    )
-            )
-    ).o(
-        (&d.movie_title)
-            .x(
-                (&d.movie_data).in_s(
-                    (&d.data_data).lt("7.0")
-                        .and((&d.data_type).o(&d.infotype_info).eq("rating"))
-                ).o(&d.data_data)
-            )
-            .x(
-                (&d.movie_company).in_s(
-                    (&d.company_note).nrx(r"\(USA\)")
-                        .and(
-                            (&d.company_note).rx(r"\(200.*\)")
-                                .and(
-                                    (&d.company_country).ne("[us]")
-                                        .and((&d.company_type).o(&d.companytype_kind).eq("production companies"))
-                                )
-                        )
-                ).o(&d.company_name)
-            )
-    );
-    min_row(q)
-}
-
-fn q22c(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_info).in_s(
-            (&d.info_type).o(&d.infotype_info).eq("countries")
-                .and((&d.info_info).in_v(nordic10()))
-        )
-            .and(
-                (&d.movie_keyword).o(&d.keyword_keyword).in_v(murder4())
-                    .and(
-                        (&d.movie_production_year).gt(2005)
-                            .and((&d.movie_kind).o(&d.kind_kind).in_v(vec!["movie","episode"]))
-                    )
-            )
-    ).o(
-        (&d.movie_title)
-            .x(
-                (&d.movie_data).in_s(
-                    (&d.data_data).lt("8.5")
-                        .and((&d.data_type).o(&d.infotype_info).eq("rating"))
-                ).o(&d.data_data)
-            )
-            .x(
-                (&d.movie_company).in_s(
-                    (&d.company_note).nrx(r"\(USA\)")
-                        .and(
-                            (&d.company_note).rx(r"\(200.*\)")
-                                .and(
-                                    (&d.company_country).ne("[us]")
-                                        .and((&d.company_type).o(&d.companytype_kind).eq("production companies"))
-                                )
-                        )
-                ).o(&d.company_name)
-            )
-    );
-    min_row(q)
+        title()
+            .x(data().in_s(
+                Data::text().lt("8.5")
+                    .and(Data::ty().text().eq("rating"))
+            ).text())
+            .x(company().in_s(
+                Company::note().nrx(r"\(USA\)")
+                    .and(Company::note().rx(r"\(200.*\)")
+                        .and(country().ne("[us]")
+                            .and(Company::ty().text().eq("production companies"))))
+            ).name())
+    ))
 }

@@ -1,86 +1,88 @@
 // queries: 27a–33c (queries.jl lines 1114–1394)
-use crate::data::Data;
+
 use crate::engine::*;
-use super::helpers::*;
-use super::sets::*;
+use crate::job_schema::*;
+use crate::queries::helpers::min_row;
+use crate::queries::sets::{genre6, kw7, link3, murder4, nordic9, nordic10, voice3, voice4, writer5};
+use super::helpers::{film_or_warner_co, follow_link};
 
-fn co_28<'d>(d: &'d Data) -> impl Query<R = usize, D = usize> + Drive + Probe + 'd {
-    (&d.movie_company).in_s(
-        (&d.company_country).ne("[us]")
-            .and((&d.company_note).nrx(r"\(USA\)"))
-            .and((&d.company_note).rx(r"\(200.*\)"))
+fn co_28() -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive + Probe {
+    company().in_s(
+        country().ne("[us]")
+            .and(Company::note().nrx(r"\(USA\)"))
+            .and(Company::note().rx(r"\(200.*\)"))
     )
 }
 
-fn dt_28ac<'d>(d: &'d Data) -> impl Query<R = usize, D = usize> + Drive + Probe + 'd {
-    (&d.movie_data).in_s(
-        (&d.data_type).o(&d.infotype_info).eq("rating")
-            .and((&d.data_data).lt("8.5"))
+fn dt_28ac() -> impl Query<R = Id<Data>, D = Id<Movie>> + Drive + Probe {
+    data().in_s(
+        Data::ty().text().eq("rating")
+            .and(Data::text().lt("8.5"))
     )
 }
 
-fn dt_28b<'d>(d: &'d Data) -> impl Query<R = usize, D = usize> + Drive + Probe + 'd {
-    (&d.movie_data).in_s(
-        (&d.data_type).o(&d.infotype_info).eq("rating")
-            .and((&d.data_data).gt("6.5"))
+fn dt_28b() -> impl Query<R = Id<Data>, D = Id<Movie>> + Drive + Probe {
+    data().in_s(
+        Data::ty().text().eq("rating")
+            .and(Data::text().gt("6.5"))
     )
 }
 
 // Conjunct trees (∧ = Prod) — consumed via `member` only, so the value
-// type stays opaque (`impl Query<D = usize> + Probe`).
-fn gf_horror<'d>(d: &'d Data) -> impl Query<D = usize> + Probe + 'd {
-    (&d.info_type).o(&d.infotype_info).eq("genres")
-        .and((&d.info_info).in_v(vec!["Horror", "Thriller"]))
+// type stays opaque (`impl Query<D = Id<Info>> + Probe`).
+fn gf_horror() -> impl Query<D = Id<Info>> + Probe {
+    Info::ty().text().eq("genres")
+        .and(Info::info().is_in(["Horror", "Thriller"]))
 }
 
-fn gf_genre6<'d>(d: &'d Data) -> impl Query<D = usize> + Probe + 'd {
-    (&d.info_type).o(&d.infotype_info).eq("genres")
-        .and((&d.info_info).in_v(genre6()))
+fn gf_genre6() -> impl Query<D = Id<Info>> + Probe {
+    Info::ty().text().eq("genres")
+        .and(Info::info().is_in(genre6()))
 }
 
-fn qlink_33a<'d>(d: &'d Data) -> impl Query<R = usize, D = usize> + Drive + Probe + 'd {
-    (&d.movie_link).in_s(
-        (&d.movielink_type).o(&d.linktype_link).in_v(link3())
-            .and((&d.movielink_target).in_s(
-                (&d.movie_kind).o(&d.kind_kind).eq("tv series")
-                    .and(&d.movie_company)
-                    .and((&d.movie_data).in_s(
-                        (&d.data_type).o(&d.infotype_info).eq("rating")
-                            .and((&d.data_data).lt("3.0"))
+fn qlink_33a() -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe {
+    link().in_s(
+        MovieLink::ty().text().is_in(link3())
+            .and(target().in_s(
+                kind().text().eq("tv series")
+                    .and(company())
+                    .and(data().in_s(
+                        Data::ty().text().eq("rating")
+                            .and(Data::text().lt("3.0"))
                     ))
-                    .and((&d.movie_production_year).ge(2005))
-                    .and((&d.movie_production_year).le(2008))
+                    .and(production_year().ge(2005))
+                    .and(production_year().le(2008))
             ))
     )
 }
 
-fn qlink_33b<'d>(d: &'d Data) -> impl Query<R = usize, D = usize> + Drive + Probe + 'd {
-    (&d.movie_link).in_s(
-        (&d.movielink_type).o(&d.linktype_link).rx(r"follow")
-            .and((&d.movielink_target).in_s(
-                (&d.movie_kind).o(&d.kind_kind).eq("tv series")
-                    .and(&d.movie_company)
-                    .and((&d.movie_data).in_s(
-                        (&d.data_type).o(&d.infotype_info).eq("rating")
-                            .and((&d.data_data).lt("3.0"))
+fn qlink_33b() -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe {
+    link().in_s(
+        MovieLink::ty().text().rx(r"follow")
+            .and(target().in_s(
+                kind().text().eq("tv series")
+                    .and(company())
+                    .and(data().in_s(
+                        Data::ty().text().eq("rating")
+                            .and(Data::text().lt("3.0"))
                     ))
-                    .and((&d.movie_production_year).eq(2007))
+                    .and(production_year().eq(2007))
             ))
     )
 }
 
-fn qlink_33c<'d>(d: &'d Data) -> impl Query<R = usize, D = usize> + Drive + Probe + 'd {
-    (&d.movie_link).in_s(
-        (&d.movielink_type).o(&d.linktype_link).in_v(link3())
-            .and((&d.movielink_target).in_s(
-                (&d.movie_kind).o(&d.kind_kind).in_v(vec!["tv series", "episode"])
-                    .and(&d.movie_company)
-                    .and((&d.movie_data).in_s(
-                        (&d.data_type).o(&d.infotype_info).eq("rating")
-                            .and((&d.data_data).lt("3.5"))
+fn qlink_33c() -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe {
+    link().in_s(
+        MovieLink::ty().text().is_in(link3())
+            .and(target().in_s(
+                kind().text().is_in(["tv series", "episode"])
+                    .and(company())
+                    .and(data().in_s(
+                        Data::ty().text().eq("rating")
+                            .and(Data::text().lt("3.5"))
                     ))
-                    .and((&d.movie_production_year).ge(2000))
-                    .and((&d.movie_production_year).le(2010))
+                    .and(production_year().ge(2000))
+                    .and(production_year().le(2010))
             ))
     )
 }
@@ -108,441 +110,410 @@ pub const ENTRIES: &[super::Entry] = &[
     ("33c", "2BE || 495 Productions || 1.3 || 1.0 || A Double Shot at Love || A Double Shot at Love", q33c),
 ];
 
-fn q27a(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_complete_cast).in_s(
-            (&d.completecast_subject).o(&d.compcasttype_kind).in_v(vec!["cast", "crew"])
-                .and((&d.completecast_status).o(&d.compcasttype_kind).eq("complete"))
+fn q27a() -> String {
+    min_row(movies().in_s(
+        complete_cast().in_s(
+            subject().text().is_in(["cast", "crew"])
+                .and(status().text().eq("complete"))
         )
-            .and(film_or_warner_co(d))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("sequel"))
-            .and(follow_link(d))
-            .and((&d.movie_info).in_s((&d.info_info).in_v(vec!["Sweden", "Germany", "Swedish", "German"])))
-            .and((&d.movie_production_year).ge(1950))
-            .and((&d.movie_production_year).le(2000))
+            .and(film_or_warner_co())
+            .and(keyword().text().eq("sequel"))
+            .and(follow_link())
+            .and(info().in_s(Info::info().is_in(["Sweden", "Germany", "Swedish", "German"])))
+            .and(production_year().ge(1950))
+            .and(production_year().le(2000))
     ).o(
-        film_or_warner_co(d).o(&d.company_name)
-            .x(follow_link(d).o((&d.movielink_type).o(&d.linktype_link)))
-            .x(&d.movie_title)
-    );
-    min_row(q)
+        film_or_warner_co().name()
+            .x(follow_link().ty().text())
+            .x(title())
+    ))
 }
 
-fn q27b(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_complete_cast).in_s(
-            (&d.completecast_subject).o(&d.compcasttype_kind).in_v(vec!["cast", "crew"])
-                .and((&d.completecast_status).o(&d.compcasttype_kind).eq("complete"))
+fn q27b() -> String {
+    min_row(movies().in_s(
+        complete_cast().in_s(
+            subject().text().is_in(["cast", "crew"])
+                .and(status().text().eq("complete"))
         )
-            .and(film_or_warner_co(d))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("sequel"))
-            .and(follow_link(d))
-            .and((&d.movie_info).in_s((&d.info_info).in_v(vec!["Sweden", "Germany", "Swedish", "German"])))
-            .and((&d.movie_production_year).eq(1998))
+            .and(film_or_warner_co())
+            .and(keyword().text().eq("sequel"))
+            .and(follow_link())
+            .and(info().in_s(Info::info().is_in(["Sweden", "Germany", "Swedish", "German"])))
+            .and(production_year().eq(1998))
     ).o(
-        film_or_warner_co(d).o(&d.company_name)
-            .x(follow_link(d).o((&d.movielink_type).o(&d.linktype_link)))
-            .x(&d.movie_title)
-    );
-    min_row(q)
+        film_or_warner_co().name()
+            .x(follow_link().ty().text())
+            .x(title())
+    ))
 }
 
-fn q27c(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_complete_cast).in_s(
-            (&d.completecast_subject).o(&d.compcasttype_kind).eq("cast")
-                .and((&d.completecast_status).o(&d.compcasttype_kind).rx(r"^complete"))
+fn q27c() -> String {
+    min_row(movies().in_s(
+        complete_cast().in_s(
+            subject().text().eq("cast")
+                .and(status().text().rx(r"^complete"))
         )
-            .and(film_or_warner_co(d))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("sequel"))
-            .and(follow_link(d))
-            .and((&d.movie_info).in_s((&d.info_info).in_v(nordic9())))
-            .and((&d.movie_production_year).ge(1950))
-            .and((&d.movie_production_year).le(2010))
+            .and(film_or_warner_co())
+            .and(keyword().text().eq("sequel"))
+            .and(follow_link())
+            .and(info().in_s(Info::info().is_in(nordic9())))
+            .and(production_year().ge(1950))
+            .and(production_year().le(2010))
     ).o(
-        film_or_warner_co(d).o(&d.company_name)
-            .x(follow_link(d).o((&d.movielink_type).o(&d.linktype_link)))
-            .x(&d.movie_title)
-    );
-    min_row(q)
+        film_or_warner_co().name()
+            .x(follow_link().ty().text())
+            .x(title())
+    ))
 }
 
-fn q28a(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_complete_cast).in_s(
-            (&d.completecast_subject).o(&d.compcasttype_kind).eq("crew")
-                .and((&d.completecast_status).o(&d.compcasttype_kind).ne("complete+verified"))
+fn q28a() -> String {
+    min_row(movies().in_s(
+        complete_cast().in_s(
+            subject().text().eq("crew")
+                .and(status().text().ne("complete+verified"))
         )
-            .and(co_28(d))
-            .and((&d.movie_info).in_s(
-                (&d.info_type).o(&d.infotype_info).eq("countries")
-                    .and((&d.info_info).in_v(nordic10()))
+            .and(co_28())
+            .and(info().in_s(
+                Info::ty().text().eq("countries")
+                    .and(Info::info().is_in(nordic10()))
             ))
-            .and(dt_28ac(d))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).in_v(murder4()))
-            .and((&d.movie_kind).o(&d.kind_kind).in_v(vec!["movie", "episode"]))
-            .and((&d.movie_production_year).gt(2000))
+            .and(dt_28ac())
+            .and(keyword().text().is_in(murder4()))
+            .and(kind().text().is_in(["movie", "episode"]))
+            .and(production_year().gt(2000))
     ).o(
-        co_28(d).o(&d.company_name)
-            .x(dt_28ac(d).o(&d.data_data))
-            .x(&d.movie_title)
-    );
-    min_row(q)
+        co_28().name()
+            .x(dt_28ac().text())
+            .x(title())
+    ))
 }
 
-fn q28b(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_complete_cast).in_s(
-            (&d.completecast_subject).o(&d.compcasttype_kind).eq("crew")
-                .and((&d.completecast_status).o(&d.compcasttype_kind).ne("complete+verified"))
+fn q28b() -> String {
+    min_row(movies().in_s(
+        complete_cast().in_s(
+            subject().text().eq("crew")
+                .and(status().text().ne("complete+verified"))
         )
-            .and(co_28(d))
-            .and((&d.movie_info).in_s(
-                (&d.info_type).o(&d.infotype_info).eq("countries")
-                    .and((&d.info_info).in_v(vec!["Sweden", "Germany", "Swedish", "German"]))
+            .and(co_28())
+            .and(info().in_s(
+                Info::ty().text().eq("countries")
+                    .and(Info::info().is_in(["Sweden", "Germany", "Swedish", "German"]))
             ))
-            .and(dt_28b(d))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).in_v(murder4()))
-            .and((&d.movie_kind).o(&d.kind_kind).in_v(vec!["movie", "episode"]))
-            .and((&d.movie_production_year).gt(2005))
+            .and(dt_28b())
+            .and(keyword().text().is_in(murder4()))
+            .and(kind().text().is_in(["movie", "episode"]))
+            .and(production_year().gt(2005))
     ).o(
-        co_28(d).o(&d.company_name)
-            .x(dt_28b(d).o(&d.data_data))
-            .x(&d.movie_title)
-    );
-    min_row(q)
+        co_28().name()
+            .x(dt_28b().text())
+            .x(title())
+    ))
 }
 
-fn q28c(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_complete_cast).in_s(
-            (&d.completecast_subject).o(&d.compcasttype_kind).eq("cast")
-                .and((&d.completecast_status).o(&d.compcasttype_kind).eq("complete"))
+fn q28c() -> String {
+    min_row(movies().in_s(
+        complete_cast().in_s(
+            subject().text().eq("cast")
+                .and(status().text().eq("complete"))
         )
-            .and(co_28(d))
-            .and((&d.movie_info).in_s(
-                (&d.info_type).o(&d.infotype_info).eq("countries")
-                    .and((&d.info_info).in_v(nordic10()))
+            .and(co_28())
+            .and(info().in_s(
+                Info::ty().text().eq("countries")
+                    .and(Info::info().is_in(nordic10()))
             ))
-            .and(dt_28ac(d))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).in_v(murder4()))
-            .and((&d.movie_kind).o(&d.kind_kind).in_v(vec!["movie", "episode"]))
-            .and((&d.movie_production_year).gt(2005))
+            .and(dt_28ac())
+            .and(keyword().text().is_in(murder4()))
+            .and(kind().text().is_in(["movie", "episode"]))
+            .and(production_year().gt(2005))
     ).o(
-        co_28(d).o(&d.company_name)
-            .x(dt_28ac(d).o(&d.data_data))
-            .x(&d.movie_title)
-    );
-    min_row(q)
+        co_28().name()
+            .x(dt_28ac().text())
+            .x(title())
+    ))
 }
 
-fn q29a(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_complete_cast).in_s(
-            (&d.completecast_subject).o(&d.compcasttype_kind).eq("cast")
-                .and((&d.completecast_status).o(&d.compcasttype_kind).eq("complete+verified"))
+fn q29a() -> String {
+    min_row(movies().in_s(
+        complete_cast().in_s(
+            subject().text().eq("cast")
+                .and(status().text().eq("complete+verified"))
         )
-            .and((&d.movie_company).o((&d.company_country).eq("[us]")))
-            .and((&d.movie_info).in_s(
-                (&d.info_type).o(&d.infotype_info).eq("release dates")
-                    .and(
-                        (&d.info_info).rx(r"^Japan:.*200")
-                            .or((&d.info_info).rx(r"^USA:.*200"))
-                    )
+            .and(company().country().eq("[us]"))
+            .and(info().in_s(
+                Info::ty().text().eq("release dates")
+                    .and(Info::info().rx(r"^Japan:.*200")
+                        .or(Info::info().rx(r"^USA:.*200")))
             ))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("computer-animation"))
-            .and((&d.movie_title).eq("Shrek 2"))
-            .and((&d.movie_production_year).ge(2000))
-            .and((&d.movie_production_year).le(2010))
+            .and(keyword().text().eq("computer-animation"))
+            .and(title().eq("Shrek 2"))
+            .and(production_year().ge(2000))
+            .and(production_year().le(2010))
     ).o(
-        (&d.movie_cast).in_s(
-            (&d.cast_note).in_v(voice3())
-                .and((&d.cast_role).o(&d.roletype_role).eq("actress"))
-                .and((&d.cast_character).o((&d.character_name).eq("Queen")))
-                .and((&d.cast_person).in_s(
-                    (&d.person_gender).eq("f")
-                        .and((&d.person_name).rx(r"An"))
-                        .and(&d.person_aka)
-                        .and((&d.person_info).in_s((&d.personinfo_type).o(&d.infotype_info).eq("trivia")))
+        cast().in_s(
+            Cast::note().is_in(voice3())
+                .and(role().text().eq("actress"))
+                .and(character().text().eq("Queen"))
+                .and(person().in_s(
+                    gender().eq("f")
+                        .and(Person::name().rx(r"An"))
+                        .and(alias())
+                        .and(bio().in_s(PersonInfo::ty().text().eq("trivia")))
                 ))
         ).o(
-            (&d.cast_character).o(&d.character_name)
-                .x((&d.cast_person).o(&d.person_name))
+            character().text()
+                .x(person().name())
         )
-        .x(&d.movie_title)
-    );
-    min_row(q)
+        .x(title())
+    ))
 }
 
-fn q29b(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_complete_cast).in_s(
-            (&d.completecast_subject).o(&d.compcasttype_kind).eq("cast")
-                .and((&d.completecast_status).o(&d.compcasttype_kind).eq("complete+verified"))
+fn q29b() -> String {
+    min_row(movies().in_s(
+        complete_cast().in_s(
+            subject().text().eq("cast")
+                .and(status().text().eq("complete+verified"))
         )
-            .and((&d.movie_company).o((&d.company_country).eq("[us]")))
-            .and((&d.movie_info).in_s(
-                (&d.info_type).o(&d.infotype_info).eq("release dates")
-                    .and((&d.info_info).rx(r"^USA:.*200"))
+            .and(company().country().eq("[us]"))
+            .and(info().in_s(
+                Info::ty().text().eq("release dates")
+                    .and(Info::info().rx(r"^USA:.*200"))
             ))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("computer-animation"))
-            .and((&d.movie_title).eq("Shrek 2"))
-            .and((&d.movie_production_year).ge(2000))
-            .and((&d.movie_production_year).le(2005))
+            .and(keyword().text().eq("computer-animation"))
+            .and(title().eq("Shrek 2"))
+            .and(production_year().ge(2000))
+            .and(production_year().le(2005))
     ).o(
-        (&d.movie_cast).in_s(
-            (&d.cast_note).in_v(voice3())
-                .and((&d.cast_role).o(&d.roletype_role).eq("actress"))
-                .and((&d.cast_character).o((&d.character_name).eq("Queen")))
-                .and((&d.cast_person).in_s(
-                    (&d.person_gender).eq("f")
-                        .and((&d.person_name).rx(r"An"))
-                        .and(&d.person_aka)
-                        .and((&d.person_info).in_s((&d.personinfo_type).o(&d.infotype_info).eq("height")))
+        cast().in_s(
+            Cast::note().is_in(voice3())
+                .and(role().text().eq("actress"))
+                .and(character().text().eq("Queen"))
+                .and(person().in_s(
+                    gender().eq("f")
+                        .and(Person::name().rx(r"An"))
+                        .and(alias())
+                        .and(bio().in_s(PersonInfo::ty().text().eq("height")))
                 ))
         ).o(
-            (&d.cast_character).o(&d.character_name)
-                .x((&d.cast_person).o(&d.person_name))
+            character().text()
+                .x(person().name())
         )
-        .x(&d.movie_title)
-    );
-    min_row(q)
+        .x(title())
+    ))
 }
 
-fn q29c(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_complete_cast).in_s(
-            (&d.completecast_subject).o(&d.compcasttype_kind).eq("cast")
-                .and((&d.completecast_status).o(&d.compcasttype_kind).eq("complete+verified"))
+fn q29c() -> String {
+    min_row(movies().in_s(
+        complete_cast().in_s(
+            subject().text().eq("cast")
+                .and(status().text().eq("complete+verified"))
         )
-            .and((&d.movie_company).o((&d.company_country).eq("[us]")))
-            .and((&d.movie_info).in_s(
-                (&d.info_type).o(&d.infotype_info).eq("release dates")
-                    .and(
-                        (&d.info_info).rx(r"^Japan:.*200")
-                            .or((&d.info_info).rx(r"^USA:.*200"))
-                    )
+            .and(company().country().eq("[us]"))
+            .and(info().in_s(
+                Info::ty().text().eq("release dates")
+                    .and(Info::info().rx(r"^Japan:.*200")
+                        .or(Info::info().rx(r"^USA:.*200")))
             ))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("computer-animation"))
-            .and((&d.movie_production_year).ge(2000))
-            .and((&d.movie_production_year).le(2010))
+            .and(keyword().text().eq("computer-animation"))
+            .and(production_year().ge(2000))
+            .and(production_year().le(2010))
     ).o(
-        (&d.movie_cast).in_s(
-            (&d.cast_note).in_v(voice4())
-                .and((&d.cast_role).o(&d.roletype_role).eq("actress"))
-                .and((&d.cast_person).in_s(
-                    (&d.person_gender).eq("f")
-                        .and((&d.person_name).rx(r"An"))
-                        .and(&d.person_aka)
-                        .and((&d.person_info).in_s((&d.personinfo_type).o(&d.infotype_info).eq("trivia")))
+        cast().in_s(
+            Cast::note().is_in(voice4())
+                .and(role().text().eq("actress"))
+                .and(person().in_s(
+                    gender().eq("f")
+                        .and(Person::name().rx(r"An"))
+                        .and(alias())
+                        .and(bio().in_s(PersonInfo::ty().text().eq("trivia")))
                 ))
         ).o(
-            (&d.cast_character).o(&d.character_name)
-                .x((&d.cast_person).o(&d.person_name))
+            character().text()
+                .x(person().name())
         )
-        .x(&d.movie_title)
-    );
-    min_row(q)
+        .x(title())
+    ))
 }
 
-fn q30a(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_complete_cast).in_s(
-            (&d.completecast_subject).o(&d.compcasttype_kind).in_v(vec!["cast", "crew"])
-                .and((&d.completecast_status).o(&d.compcasttype_kind).eq("complete+verified"))
+fn q30a() -> String {
+    min_row(movies().in_s(
+        complete_cast().in_s(
+            subject().text().is_in(["cast", "crew"])
+                .and(status().text().eq("complete+verified"))
         )
-            .and((&d.movie_info).in_s(gf_horror(d)))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).in_v(kw7()))
-            .and((&d.movie_production_year).gt(2000))
+            .and(info().in_s(gf_horror()))
+            .and(keyword().text().is_in(kw7()))
+            .and(production_year().gt(2000))
     ).o(
-        (&d.movie_info).in_s(gf_horror(d)).o(&d.info_info)
-            .x((&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("votes")).o(&d.data_data))
-            .x(&d.movie_title)
-            .x((&d.movie_cast).in_s(
-                (&d.cast_note).in_v(writer5())
-                    .and((&d.cast_person).o((&d.person_gender).eq("m")))
-            ).o((&d.cast_person).o(&d.person_name)))
-    );
-    min_row(q)
+        info().in_s(gf_horror()).info()
+            .x(data().in_s(Data::ty().text().eq("votes")).text())
+            .x(title())
+            .x(cast().in_s(
+                Cast::note().is_in(writer5())
+                    .and(person().gender().eq("m"))
+            ).person().name())
+    ))
 }
 
-fn q30b(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_complete_cast).in_s(
-            (&d.completecast_subject).o(&d.compcasttype_kind).in_v(vec!["cast", "crew"])
-                .and((&d.completecast_status).o(&d.compcasttype_kind).eq("complete+verified"))
+fn q30b() -> String {
+    min_row(movies().in_s(
+        complete_cast().in_s(
+            subject().text().is_in(["cast", "crew"])
+                .and(status().text().eq("complete+verified"))
         )
-            .and((&d.movie_info).in_s(gf_horror(d)))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).in_v(kw7()))
-            .and((&d.movie_production_year).gt(2000))
-            .and(
-                (&d.movie_title).rx(r"Freddy")
-                    .or(
-                        (&d.movie_title).rx(r"Jason")
-                            .or((&d.movie_title).rx(r"^Saw"))
-                    )
-            )
+            .and(info().in_s(gf_horror()))
+            .and(keyword().text().is_in(kw7()))
+            .and(production_year().gt(2000))
+            .and(title().rx(r"Freddy")
+                .or(title().rx(r"Jason")
+                    .or(title().rx(r"^Saw"))))
     ).o(
-        (&d.movie_info).in_s(gf_horror(d)).o(&d.info_info)
-            .x((&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("votes")).o(&d.data_data))
-            .x(&d.movie_title)
-            .x((&d.movie_cast).in_s(
-                (&d.cast_note).in_v(writer5())
-                    .and((&d.cast_person).o((&d.person_gender).eq("m")))
-            ).o((&d.cast_person).o(&d.person_name)))
-    );
-    min_row(q)
+        info().in_s(gf_horror()).info()
+            .x(data().in_s(Data::ty().text().eq("votes")).text())
+            .x(title())
+            .x(cast().in_s(
+                Cast::note().is_in(writer5())
+                    .and(person().gender().eq("m"))
+            ).person().name())
+    ))
 }
 
-fn q30c(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_complete_cast).in_s(
-            (&d.completecast_subject).o(&d.compcasttype_kind).eq("cast")
-                .and((&d.completecast_status).o(&d.compcasttype_kind).eq("complete+verified"))
+fn q30c() -> String {
+    min_row(movies().in_s(
+        complete_cast().in_s(
+            subject().text().eq("cast")
+                .and(status().text().eq("complete+verified"))
         )
-            .and((&d.movie_info).in_s(gf_genre6(d)))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).in_v(kw7()))
+            .and(info().in_s(gf_genre6()))
+            .and(keyword().text().is_in(kw7()))
     ).o(
-        (&d.movie_info).in_s(gf_genre6(d)).o(&d.info_info)
-            .x((&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("votes")).o(&d.data_data))
-            .x(&d.movie_title)
-            .x((&d.movie_cast).in_s(
-                (&d.cast_note).in_v(writer5())
-                    .and((&d.cast_person).o((&d.person_gender).eq("m")))
-            ).o((&d.cast_person).o(&d.person_name)))
-    );
-    min_row(q)
+        info().in_s(gf_genre6()).info()
+            .x(data().in_s(Data::ty().text().eq("votes")).text())
+            .x(title())
+            .x(cast().in_s(
+                Cast::note().is_in(writer5())
+                    .and(person().gender().eq("m"))
+            ).person().name())
+    ))
 }
 
-fn q31a(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_company).o((&d.company_name).rx(r"^Lionsgate"))
-            .and((&d.movie_info).in_s(gf_horror(d)))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).in_v(kw7()))
+fn q31a() -> String {
+    min_row(movies().in_s(
+        company().name().rx(r"^Lionsgate")
+            .and(info().in_s(gf_horror()))
+            .and(keyword().text().is_in(kw7()))
     ).o(
-        (&d.movie_info).in_s(gf_horror(d)).o(&d.info_info)
-            .x((&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("votes")).o(&d.data_data))
-            .x(&d.movie_title)
-            .x((&d.movie_cast).in_s(
-                (&d.cast_note).in_v(writer5())
-                    .and((&d.cast_person).o((&d.person_gender).eq("m")))
-            ).o((&d.cast_person).o(&d.person_name)))
-    );
-    min_row(q)
+        info().in_s(gf_horror()).info()
+            .x(data().in_s(Data::ty().text().eq("votes")).text())
+            .x(title())
+            .x(cast().in_s(
+                Cast::note().is_in(writer5())
+                    .and(person().gender().eq("m"))
+            ).person().name())
+    ))
 }
 
-fn q31b(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_company).in_s(
-            (&d.company_name).rx(r"^Lionsgate")
-                .and((&d.company_note).rx(r"\(Blu-ray\)"))
+fn q31b() -> String {
+    min_row(movies().in_s(
+        company().in_s(
+            Company::name().rx(r"^Lionsgate")
+                .and(Company::note().rx(r"\(Blu-ray\)"))
         )
-            .and((&d.movie_info).in_s(gf_horror(d)))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).in_v(kw7()))
-            .and((&d.movie_production_year).gt(2000))
-            .and(
-                (&d.movie_title).rx(r"Freddy")
-                    .or(
-                        (&d.movie_title).rx(r"Jason")
-                            .or((&d.movie_title).rx(r"^Saw"))
-                    )
-            )
+            .and(info().in_s(gf_horror()))
+            .and(keyword().text().is_in(kw7()))
+            .and(production_year().gt(2000))
+            .and(title().rx(r"Freddy")
+                .or(title().rx(r"Jason")
+                    .or(title().rx(r"^Saw"))))
     ).o(
-        (&d.movie_info).in_s(gf_horror(d)).o(&d.info_info)
-            .x((&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("votes")).o(&d.data_data))
-            .x(&d.movie_title)
-            .x((&d.movie_cast).in_s(
-                (&d.cast_note).in_v(writer5())
-                    .and((&d.cast_person).o((&d.person_gender).eq("m")))
-            ).o((&d.cast_person).o(&d.person_name)))
-    );
-    min_row(q)
+        info().in_s(gf_horror()).info()
+            .x(data().in_s(Data::ty().text().eq("votes")).text())
+            .x(title())
+            .x(cast().in_s(
+                Cast::note().is_in(writer5())
+                    .and(person().gender().eq("m"))
+            ).person().name())
+    ))
 }
 
-fn q31c(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_company).o((&d.company_name).rx(r"^Lionsgate"))
-            .and((&d.movie_info).in_s(gf_genre6(d)))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).in_v(kw7()))
+fn q31c() -> String {
+    min_row(movies().in_s(
+        company().name().rx(r"^Lionsgate")
+            .and(info().in_s(gf_genre6()))
+            .and(keyword().text().is_in(kw7()))
     ).o(
-        (&d.movie_info).in_s(gf_genre6(d)).o(&d.info_info)
-            .x((&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("votes")).o(&d.data_data))
-            .x(&d.movie_title)
-            .x((&d.movie_cast).in_s((&d.cast_note).in_v(writer5()))
-                    .o((&d.cast_person).o(&d.person_name)))
-    );
-    min_row(q)
+        info().in_s(gf_genre6()).info()
+            .x(data().in_s(Data::ty().text().eq("votes")).text())
+            .x(title())
+            .x(cast().in_s(Cast::note().is_in(writer5()))
+                    .person().name())
+    ))
 }
 
 // q32a/q32b differ only in the keyword constant.
-fn q32(d: &Data, kw: &'static str) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_keyword).o(&d.keyword_keyword).eq(kw)
-            .and(&d.movie_link)
+fn q32(kw: &'static str) -> String {
+    min_row(movies().in_s(
+        keyword().text().eq(kw)
+            .and(link())
     ).o(
-        (&d.movie_link).o((&d.movielink_type).o(&d.linktype_link))
-            .x(&d.movie_title)
-            .x((&d.movie_link).o((&d.movielink_target).o(&d.movie_title)))
-    );
-    min_row(q)
+        link().ty().text()
+            .x(title())
+            .x(link().target().title())
+    ))
 }
 
-fn q32a(d: &Data) -> String { q32(d, "10,000-mile-club") }
-fn q32b(d: &Data) -> String { q32(d, "character-name-in-title") }
+fn q32a() -> String { q32("10,000-mile-club") }
+fn q32b() -> String { q32("character-name-in-title") }
 
-fn q33a(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_kind).o(&d.kind_kind).eq("tv series")
-            .and((&d.movie_company).o((&d.company_country).eq("[us]")))
-            .and(qlink_33a(d))
+fn q33a() -> String {
+    min_row(movies().in_s(
+        kind().text().eq("tv series")
+            .and(company().country().eq("[us]"))
+            .and(qlink_33a())
     ).o(
-        (&d.movie_company).in_s((&d.company_country).eq("[us]")).o(&d.company_name)
-            .x(qlink_33a(d).o((&d.movielink_target).o((&d.movie_company).o(&d.company_name))))
-            .x((&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("rating")).o(&d.data_data))
-            .x(qlink_33a(d).o((&d.movielink_target).o((&d.movie_data).in_s(
-                (&d.data_type).o(&d.infotype_info).eq("rating")
-                    .and((&d.data_data).lt("3.0"))
-            ).o(&d.data_data))))
-            .x(&d.movie_title)
-            .x(qlink_33a(d).o((&d.movielink_target).o(&d.movie_title)))
-    );
-    min_row(q)
+        company().in_s(country().eq("[us]")).name()
+            .x(qlink_33a().target().company().name())
+            .x(data().in_s(Data::ty().text().eq("rating")).text())
+            .x(qlink_33a().target().o(data().in_s(
+                Data::ty().text().eq("rating")
+                    .and(Data::text().lt("3.0"))
+            ).text()))
+            .x(title())
+            .x(qlink_33a().target().title())
+    ))
 }
 
-fn q33b(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_kind).o(&d.kind_kind).eq("tv series")
-            .and((&d.movie_company).o((&d.company_country).eq("[nl]")))
-            .and(qlink_33b(d))
+fn q33b() -> String {
+    min_row(movies().in_s(
+        kind().text().eq("tv series")
+            .and(company().country().eq("[nl]"))
+            .and(qlink_33b())
     ).o(
-        (&d.movie_company).in_s((&d.company_country).eq("[nl]")).o(&d.company_name)
-            .x(qlink_33b(d).o((&d.movielink_target).o((&d.movie_company).o(&d.company_name))))
-            .x((&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("rating")).o(&d.data_data))
-            .x(qlink_33b(d).o((&d.movielink_target).o((&d.movie_data).in_s(
-                (&d.data_type).o(&d.infotype_info).eq("rating")
-                    .and((&d.data_data).lt("3.0"))
-            ).o(&d.data_data))))
-            .x(&d.movie_title)
-            .x(qlink_33b(d).o((&d.movielink_target).o(&d.movie_title)))
-    );
-    min_row(q)
+        company().in_s(country().eq("[nl]")).name()
+            .x(qlink_33b().target().company().name())
+            .x(data().in_s(Data::ty().text().eq("rating")).text())
+            .x(qlink_33b().target().o(data().in_s(
+                Data::ty().text().eq("rating")
+                    .and(Data::text().lt("3.0"))
+            ).text()))
+            .x(title())
+            .x(qlink_33b().target().title())
+    ))
 }
 
-fn q33c(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_kind).o(&d.kind_kind).in_v(vec!["tv series", "episode"])
-            .and((&d.movie_company).o((&d.company_country).ne("[us]")))
-            .and(qlink_33c(d))
+fn q33c() -> String {
+    min_row(movies().in_s(
+        kind().text().is_in(["tv series", "episode"])
+            .and(company().country().ne("[us]"))
+            .and(qlink_33c())
     ).o(
-        (&d.movie_company).in_s((&d.company_country).ne("[us]")).o(&d.company_name)
-            .x(qlink_33c(d).o((&d.movielink_target).o((&d.movie_company).o(&d.company_name))))
-            .x((&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("rating")).o(&d.data_data))
-            .x(qlink_33c(d).o((&d.movielink_target).o((&d.movie_data).in_s(
-                (&d.data_type).o(&d.infotype_info).eq("rating")
-                    .and((&d.data_data).lt("3.5"))
-            ).o(&d.data_data))))
-            .x(&d.movie_title)
-            .x(qlink_33c(d).o((&d.movielink_target).o(&d.movie_title)))
-    );
-    min_row(q)
+        company().in_s(country().ne("[us]")).name()
+            .x(qlink_33c().target().company().name())
+            .x(data().in_s(Data::ty().text().eq("rating")).text())
+            .x(qlink_33c().target().o(data().in_s(
+                Data::ty().text().eq("rating")
+                    .and(Data::text().lt("3.5"))
+            ).text()))
+            .x(title())
+            .x(qlink_33c().target().title())
+    ))
 }

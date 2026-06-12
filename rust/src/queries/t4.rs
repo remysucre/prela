@@ -1,7 +1,9 @@
 // queries: queries.jl lines 757-856 (templates 16-18)
-use crate::data::Data;
+
 use crate::engine::*;
-use super::helpers::*;
+use crate::job_schema::*;
+use crate::queries::helpers::min_row;
+use crate::queries::sets::{genre6, writer5};
 
 pub const ENTRIES: &[super::Entry] = &[
     ("16a", "Adams, Stan || Carol Burnett vs. Anthony Perkins", q16a),
@@ -20,147 +22,138 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 // q16a/q16d differ only in the episode_nr lower bound.
-fn q16ad(d: &Data, lo: i64) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_company).o((&d.company_country).eq("[us]"))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title"))
-            .and((&d.movie_episode_nr).ge(lo))
-            .and((&d.movie_episode_nr).lt(100))
+fn q16ad(lo: i64) -> String {
+    min_row(movies().in_s(
+        company().country().eq("[us]")
+            .and(keyword().text().eq("character-name-in-title"))
+            .and(episode_nr().ge(lo))
+            .and(episode_nr().lt(100))
     ).o(
-        (&d.movie_cast).o((&d.cast_person).o((&d.person_aka).o(&d.akaname_name)))
-            .x(&d.movie_title)
-    );
-    min_row(q)
+        cast().person().alias().text()
+            .x(title())
+    ))
 }
 
-fn q16a(d: &Data) -> String { q16ad(d, 50) }
-fn q16d(d: &Data) -> String { q16ad(d, 5) }
+fn q16a() -> String { q16ad(50) }
+fn q16d() -> String { q16ad(5) }
 
-fn q16b(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_company).o((&d.company_country).eq("[us]"))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title"))
+fn q16b() -> String {
+    min_row(movies().in_s(
+        company().country().eq("[us]")
+            .and(keyword().text().eq("character-name-in-title"))
     ).o(
-        (&d.movie_cast).o((&d.cast_person).o((&d.person_aka).o(&d.akaname_name)))
-            .x(&d.movie_title)
-    );
-    min_row(q)
+        cast().person().alias().text()
+            .x(title())
+    ))
 }
 
-fn q16c(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_company).o((&d.company_country).eq("[us]"))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title"))
-            .and((&d.movie_episode_nr).lt(100))
+fn q16c() -> String {
+    min_row(movies().in_s(
+        company().country().eq("[us]")
+            .and(keyword().text().eq("character-name-in-title"))
+            .and(episode_nr().lt(100))
     ).o(
-        (&d.movie_cast).o((&d.cast_person).o((&d.person_aka).o(&d.akaname_name)))
-            .x(&d.movie_title)
-    );
-    min_row(q)
+        cast().person().alias().text()
+            .x(title())
+    ))
 }
 
-fn q17a(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_company).o((&d.company_country).eq("[us]"))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title"))
+fn q17a() -> String {
+    min_row(movies().in_s(
+        company().country().eq("[us]")
+            .and(keyword().text().eq("character-name-in-title"))
     ).o(
-        (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(r"^B")))
-    );
-    min_row(q)
+        cast().person().name().rx(r"^B")
+    ))
 }
 
 // q17b/c/d/f differ only in the person-name regex.
-fn q17_any_co(d: &Data, re: &str) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_company)
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title"))
+fn q17_any_co(re: &str) -> String {
+    min_row(movies().in_s(
+        company()
+            .and(keyword().text().eq("character-name-in-title"))
     ).o(
-        (&d.movie_cast).o((&d.cast_person).o((&d.person_name).rx(re)))
-    );
-    min_row(q)
+        cast().person().name().rx(re)
+    ))
 }
 
-fn q17b(d: &Data) -> String { q17_any_co(d, r"^Z") }
-fn q17c(d: &Data) -> String { q17_any_co(d, r"^X") }
-fn q17d(d: &Data) -> String { q17_any_co(d, r"Bert") }
-fn q17f(d: &Data) -> String { q17_any_co(d, r"B") }
+fn q17b() -> String { q17_any_co(r"^Z") }
+fn q17c() -> String { q17_any_co(r"^X") }
+fn q17d() -> String { q17_any_co(r"Bert") }
+fn q17f() -> String { q17_any_co(r"B") }
 
-fn q17e(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_company).o((&d.company_country).eq("[us]"))
-            .and((&d.movie_keyword).o(&d.keyword_keyword).eq("character-name-in-title"))
+fn q17e() -> String {
+    min_row(movies().in_s(
+        company().country().eq("[us]")
+            .and(keyword().text().eq("character-name-in-title"))
     ).o(
-        (&d.movie_cast).o((&d.cast_person).o(&d.person_name))
-    );
-    min_row(q)
+        cast().person().name()
+    ))
 }
 
-fn ib_18a<'d>(d: &'d Data) -> impl Query<R = &'static str, D = usize> + Drive + Probe + 'd {
-    (&d.movie_info).in_s((&d.info_type).o(&d.infotype_info).eq("budget")).o(&d.info_info)
+fn ib_18a() -> impl Query<R = &'static str, D = Id<Movie>> + Drive + Probe {
+    info().in_s(Info::ty().text().eq("budget")).info()
 }
 
-fn q18a(d: &Data) -> String {
-    let q = d.movie.in_s(
-        ib_18a(d)
-            .and((&d.movie_cast).in_s(
-                (&d.cast_note).in_v(vec!["(producer)", "(executive producer)"])
-                    .and((&d.cast_person).in_s(
-                        (&d.person_gender).eq("m")
-                            .and((&d.person_name).rx(r"Tim"))
+fn q18a() -> String {
+    min_row(movies().in_s(
+        ib_18a()
+            .and(cast().in_s(
+                Cast::note().is_in(["(producer)", "(executive producer)"])
+                    .and(person().in_s(
+                        gender().eq("m")
+                            .and(Person::name().rx(r"Tim"))
                     ))
             ))
     ).o(
-        ib_18a(d)
-            .x((&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("votes")).o(&d.data_data))
-            .x(&d.movie_title)
-    );
-    min_row(q)
+        ib_18a()
+            .x(data().in_s(Data::ty().text().eq("votes")).text())
+            .x(title())
+    ))
 }
 
 // Conjunct/diff tree (∧ = Prod, - = Diff) — consumed via `member` only, so
-// the value type stays opaque (`impl Query<D = usize> + Probe`).
-fn gf_18b<'d>(d: &'d Data) -> impl Query<D = usize> + Probe + 'd {
-    (&d.info_type).o(&d.infotype_info).eq("genres")
-        .and((&d.info_info).in_v(vec!["Horror", "Thriller"]))
-        .minus(&d.info_note)
+// the value type stays opaque (`impl Query<D = Id<Info>> + Probe`).
+fn gf_18b() -> impl Query<D = Id<Info>> + Probe {
+    Info::ty().text().eq("genres")
+        .and(Info::info().is_in(["Horror", "Thriller"]))
+        .minus(Info::note())
 }
 
-fn q18b(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_info).in_s(gf_18b(d))
-            .and((&d.movie_production_year).ge(2008))
-            .and((&d.movie_production_year).le(2014))
-            .and((&d.movie_cast).in_s(
-                (&d.cast_note).in_v(super::sets::writer5())
-                    .and((&d.cast_person).in_s((&d.person_gender).eq("f")))
+fn q18b() -> String {
+    min_row(movies().in_s(
+        info().in_s(gf_18b())
+            .and(production_year().ge(2008))
+            .and(production_year().le(2014))
+            .and(cast().in_s(
+                Cast::note().is_in(writer5())
+                    .and(person().in_s(gender().eq("f")))
             ))
     ).o(
-        (&d.movie_info).in_s(gf_18b(d)).o(&d.info_info)
-            .x((&d.movie_data).in_s(
-                (&d.data_type).o(&d.infotype_info).eq("rating")
-                    .and((&d.data_data).gt("8.0"))
-            ).o(&d.data_data))
-            .x(&d.movie_title)
-    );
-    min_row(q)
+        info().in_s(gf_18b()).info()
+            .x(data().in_s(
+                Data::ty().text().eq("rating")
+                    .and(Data::text().gt("8.0"))
+            ).text())
+            .x(title())
+    ))
 }
 
-fn gf_18c<'d>(d: &'d Data) -> impl Query<D = usize> + Probe + 'd {
-    (&d.info_type).o(&d.infotype_info).eq("genres")
-        .and((&d.info_info).in_v(super::sets::genre6()))
+fn gf_18c() -> impl Query<D = Id<Info>> + Probe {
+    Info::ty().text().eq("genres")
+        .and(Info::info().is_in(genre6()))
 }
 
-fn q18c(d: &Data) -> String {
-    let q = d.movie.in_s(
-        (&d.movie_info).in_s(gf_18c(d))
-            .and((&d.movie_cast).in_s(
-                (&d.cast_note).in_v(super::sets::writer5())
-                    .and((&d.cast_person).in_s((&d.person_gender).eq("m")))
+fn q18c() -> String {
+    min_row(movies().in_s(
+        info().in_s(gf_18c())
+            .and(cast().in_s(
+                Cast::note().is_in(writer5())
+                    .and(person().in_s(gender().eq("m")))
             ))
     ).o(
-        (&d.movie_info).in_s(gf_18c(d)).o(&d.info_info)
-            .x((&d.movie_data).in_s((&d.data_type).o(&d.infotype_info).eq("votes")).o(&d.data_data))
-            .x(&d.movie_title)
-    );
-    min_row(q)
+        info().in_s(gf_18c()).info()
+            .x(data().in_s(Data::ty().text().eq("votes")).text())
+            .x(title())
+    ))
 }

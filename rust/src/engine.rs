@@ -53,6 +53,7 @@ use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use regex::Regex;
 use smallvec::SmallVec;
 use std::hash::Hash;
+use std::marker::PhantomData;
 
 /// Default inline capacity for the probe-index buckets. Most TPC-H
 /// foreign-key relations are 1:1 or 1:few (e.g. lineitems-per-order ≈ 4),
@@ -125,11 +126,100 @@ impl<T: Probe + ?Sized> Probe for &T {
 
 pub const NO_ID: usize = usize::MAX;
 
-pub struct VecRel<R: Copy> {
-    pub values: Vec<R>,
+// ===== Dense domains: untyped `usize` or phantom-typed `Id<E>` ==========
+// `Dense` abstracts "an id indexing a dense 0..n universe". The dense nodes
+// are generic over it: `D = usize` is the untyped default (existing loaders
+// and queries, unchanged); `D = Id<E>` carries a phantom entity tag so that
+// composing through mismatched entities is a COMPILE error — e.g. with
+// `movie_keyword: Query<D = Id<Movie>, R = Id<Keyword>>` and
+// `person_name: Query<D = Id<Person>>`, `movie_keyword.o(person_name)`
+// fails to type-check (expected `Id<Keyword>`, found `Id<Person>`).
+pub trait Dense: Copy + Eq + Hash + 'static {
+    /// Missing-id sentinel for this domain — fails every bounds check.
+    const NONE: Self;
+    fn idx(self) -> usize;
+    fn from_idx(i: usize) -> Self;
 }
 
-pub struct MultiRel<R: Copy + 'static> {
+impl Dense for usize {
+    const NONE: usize = NO_ID;
+    #[inline(always)]
+    fn idx(self) -> usize { self }
+    #[inline(always)]
+    fn from_idx(i: usize) -> usize { i }
+}
+
+/// Phantom-typed entity id (the Julia engine's `ID{E}`). `repr(transparent)`
+/// over `usize`, so typed id columns can be reinterpreted in bulk from the
+/// cache's word arrays.
+#[repr(transparent)]
+pub struct Id<E: 'static>(pub usize, pub PhantomData<E>);
+
+impl<E> Id<E> {
+    #[inline(always)]
+    pub fn new(i: usize) -> Self { Id(i, PhantomData) }
+}
+// Manual impls: `derive` would wrongly require bounds on the phantom `E`.
+impl<E> Copy for Id<E> {}
+impl<E> Clone for Id<E> {
+    #[inline(always)]
+    fn clone(&self) -> Self { *self }
+}
+impl<E> PartialEq for Id<E> {
+    #[inline(always)]
+    fn eq(&self, o: &Self) -> bool { self.0 == o.0 }
+}
+impl<E> Eq for Id<E> {}
+impl<E> Hash for Id<E> {
+    #[inline(always)]
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) { self.0.hash(h) }
+}
+// Ids are dense indexes; index order is the (arbitrary but total) order
+// used by sinks like `count_distinct`'s sort+dedup.
+impl<E> PartialOrd for Id<E> {
+    #[inline(always)]
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> { Some(self.cmp(o)) }
+}
+impl<E> Ord for Id<E> {
+    #[inline(always)]
+    fn cmp(&self, o: &Self) -> std::cmp::Ordering { self.0.cmp(&o.0) }
+}
+impl<E> std::fmt::Debug for Id<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Id({})", self.0)
+    }
+}
+impl<E: 'static> Dense for Id<E> {
+    const NONE: Self = Id(NO_ID, PhantomData);
+    #[inline(always)]
+    fn idx(self) -> usize { self.0 }
+    #[inline(always)]
+    fn from_idx(i: usize) -> Self { Id::new(i) }
+}
+
+// Entity → scalar hops are spelled by the `schema!`-generated NAVIGATION
+// traits (one method per field, blanket-implemented for queries valued in
+// the entity's ids — see src/schema.rs): `Movie::kind().text()` composes
+// with Kind's text column. Navigation superseded the old `Primary`/`.p()`
+// elision: it names ANY field, not just the first declared one, and reads
+// as the chain it builds. (A Julia-style single-name `eq` that dispatches
+// on scalar vs entity-valued columns was analyzed and rejected:
+// overload-by-second-trait is ambiguous under coherence — nav traits avoid
+// that wall because their receivers' `R = Id<E>` bounds are disjoint.)
+
+pub struct VecRel<R: Copy, D: Dense = usize> {
+    pub values: Vec<R>,
+    pub _d: PhantomData<D>,
+}
+
+impl<R: Copy, D: Dense> VecRel<R, D> {
+    pub fn new(values: Vec<R>) -> Self { VecRel { values, _d: PhantomData } }
+    /// Size of the dense key space — the universe size of the owning entity.
+    pub fn n_keys(&self) -> usize { self.values.len() }
+}
+
+pub struct MultiRel<R: Copy + 'static, D: Dense = usize> {
+    pub _d: PhantomData<D>,
     /// CSR row offsets, length n+1 (u32: every cached column's value count
     /// fits, and half-width offsets halve the footprint of sparse rows).
     pub offsets: &'static [u32],
@@ -141,23 +231,30 @@ pub struct MultiRel<R: Copy + 'static> {
 // the scatter/fill into the cache, so production loading never builds from
 // pairs.
 #[cfg(test)]
-impl<R: Copy + Default> VecRel<R> {
+impl<R: Copy + Default, D: Dense> VecRel<R, D> {
     pub fn from_pairs(n: usize, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
         let mut values = vec![R::default(); n];
         for (k, v) in pairs {
             values[k] = v;
         }
-        VecRel { values }
+        VecRel::new(values)
     }
 }
 
-impl<R: Copy + 'static> MultiRel<R> {
+impl<R: Copy + 'static, D: Dense> MultiRel<R, D> {
     /// Wrap existing CSR arrays (the cache loaders' zero-copy path).
     pub fn from_csr(offsets: &'static [u32], values: &'static [R]) -> Self {
         assert!(!offsets.is_empty(), "CSR offsets must have length n+1");
         assert_eq!(*offsets.last().unwrap() as usize, values.len());
-        MultiRel { offsets, values }
+        MultiRel { offsets, values, _d: PhantomData }
     }
+
+    /// Size of the dense key space — the universe size of the owning entity.
+    /// (Schema surface: sizes the universe of an entity whose first column
+    /// is `Multi`; no current schema declares one, so bin builds don't call
+    /// it — tests do.)
+    #[allow(dead_code)]
+    pub fn n_keys(&self) -> usize { self.offsets.len() - 1 }
 
     /// Build CSR from a pair stream — small-data constructor for unit
     /// tests (the backing Vecs are leaked). Pairs with `k >= n` are
@@ -177,7 +274,7 @@ impl<R: Copy + 'static> MultiRel<R> {
             values.extend_from_slice(b);
             offsets.push(values.len() as u32);
         }
-        MultiRel { offsets: Vec::leak(offsets), values: Vec::leak(values) }
+        MultiRel { offsets: Vec::leak(offsets), values: Vec::leak(values), _d: PhantomData }
     }
 
     /// Row slice for key `x` — empty for missing/out-of-universe keys
@@ -200,71 +297,81 @@ impl<R: Copy + 'static> MultiRel<R> {
 // check — a missing-key sentinel (`NO_ID` = usize::MAX) or any
 // out-of-universe id fails it, so "missing key emits nothing" and bounds
 // safety are the same one check. No `unsafe` needed.
-impl<R: Copy> Query for VecRel<R> { type D = usize; type R = R; }
-impl<R: Copy> Drive for VecRel<R> {
+impl<R: Copy, D: Dense> Query for VecRel<R, D> { type D = D; type R = R; }
+impl<R: Copy, D: Dense> Drive for VecRel<R, D> {
     #[inline(always)]
-    fn drive<K: FnMut(usize, R)>(&self, mut k: K) {
+    fn drive<K: FnMut(D, R)>(&self, mut k: K) {
         for (i, &v) in self.values.iter().enumerate() {
-            k(i, v);
+            k(D::from_idx(i), v);
         }
     }
 }
-impl<R: Copy> Probe for VecRel<R> {
+impl<R: Copy, D: Dense> Probe for VecRel<R, D> {
     #[inline(always)]
-    fn probe<K: FnMut(R)>(&self, x: usize, mut k: K) {
-        if let Some(&v) = self.values.get(x) {
+    fn probe<K: FnMut(R)>(&self, x: D, mut k: K) {
+        if let Some(&v) = self.values.get(x.idx()) {
             k(v);
         }
     }
     #[inline(always)]
-    fn probe_any<K: FnMut(R) -> bool>(&self, x: usize, mut k: K) -> bool {
-        self.values.get(x).is_some_and(|&v| k(v))
+    fn probe_any<K: FnMut(R) -> bool>(&self, x: D, mut k: K) -> bool {
+        self.values.get(x.idx()).is_some_and(|&v| k(v))
     }
 }
 
-impl<R: Copy> Query for MultiRel<R> { type D = usize; type R = R; }
-impl<R: Copy> Drive for MultiRel<R> {
+impl<R: Copy, D: Dense> Query for MultiRel<R, D> { type D = D; type R = R; }
+impl<R: Copy, D: Dense> Drive for MultiRel<R, D> {
     #[inline(always)]
-    fn drive<K: FnMut(usize, R)>(&self, mut k: K) {
+    fn drive<K: FnMut(D, R)>(&self, mut k: K) {
         for (i, w) in self.offsets.windows(2).enumerate() {
-            for &v in &self.values[w[0] as usize..w[1] as usize] { k(i, v); }
+            for &v in &self.values[w[0] as usize..w[1] as usize] { k(D::from_idx(i), v); }
         }
     }
 }
-impl<R: Copy> Probe for MultiRel<R> {
+impl<R: Copy, D: Dense> Probe for MultiRel<R, D> {
     #[inline(always)]
-    fn probe<K: FnMut(R)>(&self, x: usize, mut k: K) {
-        for &v in self.row(x) { k(v); }
+    fn probe<K: FnMut(R)>(&self, x: D, mut k: K) {
+        for &v in self.row(x.idx()) { k(v); }
     }
     #[inline(always)]
-    fn probe_any<K: FnMut(R) -> bool>(&self, x: usize, mut k: K) -> bool {
-        self.row(x).iter().any(|&v| k(v))
+    fn probe_any<K: FnMut(R) -> bool>(&self, x: D, mut k: K) -> bool {
+        self.row(x.idx()).iter().any(|&v| k(v))
     }
 }
 
 // ===== Universe — identity relation over the dense entity ids ===========
 
 #[derive(Copy, Clone)]
-pub struct Universe { pub n: usize }
+pub struct Universe<D: Dense = usize> {
+    pub n: usize,
+    pub _d: PhantomData<D>,
+}
 
-impl Query for Universe { type D = usize; type R = usize; }
-impl Drive for Universe {
+impl<D: Dense> Universe<D> {
+    pub fn new(n: usize) -> Self { Universe { n, _d: PhantomData } }
+}
+
+impl<D: Dense> Query for Universe<D> { type D = D; type R = D; }
+impl<D: Dense> Drive for Universe<D> {
     #[inline(always)]
-    fn drive<K: FnMut(usize, usize)>(&self, mut k: K) {
-        for i in 0..self.n { k(i, i); }
+    fn drive<K: FnMut(D, D)>(&self, mut k: K) {
+        for i in 0..self.n {
+            let d = D::from_idx(i);
+            k(d, d);
+        }
     }
 }
-impl Probe for Universe {
+impl<D: Dense> Probe for Universe<D> {
     #[inline(always)]
-    fn probe<K: FnMut(usize)>(&self, x: usize, mut k: K) {
-        if x < self.n { k(x); }
+    fn probe<K: FnMut(D)>(&self, x: D, mut k: K) {
+        if x.idx() < self.n { k(x); }
     }
     #[inline(always)]
-    fn probe_any<K: FnMut(usize) -> bool>(&self, x: usize, mut k: K) -> bool {
-        x < self.n && k(x)
+    fn probe_any<K: FnMut(D) -> bool>(&self, x: D, mut k: K) -> bool {
+        x.idx() < self.n && k(x)
     }
     #[inline(always)]
-    fn member(&self, x: usize) -> bool { x < self.n }
+    fn member(&self, x: D) -> bool { x.idx() < self.n }
 }
 
 // ===== Compose: a: D → M, b: M → R  ⟹  Compose: D → R ===================
@@ -560,56 +667,62 @@ impl<D: Copy + Eq + Hash> Probe for MatSet<D> {
 
 // Not a `FromQuery` target: the universe size `n` is part of the physical
 // choice, so construction stays explicit via `Bitset::over(universe, q)`.
-pub struct Bitset { pub bs: Vec<u64>, pub n: usize }
+pub struct Bitset<D: Dense = usize> {
+    pub bs: Vec<u64>,
+    pub n: usize,
+    pub _d: PhantomData<D>,
+}
 
-impl Bitset {
-    pub fn empty(u: Universe) -> Self {
-        Bitset { bs: vec![0u64; u.n.div_ceil(64)], n: u.n }
+impl<D: Dense> Bitset<D> {
+    pub fn empty(u: Universe<D>) -> Self {
+        Bitset { bs: vec![0u64; u.n.div_ceil(64)], n: u.n, _d: PhantomData }
     }
     /// A bitset over `u`, driven from `q`: set a bit at each emitted VALUE.
     /// Identity relations send their keys through the value slot, so one
     /// constructor bit-sets a set's keys and a value-bearing query's values
     /// alike (julia-engine plan.jl `build_bitset`). Out-of-universe values —
     /// including `NO_ID` hole fills — are dropped by the `set` guard.
-    pub fn over<Q: Drive<R = usize>>(u: Universe, q: &Q) -> Self {
+    pub fn over<Q: Drive<R = D>>(u: Universe<D>, q: &Q) -> Self {
         let mut b = Self::empty(u);
         q.drive(|_, c| b.set(c));
         b
     }
-    #[inline] pub fn set(&mut self, x: usize) {
-        if x < self.n {
-            self.bs[x / 64] |= 1u64 << (x % 64);
+    #[inline] pub fn set(&mut self, x: D) {
+        let i = x.idx();
+        if i < self.n {
+            self.bs[i / 64] |= 1u64 << (i % 64);
         }
     }
 }
 
-impl Query for Bitset { type D = usize; type R = usize; }
-impl Drive for Bitset {
+impl<D: Dense> Query for Bitset<D> { type D = D; type R = D; }
+impl<D: Dense> Drive for Bitset<D> {
     #[inline]
-    fn drive<K: FnMut(usize, usize)>(&self, mut k: K) {
+    fn drive<K: FnMut(D, D)>(&self, mut k: K) {
         for (wi, &w) in self.bs.iter().enumerate() {
             let mut w = w;
             while w != 0 {
                 let b = w.trailing_zeros() as usize;
-                let x = wi * 64 + b;
+                let x = D::from_idx(wi * 64 + b);
                 k(x, x);
                 w &= w - 1;
             }
         }
     }
 }
-impl Probe for Bitset {
+impl<D: Dense> Probe for Bitset<D> {
     #[inline]
-    fn probe<K: FnMut(usize)>(&self, x: usize, mut k: K) {
+    fn probe<K: FnMut(D)>(&self, x: D, mut k: K) {
         if self.member(x) { k(x); }
     }
     #[inline]
-    fn probe_any<K: FnMut(usize) -> bool>(&self, x: usize, mut k: K) -> bool {
+    fn probe_any<K: FnMut(D) -> bool>(&self, x: D, mut k: K) -> bool {
         self.member(x) && k(x)
     }
     #[inline]
-    fn member(&self, x: usize) -> bool {
-        self.bs.get(x / 64).is_some_and(|&w| (w >> (x % 64)) & 1 == 1)
+    fn member(&self, x: D) -> bool {
+        let i = x.idx();
+        self.bs.get(i / 64).is_some_and(|&w| (w >> (i % 64)) & 1 == 1)
     }
 }
 
@@ -692,47 +805,48 @@ impl<D: Copy + Eq + Hash, S: Copy> Probe for Fold<D, S> {
 // every reduce step; for Q1 (≤6 group keys via packed byte index), Q2 / Q20
 // (per-part), Q18 (per-order), the gain is ~5-10× over `Fold`.
 
-pub struct DenseFold<S: Copy> {
+pub struct DenseFold<S: Copy, D: Dense = usize> {
     pub vals: Vec<S>,
     pub seen: Vec<bool>,
+    pub _d: PhantomData<D>,
 }
 
-impl<S: Copy> DenseFold<S> {
+impl<S: Copy, D: Dense> DenseFold<S, D> {
     pub fn build<Q, OP>(q: Q, n: usize, init: S, op: OP) -> Self
-    where Q: Drive<D = usize>, OP: Fn(S, Q::R) -> S {
+    where Q: Drive<D = D>, OP: Fn(S, Q::R) -> S {
         let mut vals = vec![init; n];
         let mut seen = vec![false; n];
         q.drive(|d, v| {
-            if let Some(s) = vals.get_mut(d) {
+            if let Some(s) = vals.get_mut(d.idx()) {
                 *s = op(*s, v);
-                seen[d] = true;
+                seen[d.idx()] = true;
             }
         });
-        DenseFold { vals, seen }
+        DenseFold { vals, seen, _d: PhantomData }
     }
 }
 
-impl<S: Copy> Query for DenseFold<S> { type D = usize; type R = S; }
-impl<S: Copy> Drive for DenseFold<S> {
+impl<S: Copy, D: Dense> Query for DenseFold<S, D> { type D = D; type R = S; }
+impl<S: Copy, D: Dense> Drive for DenseFold<S, D> {
     #[inline(always)]
-    fn drive<K: FnMut(usize, S)>(&self, mut k: K) {
+    fn drive<K: FnMut(D, S)>(&self, mut k: K) {
         for (i, (&v, &seen)) in self.vals.iter().zip(&self.seen).enumerate() {
             if seen {
-                k(i, v);
+                k(D::from_idx(i), v);
             }
         }
     }
 }
-impl<S: Copy> Probe for DenseFold<S> {
+impl<S: Copy, D: Dense> Probe for DenseFold<S, D> {
     #[inline(always)]
-    fn probe<K: FnMut(S)>(&self, x: usize, mut k: K) {
-        if let Some(&v) = self.vals.get(x) {
-            if self.seen[x] { k(v); }
+    fn probe<K: FnMut(S)>(&self, x: D, mut k: K) {
+        if let Some(&v) = self.vals.get(x.idx()) {
+            if self.seen[x.idx()] { k(v); }
         }
     }
     #[inline(always)]
-    fn probe_any<K: FnMut(S) -> bool>(&self, x: usize, mut k: K) -> bool {
-        self.vals.get(x).is_some_and(|&v| self.seen[x] && k(v))
+    fn probe_any<K: FnMut(S) -> bool>(&self, x: D, mut k: K) -> bool {
+        self.vals.get(x.idx()).is_some_and(|&v| self.seen[x.idx()] && k(v))
     }
 }
 
@@ -828,6 +942,14 @@ pub trait QueryExt: Query + Sized {
         where Self::R: PartialOrd { self.filt(move |x| x <= v) }
     #[inline(always)] fn in_v(self, vs: Vec<Self::R>) -> Filter<Self, impl Fn(Self::R) -> bool>
         where Self::R: PartialEq { self.filt(move |x| vs.iter().any(|&v| v == x)) }
+    /// `in_v` over any `IntoIterator` — arrays, slices, the named set fns —
+    /// collected once into the captured Vec.
+    #[inline(always)] fn is_in<I: IntoIterator<Item = Self::R>>(self, vs: I)
+        -> Filter<Self, impl Fn(Self::R) -> bool>
+        where Self::R: PartialEq {
+        let vs: Vec<Self::R> = vs.into_iter().collect();
+        self.filt(move |x| vs.iter().any(|&v| v == x))
+    }
     /// Restriction `a : b` — keep self's pairs whose VALUE is a `member` of
     /// `s` (any probe-able relation). Builds the dedicated `Restrict` node,
     /// node-for-node with Julia.
@@ -887,8 +1009,8 @@ pub trait QueryExt: Query + Sized {
     /// that a `Vec<S>` of size `n` beats the HashMap path of `fold`.
     #[inline(always)]
     fn dense_fold<OP: Fn(S, Self::R) -> S, S: Copy>(self, n: usize, init: S, op: OP)
-        -> DenseFold<S>
-    where Self: Drive<D = usize> { DenseFold::build(self, n, init, op) }
+        -> DenseFold<S, Self::D>
+    where Self: Drive, Self::D: Dense { DenseFold::build(self, n, init, op) }
 
     /// Count-distinct — the `length ∘ unique` instance of `.buf_fold`. The
     /// closure sorts + dedups the per-key SVec on finalization — much
@@ -954,7 +1076,7 @@ mod tests {
         // cast ∘ (films probed at cast values)? — compose cast: i64→i64 with films
         assert_eq!(drive_all(&(&c).o(&f)), vec![]); // cast values 7,8 not film keys <3
         assert_eq!(drive_all(&(&f).filt(|v| v > 15)), vec![(1, 20), (2, 30)]);
-        let u = Universe { n: 2 };
+        let u = Universe::new(2);
         assert_eq!(drive_all(&u.o(&f)), vec![(0, 10), (1, 20)]);
         assert_eq!(drive_all(&(&f).x(&f)), vec![(0, (10, 10)), (1, (20, 20)), (2, (30, 30))]);
     }
@@ -1021,7 +1143,7 @@ mod tests {
         assert!(c.member(0) && !c.member(1));
         assert!((&f).filt(|v| v > 15).member(1) && !(&f).filt(|v| v > 15).member(0));
         // overrides: Universe bound check, MatSet hash, Bitset bit test
-        let u = Universe { n: 2 };
+        let u = Universe::new(2);
         assert!(u.member(1) && !u.member(2));
         let ms: MatSet<_> = (&f).collect(); // value-set of films: {10, 20, 30}
         assert!(ms.member(10) && !ms.member(11));
@@ -1030,7 +1152,7 @@ mod tests {
     #[test]
     fn identity_sets_and_bitset() {
         let c = cast();
-        let u3 = Universe { n: 3 };
+        let u3 = Universe::new(3);
         // films-with-cast as an identity relation: restrict the universe by
         // membership in cast (Julia's `a : b`, the Restrict node).
         let people = u3.in_s(&c);
@@ -1040,13 +1162,13 @@ mod tests {
         // from_drive impl serves sets and value-bearing queries alike
         let ms: MatSet<_> = (&people).collect();
         assert!(ms.member(0) && !ms.member(1));
-        let b = Bitset::over(Universe { n: 3 }, &people);
+        let b = Bitset::over(Universe::new(3), &people);
         assert!(b.member(0) && !b.member(1) && b.member(2));
         assert!(!b.member(NO_ID) && !b.member(3));
-        let vb = Bitset::over(Universe { n: 9 }, &c); // values of cast: {7, 8}
+        let vb = Bitset::over(Universe::new(9), &c); // values of cast: {7, 8}
         assert!(vb.member(7) && vb.member(8) && !vb.member(0));
         // restrict/diff over Universe — drive emits (x, x)
-        let u2 = Universe { n: 2 };
+        let u2 = Universe::new(2);
         assert_eq!(drive_all(&u2.in_s(&ms)), vec![(0, 0)]);
         assert_eq!(drive_all(&u2.minus(&ms)), vec![(1, 1)]);
         // ∨ is PROBE-ONLY (no Drive impl — `drive_all(&u2.or(&b))` would be
@@ -1117,7 +1239,7 @@ mod tests {
     #[test]
     fn diff_is_value_bearing_and_key_based() {
         let c = cast();
-        let u1 = Universe { n: 1 }; // key set {0}
+        let u1 = Universe::new(1); // key set {0}
         // value-bearing lhs: pairs pass through with their VALUES; the
         // exclusion test is on the KEY (film id), not the value
         let dd = (&c).minus(u1);
@@ -1132,22 +1254,52 @@ mod tests {
     #[test]
     fn union_is_bag_concat() {
         let c = cast();
-        let u2 = Universe { n: 2 };
+        let u2 = Universe::new(2);
         // duplicates are preserved: each leg emits all its rows
         assert_eq!(drive_all(&(&c).union(&c)),
                    vec![(0, 7), (0, 7), (0, 8), (0, 8), (2, 7), (2, 7)]);
         // identity legs: the overlap is emitted twice; a deduping sink
         // (Bitset / MatSet collect) collapses the bag back to a set
-        let both = u2.union(Universe { n: 1 });
+        let both = u2.union(Universe::new(1));
         assert_eq!(drive_all(&both), vec![(0, 0), (0, 0), (1, 1)]);
-        let b = Bitset::over(Universe { n: 2 }, &both);
+        let b = Bitset::over(Universe::new(2), &both);
         assert!(b.member(0) && b.member(1));
+    }
+
+    #[test]
+    fn typed_ids_compose() {
+        struct M;
+        struct K;
+        // typed fixture columns: movie → kind id, kind → name
+        let mk: VecRel<Id<K>, Id<M>> =
+            VecRel::new(vec![Id::new(1), Id::new(0), Id::new(1)]);
+        let kname: VecRel<&'static str, Id<K>> =
+            VecRel::new(vec!["alpha", "beta"]);
+        // compose through the typed bridge (Id<K> = Id<K>) — the shape the
+        // schema!-generated nav methods build (`q.kname()` ≡ `q.o(kname)`)
+        let mut got = Vec::new();
+        (&mk).o(&kname).drive(|m, n| got.push((m.0, n)));
+        assert_eq!(got, vec![(0, "beta"), (1, "alpha"), (2, "beta")]);
+        let mut got = Vec::new();
+        (&mk).o(&kname).eq("beta").drive(|m, n| got.push((m.0, n)));
+        assert_eq!(got, vec![(0, "beta"), (2, "beta")]);
+        // member position through a typed universe restriction
+        let u: Universe<Id<M>> = Universe::new(3);
+        let live = u.in_s((&mk).o(&kname).eq("alpha"));
+        assert!(live.member(Id::new(1)) && !live.member(Id::new(0)));
+        assert!(!live.member(Id::NONE));
+        // typed ids work as fold/group keys (Eq + Hash + Ord)
+        let counts = (&mk).inv().fold(0i64, |a, _| a + 1);
+        let mut got = Vec::new();
+        counts.drive(|k: Id<K>, c| got.push((k.0, c)));
+        got.sort();
+        assert_eq!(got, vec![(0, 1), (1, 2)]);
     }
 
     #[test]
     fn collect_set_restrict_and_map() {
         let f = films();
-        let u = Universe { n: 31 };
+        let u = Universe::new(31);
         // Julia's `⩘`: the universe 0..31 restricted by films' collected
         // value-set {10, 20, 30}
         let w = u.in_s((&f).collect::<MatSet<_>>());

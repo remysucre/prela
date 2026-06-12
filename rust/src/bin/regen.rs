@@ -21,10 +21,7 @@
 // sizes are computed (the same max-id formulas the v1 runtime loader
 // used) and each column is finalized to its dense/CSR layout and written.
 
-#[path = "../format.rs"]
-mod format;
-
-use format::*;
+use prela::format::*;
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -42,6 +39,45 @@ macro_rules! t {
         $s;
         eprintln!("    {:.2}s", start.elapsed().as_secs_f32());
     }};
+}
+
+// ===== schema manifest check =============================================
+// The `schema!` declarations (src/job_schema.rs, src/tpch_schema.rs) are
+// the source of truth for WHAT the cache contains: regen records every
+// file it writes and, after a run, checks the set against the schema's
+// generated MANIFEST — name for name (field names are filenames, verbatim)
+// and header kind for kind. Drift in either direction fails the regen run
+// loudly.
+
+fn verify_manifest(
+    cache_dir: &Path,
+    written: &[String],
+    manifest: &[(&str, &str, u32)],
+    suite: &str,
+) {
+    let expected: HashMap<String, u32> = manifest
+        .iter()
+        .map(|&(e, f, k)| (format!("{e}_{f}"), k))
+        .collect();
+    for name in written {
+        assert!(
+            expected.contains_key(name),
+            "{suite}: regen wrote {name}.bin but the schema does not declare it"
+        );
+    }
+    for (name, kind) in &expected {
+        assert!(
+            written.iter().any(|w| w == name),
+            "{suite}: the schema declares {name} but regen did not write it"
+        );
+        let path = cache_dir.join(format!("{name}.bin"));
+        let mut head = [0u8; HEADER_LEN];
+        File::open(&path)
+            .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut head))
+            .unwrap_or_else(|e| panic!("{suite}: read {path:?}: {e}"));
+        parse_header(&head, *kind, &format!("{path:?}")); // panics on kind mismatch
+    }
+    eprintln!("{suite}: schema manifest verified — {} columns", expected.len());
 }
 
 // ===== file writing ======================================================
@@ -408,8 +444,12 @@ fn tpch_dense_str(out: &Path, parquet: &Path, key: &str, val: &str, key_delta: i
 fn run_tpch(parquet_dir: &Path, cache_dir: &Path) {
     std::fs::create_dir_all(cache_dir).unwrap();
 
+    let written = std::cell::RefCell::new(Vec::<String>::new());
     let p = |name: &str| parquet_dir.join(format!("{name}.parquet"));
-    let o = |name: &str| cache_dir.join(format!("{name}.bin"));
+    let o = |name: &str| {
+        written.borrow_mut().push(name.to_string());
+        cache_dir.join(format!("{name}.bin"))
+    };
     use TVal::*;
 
     // Region / Nation: 0-based keys in the parquet (internal = raw).
@@ -446,7 +486,7 @@ fn run_tpch(parquet_dir: &Path, cache_dir: &Path) {
     t!(tpch_dense_str(&o("Part_name"),      &p("part"), "p_partkey", "p_name",      -1));
     t!(tpch_dense_str(&o("Part_mfgr"),      &p("part"), "p_partkey", "p_mfgr",      -1));
     t!(tpch_dense_str(&o("Part_brand"),     &p("part"), "p_partkey", "p_brand",     -1));
-    t!(tpch_dense_str(&o("Part_type"),      &p("part"), "p_partkey", "p_type",      -1));
+    t!(tpch_dense_str(&o("Part_ty"),        &p("part"), "p_partkey", "p_type",      -1));
     t!(tpch_dense(&o("Part_size"),          &p("part"), "p_partkey", "p_size",      -1, I64));
     t!(tpch_dense_str(&o("Part_container"), &p("part"), "p_partkey", "p_container", -1));
     t!(tpch_dense(&o("Part_retailprice"),   &p("part"), "p_partkey", "p_retailprice", -1, F64));
@@ -489,6 +529,8 @@ fn run_tpch(parquet_dir: &Path, cache_dir: &Path) {
     t!(tpch_dense_str(&o("Lineitem_shipinstruct"), &p("lineitem"), "l_id", "l_shipinstruct", -1));
     t!(tpch_dense_str(&o("Lineitem_shipmode"),  &p("lineitem"), "l_id", "l_shipmode",     -1));
     t!(tpch_dense_str(&o("Lineitem_comment"),   &p("lineitem"), "l_id", "l_comment",      -1));
+
+    verify_manifest(cache_dir, &written.into_inner(), prela::tpch_schema::MANIFEST, "tpch");
 }
 
 // ======================== JOB ========================
@@ -921,7 +963,11 @@ fn read_job(parquet_dir: &Path) -> Job {
 
 fn run_job(parquet_dir: &Path, cache_dir: &Path) {
     std::fs::create_dir_all(cache_dir).unwrap();
-    let o = |name: &str| cache_dir.join(format!("{name}.bin"));
+    let written = std::cell::RefCell::new(Vec::<String>::new());
+    let o = |name: &str| {
+        written.borrow_mut().push(name.to_string());
+        cache_dir.join(format!("{name}.bin"))
+    };
 
     let mut j = read_job(parquet_dir);
     macro_rules! take {
@@ -1007,51 +1053,53 @@ fn run_job(parquet_dir: &Path, cache_dir: &Path) {
         // Person
         take!(person_name).write_dense(&o("Person_name"), n_person);
         take!(person_gender).write_csr(&o("Person_gender"), n_person);
-        take!(person_aka).write_csr(&o("Person_aka"), n_person);
-        take!(person_info).write_csr(&o("Person_info"), n_person);
+        take!(person_aka).write_csr(&o("Person_alias"), n_person);
+        take!(person_info).write_csr(&o("Person_bio"), n_person);
         take!(person_name_pcode).write_csr(&o("Person_name_pcode_cf"), n_person);
 
-        // lookup entities
-        take!(keyword_keyword).write_dense(&o("Keyword_keyword"), n_keyword);
-        take!(kind_kind).write_dense(&o("Kind_kind"), n_kind);
-        take!(roletype_role).write_dense(&o("RoleType_role"), n_roletype);
-        take!(character_name).write_dense(&o("Character_name"), n_character);
+        // lookup entities (labels are uniformly `text` in the schema)
+        take!(keyword_keyword).write_dense(&o("Keyword_text"), n_keyword);
+        take!(kind_kind).write_dense(&o("Kind_text"), n_kind);
+        take!(roletype_role).write_dense(&o("RoleType_text"), n_roletype);
+        take!(character_name).write_dense(&o("Character_text"), n_character);
 
         // Company
         take!(company_country).write_csr(&o("Company_country"), n_company);
         take!(company_name).write_dense(&o("Company_name"), n_company);
         take!(company_note).write_csr(&o("Company_note"), n_company);
-        take!(company_type).write_dense(&o("Company_type"), n_company, KIND_DENSE_I64, NO_ID_WORD);
-        take!(companytype_kind).write_dense(&o("CompanyType_kind"), n_comptype);
+        take!(company_type).write_dense(&o("Company_ty"), n_company, KIND_DENSE_I64, NO_ID_WORD);
+        take!(companytype_kind).write_dense(&o("CompanyType_text"), n_comptype);
 
         // Info / Data / PersonInfo
         take!(info_info).write_dense(&o("Info_info"), n_info);
-        take!(info_type).write_dense(&o("Info_type"), n_info, KIND_DENSE_I64, NO_ID_WORD);
+        take!(info_type).write_dense(&o("Info_ty"), n_info, KIND_DENSE_I64, NO_ID_WORD);
         take!(info_note).write_csr(&o("Info_note"), n_info);
-        take!(infotype_info).write_dense(&o("InfoType_info"), n_infotype);
-        take!(data_data).write_dense(&o("Data_data"), n_data);
-        take!(data_type).write_dense(&o("Data_type"), n_data, KIND_DENSE_I64, NO_ID_WORD);
+        take!(infotype_info).write_dense(&o("InfoType_text"), n_infotype);
+        take!(data_data).write_dense(&o("Data_text"), n_data);
+        take!(data_type).write_dense(&o("Data_ty"), n_data, KIND_DENSE_I64, NO_ID_WORD);
         take!(personinfo_info).write_dense(&o("PersonInfo_info"), n_pinfo);
-        take!(personinfo_type).write_dense(&o("PersonInfo_type"), n_pinfo, KIND_DENSE_I64, NO_ID_WORD);
+        take!(personinfo_type).write_dense(&o("PersonInfo_ty"), n_pinfo, KIND_DENSE_I64, NO_ID_WORD);
         take!(personinfo_note).write_csr(&o("PersonInfo_note"), n_pinfo);
 
         // Aka
-        take!(akaname_name).write_dense(&o("AkaName_name"), n_akaname);
-        take!(akatitle_title).write_dense(&o("AkaTitle_title"), n_akatitle);
+        take!(akaname_name).write_dense(&o("AkaName_text"), n_akaname);
+        take!(akatitle_title).write_dense(&o("AkaTitle_text"), n_akatitle);
 
         // MovieLink / LinkType
         take!(movielink_target).write_dense(&o("MovieLink_target"), n_mlink, KIND_DENSE_I64, NO_ID_WORD);
-        take!(movielink_type).write_dense(&o("MovieLink_type"), n_mlink, KIND_DENSE_I64, NO_ID_WORD);
-        take!(linktype_link).write_dense(&o("LinkType_link"), n_ltype);
+        take!(movielink_type).write_dense(&o("MovieLink_ty"), n_mlink, KIND_DENSE_I64, NO_ID_WORD);
+        take!(linktype_link).write_dense(&o("LinkType_text"), n_ltype);
 
         // CompleteCast / CompCastType
         take!(completecast_status).write_dense(&o("CompleteCast_status"), n_ccast, KIND_DENSE_I64, NO_ID_WORD);
         take!(completecast_subject).write_dense(&o("CompleteCast_subject"), n_ccast, KIND_DENSE_I64, NO_ID_WORD);
-        take!(compcasttype_kind).write_dense(&o("CompCastType_kind"), n_ccktype);
+        take!(compcasttype_kind).write_dense(&o("CompCastType_text"), n_ccktype);
     });
 
     // v1 leftovers that v2 never reads (Cast_movie was write-only even in v1)
-    let _ = std::fs::remove_file(o("Cast_movie"));
+    let _ = std::fs::remove_file(cache_dir.join("Cast_movie.bin"));
+
+    verify_manifest(cache_dir, &written.into_inner(), prela::job_schema::MANIFEST, "job");
 }
 
 fn main() {

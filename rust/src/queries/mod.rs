@@ -1,5 +1,8 @@
-// All 113 JOB queries — one entry per Julia _q(name, oracle) block.
-// Each chunk file owns one slice of queries.jl; ALL stitches them together.
+// All 113 JOB queries — one entry per Julia _q(name, oracle) block —
+// plus the method-chain demo. Each chunk file owns one slice of
+// queries.jl; ALL stitches them together. Queries read the typed schema's
+// global `OnceLock` store (src/job_schema.rs), so runners take no data
+// argument — call `job_schema::job_init` once before running.
 
 pub mod helpers;
 pub mod sets;
@@ -12,8 +15,7 @@ mod t4;
 mod t5;
 mod t6;
 
-use crate::data::Data;
-pub type Entry = crate::Entry<Data>;
+pub type Entry = crate::Entry;
 
 pub fn all_queries() -> Vec<Entry> {
     [

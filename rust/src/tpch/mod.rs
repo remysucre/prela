@@ -9,7 +9,7 @@
 // common.rs owns the oracles and the baseline (idiomatic) implementations;
 // each variant overlays only the queries it rewrites on the base registry.
 
-mod common;
+pub mod common;
 pub mod ddbcheat;
 pub mod idiomatic;
 pub mod optimized;

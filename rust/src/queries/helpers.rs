@@ -1,9 +1,11 @@
 // Terminal continuation: drive a query, fold the lexicographic minimum of
 // each output column independently, and render `a || b || …` (or "(empty)"
 // when no row survived) — the JOB benchmark's MIN(...) projection.
+// Plus the typed shared sub-queries (Julia `let` bindings used by several
+// queries).
 
-use crate::data::Data;
 use crate::engine::*;
+use crate::job_schema::*;
 
 /// An output-row shape: scalar columns and nested `Prod` tuples thereof.
 pub trait Row: Copy {
@@ -51,24 +53,24 @@ pub fn min_row<Q: Drive>(q: Q) -> String where Q::R: Row {
 
 /// Companies named *Film*/*Warner*, non-Polish production companies without
 /// a note — the `co` binding of queries 21a-c and 27a-c.
-pub fn film_or_warner_co<'d>(d: &'d Data) -> impl Query<R = usize, D = usize> + Drive + Probe + 'd {
-    (&d.movie_company).in_s(
-        (&d.company_country).ne("[pl]")
+pub fn film_or_warner_co() -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive + Probe {
+    company().in_s(
+        country().ne("[pl]")
             .and(
-                (&d.company_name).rx(r"Film")
-                    .or((&d.company_name).rx(r"Warner"))
+                Company::name().rx(r"Film")
+                    .or(Company::name().rx(r"Warner"))
             )
             .and(
-                (&d.company_type).o(&d.companytype_kind).eq("production companies")
-                    .minus(&d.company_note)
+                Company::ty().text().eq("production companies")
+                    .minus(Company::note())
             )
     )
 }
 
 /// Movie links whose link type matches "follow" — the `lk` binding of
 /// queries 21a-c and 27a-c.
-pub fn follow_link<'d>(d: &'d Data) -> impl Query<R = usize, D = usize> + Drive + Probe + 'd {
-    (&d.movie_link).in_s(
-        (&d.movielink_type).o(&d.linktype_link).rx(r"follow")
+pub fn follow_link() -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe {
+    link().in_s(
+        MovieLink::ty().text().rx(r"follow")
     )
 }

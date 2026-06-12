@@ -1,5 +1,5 @@
-// Cache-format-v2 readers shared by the JOB (data.rs) and TPC-H
-// (tpch_data.rs) datasets. The format is specified in src/format.rs and
+// Cache-format-v2 readers, consumed by the `schema!`-generated loaders
+// (src/job_schema.rs, src/tpch_schema.rs). The format is specified in src/format.rs and
 // produced by the `regen` binary (`cargo run --release --features regen
 // --bin regen -- {job|tpch} ...`), which absorbs ALL load-time
 // transformation: ids are stored 0-based with `NO_ID` holes baked in,
@@ -12,12 +12,15 @@
 // Strings and CSR payloads are returned as `&'static` borrows — the mmap
 // is leaked, so the bytes live for the program. No per-string allocation.
 
-use crate::engine::{MultiRel, VecRel};
+use crate::engine::{Dense, Id, MultiRel, VecRel};
 use crate::format::*;
 use memmap2::Mmap;
 use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 
+#[cfg(test)]
 fn cache_dir() -> PathBuf {
     PathBuf::from("../cache")
 }
@@ -31,13 +34,20 @@ fn mmap_static(path: &Path) -> &'static [u8] {
     &**leaked
 }
 
-/// mmap `<name>.bin`, validate the v2 header against `kind`, return
-/// (n, m, full bytes).
-fn open(name: &str, kind: u32) -> (usize, usize, &'static [u8]) {
-    let path = cache_dir().join(format!("{name}.bin"));
+/// mmap `<dir>/<name>.bin`, validate the v2 header against `kind`, return
+/// (n, m, full bytes). The `schema!` macro builds `name` with `stringify!`
+/// — field names are filenames, verbatim.
+fn open_in(dir: &Path, name: &str, kind: u32) -> (usize, usize, &'static [u8]) {
+    let path = dir.join(format!("{name}.bin"));
     let bytes = mmap_static(&path);
     let (n, m) = parse_header(bytes, kind, &format!("{path:?}"));
     (n, m, bytes)
+}
+
+/// mmap `<name>.bin` under the default `../cache` dir (test cross-check).
+#[cfg(test)]
+fn open(name: &str, kind: u32) -> (usize, usize, &'static [u8]) {
+    open_in(&cache_dir(), name, kind)
 }
 
 /// Reinterpret a byte range as a typed slice. Alignment holds by the
@@ -52,33 +62,54 @@ fn cast_slice<T>(bytes: &'static [u8], off: usize, len: usize) -> &'static [T] {
 }
 
 // ===== dense columns (one value per 0-based id) ==========================
+// The `_in` readers are dir-parameterized and generic over the key domain
+// `D: Dense` (and, for FK columns, the value entity tag `T`) — the typed
+// `schema!` layer instantiates them with `D = Id<E>`; the legacy wrappers
+// below pin `D = usize` and the default `../cache` dir.
 
 /// Dense i64 column (scalars; dates are pre-parsed yyyymmdd).
-pub fn load_i64(name: &str) -> VecRel<i64> {
-    let (n, _, bytes) = open(name, KIND_DENSE_I64);
-    VecRel { values: cast_slice::<i64>(bytes, HEADER_LEN, n).to_vec() }
+pub fn load_i64_in<D: Dense>(dir: &Path, name: &str) -> VecRel<i64, D> {
+    let (n, _, bytes) = open_in(dir, name, KIND_DENSE_I64);
+    VecRel::new(cast_slice::<i64>(bytes, HEADER_LEN, n).to_vec())
 }
 
 /// Dense id column (FKs): same payload kind as i64, but the words are
-/// 0-based ids with `NO_ID` (= !0) baked into the holes by regen.
-pub fn load_ids(name: &str) -> VecRel<usize> {
-    let (n, _, bytes) = open(name, KIND_DENSE_I64);
-    VecRel { values: cast_slice::<usize>(bytes, HEADER_LEN, n).to_vec() }
+/// 0-based ids with `NO_ID` (= !0) baked into the holes by regen. The
+/// typed value is produced by BULK REINTERPRET: `Id<T>` is
+/// `repr(transparent)` over `usize`, so `cast_slice::<Id<T>>` reads the
+/// cache words as tagged ids with no per-element conversion.
+pub fn load_ids_in<T: 'static, D: Dense>(dir: &Path, name: &str) -> VecRel<Id<T>, D> {
+    let (n, _, bytes) = open_in(dir, name, KIND_DENSE_I64);
+    VecRel::new(cast_slice::<Id<T>>(bytes, HEADER_LEN, n).to_vec())
 }
 
 /// Dense f64 column.
-pub fn load_f64(name: &str) -> VecRel<f64> {
-    let (n, _, bytes) = open(name, KIND_DENSE_F64);
-    VecRel { values: cast_slice::<f64>(bytes, HEADER_LEN, n).to_vec() }
+pub fn load_f64_in<D: Dense>(dir: &Path, name: &str) -> VecRel<f64, D> {
+    let (n, _, bytes) = open_in(dir, name, KIND_DENSE_F64);
+    VecRel::new(cast_slice::<f64>(bytes, HEADER_LEN, n).to_vec())
 }
 
 /// Dense string column: one pass over the offsets builds the
 /// `Vec<&'static str>`; the bytes stay in the leaked mmap. Holes are "".
-pub fn load_strs(name: &str) -> VecRel<&'static str> {
-    let (n, m, bytes) = open(name, KIND_DENSE_STR);
+pub fn load_strs_in<D: Dense>(dir: &Path, name: &str) -> VecRel<&'static str, D> {
+    let (n, m, bytes) = open_in(dir, name, KIND_DENSE_STR);
     let offsets = cast_slice::<u32>(bytes, HEADER_LEN, n + 1);
     let data = cast_slice::<u8>(bytes, HEADER_LEN + (n + 1) * 4, m);
-    VecRel { values: strs_from_offsets(offsets, data) }
+    VecRel::new(strs_from_offsets(offsets, data))
+}
+
+/// Dense id column under `../cache`, untyped keys and values — survives
+/// only as the cross-check side of job_schema's typed-vs-untyped test.
+#[cfg(test)]
+pub fn load_ids(name: &str) -> VecRel<usize> {
+    let (n, _, bytes) = open(name, KIND_DENSE_I64);
+    VecRel::new(cast_slice::<usize>(bytes, HEADER_LEN, n).to_vec())
+}
+
+/// Dense string column under `../cache`, untyped keys (test cross-check).
+#[cfg(test)]
+pub fn load_strs(name: &str) -> VecRel<&'static str> {
+    load_strs_in(&cache_dir(), name)
 }
 
 fn strs_from_offsets(offsets: &'static [u32], data: &'static [u8]) -> Vec<&'static str> {
@@ -94,30 +125,24 @@ fn strs_from_offsets(offsets: &'static [u32], data: &'static [u8]) -> Vec<&'stat
 
 // ===== CSR multi columns ================================================
 
-/// CSR with 8-byte word values, read as 0-based ids. Zero-copy: offsets
+/// CSR with 8-byte word values, read as 0-based ids tagged with the value
+/// entity `T` (same bulk-reinterpret as `load_ids_in`). Zero-copy: offsets
 /// and values are slices into the leaked mmap.
-pub fn load_multi_ids(name: &str) -> MultiRel<usize> {
-    let (offsets, values) = csr_words::<usize>(name);
+pub fn load_multi_ids_in<T: 'static, D: Dense>(dir: &Path, name: &str) -> MultiRel<Id<T>, D> {
+    let (offsets, values) = csr_words::<Id<T>>(dir, name);
     MultiRel::from_csr(offsets, values)
 }
 
 /// CSR with 8-byte word values, read as raw i64 scalars.
-pub fn load_multi_i64(name: &str) -> MultiRel<i64> {
-    let (offsets, values) = csr_words::<i64>(name);
+pub fn load_multi_i64_in<D: Dense>(dir: &Path, name: &str) -> MultiRel<i64, D> {
+    let (offsets, values) = csr_words::<i64>(dir, name);
     MultiRel::from_csr(offsets, values)
-}
-
-fn csr_words<T>(name: &str) -> (&'static [u32], &'static [T]) {
-    let (n, m, bytes) = open(name, KIND_CSR_WORDS);
-    let offsets = cast_slice::<u32>(bytes, HEADER_LEN, n + 1);
-    let values = cast_slice::<T>(bytes, align8(HEADER_LEN + (n + 1) * 4), m);
-    (offsets, values)
 }
 
 /// CSR string column: row offsets are zero-copy; the per-string `&str`s
 /// are built in one pass and leaked (they index the leaked mmap bytes).
-pub fn load_multi_strs(name: &str) -> MultiRel<&'static str> {
-    let (n, m, bytes) = open(name, KIND_CSR_STR);
+pub fn load_multi_strs_in<D: Dense>(dir: &Path, name: &str) -> MultiRel<&'static str, D> {
+    let (n, m, bytes) = open_in(dir, name, KIND_CSR_STR);
     let row_off = cast_slice::<u32>(bytes, HEADER_LEN, n + 1);
     let str_off_at = HEADER_LEN + (n + 1) * 4;
     let str_off = cast_slice::<u32>(bytes, str_off_at, m + 1);
@@ -125,6 +150,20 @@ pub fn load_multi_strs(name: &str) -> MultiRel<&'static str> {
     let data = cast_slice::<u8>(bytes, data_at, bytes.len() - data_at);
     let strs: Vec<&'static str> = strs_from_offsets(str_off, data);
     MultiRel::from_csr(row_off, Vec::leak(strs))
+}
+
+/// CSR id column under `../cache`, untyped keys and values (test cross-check).
+#[cfg(test)]
+pub fn load_multi_ids(name: &str) -> MultiRel<usize> {
+    let (offsets, values) = csr_words::<usize>(&cache_dir(), name);
+    MultiRel::from_csr(offsets, values)
+}
+
+fn csr_words<T>(dir: &Path, name: &str) -> (&'static [u32], &'static [T]) {
+    let (n, m, bytes) = open_in(dir, name, KIND_CSR_WORDS);
+    let offsets = cast_slice::<u32>(bytes, HEADER_LEN, n + 1);
+    let values = cast_slice::<T>(bytes, align8(HEADER_LEN + (n + 1) * 4), m);
+    (offsets, values)
 }
 
 // ===== tests — round-trip a tiny file of each kind ======================

@@ -1,33 +1,19 @@
-mod cache;
-mod data;
-mod engine;
-mod format;
-mod queries;
-mod tpch;
-mod tpch_data;
-
-use data::Data;
-use tpch_data::TpchData;
-
-/// A registered query: (name, expected output, runner).
-pub type Entry<D> = (&'static str, &'static str, fn(&D) -> String);
+use prela::{Entry, job_schema, queries, tpch, tpch_schema};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let suite = args.get(1).map(|s| s.as_str()).unwrap_or("job");
 
-    if suite == "tpch" {
-        run_tpch();
-    } else {
-        run_job();
+    match suite {
+        "tpch" => run_tpch(),
+        _ => run_job(),
     }
 }
 
 /// Two timed rounds over a query suite: run every query, diff against its
 /// oracle, report ok-counts. Per-query reporting is suite-specific.
-fn run_suite<D>(
-    d: &D,
-    qs: &[Entry<D>],
+fn run_suite(
+    qs: &[Entry],
     on_pass: impl Fn(usize, &str, f64, &str),
     on_diff: impl Fn(&str, f64, &str, &str),
 ) {
@@ -37,7 +23,7 @@ fn run_suite<D>(
         let t = std::time::Instant::now();
         for (name, oracle, f) in qs {
             let q_t = std::time::Instant::now();
-            let got = f(d);
+            let got = f();
             let dt = q_t.elapsed().as_secs_f64();
             if got == *oracle {
                 ok += 1;
@@ -53,14 +39,14 @@ fn run_suite<D>(
 
 fn run_job() {
     let t = std::time::Instant::now();
-    let d = Data::load();
+    job_schema::job_init(std::path::Path::new("../cache"));
     eprintln!("load: {:.2}s  (movie n={}, person n={})",
-              t.elapsed().as_secs_f32(), d.movie.n, d.persons.n);
+              t.elapsed().as_secs_f32(), job_schema::movies().n, job_schema::persons().n);
 
     let qs = queries::all_queries();
     eprintln!("{} queries registered", qs.len());
 
-    run_suite(&d, &qs,
+    run_suite(&qs,
         |round, name, dt, got| {
             if round == 2 || dt > 0.5 {
                 println!("{:<5} ok  {:>8.4}s  {}", name, dt, got);
@@ -74,9 +60,11 @@ fn run_job() {
 
 fn run_tpch() {
     let t = std::time::Instant::now();
-    let d = TpchData::load();
+    tpch_schema::tpch_init(std::path::Path::new("../cache"));
     eprintln!("load: {:.2}s  (li n={}, ord n={}, ps n={})",
-              t.elapsed().as_secs_f32(), d.lineitem.n, d.orders.n, d.partsupp.n);
+              t.elapsed().as_secs_f32(),
+              tpch_schema::lineitem().n, tpch_schema::orders().n,
+              tpch_schema::partsupp().n);
 
     // QS=idiomatic|optimized|ddbcheat (default optimized)
     let variant = std::env::var("QS").unwrap_or_else(|_| "optimized".to_string());
@@ -88,7 +76,7 @@ fn run_tpch() {
     };
     eprintln!("{} TPC-H queries registered ({} variant)", qs.len(), variant);
 
-    run_suite(&d, &qs,
+    run_suite(&qs,
         |_, name, dt, _| println!("{:<5} ok    {:>8.4}s", name, dt),
         |name, dt, got, oracle| {
             println!("{:<5} DIFF  {:>8.4}s", name, dt);
