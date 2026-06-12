@@ -9,12 +9,12 @@
 //
 // There is no separate key-set family: a set IS an identity relation D → D
 // (Julia's `Unary{D} <: Query{D, D}`). Set-shaped nodes (Universe, Bitset,
-// MatSetSet, Disj) emit `(x, x)` from drive and yield `x` from
+// MatSet, Disj) emit `(x, x)` from drive and yield `x` from
 // probe iff member — so they compose, product and left-compose like any
 // other relation, with no keyset projection in between. Membership is part
 // of the relation protocol: `member(q, x)` defaults to
 // `probe_any(x, |_| true)` for ANY probe-able query and is overridden where
-// a direct test is cheaper (Bitset bit-test, Universe bound check, MatSetSet
+// a direct test is cheaper (Bitset bit-test, Universe bound check, MatSet
 // hash lookup).
 //
 // Set algebra mirrors Julia exactly: `∧`/`.and` is an ALIAS for the product
@@ -29,10 +29,16 @@
 // lowering prela's `prepare` does with `Driven()`/`Probed()`, at type-check
 // time. Stream/index pairs are separate types, chosen by the query author:
 //
-//   .inv()      → InvStream   (drive-only: flips pairs, no state)
-//   .mat_idx()  → HashIdx     (probe-only: eager HashMap<D, SVec<R>>)
-//   .lc(s)      → LCStream    (drive-only)
-//   .fold(...)  → Fold        (cache; both modes)
+//   .inv()                     → InvStream  (drive-only: flips pairs, no state)
+//   .collect::<HashIdx<_,_>>() → HashIdx    (probe-only: eager HashMap<D, SVec<R>>)
+//   .collect::<MatSet<_>>()    → MatSet     (probe-only membership set)
+//   s.group_by(key)            → GroupBy    (drive-only)
+//   .fold(...)                 → Fold       (cache; both modes)
+//
+// NO HIDDEN MATERIALIZATION: a drive-only node in probe position is a compile
+// error, and the fix is an explicit `collect` whose target type names the
+// physical structure (the `FromRel` mirror of Iterator's `FromIterator`) —
+// every index/set build is visible in the query text.
 //
 // State is EAGER: every index/cache-holding node builds its state in its
 // constructor, from already-built children, and holds it in plain
@@ -370,8 +376,9 @@ impl<A: Probe, B: Probe<D = A::D>> Probe for Disj<A, B> {
 /// Enumerable BAG union: drive `a` fully, then `b` fully — NO dedup and no
 /// membership pretense (drive-only; no `Probe`). The legs must agree on
 /// domain AND value type. A key in both legs is emitted by both, so feed a
-/// `Union` only to deduping sinks (`Bitset::from_drive`, `.mat_set()`, …)
-/// or fold through `.mat_set()` first when duplicates would change results.
+/// `Union` only to deduping sinks (`Bitset::from_drive`,
+/// `.collect::<MatSet<_>>()`, …) or collect into a set first when
+/// duplicates would change results.
 /// Julia leaves this node as a design note next to `drive(::Disj)`; Rust
 /// implements it. Built with `.union(b)`.
 pub struct Union<A, B> { pub a: A, pub b: B }
@@ -433,18 +440,31 @@ impl<Q: Drive> Drive for InvStream<Q> where Q::R: Eq + Hash {
     }
 }
 
+// ===== FromRel / collect — explicit materialization ======================
+// The relation mirror of `FromIterator`/`Iterator::collect`: `q.collect()`
+// drives `q` once into the physical structure named by the target type
+// (turbofish or `let` annotation). This is the ONLY way a stream becomes
+// probe-side state, so every materialization is visible in the query text.
+// `Bitset` deliberately does not implement `FromRel`: it needs the universe
+// size `n` — part of the physical choice — so it keeps the explicit
+// `Bitset::from_drive(n, q)` constructor.
+
+pub trait FromRel<Q: Drive>: Sized {
+    fn from_rel(q: Q) -> Self;
+}
+
 // ===== HashIdx — THE probe-side physical node ===========================
 // An eager `HashMap<K, SVec<V>>` with probe access — the probed form of a
-// materialized forward index (`.mat_idx()`).
+// materialized forward index (`.collect::<HashIdx<_, _>>()`).
 
 pub struct HashIdx<K: Copy + Eq + Hash, V: Copy> {
     pub idx: HashMap<K, SVec<V>>,
 }
 
-impl<K: Copy + Eq + Hash, V: Copy> HashIdx<K, V> {
-    /// Forward index: bucket q's values by key. (`.mat_idx()`)
-    pub fn mat<Q: Drive<D = K, R = V>>(q: Q) -> Self {
-        let mut m: HashMap<K, SVec<V>> = HashMap::new();
+/// Forward index: bucket q's values by key.
+impl<Q: Drive> FromRel<Q> for HashIdx<Q::D, Q::R> {
+    fn from_rel(q: Q) -> Self {
+        let mut m: HashMap<Q::D, SVec<Q::R>> = HashMap::new();
         q.drive(|d, r| m.entry(d).or_default().push(r));
         HashIdx { idx: m }
     }
@@ -467,21 +487,22 @@ impl<K: Copy + Eq + Hash, V: Copy> Probe for HashIdx<K, V> {
     }
 }
 
-// ===== MatSetSet — materialized membership set (probe-only identity) ====
+// ===== MatSet — materialized membership set (probe-only identity) ====
 
-pub struct MatSetSet<D: Copy + Eq + Hash> { pub set: HashSet<D> }
-impl<D: Copy + Eq + Hash> MatSetSet<D> {
-    /// Drive the input and collect the VALUE slot. Identity relations send
-    /// their keys through the value slot, so one constructor materializes a
-    /// set's keys and a value-bearing query's values alike.
-    pub fn build<S: Drive<R = D>>(s: S) -> Self {
+pub struct MatSet<D: Copy + Eq + Hash> { pub set: HashSet<D> }
+/// Drive the input and collect the VALUE slot. Identity relations send
+/// their keys through the value slot, so one impl materializes a set's
+/// keys and a value-bearing query's values alike.
+impl<Q: Drive> FromRel<Q> for MatSet<Q::R>
+where Q::R: Eq + Hash {
+    fn from_rel(q: Q) -> Self {
         let mut set = HashSet::new();
-        s.drive(|_, v| { set.insert(v); });
-        MatSetSet { set }
+        q.drive(|_, v| { set.insert(v); });
+        MatSet { set }
     }
 }
-impl<D: Copy + Eq + Hash> Rel for MatSetSet<D> { type D = D; type R = D; }
-impl<D: Copy + Eq + Hash> Probe for MatSetSet<D> {
+impl<D: Copy + Eq + Hash> Rel for MatSet<D> { type D = D; type R = D; }
+impl<D: Copy + Eq + Hash> Probe for MatSet<D> {
     #[inline(always)]
     fn probe<K: FnMut(D)>(&self, x: D, mut k: K) {
         if self.set.contains(&x) { k(x); }
@@ -496,13 +517,15 @@ impl<D: Copy + Eq + Hash> Probe for MatSetSet<D> {
 
 // ===== Bitset — `Vec<u64>`-backed dense identity relation ===============
 //
-// Drop-in replacement for `MatSetSet` when the membership domain is a
+// Drop-in replacement for `MatSet` when the membership domain is a
 // dense `0..n`: trades the HashSet's hash+probe for one bit-test.
 // `drive` enumerates set bits via word-scan + `trailing_zeros` so
 // iteration cost is proportional to popcount, not the universe size.
 // `set` rejects keys ≥ n (`NO_ID` hole sentinels), so padding bits in the
 // last word stay 0 and `member`/`drive` can trust the words as-is.
 
+// Not a `FromRel` target: the universe size `n` is part of the physical
+// choice, so construction stays explicit via `Bitset::from_drive(n, q)`.
 pub struct Bitset { pub bs: Vec<u64>, pub n: usize }
 
 impl Bitset {
@@ -555,19 +578,22 @@ impl Probe for Bitset {
     }
 }
 
-// ===== LCStream (`r ← s`) — drive s, probe r per row ====================
-// For r: Probe<D, RK> and s: Drive<D, SV>, produces a drive-only RK → SV.
+// ===== GroupBy (Julia `r ← s`) — drive src, probe key per row ===========
+// For src: Drive<D, SV> and key: Probe<D, RK>, produces a drive-only
+// RK → SV: each src pair is re-keyed by `key`'s value at the same d.
+// Method spelling is receiver-first on the DRIVEN side: `s.group_by(r)` —
+// Julia's `←` argument order is an infix-surface artifact.
 
-pub struct LCStream<R, S> { pub r: R, pub s: S }
+pub struct GroupBy<S, R> { pub src: S, pub key: R }
 
-impl<R: Rel, S: Rel<D = R::D>> Rel for LCStream<R, S> where R::R: Eq + Hash {
+impl<S: Rel, R: Rel<D = S::D>> Rel for GroupBy<S, R> where R::R: Eq + Hash {
     type D = R::R;
     type R = S::R;
 }
-impl<R: Probe, S: Drive<D = R::D>> Drive for LCStream<R, S> where R::R: Eq + Hash {
+impl<S: Drive, R: Probe<D = S::D>> Drive for GroupBy<S, R> where R::R: Eq + Hash {
     #[inline(always)]
     fn drive<K: FnMut(R::R, S::R)>(&self, mut k: K) {
-        self.s.drive(|d, sv| self.r.probe(d, |rk| k(rk, sv)));
+        self.src.drive(|d, sv| self.key.probe(d, |rk| k(rk, sv)));
     }
 }
 
@@ -747,7 +773,7 @@ pub trait QueryExt: Rel + Sized {
 
     /// Enumerable bag union — drive self fully, then `b` fully, NO dedup
     /// (the drive-position complement of the probe-only `.or`). Feed it to
-    /// deduping sinks, or `.mat_set()` it when duplicates would matter.
+    /// deduping sinks, or collect it into a `MatSet` when duplicates would matter.
     #[allow(dead_code)] // no suite query drives a union today (every `∨` is member-position); kept as the sanctioned enumerable form, exercised by unit tests
     #[inline(always)]
     fn union<B: Rel<D = Self::D, R = Self::R>>(self, b: B) -> Union<Self, B> { Union { a: self, b } }
@@ -792,26 +818,21 @@ pub trait QueryExt: Rel + Sized {
     #[inline(always)] fn between(self, lo: Self::R, hi: Self::R) -> Filter<Self, impl Fn(Self::R) -> bool>
         where Self::R: PartialOrd { self.filt(move |x| x >= lo && x <= hi) }
 
-    /// Materialize in probe position (`!q` probed) — eager forward index.
+    /// Materialize — drive self once into the physical structure named by
+    /// the target type (`FromRel`, the relation mirror of `FromIterator`):
+    /// `.collect::<HashIdx<_, _>>()` for a forward index, `.collect::<
+    /// MatSet<_>>()` for a membership set (Julia: `prepare` probing a
+    /// `Materialized`). The type annotation IS the visible physical choice.
     #[inline(always)]
-    fn mat_idx(self) -> HashIdx<Self::D, Self::R> where Self: Drive { HashIdx::mat(self) }
+    fn collect<T: FromRel<Self>>(self) -> T where Self: Drive { T::from_rel(self) }
 
-    /// `r ← s` in drive position — drives s, probes r per row. (With sets
-    /// now identity relations, `r ← (set)` is just this general form: the
-    /// set's key flows through the value slot.)
+    /// Julia's `r ← s` in drive position — drives self, probes `key` per
+    /// row, emits (key-value, self-value). (With sets now identity
+    /// relations, grouping by a set is just this general form: the set's
+    /// key flows through the value slot.)
     #[inline(always)]
-    fn lc<S: Rel<D = Self::D>>(self, s: S) -> LCStream<Self, S>
-    where Self::R: Eq + Hash { LCStream { r: self, s } }
-
-    /// `l ⩘ r` — left-driving wedge: restrict `r` by `l`'s value-set. Pure
-    /// sugar over the same `Restrict` node Julia builds (`⩘(l, r) =
-    /// Restrict(r, l')`): materialize `l`'s values with `.mat_set()` and
-    /// feed them to `.in_s`. `r` is identity-shaped (`D = R = l`'s value
-    /// type), so this keeps the keys of `r` that are values of `l`.
-    #[inline(always)]
-    fn lconj<R: Rel<D = Self::R, R = Self::R>>(self, r: R)
-        -> Restrict<R, MatSetSet<Self::R>>
-    where Self: Drive, Self::R: Eq + Hash { r.in_s(self.mat_set()) }
+    fn group_by<R: Rel<D = Self::D>>(self, key: R) -> GroupBy<Self, R>
+    where R::R: Eq + Hash { GroupBy { src: self, key } }
 
     /// `▷ (op, init)` — per-key foldl into an eager cache.
     #[inline(always)]
@@ -849,13 +870,6 @@ pub trait QueryExt: Rel + Sized {
         Map::new(self, f)
     }
 
-    /// Materialize in member position — eager membership HashSet over the
-    /// VALUE slot (a set input contributes its keys, which it sends through
-    /// the value slot; a value-bearing input contributes its values).
-    #[inline(always)]
-    fn mat_set(self) -> MatSetSet<Self::R>
-    where Self: Drive, Self::R: Eq + Hash { MatSetSet::build(self) }
-
     /// `⊵ (op, init)` — no-group foldl. Drives the whole query, returns scalar.
     #[inline(always)]
     fn unwrap_fold<OP: Fn(S, Self::R) -> S, S: Copy>(&self, init: S, op: OP) -> S
@@ -874,7 +888,7 @@ mod tests {
     use super::*;
 
     // films: 0 → 10, 1 → 20, 2 → 30 (Col); cast: 0 → {7, 8}, 2 → {7} (MultiCol)
-    // Values are id-typed (usize) so they can feed compose/lconj domains.
+    // Values are id-typed (usize) so they can feed compose/restrict domains.
     fn films() -> Col<usize> { Col::from_pairs(3, [(0, 10), (1, 20), (2, 30)]) }
     fn cast() -> MultiCol<usize> { MultiCol::from_pairs(3, [(0, 7), (0, 8), (2, 7)]) }
 
@@ -917,9 +931,9 @@ mod tests {
     }
 
     #[test]
-    fn mat_idx() {
+    fn collect_hash_idx() {
         let f = films();
-        let idx = (&f).filt(|v| v > 10).mat_idx();
+        let idx = (&f).filt(|v| v > 10).collect::<HashIdx<_, _>>();
         let mut got = Vec::new();
         idx.probe(2, |v| got.push(v));
         assert_eq!(got, vec![30]);
@@ -927,36 +941,37 @@ mod tests {
     }
 
     #[test]
-    fn lc_and_folds() {
+    fn group_by_and_folds() {
         let f = films();
         let c = cast();
-        // group film-values by cast-person: lc(cast ← films)... r=cast probed,
-        // s=films driven: for film d, value f(d), key = each cast member of d.
-        let grouped = (&c).lc(&f);
+        // group film-values by cast-person (Julia `cast ← films`): films
+        // driven, cast probed for the key — for film d, value f(d), key =
+        // each cast member of d.
+        let grouped = (&f).group_by(&c);
         assert_eq!(drive_all(&grouped), vec![(7, 10), (7, 30), (8, 10)]);
         // fold: count films per person
-        let counts = (&c).lc(&f).fold(0i64, |a, _| a + 1);
+        let counts = (&f).group_by(&c).fold(0i64, |a, _| a + 1);
         assert_eq!(drive_all(&counts), vec![(7, 2), (8, 1)]);
         // dense fold over person ids 0..9
-        let dcounts = (&c).lc(&f).dense_fold(9, 0i64, |a, _| a + 1);
+        let dcounts = (&f).group_by(&c).dense_fold(9, 0i64, |a, _| a + 1);
         assert_eq!(drive_all(&dcounts), vec![(7, 2), (8, 1)]);
         // buf_fold: whole-group reduce the foldl shape can't express —
         // person 7 saw film values {10, 30} (range 20), person 8 {10}
-        let range = (&c).lc(&f).buf_fold(|vs| {
+        let range = (&f).group_by(&c).buf_fold(|vs| {
             let mn = *vs.iter().min().unwrap();
             let mx = *vs.iter().max().unwrap();
             (mx - mn) as i64
         });
         assert_eq!(drive_all(&range), vec![(7, 20), (8, 0)]);
         // median via buf_fold (an order-statistic — needs the whole group)
-        let med = (&c).lc(&f).buf_fold(|mut vs| {
+        let med = (&f).group_by(&c).buf_fold(|mut vs| {
             vs.sort_unstable();
             vs[vs.len() / 2]
         });
         assert_eq!(drive_all(&med), vec![(7, 30), (8, 10)]);
         // count_distinct = buf_fold's `length ∘ unique` instance; the
         // duplicate (7, 10) row collapses
-        let cd = (&c).lc(&f).union((&c).lc(&f).filt(|v| v == 10)).count_distinct();
+        let cd = (&f).group_by(&c).union((&f).group_by(&c).filt(|v| v == 10)).count_distinct();
         assert_eq!(drive_all(&cd), vec![(7, 2), (8, 1)]);
         // scalar
         assert_eq!((&f).unwrap_fold(0usize, |a, v| a + v), 60);
@@ -970,10 +985,10 @@ mod tests {
         assert!(f.member(1) && !f.member(3) && !f.member(NO_ID));
         assert!(c.member(0) && !c.member(1));
         assert!((&f).filt(|v| v > 15).member(1) && !(&f).filt(|v| v > 15).member(0));
-        // overrides: Universe bound check, MatSetSet hash, Bitset bit test
+        // overrides: Universe bound check, MatSet hash, Bitset bit test
         let u = Universe { n: 2 };
         assert!(u.member(1) && !u.member(2));
-        let ms = (&f).mat_set(); // value-set of films: {10, 20, 30}
+        let ms: MatSet<_> = (&f).collect(); // value-set of films: {10, 20, 30}
         assert!(ms.member(10) && !ms.member(11));
     }
 
@@ -986,9 +1001,9 @@ mod tests {
         let people = u3.in_s(&c);
         assert_eq!(drive_all(&people), vec![(0, 0), (2, 2)]);
         assert!(people.member(0) && !people.member(1));
-        // identity sets send keys through the value slot, so one mat_set /
-        // from_drive constructor serves sets and value-bearing queries alike
-        let ms = (&people).mat_set();
+        // identity sets send keys through the value slot, so one FromRel /
+        // from_drive impl serves sets and value-bearing queries alike
+        let ms: MatSet<_> = (&people).collect();
         assert!(ms.member(0) && !ms.member(1));
         let b = Bitset::from_drive(3, &people);
         assert!(b.member(0) && !b.member(1) && b.member(2));
@@ -1087,7 +1102,7 @@ mod tests {
         assert_eq!(drive_all(&(&c).union(&c)),
                    vec![(0, 7), (0, 7), (0, 8), (0, 8), (2, 7), (2, 7)]);
         // identity legs: the overlap is emitted twice; a deduping sink
-        // (Bitset / mat_set) collapses the bag back to a set
+        // (Bitset / MatSet collect) collapses the bag back to a set
         let both = u2.union(Universe { n: 1 });
         assert_eq!(drive_all(&both), vec![(0, 0), (0, 0), (1, 1)]);
         let b = Bitset::from_drive(2, &both);
@@ -1095,12 +1110,12 @@ mod tests {
     }
 
     #[test]
-    fn lconj_and_map() {
+    fn collect_set_restrict_and_map() {
         let f = films();
         let u = Universe { n: 31 };
-        // `⩘` is sugar for `u.in_s((&f).mat_set())`: the universe 0..31
-        // restricted by films' value-set {10, 20, 30}
-        let w = (&f).lconj(&u);
+        // Julia's `⩘`: the universe 0..31 restricted by films' collected
+        // value-set {10, 20, 30}
+        let w = u.in_s((&f).collect::<MatSet<_>>());
         assert_eq!(drive_all(&w), vec![(10, 10), (20, 20), (30, 30)]);
         assert!(w.member(10) && !w.member(11));
         assert_eq!(drive_all(&(&f).map(|v| v * 2)), vec![(0, 20), (1, 40), (2, 60)]);

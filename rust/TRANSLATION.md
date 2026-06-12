@@ -50,11 +50,11 @@ fn q2a(d: &Data) -> String {
 
 Mirroring Julia's `Unary{D} <: Query{D, D}`, Rust has ONE trait family
 (`Rel` / `Drive` / `Probe`). A set-shaped node (`Universe`, `Bitset`,
-`MatSetSet`, `Disj`) is an identity relation `D → D`: `drive`
+`MatSet`, `Disj`) is an identity relation `D → D`: `drive`
 emits `(x, x)`, `probe` yields `x` iff member. Membership is part of the
 relation protocol — `member(q, x)` is defined for ANY probe-able query as
 `probe_any(x, |_| true)`, with cheaper overrides on the set leaves (Bitset
-bit-test, Universe bound check, MatSetSet hash lookup) and on `Prod` (the
+bit-test, Universe bound check, MatSet hash lookup) and on `Prod` (the
 flat short-circuit AND below).
 
 Consequences:
@@ -65,7 +65,7 @@ Consequences:
 - `s : q` (set ∘ query) is plain `Compose` — `s.o(q)` — because the
   identity's value IS the key.
 - Identity relations send their keys through the value slot of `drive`, so
-  the one `Bitset::from_drive` / `.mat_set()` constructor serves sets and
+  the one `Bitset::from_drive` / `MatSet` `FromRel` impl serves sets and
   value-bearing queries alike (a set contributes its keys, a query its
   values).
 
@@ -96,10 +96,11 @@ member-check `p`, probe `b` — the post-unification spelling of Julia's
 | `(movie → …)`       | `d.movie.o(…)`                            | Universe ∘ Query |
 | `a ∧ b`             | `a.and(b)`                                | alias for `⊗` (= `Prod`); in member position the `member` fast path short-circuits flat without building pairs |
 | `a ∨ b`             | `a.or(b)`                                 | probe-only membership union (`Disj`); driving it is a COMPILE error |
-| (enumerable union)  | `a.union(b)`                              | bag-concat `Union` (drive a then b, NO dedup); Julia has this only as a design note next to `drive(::Disj)` — Rust implements it. Feed it to deduping sinks (`Bitset::from_drive`, `.mat_set()`), or materialize first when duplicates would change results |
+| (enumerable union)  | `a.union(b)`                              | bag-concat `Union` (drive a then b, NO dedup); Julia has this only as a design note next to `drive(::Disj)` — Rust implements it. Feed it to deduping sinks (`Bitset::from_drive`, `.collect::<MatSet<_>>()`), or materialize first when duplicates would change results |
 | `a - b`             | `a.minus(b)`                              | value-bearing `Diff`: a's pairs whose KEY is not a member of b (identity a ⟹ set difference) |
 | `a × b × c`         | `a.x(b).x(c)`                             | left-nested binary |
-| `l ⩘ r`             | `l.lconj(r)`                              | left-driving wedge — in BOTH languages pure sugar building a `Restrict` of `r` by `l`'s value-set. Julia: `⩘(l, r) = Restrict(r, l')`, materialized lazily through the mode system (the `Inv` sits in probed position, so `prepare` self-indexes it); Rust has no lazy `Inv` node, so the sugar materializes eagerly: `l.lconj(r)` ≡ `r.in_s(l.mat_set())`, a `Restrict<R, MatSetSet>` (`r` identity-shaped) |
+| `l ⩘ r`             | `r.in_s(l.collect::<MatSet<_>>())`        | left-driving wedge — in BOTH languages a `Restrict` of `r` by `l`'s value-set, with no dedicated node or sugar. Julia: `⩘(l, r) = Restrict(r, l')`, materialized lazily through the mode system (the `Inv` sits in probed position, so `prepare` self-indexes it); Rust has no lazy `Inv` node, so the collect materializes eagerly — visible in the query text |
+| `r ← s` (l-compose) | `s.group_by(r)`                           | drive-only `GroupBy`: drive `s`, probe `r` per row for the group key, emit (r-value, s-value). RECEIVER = DRIVEN SIDE — Julia's infix argument order is a surface artifact; in method position the flip reads naturally ("group s by r") |
 | `q ▷ (op, init)`    | `q.fold(init, op)`                        | per-key foldl into an eager cache |
 | `q ▷ f` (callable)  | `q.buf_fold(f)`                           | `BufFold` — per-key whole-multiset reduce: buffer each group, cache `f(group)`. For reducers that don't fit foldl's `(S, R) → S` shape; `▷ (vs -> length(unique(vs)))` ⇒ `.count_distinct()`, the `length ∘ unique` instance |
 | `a == v`            | `a.eq(v)`                                 | for `Type.field == v` see ELISION |
@@ -109,6 +110,19 @@ member-check `p`, probe `b` — the post-unification spelling of Julia's
 | `a ~ r"…"`          | `a.rx(r"…")`                              |  |
 | `a ≁ r"…"`          | `a.nrx(r"…")`                             |  |
 | `Universe`          | `d.movie`, `d.persons`                    | Copy; identity relation over 0..n |
+
+## No hidden materialization — `collect` names the physical type
+
+Every index/set build is visible in the query text. `q.collect()` (the
+`FromRel` mirror of `Iterator::collect`/`FromIterator`) drives `q` once into
+the physical structure named by the target type — turbofish inline
+(`.collect::<MatSet<_>>()`) or a `let` annotation
+(`let idx: HashIdx<_, _> = (…).collect();`). This is the ONLY way a stream
+becomes probe-side state; a drive-only node (`InvStream`, `GroupBy`, `Union`)
+in probe position is a compile error, and the fix is an explicit `collect`
+where Julia's `prepare` would auto-index through the mode system. `Bitset`
+is deliberately NOT a `FromRel` target: it needs the universe size `n` —
+part of the physical choice — so it keeps `Bitset::from_drive(n, q)`.
 
 The scalar comparisons (`.eq`/`.ne`/`.gt`/`.lt`/`.ge`/`.le`/`.in_v`/`.rx`/
 `.nrx`/`.during`/`.between`) are all captured-closure forms of `.filt`: each

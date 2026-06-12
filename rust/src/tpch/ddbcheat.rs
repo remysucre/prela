@@ -70,7 +70,7 @@ fn q1(d: &TpchData) -> String {
 }
 
 fn q4(d: &TpchData) -> String {
-    // ddbcheat: instead of `lconj` building a HashSet from ~14M late-lineitem
+    // ddbcheat: instead of collecting a MatSet from ~14M late-lineitem
     // orderkeys then intersecting with ~750K date-filtered orders, build a
     // packed bitset of "has-late-lineitem" indexed by orderkey in one scan.
     // The chained restriction short-circuits against the date predicate
@@ -114,7 +114,7 @@ fn q8(d: &TpchData) -> String {
     let year = (&live).o((&d.li_order).o(&d.ord_date)).map(|d: i64| d / 10000);
     let snat_name = (&live).o((&d.li_supplier).o((&d.su_nation).o(&d.na_name)));
     let scan = (&live).o((&d.li_extendedprice).x(&d.li_discount)).x(snat_name);
-    let pair_fold = year.lc(scan).fold((0.0_f64, 0.0_f64), |(b, t), ((e, dc), nm)| {
+    let pair_fold = scan.group_by(year).fold((0.0_f64, 0.0_f64), |(b, t), ((e, dc), nm)| {
         let v = e * (1.0 - dc);
         (b + if nm == "BRAZIL" { v } else { 0.0 }, t + v)
     });
@@ -138,7 +138,7 @@ fn q9(d: &TpchData) -> String {
     for i in 0..n_part {
         pa_is_green[i] = d.pa_name.values[i].contains("green");
     }
-    let sc = (&d.ps_part).x(&d.ps_supplier).inv().o(&d.ps_supplycost).mat_idx();
+    let sc: HashIdx<_, _> = (&d.ps_part).x(&d.ps_supplier).inv().o(&d.ps_supplycost).collect();
     let live = (&d.lineitem)
         .in_s((&d.li_part).filt(move |p: usize| pa_is_green[p]));
     let nation_id = (&live).o((&d.li_supplier).o(&d.su_nation));
@@ -148,7 +148,7 @@ fn q9(d: &TpchData) -> String {
     let scan = (&live).o(
         (&d.li_extendedprice).x(&d.li_discount).x(&d.li_quantity).x(cost_per_li)
     );
-    let result = groups.lc(scan).fold(0.0_f64, |a, (((e, dc), q), cost)| {
+    let result = scan.group_by(groups).fold(0.0_f64, |a, (((e, dc), q), cost)| {
         a + e * (1.0 - dc) - cost * q
     });
     let mut rows: Vec<((usize, i64), f64)> = Vec::new();
@@ -180,7 +180,7 @@ fn q12(d: &TpchData) -> String {
         .in_s((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r));
     let scan = (&live).o(&d.li_shipmode);
     let prio = (&live).o((&d.li_order).o(&d.ord_priority));
-    let result = scan.lc(prio).fold((0_i64, 0_i64), |(h, l), pr| {
+    let result = prio.group_by(scan).fold((0_i64, 0_i64), |(h, l), pr| {
         let is_high = pr == "1-URGENT" || pr == "2-HIGH";
         if is_high { (h + 1, l) } else { (h, l + 1) }
     });
@@ -212,8 +212,8 @@ fn q13(d: &TpchData) -> String {
     }
 
     let live_orders = (&d.orders).in_s(not_special);
-    let count_per_cust = (&live_orders).o(&d.ord_customer)
-        .lc((&live_orders).o(&d.ord_date))
+    let count_per_cust = (&live_orders).o(&d.ord_date)
+        .group_by((&live_orders).o(&d.ord_customer))
         .fold(0_i64, |a, _| a + 1);
     let mut dist: HashMap<i64, i64> = HashMap::new();
     let mut n_with = 0i64;
@@ -305,7 +305,8 @@ fn q20(d: &TpchData) -> String {
     let canada_supps = (&d.supplier).in_s(
         (&d.su_nation).o(&d.na_name).eq("CANADA")
     );
-    let target = qual_ps.o(&d.ps_supplier).lconj(canada_supps);
+    let qual_supps: MatSet<_> = qual_ps.o(&d.ps_supplier).collect();
+    let target = canada_supps.in_s(qual_supps);
     let mut rows: Vec<(&str, &str)> = Vec::new();
     target.o((&d.su_name).x(&d.su_address)).drive(|_, (n, a)| rows.push((n, a)));
     rows.sort_by(|a, b| a.0.cmp(b.0));
@@ -371,7 +372,7 @@ fn q21(d: &TpchData) -> String {
         .in_s((&d.li_order).x(&d.li_supplier).filt(move |(o, s)| {
             !late_multi[o] && late_first[o] == s
         }));
-    let counts = (&d.li_supplier).lc(qualifying).fold(0_i64, |a, _| a + 1);
+    let counts = qualifying.group_by(&d.li_supplier).fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(usize, i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
     let mut named: Vec<(&str, i64)> = rows.iter()
@@ -396,7 +397,7 @@ fn q2(d: &TpchData) -> String {
     );
     // ddbcheat: partkey is a dense i64 0..N, so min-per-key fits in a
     // Vec<f64> indexed by partkey — no hash, no allocation per insert. The
-    // generic `.fold().mat()` builds an AHashMap<i64,f64> which is ~2× the
+    // a generic `.fold()` builds an AHashMap<i64,f64> which is ~2× the
     // wall-clock for this fold's hot loop.
     let n_part = d.part.n;
     let mut min_per_part: Vec<f64> = vec![f64::INFINITY; n_part];

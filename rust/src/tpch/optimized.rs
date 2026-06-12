@@ -38,7 +38,7 @@ fn q1(d: &TpchData) -> String {
             ((rf.as_bytes()[0].wrapping_sub(b'A') as usize) << 4)
                 | (ls.as_bytes()[0].wrapping_sub(b'F') as usize)
         });
-    let grouped = group_key.lc(scan)
+    let grouped = scan.group_by(group_key)
         .dense_fold(288, (0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0_i64),
               |(qty, ext, di, dp, chg, n), (((q, e), dc), tx)| {
                   let dp_inc = e * (1.0 - dc);
@@ -62,7 +62,7 @@ fn q4(d: &TpchData) -> String {
     // Julia: let live = (lineitem ∧ (commitdate < receiptdate) → Li.order) ⩘
     //                  (orders ∧ (date in during("1993-07-01", "1993-10-01")))
     //        (live → Ord.priority)' ▷ ((a, _) -> a + 1, 0)
-    // Dense `Bitset` of orderkeys with a late lineitem replaces the lconj
+    // Dense `Bitset` of orderkeys with a late lineitem replaces the MatSet
     // path that lazy-built a HashSet from ~14M late-lineitem orderkeys.
     let bad_li_order = d.lineitem
         .in_s((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r))
@@ -84,7 +84,7 @@ fn q9(d: &TpchData) -> String {
     // CP1.3 / CP1.4: group on (nation_id, year) as (usize, i64) — 16-byte
     // integer hash key, not (&str, i64) which costs a string hash + memcmp
     // per collision. Nation name is FD'd by nation_id, looked up at output.
-    let sc = (&d.ps_part).x(&d.ps_supplier).inv().o(&d.ps_supplycost).mat_idx();
+    let sc: HashIdx<_, _> = (&d.ps_part).x(&d.ps_supplier).inv().o(&d.ps_supplycost).collect();
     // Hoist the `Part.name ~ "green"` predicate out of the 60M-row
     // lineitem scan by materializing the matching part-ids into a `Bitset`
     // (~200K Part rows scanned once). Per lineitem becomes one bit-test.
@@ -100,7 +100,7 @@ fn q9(d: &TpchData) -> String {
     let scan = (&live).o(
         (&d.li_extendedprice).x(&d.li_discount).x(&d.li_quantity).x(cost_per_li)
     );
-    let result = groups.lc(scan).fold(0.0_f64, |a, (((e, dc), q), cost)| {
+    let result = scan.group_by(groups).fold(0.0_f64, |a, (((e, dc), q), cost)| {
         a + e * (1.0 - dc) - cost * q
     });
     let mut rows: Vec<((usize, i64), f64)> = Vec::new();
@@ -132,7 +132,7 @@ fn q12(d: &TpchData) -> String {
         .in_s((&d.li_commitdate).x(&d.li_receiptdate).filt(|(c, r)| c < r));
     let scan = (&live).o(&d.li_shipmode);
     let prio = (&live).o((&d.li_order).o(&d.ord_priority));
-    let result = scan.lc(prio).fold((0_i64, 0_i64), |(h, l), pr| {
+    let result = prio.group_by(scan).fold((0_i64, 0_i64), |(h, l), pr| {
         let is_high = pr == "1-URGENT" || pr == "2-HIGH";
         if is_high { (h + 1, l) } else { (h, l + 1) }
     });
@@ -161,8 +161,8 @@ fn q13(d: &TpchData) -> String {
                 None => true,
             }
         }));
-    let count_per_cust = (&live_orders).o(&d.ord_customer)
-        .lc((&live_orders).o(&d.ord_date))
+    let count_per_cust = (&live_orders).o(&d.ord_date)
+        .group_by((&live_orders).o(&d.ord_customer))
         .fold(0_i64, |a, _| a + 1);
     let mut dist: HashMap<i64, i64> = HashMap::new();
     let mut n_with = 0i64;
@@ -185,12 +185,12 @@ pub(super) fn q17(d: &TpchData) -> String {
     let qual_part_set = (&d.part)
         .in_s((&d.pa_brand).eq("Brand#23"))
         .in_s((&d.pa_container).eq("MED BOX"))
-        .mat_set();
+        .collect::<MatSet<_>>();
     let live_li = (&d.li_part).in_s(&qual_part_set);
-    let threshold_per_part = (&live_li).lc(&d.li_quantity)
+    let threshold_per_part = (&d.li_quantity).group_by(&live_li)
         .fold((0.0_f64, 0_i64), |(s, n), q| (s + q, n + 1))
         .map(|(s, n)| 0.2 * s / n as f64);
-    let tpp = threshold_per_part.mat_idx();
+    let tpp: HashIdx<_, _> = threshold_per_part.collect();
     let live = d.lineitem
         .in_s(&live_li)
         .in_s((&d.li_quantity).x((&d.li_part).o(&tpp))
@@ -203,7 +203,7 @@ pub(super) fn q17(d: &TpchData) -> String {
 // ---------- Q18 — large volume customer ----------
 
 fn q18(d: &TpchData) -> String {
-    let sum_qty = (&d.li_order).lc(&d.li_quantity).dense_fold(d.orders.n, 0.0_f64, |a, q| a + q);
+    let sum_qty = (&d.li_quantity).group_by(&d.li_order).dense_fold(d.orders.n, 0.0_f64, |a, q| a + q);
     let big = sum_qty.gt(300.0);
     let mut rows: Vec<(usize, f64)> = Vec::new();
     big.drive(|k, v| rows.push((k, v)));
@@ -250,11 +250,11 @@ fn q21(d: &TpchData) -> String {
         Some(f) if f != s => (first, true),
         _ => (first, multi),
     };
-    let supp_state = (&d.li_order).lc(&d.li_supplier)
+    let supp_state = (&d.li_supplier).group_by(&d.li_order)
         .dense_fold(d.orders.n, (None, false), track);
     let multi_supp = (&d.orders).in_s(supp_state.filt(|(_, m): (Option<usize>, bool)| m));
-    let late_supp_state = (&late).o(&d.li_order)
-        .lc((&late).o(&d.li_supplier))
+    let late_supp_state = (&late).o(&d.li_supplier)
+        .group_by((&late).o(&d.li_order))
         .dense_fold(d.orders.n, (None, false), track);
     let only_late = (&d.orders).in_s(late_supp_state
         .filt(|(first, multi): (Option<usize>, bool)| first.is_some() && !multi));
@@ -273,7 +273,7 @@ fn q21(d: &TpchData) -> String {
         .in_s((&d.li_order).in_s(&f_ords_bs))
         .in_s((&d.li_order).in_s(&multi_supp_bs))
         .in_s((&d.li_order).in_s(&only_late_bs));
-    let counts = (&d.li_supplier).lc(qualifying).fold(0_i64, |a, _| a + 1);
+    let counts = qualifying.group_by(&d.li_supplier).fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(usize, i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
     let mut named: Vec<(&str, i64)> = rows.iter()
@@ -300,12 +300,12 @@ pub(super) fn q22(d: &TpchData) -> String {
         .unwrap_fold((0.0_f64, 0_i64), |(s, n), v| (s + v, n + 1));
     let avg = sum_p / cnt_p as f64;
     // Packed bitset over the dense customer universe — replaces the
-    // baseline's `mat_set` (a HashSet built from every order's customer)
+    // baseline's collected `MatSet` (a HashSet built from every order's customer)
     // with one bit per customer.
     let custs_with_orders = Bitset::from_drive(d.customer.n, &d.ord_customer);
     let target = (&prefix_ok).in_s((&d.cu_acctbal).gt(avg))
         .minus(custs_with_orders);
-    let counts = (&prefix).lc(target)
+    let counts = target.group_by(&prefix)
         .fold((0_i64, 0.0_f64), |(cnt, sm), c| {
             let ab = d.cu_acctbal.values[c];
             (cnt + 1, sm + ab)
@@ -329,8 +329,8 @@ fn q2(d: &TpchData) -> String {
     let eu_ps = (&d.partsupp).in_s(
         (&d.ps_supplier).o((&d.su_nation).o((&d.na_region).o(&d.re_name))).eq("EUROPE")
     );
-    let min_per_part = (&eu_ps).o(&d.ps_part)
-        .lc((&eu_ps).o(&d.ps_supplycost))
+    let min_per_part = (&eu_ps).o(&d.ps_supplycost)
+        .group_by((&eu_ps).o(&d.ps_part))
         .dense_fold(d.part.n, f64::INFINITY, |a, c| if c < a { c } else { a });
     let target = (&eu_ps)
         .in_s((&d.ps_part).o(&d.pa_size).eq(15))
