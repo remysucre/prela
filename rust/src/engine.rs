@@ -253,45 +253,63 @@ impl<A: Probe, B: Probe<D = A::R>> Probe for Compose<A, B> {
     }
 }
 
-// ===== Filter (predicates) ==============================================
+// ===== Filter (relation × scalar predicate) =============================
+// The predicate is a plain closure `Fn(A::R) -> bool`, held directly — no
+// predicate trait layer (Julia: `Filter(a, pred)` with any callable). Every
+// comparison combinator below (`.eq`, `.gt`, `.rx`, …) is a captured-closure
+// form of `.filt`.
 
-pub struct Filter<A, P> { pub a: A, pub p: P }
+pub struct Filter<A, F> { pub a: A, pub p: F }
 
-pub trait Pred<R> { fn test(&self, v: R) -> bool; }
-
-/// Membership predicate — `member` over any probe-able relation (the Julia
-/// restriction `a : b`, which consumes `b` via `member` directly). Kept
-/// nominal (rather than a closure) so it can hold the operand by value
-/// without naming its type.
-pub struct InSet<S: Probe>(pub S);
-impl<S: Probe> Pred<S::D> for InSet<S> {
-    #[inline(always)] fn test(&self, v: S::D) -> bool { self.0.member(v) }
-}
-
-/// Closure predicate — every comparison combinator below desugars to this.
-pub struct FnP<F>(pub F);
-impl<R: Copy, F: Fn(R) -> bool> Pred<R> for FnP<F> {
-    #[inline(always)] fn test(&self, v: R) -> bool { (self.0)(v) }
-}
-
-impl<A: Rel, P> Rel for Filter<A, P> {
+impl<A: Rel, F> Rel for Filter<A, F> {
     type D = A::D;
     type R = A::R;
 }
-impl<A: Drive, P: Pred<A::R>> Drive for Filter<A, P> {
+impl<A: Drive, F: Fn(A::R) -> bool> Drive for Filter<A, F> {
     #[inline(always)]
     fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
-        self.a.drive(|x, v| if self.p.test(v) { k(x, v); });
+        self.a.drive(|x, v| if (self.p)(v) { k(x, v); });
     }
 }
-impl<A: Probe, P: Pred<A::R>> Probe for Filter<A, P> {
+impl<A: Probe, F: Fn(A::R) -> bool> Probe for Filter<A, F> {
     #[inline(always)]
     fn probe<K: FnMut(A::R)>(&self, x: A::D, mut k: K) {
-        self.a.probe(x, |v| if self.p.test(v) { k(v); });
+        self.a.probe(x, |v| if (self.p)(v) { k(v); });
     }
     #[inline(always)]
     fn probe_any<K: FnMut(A::R) -> bool>(&self, x: A::D, mut k: K) -> bool {
-        self.a.probe_any(x, |v| self.p.test(v) && k(v))
+        self.a.probe_any(x, |v| (self.p)(v) && k(v))
+    }
+}
+
+// ===== Restrict (relation × relation — `a : b`) =========================
+// Keeps a's pairs (a's VALUE flows through) where the value is a `member`
+// of b; b is consumed via `member` only (julia/interp.jl:
+// `drive(n::Restrict, k) = drive(n.a, (x, m) -> member(n.b, m) && k(x, m))`,
+// probe/probe_any analogous). No `member` override: the defaulted
+// `probe_any(x, |_| true)` already reduces to
+// `a.probe_any(x, |v| b.member(v))`, which is the optimal form.
+
+pub struct Restrict<A, B> { pub a: A, pub b: B }
+
+impl<A: Rel, B: Rel<D = A::R>> Rel for Restrict<A, B> {
+    type D = A::D;
+    type R = A::R;
+}
+impl<A: Drive, B: Probe<D = A::R>> Drive for Restrict<A, B> {
+    #[inline(always)]
+    fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
+        self.a.drive(|x, v| if self.b.member(v) { k(x, v); });
+    }
+}
+impl<A: Probe, B: Probe<D = A::R>> Probe for Restrict<A, B> {
+    #[inline(always)]
+    fn probe<K: FnMut(A::R)>(&self, x: A::D, mut k: K) {
+        self.a.probe(x, |v| if self.b.member(v) { k(v); });
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut(A::R) -> bool>(&self, x: A::D, mut k: K) -> bool {
+        self.a.probe_any(x, |v| self.b.member(v) && k(v))
     }
 }
 
@@ -735,40 +753,43 @@ pub trait QueryExt: Rel + Sized {
     fn union<B: Rel<D = Self::D, R = Self::R>>(self, b: B) -> Union<Self, B> { Union { a: self, b } }
 
     // Predicate filters — all captured-closure forms of `filt`.
-    #[inline(always)] fn eq(self, v: Self::R) -> Filter<Self, impl Pred<Self::R>>
+    #[inline(always)] fn eq(self, v: Self::R) -> Filter<Self, impl Fn(Self::R) -> bool>
         where Self::R: PartialEq { self.filt(move |x| x == v) }
-    #[inline(always)] fn ne(self, v: Self::R) -> Filter<Self, impl Pred<Self::R>>
+    #[inline(always)] fn ne(self, v: Self::R) -> Filter<Self, impl Fn(Self::R) -> bool>
         where Self::R: PartialEq { self.filt(move |x| x != v) }
-    #[inline(always)] fn gt(self, v: Self::R) -> Filter<Self, impl Pred<Self::R>>
+    #[inline(always)] fn gt(self, v: Self::R) -> Filter<Self, impl Fn(Self::R) -> bool>
         where Self::R: PartialOrd { self.filt(move |x| x > v) }
-    #[inline(always)] fn lt(self, v: Self::R) -> Filter<Self, impl Pred<Self::R>>
+    #[inline(always)] fn lt(self, v: Self::R) -> Filter<Self, impl Fn(Self::R) -> bool>
         where Self::R: PartialOrd { self.filt(move |x| x < v) }
-    #[inline(always)] fn ge(self, v: Self::R) -> Filter<Self, impl Pred<Self::R>>
+    #[inline(always)] fn ge(self, v: Self::R) -> Filter<Self, impl Fn(Self::R) -> bool>
         where Self::R: PartialOrd { self.filt(move |x| x >= v) }
-    #[inline(always)] fn le(self, v: Self::R) -> Filter<Self, impl Pred<Self::R>>
+    #[inline(always)] fn le(self, v: Self::R) -> Filter<Self, impl Fn(Self::R) -> bool>
         where Self::R: PartialOrd { self.filt(move |x| x <= v) }
-    #[inline(always)] fn in_v(self, vs: Vec<Self::R>) -> Filter<Self, impl Pred<Self::R>>
+    #[inline(always)] fn in_v(self, vs: Vec<Self::R>) -> Filter<Self, impl Fn(Self::R) -> bool>
         where Self::R: PartialEq { self.filt(move |x| vs.iter().any(|&v| v == x)) }
-    #[inline(always)] fn in_s<S: Probe<D = Self::R>>(self, s: S) -> Filter<Self, InSet<S>>
-        { Filter { a: self, p: InSet(s) } }
-    #[inline(always)] fn rx(self, re: &str) -> Filter<Self, impl Pred<Self::R>>
+    /// Restriction `a : b` — keep self's pairs whose VALUE is a `member` of
+    /// `s` (any probe-able relation). Builds the dedicated `Restrict` node,
+    /// node-for-node with Julia.
+    #[inline(always)] fn in_s<S: Probe<D = Self::R>>(self, s: S) -> Restrict<Self, S>
+        { Restrict { a: self, b: s } }
+    #[inline(always)] fn rx(self, re: &str) -> Filter<Self, impl Fn(Self::R) -> bool>
         where Self: Rel<R = &'static str> {
         let re = Regex::new(re).unwrap();
         self.filt(move |s| re.is_match(s))
     }
-    #[inline(always)] fn nrx(self, re: &str) -> Filter<Self, impl Pred<Self::R>>
+    #[inline(always)] fn nrx(self, re: &str) -> Filter<Self, impl Fn(Self::R) -> bool>
         where Self: Rel<R = &'static str> {
         let re = Regex::new(re).unwrap();
         self.filt(move |s| !re.is_match(s))
     }
     /// Closure-predicate filter — for things like cross-column compares.
-    #[inline(always)] fn filt<F: Fn(Self::R) -> bool>(self, f: F) -> Filter<Self, FnP<F>>
-        { Filter { a: self, p: FnP(f) } }
+    #[inline(always)] fn filt<F: Fn(Self::R) -> bool>(self, f: F) -> Filter<Self, F>
+        { Filter { a: self, p: f } }
     /// Half-open range `[lo, hi)` — Julia `during(lo, hi)`.
-    #[inline(always)] fn during(self, lo: Self::R, hi: Self::R) -> Filter<Self, impl Pred<Self::R>>
+    #[inline(always)] fn during(self, lo: Self::R, hi: Self::R) -> Filter<Self, impl Fn(Self::R) -> bool>
         where Self::R: PartialOrd { self.filt(move |x| x >= lo && x < hi) }
     /// Closed range `[lo, hi]` — Julia `lo..hi`.
-    #[inline(always)] fn between(self, lo: Self::R, hi: Self::R) -> Filter<Self, impl Pred<Self::R>>
+    #[inline(always)] fn between(self, lo: Self::R, hi: Self::R) -> Filter<Self, impl Fn(Self::R) -> bool>
         where Self::R: PartialOrd { self.filt(move |x| x >= lo && x <= hi) }
 
     /// Materialize in probe position (`!q` probed) — eager forward index.
@@ -783,13 +804,13 @@ pub trait QueryExt: Rel + Sized {
     where Self::R: Eq + Hash { LCStream { r: self, s } }
 
     /// `l ⩘ r` — left-driving wedge: restrict `r` by `l`'s value-set. Pure
-    /// sugar, no dedicated node (Julia: `⩘(l, r) = Restrict(r, l')`):
-    /// materialize `l`'s values with `.mat_set()` and feed them to `.in_s`.
-    /// `r` is identity-shaped (`D = R = l`'s value type), so this keeps the
-    /// keys of `r` that are values of `l`.
+    /// sugar over the same `Restrict` node Julia builds (`⩘(l, r) =
+    /// Restrict(r, l')`): materialize `l`'s values with `.mat_set()` and
+    /// feed them to `.in_s`. `r` is identity-shaped (`D = R = l`'s value
+    /// type), so this keeps the keys of `r` that are values of `l`.
     #[inline(always)]
     fn lconj<R: Rel<D = Self::R, R = Self::R>>(self, r: R)
-        -> Filter<R, InSet<MatSetSet<Self::R>>>
+        -> Restrict<R, MatSetSet<Self::R>>
     where Self: Drive, Self::R: Eq + Hash { r.in_s(self.mat_set()) }
 
     /// `▷ (op, init)` — per-key foldl into an eager cache.
@@ -961,7 +982,7 @@ mod tests {
         let c = cast();
         let u3 = Universe { n: 3 };
         // films-with-cast as an identity relation: restrict the universe by
-        // membership in cast (the post-unification spelling of Julia's `:`).
+        // membership in cast (Julia's `a : b`, the Restrict node).
         let people = u3.in_s(&c);
         assert_eq!(drive_all(&people), vec![(0, 0), (2, 2)]);
         assert!(people.member(0) && !people.member(1));
@@ -987,9 +1008,42 @@ mod tests {
         assert_eq!(got, vec![2]);
         assert!(u2.or(&b).member(2) && !u2.or(&b).member(5));
         assert!(u2.minus(&ms).member(1) && !u2.minus(&ms).member(0));
-        // identity composes like any relation (the old Restrict)
+        // identity composes like any relation
         let f = films();
         assert_eq!(drive_all(&(&people).o(&f)), vec![(0, 10), (2, 30)]);
+    }
+
+    #[test]
+    fn restrict_keeps_lhs_value() {
+        // b maps a's values (10, 20) to DIFFERENT values (99, 88); the
+        // restriction must pass a's pairs through untouched — the membership
+        // test is on a's VALUE against b's DOMAIN, and b's values never flow.
+        let f = films(); // 0 → 10, 1 → 20, 2 → 30
+        let b = MultiCol::from_pairs(31, [(10, 99usize), (20, 88)]);
+        let r = (&f).in_s(&b);
+        assert_eq!(drive_all(&r), vec![(0, 10), (1, 20)]); // not (0, 99) …
+        // probe keeps a's value too
+        let mut got = Vec::new();
+        r.probe(1, |v| got.push(v));
+        r.probe(2, |v| got.push(v)); // 30 ∉ dom(b): filtered out
+        assert_eq!(got, vec![20]);
+    }
+
+    #[test]
+    fn restrict_member() {
+        // member(Restrict, x) = a has some value at x that is a member of b
+        // (the defaulted probe_any(x, |_| true) path)
+        let f = films();
+        let b = MultiCol::from_pairs(31, [(10, 99usize), (20, 88)]);
+        let r = (&f).in_s(&b);
+        assert!(r.member(0) && r.member(1));
+        assert!(!r.member(2));     // 30 fails the membership test
+        assert!(!r.member(3));     // outside a's domain entirely
+        // multi-valued a: film 0 has cast {7, 8}; restrict by value-set {8}
+        let c = cast();
+        let only8 = MultiCol::from_pairs(9, [(8, 0usize)]);
+        let rc = (&c).in_s(&only8);
+        assert!(rc.member(0) && !rc.member(2)); // film 2's only cast is 7
     }
 
     #[test]

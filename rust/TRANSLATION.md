@@ -91,7 +91,7 @@ member-check `p`, probe `b` — the post-unification spelling of Julia's
 | Julia               | Rust                                      | Notes |
 |---------------------|-------------------------------------------|-------|
 | `a → b` (Q ∘ Q)     | `a.o(b)`                                  | bridge = a's value type |
-| `a : b` (restrict)  | `a.in_s(b)`                               | keep rows of a whose value is a `member` of b — any probe-able b |
+| `a : b` (restrict)  | `a.in_s(b)`                               | builds the dedicated `Restrict` node — node-for-node with Julia. Keep rows of a whose VALUE is a `member` of b (any probe-able b); a's value flows through unchanged |
 | `s : q` (s a set)   | `s.o(q)`                                  | identity relation composes like any other |
 | `(movie → …)`       | `d.movie.o(…)`                            | Universe ∘ Query |
 | `a ∧ b`             | `a.and(b)`                                | alias for `⊗` (= `Prod`); in member position the `member` fast path short-circuits flat without building pairs |
@@ -99,7 +99,7 @@ member-check `p`, probe `b` — the post-unification spelling of Julia's
 | (enumerable union)  | `a.union(b)`                              | bag-concat `Union` (drive a then b, NO dedup); Julia has this only as a design note next to `drive(::Disj)` — Rust implements it. Feed it to deduping sinks (`Bitset::from_drive`, `.mat_set()`), or materialize first when duplicates would change results |
 | `a - b`             | `a.minus(b)`                              | value-bearing `Diff`: a's pairs whose KEY is not a member of b (identity a ⟹ set difference) |
 | `a × b × c`         | `a.x(b).x(c)`                             | left-nested binary |
-| `l ⩘ r`             | `l.lconj(r)`                              | left-driving wedge — in BOTH languages pure sugar for restricting `r` by `l`'s value-set, no dedicated node. Julia: `⩘(l, r) = Restrict(r, l')`, materialized lazily through the mode system (the `Inv` sits in probed position, so `prepare` self-indexes it); Rust has no lazy `Inv` node, so the sugar materializes eagerly: `l.lconj(r)` ≡ `r.in_s(l.mat_set())` (`r` identity-shaped) |
+| `l ⩘ r`             | `l.lconj(r)`                              | left-driving wedge — in BOTH languages pure sugar building a `Restrict` of `r` by `l`'s value-set. Julia: `⩘(l, r) = Restrict(r, l')`, materialized lazily through the mode system (the `Inv` sits in probed position, so `prepare` self-indexes it); Rust has no lazy `Inv` node, so the sugar materializes eagerly: `l.lconj(r)` ≡ `r.in_s(l.mat_set())`, a `Restrict<R, MatSetSet>` (`r` identity-shaped) |
 | `q ▷ (op, init)`    | `q.fold(init, op)`                        | per-key foldl into an eager cache |
 | `q ▷ f` (callable)  | `q.buf_fold(f)`                           | `BufFold` — per-key whole-multiset reduce: buffer each group, cache `f(group)`. For reducers that don't fit foldl's `(S, R) → S` shape; `▷ (vs -> length(unique(vs)))` ⇒ `.count_distinct()`, the `length ∘ unique` instance |
 | `a == v`            | `a.eq(v)`                                 | for `Type.field == v` see ELISION |
@@ -109,6 +109,14 @@ member-check `p`, probe `b` — the post-unification spelling of Julia's
 | `a ~ r"…"`          | `a.rx(r"…")`                              |  |
 | `a ≁ r"…"`          | `a.nrx(r"…")`                             |  |
 | `Universe`          | `d.movie`, `d.persons`                    | Copy; identity relation over 0..n |
+
+The scalar comparisons (`.eq`/`.ne`/`.gt`/`.lt`/`.ge`/`.le`/`.in_v`/`.rx`/
+`.nrx`/`.during`/`.between`) are all captured-closure forms of `.filt`: each
+builds `Filter<A, F>` where `F` is a plain `Fn(A::R) -> bool` closure held
+directly — there is no predicate trait layer (Julia: `Filter(a, pred)` with
+any callable). Relation-valued restriction is the separate `Restrict` node
+(`.in_s`), consuming its rhs via `member` only — the same `Filter`/`Restrict`
+split as Julia's algebra.
 
 ## Schema fields → `d.<field>`
 
