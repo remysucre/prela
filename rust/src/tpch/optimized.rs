@@ -162,9 +162,13 @@ fn q13() -> String {
                       None => true,
                   }
               })));
+    // `customer` is a dense 0..n id domain, so the per-customer order count
+    // folds into a `Vec<i64>` indexed by customer id (DenseFold) rather than
+    // a HashMap keyed by id (Fold) — one array bump per order, no hashing,
+    // across all ~15M live orders. Same hoist as q9/q15/q21's dense folds.
     let count_per_cust = (&live_orders).date()
         .group_by((&live_orders).customer())
-        .fold(0_i64, |a, _| a + 1);
+        .dense_fold(customer.iq().n, 0_i64, |a, _| a + 1);
     let mut dist: HashMap<i64, i64> = HashMap::new();
     let mut n_with = 0i64;
     count_per_cust.drive(|_, c| { *dist.entry(c).or_insert(0) += 1; n_with += 1; });

@@ -1,6 +1,14 @@
 use prela::engine::IntoQuery;
 use prela::{Entry, job_schema, queries, tpch, tpch_schema};
 
+/// Cache directory the suites mmap from — `../cache` by default, overridable
+/// with `PRELA_CACHE` (e.g. to point at a different scale factor's cache).
+fn cache_dir() -> std::path::PathBuf {
+    std::env::var_os("PRELA_CACHE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("../cache"))
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let suite = args.get(1).map(|s| s.as_str()).unwrap_or("job");
@@ -40,7 +48,7 @@ fn run_suite(
 
 fn run_job() {
     let t = std::time::Instant::now();
-    job_schema::job_init(std::path::Path::new("../cache"));
+    job_schema::job_init(&cache_dir());
     eprintln!("load: {:.2}s  (movie n={}, person n={})",
               t.elapsed().as_secs_f32(),
               job_schema::movie.iq().n, job_schema::persons.iq().n);
@@ -62,7 +70,7 @@ fn run_job() {
 
 fn run_tpch() {
     let t = std::time::Instant::now();
-    tpch_schema::tpch_init(std::path::Path::new("../cache"));
+    tpch_schema::tpch_init(&cache_dir());
     eprintln!("load: {:.2}s  (li n={}, ord n={}, ps n={})",
               t.elapsed().as_secs_f32(),
               tpch_schema::lineitem.iq().n, tpch_schema::orders.iq().n,
