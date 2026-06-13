@@ -54,7 +54,7 @@ pub fn min_row<Q: Drive>(q: Q) -> String where Q::R: Row {
 /// Companies named *Film*/*Warner*, non-Polish production companies without
 /// a note — the `co` binding of queries 21a-c and 27a-c.
 pub fn film_or_warner_co() -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive + Probe {
-    company.when(country.ne("[pl]")
+    company.with(country.ne("[pl]")
             .and(Company::name.rx(r"Film").or(Company::name.rx(r"Warner")))
             .and(Company::ty.text().eq("production companies").minus(Company::note)))
 }

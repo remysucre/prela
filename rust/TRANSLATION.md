@@ -74,7 +74,7 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 fn q2a() -> impl Drive<R: Row> {
-    movie.when(/* ... */).select(/* ... */)
+    movie.with(/* ... */).select(/* ... */)
 }
 
 // ... more queries
@@ -94,7 +94,7 @@ flat short-circuit AND below).
 Consequences:
 
 - There is no `.k()` / `keys()` projection. A value-bearing query is used
-  as a set operand directly: `.when(rel)`, `a.and(rel)`, `a.minus(rel)` all
+  as a set operand directly: `.with(rel)`, `a.and(rel)`, `a.minus(rel)` all
   consume `rel` via `member` only.
 - `s : q` (set ∘ query) is plain `Compose` — `s.select(q)` — because the
   identity's value IS the key.
@@ -109,14 +109,14 @@ Julia aliases `∧` to `⊗` (`algebra.jl`: `∧(a, b) = ⊗(a, b)`), and Rust
 mirrors that exactly: `.and(b)` builds the same `Prod` node as `.and(b)`. The
 two faces of the one node:
 
-- **member position** (the argument of `.when`, a `.minus` rhs, a nested
+- **member position** (the argument of `.with`, a `.minus` rhs, a nested
   conjunct): `member(Prod)` is the flat short-circuit AND of the per-leg
   `member`s (Julia's `_prod_member`) — no pair value is ever built, so a
   conjunct tree costs exactly what a dedicated Conj node would.
 - **drive/probe position**: it is the product and emits nested-pair values.
 
 So a restricted scan is never written `a.and(p).select(b)` (that would compose
-on the PAIR value and not type-check); it is `a.when(p).select(b)` — drive `a`,
+on the PAIR value and not type-check); it is `a.with(p).select(b)` — drive `a`,
 member-check `p`, probe `b` — the post-unification spelling of Julia's
 `a : p → b`.
 
@@ -125,7 +125,7 @@ member-check `p`, probe `b` — the post-unification spelling of Julia's
 | Julia               | Rust                                      | Notes |
 |---------------------|-------------------------------------------|-------|
 | `a → b` (Q ∘ Q)     | `a.select(b)`                                  | bridge = a's value type |
-| `a : b` (restrict)  | `a.when(b)`                               | builds the dedicated `Restrict` node — node-for-node with Julia. Keep rows of a whose VALUE is a `member` of b (any probe-able b); a's value flows through unchanged |
+| `a : b` (restrict)  | `a.with(b)`                               | builds the dedicated `Restrict` node — node-for-node with Julia. Keep rows of a whose VALUE is a `member` of b (any probe-able b); a's value flows through unchanged |
 | `s : q` (s a set)   | `s.select(q)`                                  | identity relation composes like any other |
 | `(movie → …)`       | `movie.select(…)`                           | Universe ∘ Query |
 | `a ∧ b`             | `a.and(b)`                                | alias for `⊗` (= `Prod`); in member position the `member` fast path short-circuits flat without building pairs |
@@ -133,7 +133,7 @@ member-check `p`, probe `b` — the post-unification spelling of Julia's
 | (enumerable union)  | `a.union(b)`                              | bag-concat `Union` (drive a then b, NO dedup); Julia has this only as a design note next to `drive(::Disj)` — Rust implements it. Feed it to deduping sinks (`Bitset::over`, `.collect::<MatSet<_>>()`), or materialize first when duplicates would change results |
 | `a - b`             | `a.minus(b)`                              | value-bearing `Diff`: a's pairs whose KEY is not a member of b (identity a ⟹ set difference) |
 | `a × b × c`         | `a.and(b).and(c)`                             | left-nested binary |
-| `l ⩘ r`             | `r.when(l.collect::<MatSet<_>>())`        | left-driving wedge — in BOTH languages a `Restrict` of `r` by `l`'s value-set, with no dedicated node or sugar. Julia: `⩘(l, r) = Restrict(r, l')`, materialized lazily through the mode system (the `Inv` sits in probed position, so `prepare` self-indexes it); Rust has no lazy `Inv` node, so the collect materializes eagerly — visible in the query text |
+| `l ⩘ r`             | `r.with(l.collect::<MatSet<_>>())`        | left-driving wedge — in BOTH languages a `Restrict` of `r` by `l`'s value-set, with no dedicated node or sugar. Julia: `⩘(l, r) = Restrict(r, l')`, materialized lazily through the mode system (the `Inv` sits in probed position, so `prepare` self-indexes it); Rust has no lazy `Inv` node, so the collect materializes eagerly — visible in the query text |
 | `r ← s` (l-compose) | `s.group_by(r)`                           | drive-only `GroupBy`: drive `s`, probe `r` per row for the group key, emit (r-value, s-value). RECEIVER = DRIVEN SIDE — Julia's infix argument order is a surface artifact; in method position the flip reads naturally ("group s by r") |
 | `q ▷ (op, init)`    | `q.fold(init, op)`                        | per-key foldl into an eager cache |
 | `q ▷ f` (callable)  | `q.buf_fold(f)`                           | `BufFold` — per-key whole-multiset reduce: buffer each group, cache `f(group)`. For reducers that don't fit foldl's `(S, R) → S` shape; `▷ (vs -> length(unique(vs)))` ⇒ `.count_distinct()`, the `length ∘ unique` instance |
@@ -147,7 +147,7 @@ member-check `p`, probe `b` — the post-unification spelling of Julia's
 
 ### Predicate position — `→` and `:` translate verbatim
 
-In member position (a conjunct of a `.when`/`.and` tree, a `.minus` rhs)
+In member position (a conjunct of a `.with`/`.and` tree, a `.minus` rhs)
 hopping an edge into a predicate tree with `→` and restricting the edge
 with `:` are semantically interchangeable — membership through `Compose`
 (`probe_any` threads the existential through the hop) and through
@@ -158,7 +158,7 @@ preserves the operator the Julia source wrote.
 - `edge → tree` ⇒ `edge.select(tree)` — or the nav method when the hop is a
   single field (`company → (Company.country == "[de]")` ⇒
   `company.country().eq("[de]")`; nav IS compose).
-- `edge : tree` ⇒ `edge.when(tree)`.
+- `edge : tree` ⇒ `edge.with(tree)`.
 
 JOB 22a's first conjunct — Julia `info → (Info.type == "countries") ∧
 (Info.info in (…))` — is therefore
@@ -169,7 +169,7 @@ info.select(Info::ty.text().eq("countries")
 ```
 
 while its subqueries `data : (…) ∧ (…) → Data.data` are genuine
-restrictions and stay `data.when(…).text()`.
+restrictions and stay `data.with(…).text()`.
 
 ## No hidden materialization — `collect` names the physical type
 
@@ -190,7 +190,7 @@ The scalar comparisons (`.eq`/`.ne`/`.gt`/`.lt`/`.ge`/`.le`/`.is_in`/`.rx`/
 builds `Filter<A, F>` where `F` is a plain `Fn(A::R) -> bool` closure held
 directly — there is no predicate trait layer (Julia: `Filter(a, pred)` with
 any callable). Relation-valued restriction is the separate `Restrict` node
-(`.when`), consuming its rhs via `member` only — the same `Filter`/`Restrict`
+(`.with`), consuming its rhs via `member` only — the same `Filter`/`Restrict`
 split as Julia's algebra.
 
 ## Schema fields → leaf handles and navigation
@@ -290,7 +290,7 @@ define a helper fn that returns a fresh instance:
 
 ```rust
 fn co_27() -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive + Probe {
-    company.when(country.ne("[pl]")
+    company.with(country.ne("[pl]")
             .and(/* … the rest of the Company-side conjunction … */))
 }
 ```
@@ -356,9 +356,9 @@ arity and any str/int column mix works with the same one-line tail.
 operands are used via `member` only, so association doesn't matter — but the
 flat chain mirrors Julia's flat `_prod_member`, so never nest
 `.and(a.and(b))`). Same for `.or`. When the chain restricts a DRIVEN
-relation, write ONE restriction over the ∧-tree — `u.when(a.and(b))`,
+relation, write ONE restriction over the ∧-tree — `u.with(a.and(b))`,
 mirroring Julia's single `:` — not chained restrictions.
-`u.when(a).when(b)` is member-equivalent (identical order and
+`u.with(a).with(b)` is member-equivalent (identical order and
 short-circuit) but reserved for genuinely sequential restriction, e.g. the
 `⩘` wedge or a restriction applied after composition.
 
@@ -368,7 +368,7 @@ short-circuit) but reserved for genuinely sequential restriction, e.g. the
 ```rust
 fn qXa() -> impl Drive<R: Row> {
     movie
-        .when(/* movie conjunct tree: a.and(b).and(c)… (member-checked) */)
+        .with(/* movie conjunct tree: a.and(b).and(c)… (member-checked) */)
         .select(/* projection — usually a .and(…) product */)
 }
 ```
@@ -377,9 +377,9 @@ fn qXa() -> impl Drive<R: Row> {
 ```rust
 fn qXa() -> impl Drive<R: Row> {
     movie
-        .when(/* movie conjunct tree */)
+        .with(/* movie conjunct tree */)
         .select(cast
-             .when(/* cast conjunct tree */)
+             .with(/* cast conjunct tree */)
              .person().name()      // cast projection — navigation
          .and(title))
 }
@@ -388,7 +388,7 @@ fn qXa() -> impl Drive<R: Row> {
 ## Layout
 A continuation conjunct (`.and`/`.or`/`.minus` on its own line) is indented
 one space past the `.` of the method call it continues — e.g. the `.and`
-siblings of a `.when(…)` sit one space in from `.when`, NOT aligned under the
+siblings of a `.with(…)` sit one space in from `.with`, NOT aligned under the
 first conjunct. This keeps deep conjunctions compact; see any multi-conjunct
 query (e.g. `q22a`).
 
@@ -411,9 +411,9 @@ ENTRIES oracle is the exact second-arg string from `_q("name", "oracle")`.
   test modules import schema names selectively.
 - Conjuncts need NO projection: `a.and(b)` consumes `b` via `member`, so a
   value-bearing filter (`production_year.gt(2000)`) is a valid operand
-  as-is. Same for `.minus`'s RHS and `.when`'s argument.
+  as-is. Same for `.minus`'s RHS and `.with`'s argument.
 - A conjunct tree is member-position ONLY. To compose or drive past it,
-  hoist it into the upstream restriction: `x.when(a.and(b)).select(body)`, never
+  hoist it into the upstream restriction: `x.with(a.and(b)).select(body)`, never
   `x.select(a.and(b).select(body))` — `.and` is the product, so the latter would try
   to compose on the pair value (compile error at best).
 - `.or` cannot be driven (no `Drive` impl, by design — Julia's `∨` is
@@ -425,5 +425,5 @@ ENTRIES oracle is the exact second-arg string from `_q("name", "oracle")`.
   where the chain is valued in an entity whose schema declares `text`. On a
   string-valued (or wrong-entity) query it does not resolve (compile
   error), which is the type system catching a wrong hop.
-- Don't forget the OUTERMOST `movie.when(…)` / `movie.select(…)` — the
+- Don't forget the OUTERMOST `movie.with(…)` / `movie.select(…)` — the
   query is anchored at the movie universe.

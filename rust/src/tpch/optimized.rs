@@ -24,7 +24,7 @@ pub fn queries() -> Vec<super::Entry> {
 fn q1() -> String {
     // Julia: ((returnflag ⊗ Li.status) ← (lineitem → shipdate <= "..." : qty ⊗ ext ⊗ disc ⊗ tax))
     //        ▷ (cmb, ...) ↦ out
-    let live = lineitem.when(shipdate.le(19980902));
+    let live = lineitem.with(shipdate.le(19980902));
     let scan = live.select(
         quantity.and(extendedprice).and(discount).and(tax)
     );
@@ -65,12 +65,12 @@ fn q4() -> String {
     // Dense `Bitset` of orderkeys with a late lineitem replaces the MatSet
     // path that lazy-built a HashSet from ~14M late-lineitem orderkeys.
     let bad_li_order = lineitem
-        .when(commitdate.and(receiptdate).filt(|(c, r)| c < r))
+        .with(commitdate.and(receiptdate).filt(|(c, r)| c < r))
         .order();
     let is_late = Bitset::over(orders, &bad_li_order);
     let live = orders
-        .when(date.during(19930701, 19931001))
-        .when(is_late);
+        .with(date.during(19930701, 19931001))
+        .with(is_late);
     let counts = live.priority().inv().fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(&str, i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
@@ -90,9 +90,9 @@ fn q9() -> String {
     // (~200K Part rows scanned once). Per lineitem becomes one bit-test.
     let green_parts = Bitset::over(
         part,
-        &part.when(Part::name.filt(|n: &str| n.contains("green"))),
+        &part.with(Part::name.filt(|n: &str| n.contains("green"))),
     );
-    let live = lineitem.when(Lineitem::part.select(&green_parts));
+    let live = lineitem.with(Lineitem::part.select(&green_parts));
     let nation_id = (&live).supplier().nation();
     let year      = (&live).order().date().map(|d: i64| d / 10000);
     let groups = nation_id.and(year);
@@ -127,7 +127,7 @@ fn q12() -> String {
     //   shipdate < commitdate:     ~49%
     //   commit  < receipt:         ~62%  (barely filters; runs last)
     let live = lineitem
-        .when(receiptdate.during(19940101, 19950101)
+        .with(receiptdate.during(19940101, 19950101)
          .and(shipmode.is_in(["MAIL", "SHIP"]))
          .and(shipdate.and(commitdate).filt(|(s, c)| s < c))
          .and(commitdate.and(receiptdate).filt(|(c, r)| c < r)));
@@ -155,7 +155,7 @@ fn q13() -> String {
     use memchr::memmem;
     let f_special = memmem::Finder::new("special");
     let live_orders = orders
-        .when(Order::customer.ne(Dense::NONE)    // skip sparse orderkey gaps (hole fill NO_ID)
+        .with(Order::customer.ne(Dense::NONE)    // skip sparse orderkey gaps (hole fill NO_ID)
          .and(Order::comment.filt(move |c: &str| {
                   match f_special.find(c.as_bytes()) {
                       Some(p) => !c[p + "special".len()..].contains("requests"),
@@ -184,15 +184,15 @@ pub(super) fn q17() -> String {
     // parts up front, restrict the lineitem scan that feeds the avg fold
     // to those parts, then the avg is computed over a tiny slice.
     let qual_part_set = part
-        .when(brand.eq("Brand#23").and(container.eq("MED BOX")))
+        .with(brand.eq("Brand#23").and(container.eq("MED BOX")))
         .collect::<MatSet<_>>();
-    let live_li = Lineitem::part.when(&qual_part_set);
+    let live_li = Lineitem::part.with(&qual_part_set);
     let threshold_per_part = quantity.group_by(&live_li)
         .fold((0.0_f64, 0_i64), |(s, n), q| (s + q, n + 1))
         .map(|(s, n)| 0.2 * s / n as f64);
     let tpp: HashIdx<_, _> = threshold_per_part.collect();
     let live = lineitem
-        .when((&live_li)
+        .with((&live_li)
          .and(quantity.and(Lineitem::part.select(&tpp)).filt(|(q, t)| q < t)));
     let sum = live.select(extendedprice)
         .unwrap_fold(0.0_f64, |a, e| a + e);
@@ -233,7 +233,7 @@ fn q21() -> String {
     //   only_late  = askeys(((late : order) ← (late : Li.supplier)) ▷ n_distinct == 1)
     //   qualifying = late ∧ (Li.supplier → saudi) ∧ (order → f_ords ∧ multi_supp ∧ only_late)
     //   (Li.supplier ← qualifying) ▷ ((a, _) -> a + 1, 0) ⊗ Su.name
-    let late = lineitem.when(
+    let late = lineitem.with(
         commitdate.and(receiptdate).filt(|(c, r)| c < r)
     );
     // `multi_supp`/`only_late` are SET-membership predicates over orderkeys
@@ -251,14 +251,14 @@ fn q21() -> String {
     };
     let supp_state = Lineitem::supplier.group_by(order)
         .dense_fold(orders.iq().n, (None, false), track);
-    let multi_supp = orders.when(supp_state.filt(|(_, m): (Option<Id<Supplier>>, bool)| m));
+    let multi_supp = orders.with(supp_state.filt(|(_, m): (Option<Id<Supplier>>, bool)| m));
     let late_supp_state = (&late).select(Lineitem::supplier)
         .group_by((&late).select(order))
         .dense_fold(orders.iq().n, (None, false), track);
-    let only_late = orders.when(late_supp_state
+    let only_late = orders.with(late_supp_state
         .filt(|(first, multi): (Option<Id<Supplier>>, bool)| first.is_some() && !multi));
-    let saudi = supplier.when(Supplier::nation.name().eq("SAUDI ARABIA"));
-    let f_ords = orders.when(Order::status.eq("F"));
+    let saudi = supplier.with(Supplier::nation.name().eq("SAUDI ARABIA"));
+    let f_ords = orders.with(Order::status.eq("F"));
     // Hoist each per-row membership probe into a dense `Bitset` over its
     // domain — the ∧ chain on `qualifying` becomes 4 bit-tests per row
     // instead of lazy Dict/regex probe chains.
@@ -267,7 +267,7 @@ fn q21() -> String {
     let multi_supp_bs = Bitset::over(orders, &multi_supp);
     let only_late_bs  = Bitset::over(orders, &only_late);
     let qualifying = (&late)
-        .when(Lineitem::supplier.select(&saudi_bs)
+        .with(Lineitem::supplier.select(&saudi_bs)
          .and(order.select((&f_ords_bs).and(&multi_supp_bs).and(&only_late_bs))));
     let counts = qualifying.group_by(Lineitem::supplier).fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(Id<Supplier>, i64)> = Vec::new();
@@ -290,8 +290,8 @@ pub(super) fn q22() -> String {
     //   (prefix ← (target : acctbal)) ▷ ((cnt, sm), ab) -> (cnt+1, sm+ab)
     let prefix = Customer::phone.map(|p: &str| &p[..2]);
     let codes = ["13","31","23","29","30","18","17"];
-    let prefix_ok = customer.when((&prefix).is_in(codes));
-    let pos = (&prefix_ok).when(Customer::acctbal.gt(0.0));
+    let prefix_ok = customer.with((&prefix).is_in(codes));
+    let pos = (&prefix_ok).with(Customer::acctbal.gt(0.0));
     let (sum_p, cnt_p) = pos.select(Customer::acctbal)
         .unwrap_fold((0.0_f64, 0_i64), |(s, n), v| (s + v, n + 1));
     let avg = sum_p / cnt_p as f64;
@@ -299,7 +299,7 @@ pub(super) fn q22() -> String {
     // baseline's collected `MatSet` (a HashSet built from every order's customer)
     // with one bit per customer.
     let custs_with_orders = Bitset::over(customer, Order::customer);
-    let target = (&prefix_ok).when(Customer::acctbal.gt(avg))
+    let target = (&prefix_ok).with(Customer::acctbal.gt(avg))
         .minus(custs_with_orders);
     let counts = target.group_by(&prefix)
         .fold((0_i64, 0.0_f64), |(cnt, sm), c| {
@@ -322,12 +322,12 @@ fn q2() -> String {
     //                  ∧ (supplycost == (PS.part → min_per_part))
     //   target : (Su.acctbal ⊗ Su.name ⊗ Na.name ⊗ PS.part ⊗ Pa.mfgr
     //             ⊗ Su.address ⊗ Su.phone ⊗ Su.comment)
-    let eu_ps = partsupp.when(PartSupp::supplier.nation().region().name().eq("EUROPE"));
+    let eu_ps = partsupp.with(PartSupp::supplier.nation().region().name().eq("EUROPE"));
     let min_per_part = (&eu_ps).supplycost()
         .group_by((&eu_ps).part())
         .dense_fold(part.iq().n, f64::INFINITY, |a, c| if c < a { c } else { a });
     let target = (&eu_ps)
-        .when(PartSupp::part.size().eq(15)
+        .with(PartSupp::part.size().eq(15)
          .and(PartSupp::part.ty().filt(|s: &str| s.ends_with("BRASS")))
          .and(supplycost.and(PartSupp::part.select(&min_per_part)).filt(|(c, m)| c == m)));
     // Project per PS row → (acct, sname, nname, pkey, mfgr, addr, phone, comm)

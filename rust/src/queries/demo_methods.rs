@@ -24,16 +24,16 @@ pub const ENTRIES: &[super::Entry] = &[
 //            walks Movie → Cast → Person → name)
 //   .and(b)    product (×)
 //   .and     ∧ — alias for the product; conjunct trees are consumed via
-//            the flat short-circuit `member` (restriction = `.when`)
+//            the flat short-circuit `member` (restriction = `.with`)
 //   .or      ∨ — probe-only membership union (drive with `.union`)
 //   .minus   value-bearing difference (key-based member test)
-//   .when    restriction (Julia `:`) — keep rows whose value is a member
+//   .with    restriction (Julia `:`) — keep rows whose value is a member
 //   .eq / .ne / .gt / .lt / .ge / .le / .is_in / .rx / .nrx  predicates
 pub fn q6a_methods() -> impl Drive<R: Row> {
     let kw_marvel = || keyword.text()
                               .eq("marvel-cinematic-universe");
     let q = movie
-        .when(production_year.gt(2010)
+        .with(production_year.gt(2010)
          .and(kw_marvel()))
         .select(kw_marvel()
          .and(title)

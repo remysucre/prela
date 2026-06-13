@@ -24,15 +24,15 @@ Nevertheless, the most idiomatic way to write a query already performs well in o
 Consider Join Order Benchmark [22a](https://github.com/gregrahn/join-order-benchmark/blob/master/22a.sql):
 
 ```rust
-movie.when(info.select(Info::ty.text().eq("countries")
+movie.with(info.select(Info::ty.text().eq("countries")
                   .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
       .and(keyword.text().is_in(["murder", "murder-in-title", "blood", "violence"]))
       .and(production_year.gt(2008))
       .and(kind.text().is_in(["movie", "episode"])))
    .select(title
-      .and(data.when(Data::text.lt("7.0")
+      .and(data.with(Data::text.lt("7.0")
                 .and(Data::ty.text().eq("rating"))).text())
-      .and(company.when(Company::note.nrx(r"\(USA\)")
+      .and(company.with(Company::note.nrx(r"\(USA\)")
                    .and(Company::note.rx(r"\(200.*\)"))
                    .and(country.ne("[us]"))
                    .and(Company::ty.text().eq("production companies"))).name()))
@@ -52,11 +52,11 @@ Then, for each such movie, output the following attributes:
 - Its production company, if satisfying further conditions
 
 In SQL's way of thinking, `movie` would be in the `FROM` clause (along with other tables involved),
- `when` corresponds to the `WHERE` clause,[^1]
+ `with` corresponds to the `WHERE` clause,[^1]
  and `select` corresponds to the `SELECT` clause.
 But unlike SQL, Prela can freely interleave predicates and outputs,
  resulting in more natural queries as shown above.
-You can also think of `data.when(...).text()` and `company.when(...).name()` parts as *subqueries*
+You can also think of `data.with(...).text()` and `company.with(...).name()` parts as *subqueries*
  which require special syntax in SQL, but are just subexpressions in Prela. 
 And instead of explicit conditions,
  joins in Prela are reflected by the *structure* of the query in a navigational style.
@@ -83,7 +83,7 @@ One way to think about this is a very extreme form
 Let us consider a simplified version of the query above:
 
 ```rust
-movie.when(production_year.gt(2008)).select(title)
+movie.with(production_year.gt(2008)).select(title)
 ```
 
 Here, `title` and `production_year` are both attributes of
@@ -102,10 +102,10 @@ For example, `production_year.gt(2008)` returns a binary relation that's
  a subset of `production_year`, such that the second column (the "value" column)
  contains only values greater than 2008.
 
-Next, `.when()` is the *restriction* combinator:
- `r.when(s)` restricts the last column of the `r` with the first column of the `s`;
+Next, `.with()` is the *restriction* combinator:
+ `r.with(s)` restricts the last column of the `r` with the first column of the `s`;
  i.e., it is exactly a left-semijoin.
-In this example, `movie.when(production_year.gt(2008))`
+In this example, `movie.with(production_year.gt(2008))`
  semijoins `movie` with the filterd-out `production_year` relation,
  and since `movie` is the identity relation,
  we're left with the IDs for movies made after 2008.
@@ -131,7 +131,7 @@ In standard relational algebra: $R \circ S = \pi_{x, z}(R \Join_{R.y = S.y} S)$
 
 Going back to our example, `.select()` takes two inputs:
 
-- `movie.when(production_year.gt(2008))`, which has all movies after 2008
+- `movie.with(production_year.gt(2008))`, which has all movies after 2008
  and is of type `Movie -> Movie`
 - `title` which has type `Movie -> String`
 
@@ -141,13 +141,13 @@ Their composition then produces an output of type `Movie -> String`,
 Another (perhaps more natural) way to think about all these is to pretend
  every movie is a JSON object called `movie`,
  and its attributes like `title` and `production_year` are JSON attributes,
- then `.select()` will feel like field access, and `.when()` lets you specify filters.
+ then `.select()` will feel like field access, and `.with()` lets you specify filters.
 
 There is one more construct in our original example,
  namely the *product* combinator `.and()`.
 It takes two relations of types `X -> Y` and `X -> Z`,
  and joins them on `X` to produce an output of type `X -> (Y, Z)`.
-When used as a conjunction in the `when` clause,
+When used as a conjunction in the `with` clause,
  product allows us to combine different predicates:
 
 ```rust
@@ -158,7 +158,7 @@ When used as a conjunction in the `when` clause,
 When used in `select`, it combines different columns in the output:
  in the full example, we output title, data (with additional filters),
  and company name - the last because
- `company.when(...).name()` computes a relation of type `Movie -> String`
+ `company.with(...).name()` computes a relation of type `Movie -> String`
  mapping each movie to its company's name.
 
 ## CTEs, UDFs, and Aggregation
@@ -170,7 +170,7 @@ Since Prela is directly embedded in the host language,
 Consider TPCH [q21](https://github.com/dragansah/tpch-dbgen/blob/master/tpch-queries/21.sql):
 
 ```rust
-let late = lineitem.when(commitdate.and(receiptdate).filt(|(c, r)| c < r));
+let late = lineitem.with(commitdate.and(receiptdate).filt(|(c, r)| c < r));
 
 // EXISTS another supplier on the order (across all lineitems)
 let multi_supp = Lineitem::supplier.group_by(order).count_distinct().gt(1);
@@ -182,7 +182,7 @@ let only_late = (&late).select(Lineitem::supplier)
 let saudi = supplier.and(Supplier::nation.name().eq("SAUDI ARABIA"));
 let f_ords = orders.and(Order::status.eq("F"));
 let qualifying = (&late)
-    .when(Lineitem::supplier.select(saudi)
+    .with(Lineitem::supplier.select(saudi)
      .and(order.select(f_ords.and(multi_supp).and(only_late))));
 
 let counts = qualifying.group_by(Lineitem::supplier).fold(0_i64, |a, _| a + 1);

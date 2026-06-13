@@ -926,7 +926,7 @@ impl<Q: Probe, F: Fn(Q::R) -> S, S: Copy> Probe for Map<Q, F, S> {
 
 // Rooted on `IntoQuery`: receiver and every relation argument resolve via
 // `.iq()` at construction, so leaf handles and plan nodes mix freely
-// (`keyword.text().eq(…)`, `movie.when(…)`). Return types are built from
+// (`keyword.text().eq(…)`, `movie.with(…)`). Return types are built from
 // `Self::Q`/`B::Q` — the resolved plan types — so the plans are identical
 // to ones built from `&'static` leaves directly.
 pub trait QueryExt: IntoQuery + Sized {
@@ -942,10 +942,10 @@ pub trait QueryExt: IntoQuery + Sized {
 
     /// `∧` / `×` / `⊗` — the product, in both of its uses (one node, one
     /// name; Julia: `∧(a, b) = ⊗(a, b)`). In member position (a conjunct
-    /// tree fed to `.when`, `.minus`'s rhs, …) the `member` override
+    /// tree fed to `.with`, `.minus`'s rhs, …) the `member` override
     /// short-circuits flat across the legs without building pair values; in
     /// drive/probe position it emits nested-pair values (output tuples) —
-    /// restrict-then-project is `a.when(p).select(b)`.
+    /// restrict-then-project is `a.with(p).select(b)`.
     #[inline(always)]
     fn and<B: IntoQuery>(self, b: B) -> Prod<Self::Q, B::Q>
     where B::Q: Query<D = DOf<Self>> { Prod { a: self.iq(), b: b.iq() } }
@@ -996,7 +996,7 @@ pub trait QueryExt: IntoQuery + Sized {
     /// Restriction `a : b` — keep self's pairs whose VALUE is a `member` of
     /// `s` (any probe-able relation). Builds the dedicated `Restrict` node,
     /// node-for-node with Julia.
-    #[inline(always)] fn when<S: IntoQuery>(self, s: S) -> Restrict<Self::Q, S::Q>
+    #[inline(always)] fn with<S: IntoQuery>(self, s: S) -> Restrict<Self::Q, S::Q>
         where S::Q: Probe<D = ROf<Self>> { Restrict { a: self.iq(), b: s.iq() } }
     #[inline(always)] fn rx(self, re: &str) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
         where Self::Q: Query<R = &'static str> {
@@ -1201,7 +1201,7 @@ mod tests {
         let u3 = Universe::new(3);
         // films-with-cast as an identity relation: restrict the universe by
         // membership in cast (Julia's `a : b`, the Restrict node).
-        let people = u3.when(&c);
+        let people = u3.with(&c);
         assert_eq!(drive_all(&people), vec![(0, 0), (2, 2)]);
         assert!(people.member(0) && !people.member(1));
         // identity sets send keys through the value slot, so one FromQuery /
@@ -1215,7 +1215,7 @@ mod tests {
         assert!(vb.member(7) && vb.member(8) && !vb.member(0));
         // restrict/diff over Universe — drive emits (x, x)
         let u2 = Universe::new(2);
-        assert_eq!(drive_all(&u2.when(&ms)), vec![(0, 0)]);
+        assert_eq!(drive_all(&u2.with(&ms)), vec![(0, 0)]);
         assert_eq!(drive_all(&u2.minus(&ms)), vec![(1, 1)]);
         // ∨ is PROBE-ONLY (no Drive impl — `drive_all(&u2.or(&b))` would be
         // a compile error by design; `.union` is the enumerable form):
@@ -1238,7 +1238,7 @@ mod tests {
         // test is on a's VALUE against b's DOMAIN, and b's values never flow.
         let f = films(); // 0 → 10, 1 → 20, 2 → 30
         let b = MultiRel::from_pairs(31, [(10, 99usize), (20, 88)]);
-        let r = (&f).when(&b);
+        let r = (&f).with(&b);
         assert_eq!(drive_all(&r), vec![(0, 10), (1, 20)]); // not (0, 99) …
         // probe keeps a's value too
         let mut got = Vec::new();
@@ -1253,14 +1253,14 @@ mod tests {
         // (the defaulted probe_any(x, |_| true) path)
         let f = films();
         let b = MultiRel::from_pairs(31, [(10, 99usize), (20, 88)]);
-        let r = (&f).when(&b);
+        let r = (&f).with(&b);
         assert!(r.member(0) && r.member(1));
         assert!(!r.member(2));     // 30 fails the membership test
         assert!(!r.member(3));     // outside a's domain entirely
         // multi-valued a: film 0 has cast {7, 8}; restrict by value-set {8}
         let c = cast();
         let only8 = MultiRel::from_pairs(9, [(8, 0usize)]);
-        let rc = (&c).when(&only8);
+        let rc = (&c).with(&only8);
         assert!(rc.member(0) && !rc.member(2)); // film 2's only cast is 7
     }
 
@@ -1331,7 +1331,7 @@ mod tests {
         assert_eq!(got, vec![(0, "beta"), (2, "beta")]);
         // member position through a typed universe restriction
         let u: Universe<Id<M>> = Universe::new(3);
-        let live = u.when((&mk).select(&kname).eq("alpha"));
+        let live = u.with((&mk).select(&kname).eq("alpha"));
         assert!(live.member(Id::new(1)) && !live.member(Id::new(0)));
         assert!(!live.member(Id::NONE));
         // typed ids work as fold/group keys (Eq + Hash + Ord)
@@ -1348,7 +1348,7 @@ mod tests {
         let u = Universe::new(31);
         // Julia's `⩘`: the universe 0..31 restricted by films' collected
         // value-set {10, 20, 30}
-        let w = u.when((&f).collect::<MatSet<_>>());
+        let w = u.with((&f).collect::<MatSet<_>>());
         assert_eq!(drive_all(&w), vec![(10, 10), (20, 20), (30, 30)]);
         assert!(w.member(10) && !w.member(11));
         assert_eq!(drive_all(&(&f).map(|v| v * 2)), vec![(0, 20), (1, 40), (2, 60)]);

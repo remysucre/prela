@@ -429,15 +429,15 @@ mod tests {
         // bare `year` for pub fields); every later hop is a nav method
         // (`.gname()` ≡ `.select(Genre::gname)` via the generated GenreNav).
         let q = film
-            .when(Film::genre.gname().eq("horror"))
-            .when(year.lt(1990))
+            .with(Film::genre.gname().eq("horror"))
+            .with(year.lt(1990))
             .ftitle();
         let mut got = Vec::new();
         q.drive(|_, t| got.push(t));
         assert_eq!(got, vec!["Alien"]);
 
         // Multi<entity> column + nav through Tag's tag column
-        let q = film.when(Film::tags.tag().eq("noir")).ftitle();
+        let q = film.with(Film::tags.tag().eq("noir")).ftitle();
         let mut got = Vec::new();
         q.drive(|_, t| got.push(t));
         assert_eq!(got, vec!["Blade"]);
