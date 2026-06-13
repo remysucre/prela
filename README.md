@@ -89,10 +89,10 @@ movie : (production_year > 2008) → title
 
 In the executable Rust embedding the same query is a method chain —
 each combinator below has a method spelling
-(`:` is `.in_s`, `→` is `.o`, and so on):
+(`:` is `.when`, `→` is `.get`, and so on):
 
 ```rust
-movie().when(production_year().gt(2008)).get(title())
+movie.when(production_year.gt(2008)).get(title)
 ```
 
 Here, `title` and `production_year` are both attributes of

@@ -8,30 +8,46 @@
 //     from `<Entity>_<field>.bin` via the src/cache.rs v2 readers
 //     (id-valued columns are bulk-reinterpreted to `Id<T>` through the
 //     `repr(transparent)` layout — no per-element conversion);
-//   - entity-qualified accessors for EVERY field
-//     (`Info::info()`, `Info::ty()` → `&'static VecRel<…, Id<Info>>`);
-//   - a BARE accessor fn (`production_year()`) for fields marked `pub` —
-//     explicit, like Julia's selective `@expose`, because macro_rules
-//     cannot detect cross-entity name collisions;
-//   - a bare universe accessor (`pub fn movie() -> Universe<Id<Movie>>`)
-//     when the entity is declared `Movie(movies)` — explicit because
-//     macro_rules cannot lowercase idents. Universe size = the entity's
-//     first column's key count;
-//   - a NAVIGATION extension trait (`Movie(movies) / MovieNav` — the name
-//     is explicit because macro_rules cannot concatenate idents) with one
-//     method per field, blanket-implemented for every query whose value
-//     type is the entity's id:
-//       trait MovieNav: Query<R = Id<Movie>> + Sized {
-//           fn title(self) -> Compose<Self, &'static …> { … }  // per field
+//   - a paren-free leaf HANDLE per field: a ZST named by the field, living
+//     in `<mod>::<Nav>` (the nav-trait ident doubles as the per-entity
+//     handle namespace — macro_rules cannot concatenate idents), that
+//     implements `engine::IntoQuery<Q = &'static VecRel/MultiRel<…>>`. Its
+//     `iq` fetches the column from the OnceLock store ONCE, at plan
+//     construction — the built plan contains only the `&'static` leaf, so
+//     hot loops are identical to hand-built plans;
+//   - the QUALIFIED spelling for EVERY field as an associated const on the
+//     entity tag (`impl Info { pub const ty: TPCH-internal handle type }`),
+//     so `Info::ty` is a value usable wherever a relation is expected;
+//   - a BARE re-export of the handle (`pub use …::production_year;`) for
+//     fields marked `pub` — explicit, like Julia's selective `@expose`,
+//     because macro_rules cannot detect cross-entity name collisions.
+//     CAVEAT (unit structs in patterns): a bare handle in scope captures
+//     any same-named BINDING pattern — `let kind = …`, a closure param
+//     `|part, _|`, a match arm — which then fails to compile ("interpreted
+//     as a unit struct, not a new binding"). Rename such locals. This also
+//     means `assert_eq!`/`assert_ne!` break in any module that glob-imports
+//     a schema exporting bare `kind` (the core macros internally bind
+//     `let kind`): test modules import schema names selectively;
+//   - a bare universe HANDLE (`pub struct movie;` with
+//     `IntoQuery<Q = Universe<Id<Movie>>>`) when the entity is declared
+//     `Movie(movie)` — explicit because macro_rules cannot lowercase
+//     idents. Universe size = the entity's first column's key count,
+//     resolved at `iq` time;
+//   - a NAVIGATION extension trait (`Movie(movie) / MovieNav`) with one
+//     method per field, blanket-implemented for everything that RESOLVES
+//     (via `IntoQuery`) to a query whose value type is the entity's id:
+//       trait MovieNav: IntoQuery + Sized
+//       where Self::Q: Query<R = Id<Movie>> {
+//           fn title(self) -> Compose<Self::Q, &'static …> { … } // per field
 //       }
-//       impl<Q: Query<R = Id<Movie>> + Sized> MovieNav for Q {}
-//     so `cast().person().name()` spells the compose chain
-//     `cast().get(Cast::person()).get(Person::name())`. Coherence is safe:
-//     same-named methods on different entities' nav traits have disjoint
-//     receivers (a query's `R` equals exactly ONE `Id<E>`), so method
-//     resolution always finds a single applicable trait. Predicate ROOTS
-//     stay accessor calls (bare or `Entity::field()`); everything after
-//     the root navigates.
+//     so `cast.person().name()` spells the compose chain
+//     `cast.get(Cast::person).get(Person::name)` — the leaf handle roots
+//     the chain paren-free, and every later hop is a nav method. Coherence
+//     is safe: same-named methods on different entities' nav traits have
+//     disjoint receivers (a resolved query's `R` equals exactly ONE
+//     `Id<E>`), so method resolution always finds a single applicable
+//     trait. Predicate ROOTS are bare handles (`keyword`) or qualified
+//     consts (`Entity::field`); everything after the root navigates.
 //
 // Field types: `str` → `VecRel<&'static str, Id<E>>`; `i64`/`f64` →
 // `VecRel<i64/f64, Id<E>>`; a bare entity ident `Kind` →
@@ -73,6 +89,7 @@ macro_rules! schema {
             pub static STORE: ::std::sync::OnceLock<super::$store> =
                 ::std::sync::OnceLock::new();
             $( $crate::schema::schema!(@colstruct $Ent; $($body)*); )*
+            $( $crate::schema::schema!(@handlemod $Ent; $Nav; $($body)*); )*
         }
 
         /// Load every column from `<cache_dir>/<Entity>_<field>.bin`.
@@ -87,8 +104,8 @@ macro_rules! schema {
         }
 
         $( $crate::schema::schema!(@uni $mod_; $Ent; [$($uni)?]; $($body)*); )*
-        $( $crate::schema::schema!(@fns $mod_; $Ent; $($body)*); )*
-        $( $crate::schema::schema!(@nav $Ent; $Nav; [] $($body)*); )*
+        $( $crate::schema::schema!(@consts $mod_; $Ent; $Nav; $($body)*); )*
+        $( $crate::schema::schema!(@nav $mod_; $Ent; $Nav; [] $($body)*); )*
 
         $crate::schema::schema!(@manifest [] $( $Ent { $($body)* } )*);
     };
@@ -149,20 +166,23 @@ macro_rules! schema {
     };
 
     // ===== field type → physical column type ============================
-    (@colty ($($p:ident)?); $E:ident; str) =>
-        { $crate::engine::VecRel<&'static str, $crate::engine::Id<$($p::)? $E>> };
-    (@colty ($($p:ident)?); $E:ident; i64) =>
-        { $crate::engine::VecRel<i64, $crate::engine::Id<$($p::)? $E>> };
-    (@colty ($($p:ident)?); $E:ident; f64) =>
-        { $crate::engine::VecRel<f64, $crate::engine::Id<$($p::)? $E>> };
-    (@colty ($($p:ident)?); $E:ident; Multi (str)) =>
-        { $crate::engine::MultiRel<&'static str, $crate::engine::Id<$($p::)? $E>> };
-    (@colty ($($p:ident)?); $E:ident; Multi (i64)) =>
-        { $crate::engine::MultiRel<i64, $crate::engine::Id<$($p::)? $E>> };
-    (@colty ($($p:ident)?); $E:ident; Multi ($T:ident)) =>
-        { $crate::engine::MultiRel<$crate::engine::Id<$($p::)? $T>, $crate::engine::Id<$($p::)? $E>> };
-    (@colty ($($p:ident)?); $E:ident; $T:ident) =>
-        { $crate::engine::VecRel<$crate::engine::Id<$($p::)? $T>, $crate::engine::Id<$($p::)? $E>> };
+    // The parenthesized prefix is a `::`-joined path back to the scope
+    // holding the entity tags: `()` at the invocation scope, `(super)` from
+    // inside the schema module, `(super super)` from a handle module.
+    (@colty ($($p:ident)*); $E:ident; str) =>
+        { $crate::engine::VecRel<&'static str, $crate::engine::Id<$($p::)* $E>> };
+    (@colty ($($p:ident)*); $E:ident; i64) =>
+        { $crate::engine::VecRel<i64, $crate::engine::Id<$($p::)* $E>> };
+    (@colty ($($p:ident)*); $E:ident; f64) =>
+        { $crate::engine::VecRel<f64, $crate::engine::Id<$($p::)* $E>> };
+    (@colty ($($p:ident)*); $E:ident; Multi (str)) =>
+        { $crate::engine::MultiRel<&'static str, $crate::engine::Id<$($p::)* $E>> };
+    (@colty ($($p:ident)*); $E:ident; Multi (i64)) =>
+        { $crate::engine::MultiRel<i64, $crate::engine::Id<$($p::)* $E>> };
+    (@colty ($($p:ident)*); $E:ident; Multi ($T:ident)) =>
+        { $crate::engine::MultiRel<$crate::engine::Id<$($p::)* $T>, $crate::engine::Id<$($p::)* $E>> };
+    (@colty ($($p:ident)*); $E:ident; $T:ident) =>
+        { $crate::engine::VecRel<$crate::engine::Id<$($p::)* $T>, $crate::engine::Id<$($p::)* $E>> };
 
     // ===== per-entity struct literal for init ============================
     (@initent $dir:ident; $mod_:ident; $Ent:ident; $($body:tt)*) => {
@@ -192,20 +212,26 @@ macro_rules! schema {
     (@load $dir:ident; $name:expr; Multi ($T:ident)) => { $crate::cache::load_multi_ids_in($dir, $name) };
     (@load $dir:ident; $name:expr; $T:ident) => { $crate::cache::load_ids_in($dir, $name) };
 
-    // ===== universe accessor, sized by the FIRST declared field ==========
+    // ===== universe handle, sized by the FIRST declared field ============
     (@uni $mod_:ident; $Ent:ident; []; $($rest:tt)*) => {};
     (@uni $mod_:ident; $Ent:ident; [$uni:ident]; pub $($rest:tt)*) => {
         $crate::schema::schema!(@uni $mod_; $Ent; [$uni]; $($rest)*);
     };
     (@uni $mod_:ident; $Ent:ident; [$uni:ident];
       $ff:ident : $t1:tt $(< $t2:tt >)? $(, $($rest:tt)*)? ) => {
-        /// Generated universe accessor — identity relation over the
-        /// entity's dense id space (size = first column's key count).
-        #[allow(dead_code)]
-        #[inline]
-        pub fn $uni() -> $crate::engine::Universe<$crate::engine::Id<$Ent>> {
-            $crate::engine::Universe::new(
-                $mod_::STORE.get().expect("schema not initialized").$Ent.$ff.n_keys())
+        /// Generated universe HANDLE — resolves (via `IntoQuery`) to the
+        /// identity relation over the entity's dense id space (size = first
+        /// column's key count, read at plan-construction time).
+        #[allow(non_camel_case_types, dead_code)]
+        #[derive(Clone, Copy)]
+        pub struct $uni;
+        impl $crate::engine::IntoQuery for $uni {
+            type Q = $crate::engine::Universe<$crate::engine::Id<$Ent>>;
+            #[inline]
+            fn iq(self) -> Self::Q {
+                $crate::engine::Universe::new(
+                    $mod_::STORE.get().expect("schema not initialized").$Ent.$ff.n_keys())
+            }
         }
     };
 
@@ -213,65 +239,96 @@ macro_rules! schema {
     // Accumulator muncher (like @colstruct): trait items can't be emitted
     // incrementally into an open `trait { … }`, so the methods accumulate
     // as tts and the trait + blanket impl are emitted at the end.
-    (@nav $Ent:ident; $Nav:ident; [$($acc:tt)*]) => {
-        /// Generated navigation trait — for any query valued in this
-        /// entity's ids, one method per field composing with that field's
-        /// column (`q.title()` ≡ `q.get(Movie::title())`). Blanket-implemented;
-        /// same-named methods on other entities' nav traits don't clash
-        /// because the receivers' `R = Id<E>` bounds are disjoint.
+    (@nav $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*]) => {
+        /// Generated navigation trait — for anything resolving (via
+        /// `IntoQuery`) to a query valued in this entity's ids, one method
+        /// per field composing with that field's column (`q.title()` ≡
+        /// `q.get(Movie::title)`). Blanket-implemented; same-named methods
+        /// on other entities' nav traits don't clash because the resolved
+        /// receivers' `R = Id<E>` bounds are disjoint.
         #[allow(dead_code)]
-        pub trait $Nav:
-            $crate::engine::Query<R = $crate::engine::Id<$Ent>> + Sized
+        pub trait $Nav: $crate::engine::IntoQuery + Sized
+        where Self::Q: $crate::engine::Query<R = $crate::engine::Id<$Ent>>
         {
             $($acc)*
         }
-        impl<Q: $crate::engine::Query<R = $crate::engine::Id<$Ent>> + Sized> $Nav for Q {}
+        impl<T: $crate::engine::IntoQuery + Sized> $Nav for T
+        where T::Q: $crate::engine::Query<R = $crate::engine::Id<$Ent>> {}
     };
-    (@nav $Ent:ident; $Nav:ident; [$($acc:tt)*] pub $($rest:tt)*) => {
-        $crate::schema::schema!(@nav $Ent; $Nav; [$($acc)*] $($rest)*);
+    (@nav $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*] pub $($rest:tt)*) => {
+        $crate::schema::schema!(@nav $mod_; $Ent; $Nav; [$($acc)*] $($rest)*);
     };
-    (@nav $Ent:ident; $Nav:ident; [$($acc:tt)*]
+    (@nav $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*]
       $f:ident : $t1:tt $(< $t2:tt >)? $(, $($rest:tt)*)? ) => {
-        $crate::schema::schema!(@nav $Ent; $Nav;
+        $crate::schema::schema!(@nav $mod_; $Ent; $Nav;
             [$($acc)*
              #[allow(dead_code)]
              #[inline]
              fn $f(self) -> $crate::engine::Compose<
-                 Self, &'static $crate::schema::schema!(@colty (); $Ent; $t1 $(($t2))?)>
+                 Self::Q, &'static $crate::schema::schema!(@colty (); $Ent; $t1 $(($t2))?)>
              {
-                 $crate::engine::Compose { a: self, b: <$Ent>::$f() }
+                 $crate::engine::Compose {
+                     a: self.iq(),
+                     b: &$mod_::STORE.get().expect("schema not initialized").$Ent.$f,
+                 }
              }]
             $($($rest)*)?);
     };
 
-    // ===== accessors: qualified for every field, bare for `pub` fields ===
-    (@fns $mod_:ident; $Ent:ident; ) => {};
-    (@fns $mod_:ident; $Ent:ident;
+    // ===== leaf handles: one paren-free ZST per field =====================
+    // The nav-trait ident doubles as the per-entity handle namespace (a
+    // module inside the schema module), because macro_rules cannot mint
+    // fresh idents: `Movie.title`'s handle type is `<mod>::MovieNav::title`.
+    // The PUBLIC spellings — `Movie::title` (assoc const, every field) and
+    // bare `title` (re-export, `pub` fields) — are generated by @consts.
+    (@handlemod $Ent:ident; $Nav:ident; $($body:tt)*) => {
+        /// Generated per-field leaf handles — ZSTs resolving (via
+        /// `IntoQuery::iq`, one OnceLock fetch at plan construction) to the
+        /// `&'static` column relation. Internal: spell them `Entity::field`
+        /// or (for `pub` fields) bare `field`.
+        #[allow(non_camel_case_types, dead_code)]
+        pub mod $Nav {
+            $crate::schema::schema!(@handle_acc $Ent; $($body)*);
+        }
+    };
+    (@handle_acc $Ent:ident; ) => {};
+    (@handle_acc $Ent:ident; pub $($rest:tt)*) => {
+        $crate::schema::schema!(@handle_acc $Ent; $($rest)*);
+    };
+    (@handle_acc $Ent:ident;
+      $f:ident : $t1:tt $(< $t2:tt >)? $(, $($rest:tt)*)? ) => {
+        #[derive(Clone, Copy)]
+        pub struct $f;
+        impl $crate::engine::IntoQuery for $f {
+            type Q = &'static $crate::schema::schema!(@colty (super super); $Ent; $t1 $(($t2))?);
+            #[inline]
+            fn iq(self) -> Self::Q {
+                &super::STORE.get().expect("schema not initialized").$Ent.$f
+            }
+        }
+        $crate::schema::schema!(@handle_acc $Ent; $($($rest)*)?);
+    };
+
+    // ===== public handle spellings: qualified const for every field, =====
+    // ===== bare re-export for `pub` fields ================================
+    (@consts $mod_:ident; $Ent:ident; $Nav:ident; ) => {};
+    (@consts $mod_:ident; $Ent:ident; $Nav:ident;
       pub $f:ident : $t1:tt $(< $t2:tt >)? $(, $($rest:tt)*)? ) => {
         impl $Ent {
-            #[allow(dead_code)]
-            #[inline]
-            pub fn $f() -> &'static $crate::schema::schema!(@colty (); $Ent; $t1 $(($t2))?) {
-                &$mod_::STORE.get().expect("schema not initialized").$Ent.$f
-            }
+            #[allow(non_upper_case_globals, dead_code)]
+            pub const $f: $mod_::$Nav::$f = $mod_::$Nav::$f;
         }
-        #[allow(dead_code)]
-        #[inline]
-        pub fn $f() -> &'static $crate::schema::schema!(@colty (); $Ent; $t1 $(($t2))?) {
-            <$Ent>::$f()
-        }
-        $crate::schema::schema!(@fns $mod_; $Ent; $($($rest)*)?);
+        #[allow(unused_imports)]
+        pub use $mod_::$Nav::$f;
+        $crate::schema::schema!(@consts $mod_; $Ent; $Nav; $($($rest)*)?);
     };
-    (@fns $mod_:ident; $Ent:ident;
+    (@consts $mod_:ident; $Ent:ident; $Nav:ident;
       $f:ident : $t1:tt $(< $t2:tt >)? $(, $($rest:tt)*)? ) => {
         impl $Ent {
-            #[allow(dead_code)]
-            #[inline]
-            pub fn $f() -> &'static $crate::schema::schema!(@colty (); $Ent; $t1 $(($t2))?) {
-                &$mod_::STORE.get().expect("schema not initialized").$Ent.$f
-            }
+            #[allow(non_upper_case_globals, dead_code)]
+            pub const $f: $mod_::$Nav::$f = $mod_::$Nav::$f;
         }
-        $crate::schema::schema!(@fns $mod_; $Ent; $($($rest)*)?);
+        $crate::schema::schema!(@consts $mod_; $Ent; $Nav; $($($rest)*)?);
     };
 }
 
@@ -363,45 +420,47 @@ mod tests {
 
         test_init(&dir);
 
-        // universe size = first column's key count
-        assert_eq!(film().n, 2);
+        // universe size = first column's key count (the universe HANDLE
+        // resolves to the `Universe` value via `iq`)
+        assert_eq!(film.iq().n, 2);
 
         // typed composition across three entities, in navigation form:
-        // a predicate ROOT is an accessor (qualified `Film::genre()`, bare
-        // `year()` for pub fields); every later hop is a nav method
-        // (`.gname()` ≡ `.get(Genre::gname())` via the generated GenreNav).
-        let q = film()
-            .when(Film::genre().gname().eq("horror"))
-            .when(year().lt(1990))
+        // a predicate ROOT is a paren-free handle (qualified `Film::genre`,
+        // bare `year` for pub fields); every later hop is a nav method
+        // (`.gname()` ≡ `.get(Genre::gname)` via the generated GenreNav).
+        let q = film
+            .when(Film::genre.gname().eq("horror"))
+            .when(year.lt(1990))
             .ftitle();
         let mut got = Vec::new();
         q.drive(|_, t| got.push(t));
         assert_eq!(got, vec!["Alien"]);
 
         // Multi<entity> column + nav through Tag's tag column
-        let q = film().when(Film::tags().tag().eq("noir")).ftitle();
+        let q = film.when(Film::tags.tag().eq("noir")).ftitle();
         let mut got = Vec::new();
         q.drive(|_, t| got.push(t));
         assert_eq!(got, vec!["Blade"]);
 
         // same-named nav methods on different entities resolve by the
-        // receiver's value type: Tag::films() is Film-valued, so `.year()`
-        // picks FilmNav; the chain then navigates Film → Genre → gname.
+        // receiver's RESOLVED value type: Tag::films is Film-valued, so
+        // `.year()` picks FilmNav; the chain navigates Film → Genre → gname.
         let mut got = Vec::new();
-        Tag::films().year().probe(Id::new(0), |y| got.push(y));
+        Tag::films.year().probe(Id::new(0), |y| got.push(y));
         assert_eq!(got, vec![1979, 1998]);
         let mut got = Vec::new();
-        Tag::films().genre().gname().probe(Id::new(1), |g| got.push(g));
+        Tag::films.genre().gname().probe(Id::new(1), |g| got.push(g));
         assert_eq!(got, vec!["drama"]);
 
-        // field names are filenames verbatim (`ty` → Genre_ty.bin)
+        // field names are filenames verbatim (`ty` → Genre_ty.bin); a
+        // handle in leaf (non-chain) position resolves explicitly via `iq`
         let mut got = Vec::new();
-        Genre::ty().probe(Id::new(0), |v| got.push(v));
+        Genre::ty.iq().probe(Id::new(0), |v| got.push(v));
         assert_eq!(got, vec!["main"]);
 
         // typed ids round-trip the bulk reinterpret: Film_genre words → Id<Genre>
         let mut got = Vec::new();
-        Film::genre().probe(Id::<Film>::new(1), |g| got.push(g));
+        Film::genre.iq().probe(Id::<Film>::new(1), |g| got.push(g));
         assert_eq!(got, vec![Id::<Genre>::new(0)]);
 
         // the generated manifest names every column with its cache kind

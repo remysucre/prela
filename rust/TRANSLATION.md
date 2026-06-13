@@ -13,7 +13,7 @@ Rust entity ids are **0-based** (internal id = natural key − 1) and
 `DenseFold`) are generic over `D: Dense`, and the `schema!`-generated
 columns instantiate them with `D = Id<Entity>` — a `repr(transparent)`
 wrapper over `usize` carrying the entity tag, so composing through
-mismatched entities is a COMPILE error (`Movie::keyword().get(Person::name())`
+mismatched entities is a COMPILE error (`Movie::keyword.get(Person::name)`
 does not type-check). Scalar value columns (years, sizes, counts, dates,
 prices) stay `i64`/`f64` — id columns and number columns are distinct types.
 The binary cache (format v2 — `rust/src/format.rs`) stores the FINAL
@@ -31,7 +31,7 @@ length).
 The missing-id sentinel is `Dense::NONE` (`engine::NO_ID` = `usize::MAX`
 under the wrapper): FK-valued columns over gappy key spaces fill holes with
 it, never 0 (entity 0 is live). Gap checks compare against it
-(`Order::customer().ne(Dense::NONE)` / `== Dense::NONE`); "no entity seen
+(`Order::customer.ne(Dense::NONE)` / `== Dense::NONE`); "no entity seen
 yet" fold states use `Option<Id<E>>` (or `NO_ID` in raw `Vec<usize>` state
 where size matters, e.g. dense per-order arrays). Probes are safe `.get()`
 lookups — `NONE` (or any out-of-universe id) fails the single bounds check
@@ -42,15 +42,20 @@ and emits nothing, so no `unsafe` is needed on the probe paths.
 The schemas live in `src/job_schema.rs` / `src/tpch_schema.rs` as one
 `schema!` block each (`src/schema.rs`). Per entity the macro generates the
 entity tag (`struct Movie`), the typed columns (loaded from the v2 cache by
-the generated `init`), entity-qualified accessors for every field
-(`Movie::title()`, `Info::ty()`), a BARE accessor for fields marked
-`pub` (`production_year()`), a bare universe accessor when declared
-`Movie(movies)` (`movie()` — the identity relation over the entity's
-ids), and a NAVIGATION trait (`Movie(movies) / MovieNav`) with one method
-per field, blanket-implemented for every query whose value type is the
-entity's id — so any `Id<Movie>`-valued chain can continue `.title()`,
-`.cast()`, … (each ≡ `.get(Movie::field())`). Columns sit in a global
-`OnceLock` store, so query fns take no data argument. The macro also emits
+the generated `init`), a paren-free leaf HANDLE per field — a ZST named by
+the field, implementing `IntoQuery` (its `iq` fetches the `&'static`
+column from the `OnceLock` store once, at plan construction) — spelled as
+an entity-qualified associated const for every field (`Movie::title`,
+`Info::ty` — values usable wherever a relation is expected), re-exported
+BARE for fields marked `pub` (`pub struct production_year;` in scope as a
+bare name), a bare universe HANDLE when declared `Movie(movie)` (`movie` —
+the identity relation over the entity's ids), and a NAVIGATION trait
+(`Movie(movie) / MovieNav`) with one method per field,
+blanket-implemented for everything that resolves (via `IntoQuery`) to a
+query whose value type is the entity's id — so any `Id<Movie>`-valued
+chain can continue `.title()`, `.cast()`, … (each ≡ `.get(Movie::field)`).
+Columns sit in a global `OnceLock` store, so query fns take no data
+argument. The macro also emits
 a `MANIFEST` of (entity, field, cache kind) — regen verifies the cache it
 writes against it (field names are cache filenames, verbatim).
 
@@ -60,16 +65,16 @@ writes against it (field names are cache filenames, verbatim).
 // queries: <range from queries.jl>
 use crate::engine::*;
 use crate::job_schema::*;
-use crate::queries::helpers::min_row;
+use crate::queries::helpers::{min_row, Row};
 use crate::queries::sets::*;
 
 pub const ENTRIES: &[super::Entry] = &[
-    ("2a", "'Doc'", q2a),
+    ("2a", "'Doc'", || min_row(q2a())),
     // ... one entry per query, name + oracle from _q("NAME","ORACLE") do ... end
 ];
 
-fn q2a() -> String {
-    min_row(movie().when(/* ... */).get(/* ... */))
+fn q2a() -> impl Drive<R: Row> {
+    movie.when(/* ... */).get(/* ... */)
 }
 
 // ... more queries
@@ -122,7 +127,7 @@ member-check `p`, probe `b` — the post-unification spelling of Julia's
 | `a → b` (Q ∘ Q)     | `a.get(b)`                                  | bridge = a's value type |
 | `a : b` (restrict)  | `a.when(b)`                               | builds the dedicated `Restrict` node — node-for-node with Julia. Keep rows of a whose VALUE is a `member` of b (any probe-able b); a's value flows through unchanged |
 | `s : q` (s a set)   | `s.get(q)`                                  | identity relation composes like any other |
-| `(movie → …)`       | `movie().get(…)`                           | Universe ∘ Query |
+| `(movie → …)`       | `movie.get(…)`                           | Universe ∘ Query |
 | `a ∧ b`             | `a.and(b)`                                | alias for `⊗` (= `Prod`); in member position the `member` fast path short-circuits flat without building pairs |
 | `a ∨ b`             | `a.or(b)`                                 | probe-only membership union (`Disj`); driving it is a COMPILE error |
 | (enumerable union)  | `a.union(b)`                              | bag-concat `Union` (drive a then b, NO dedup); Julia has this only as a design note next to `drive(::Disj)` — Rust implements it. Feed it to deduping sinks (`Bitset::over`, `.collect::<MatSet<_>>()`), or materialize first when duplicates would change results |
@@ -138,7 +143,7 @@ member-check `p`, probe `b` — the post-unification spelling of Julia's
 | `a in (v1, …)`      | `a.is_in([v1, …])`                        | any `IntoIterator` — arrays, slices, the named set fns in `super::sets` |
 | `a ~ r"…"`          | `a.rx(r"…")`                              |  |
 | `a ≁ r"…"`          | `a.nrx(r"…")`                             |  |
-| `Universe`          | `movie()`, `persons()`                   | Copy; identity relation over `Id<Movie>` / `Id<Person>` |
+| `Universe`          | `movie`, `persons`                   | Copy; identity relation over `Id<Movie>` / `Id<Person>` |
 
 ### Predicate position — `→` and `:` translate verbatim
 
@@ -150,21 +155,21 @@ with `:` are semantically interchangeable — membership through `Compose`
 the suites pin both paths. The translation does NOT get to choose: it
 preserves the operator the Julia source wrote.
 
-- `edge → tree` ⇒ `edge().get(tree)` — or the nav method when the hop is a
+- `edge → tree` ⇒ `edge.get(tree)` — or the nav method when the hop is a
   single field (`company → (Company.country == "[de]")` ⇒
-  `company().country().eq("[de]")`; nav IS compose).
-- `edge : tree` ⇒ `edge().when(tree)`.
+  `company.country().eq("[de]")`; nav IS compose).
+- `edge : tree` ⇒ `edge.when(tree)`.
 
 JOB 22a's first conjunct — Julia `info → (Info.type == "countries") ∧
 (Info.info in (…))` — is therefore
 
 ```rust
-info().get(Info::ty().text().eq("countries")
-           .and(Info::info().is_in([…])))
+info.get(Info::ty.text().eq("countries")
+         .and(Info::info.is_in([…])))
 ```
 
 while its subqueries `data : (…) ∧ (…) → Data.data` are genuine
-restrictions and stay `data().when(…).text()`.
+restrictions and stay `data.when(…).text()`.
 
 ## No hidden materialization — `collect` names the physical type
 
@@ -188,33 +193,37 @@ any callable). Relation-valued restriction is the separate `Restrict` node
 (`.when`), consuming its rhs via `member` only — the same `Filter`/`Restrict`
 split as Julia's algebra.
 
-## Schema fields → accessors and navigation
+## Schema fields → leaf handles and navigation
 
 A field is spelled two ways, by position in the chain:
 
-- **Root** (the start of a predicate or projection chain): an accessor
-  call — bare for `pub` fields, `Entity::field()` otherwise.
+- **Root** (the start of a predicate or projection chain, or argument
+  position): a paren-free leaf handle — the bare ZST for `pub` fields,
+  the `Entity::field` associated const otherwise. No parens: the handle
+  is a VALUE, resolved to its column via `IntoQuery` when the plan is
+  built.
 - **Mid-chain** (after anything `Id<E>`-valued): a NAVIGATION method —
-  `keyword().text()`, `cast().person().name()` — one method per field on
-  the entity's generated nav trait, regardless of `pub`.
+  `keyword.text()`, `cast.person().name()` — one method per field on
+  the entity's generated nav trait, regardless of `pub`. Nav methods keep
+  their parens; only the chain's root is bare.
 
-**Bare accessors** (fields marked `pub` in `src/job_schema.rs`):
-`title()`, `kind()`, `production_year()`, `episode_nr()`, `keyword()`,
-`company()`, `cast()`, `info()`, `data()`, `complete_cast()`, `link()`,
-`linked_by()`, `aka()` (Movie — every Movie edge/attr is bare); `person()`,
-`role()`, `character()` (Cast); `gender()`, `alias()`, `bio()`,
-`name_pcode_cf()` (Person); `country()` (Company); `target()` (MovieLink);
-`status()`, `subject()` (CompleteCast).
+**Bare handles** (fields marked `pub` in `src/job_schema.rs`):
+`title`, `kind`, `production_year`, `episode_nr`, `keyword`,
+`company`, `cast`, `info`, `data`, `complete_cast`, `link`,
+`linked_by`, `aka` (Movie — every Movie edge/attr is bare); `person`,
+`role`, `character` (Cast); `gender`, `alias`, `bio`,
+`name_pcode_cf` (Person); `country` (Company); `target` (MovieLink);
+`status`, `subject` (CompleteCast).
 
 **Entity-qualified roots** (names that collide across entities): the
-lookup-table labels are uniformly `text` (`Keyword::text()`,
-`Kind::text()`, `RoleType::text()`, `Character::text()`,
-`CompanyType::text()`, `InfoType::text()`, `Data::text()`,
-`AkaName::text()`, `AkaTitle::text()`, `LinkType::text()`,
-`CompCastType::text()`); plus `Person::name()` / `Company::name()`,
-`Cast::note()` / `Company::note()` / `Info::note()` / `PersonInfo::note()`,
-`Company::ty()` / `Info::ty()` / `Data::ty()` / `PersonInfo::ty()` /
-`MovieLink::ty()`, and `Info::info()` / `PersonInfo::info()`.
+lookup-table labels are uniformly `text` (`Keyword::text`,
+`Kind::text`, `RoleType::text`, `Character::text`,
+`CompanyType::text`, `InfoType::text`, `Data::text`,
+`AkaName::text`, `AkaTitle::text`, `LinkType::text`,
+`CompCastType::text`); plus `Person::name` / `Company::name`,
+`Cast::note` / `Company::note` / `Info::note` / `PersonInfo::note`,
+`Company::ty` / `Info::ty` / `Data::ty` / `PersonInfo::ty` /
+`MovieLink::ty`, and `Info::info` / `PersonInfo::info`.
 
 (Former names: `type_` is now `ty` everywhere — no raw-keyword underscore,
 and field names ARE the cache filenames (`Info_ty.bin`). `Person.info` →
@@ -225,39 +234,40 @@ and field names ARE the cache filenames (`Info_ty.bin`). `Person.info` →
 
 Julia writes `keyword == "x"` and means "the keyword id, resolved to its
 label, equals x". Rust spells the hop as the field's nav method —
-`keyword().text()` ≡ `keyword().get(Keyword::text())`, defined exactly where
+`keyword.text()` ≡ `keyword.get(Keyword::text)`, defined exactly where
 the chain's value type is the entity id `Id<E>` (same-named methods on
 other entities' traits don't apply: the receivers are disjoint).
 
 | Julia                                | Rust                              |
 |--------------------------------------|-----------------------------------|
-| `keyword == "x"`                     | `keyword().text().eq("x")`        |
-| `keyword in (...)`                   | `keyword().text().is_in([...])`   |
-| `role == "x"` (cast)                 | `role().text().eq("x")`           |
-| `kind == "x"` (movie)                | `kind().text().eq("x")`           |
-| `Info.type == "x"`                   | `Info::ty().text().eq("x")`       |
-| `Company.type == "x"`                | `Company::ty().text().eq("x")`    |
-| `Data.type == "x"`                   | `Data::ty().text().eq("x")` (Data.ty points to InfoType) |
-| `MovieLink.type == "x"`              | `MovieLink::ty().text().eq("x")`  |
-| `PersonInfo.type == "x"`             | `PersonInfo::ty().text().eq("x")` |
-| `CompleteCast.status == "x"`         | `status().text().eq("x")`         |
-| `CompleteCast.subject == "x"`        | `subject().text().eq("x")`        |
+| `keyword == "x"`                     | `keyword.text().eq("x")`        |
+| `keyword in (...)`                   | `keyword.text().is_in([...])`   |
+| `role == "x"` (cast)                 | `role.text().eq("x")`           |
+| `kind == "x"` (movie)                | `kind.text().eq("x")`           |
+| `Info.type == "x"`                   | `Info::ty.text().eq("x")`       |
+| `Company.type == "x"`                | `Company::ty.text().eq("x")`    |
+| `Data.type == "x"`                   | `Data::ty.text().eq("x")` (Data.ty points to InfoType) |
+| `MovieLink.type == "x"`              | `MovieLink::ty.text().eq("x")`  |
+| `PersonInfo.type == "x"`             | `PersonInfo::ty.text().eq("x")` |
+| `CompleteCast.status == "x"`         | `status.text().eq("x")`         |
+| `CompleteCast.subject == "x"`        | `subject.text().eq("x")`        |
 
 Same pattern for `~`, `≁`, `>`, `<`, `in`, etc. — the LHS root keeps its
-accessor form and every subsequent hop navigates.
+bare-handle (or `Entity::field`) form and every subsequent hop navigates.
 
 ## Multi-hop traversal
 
 | Julia in context                   | Rust                                |
 |------------------------------------|-------------------------------------|
-| `person.name` (cast context)       | `person().name()`                   |
-| `person.aka.name` (cast)           | `person().alias().text()`           |
-| `Person.aka.name` (person context) | `alias().text()`                    |
-| `character.name` (cast)            | `character().text()`                |
-| `cast.person.name` (movie context) | `cast().person().name()`            |
+| `person.name` (cast context)       | `person.name()`                   |
+| `person.aka.name` (cast)           | `person.alias().text()`           |
+| `Person.aka.name` (person context) | `alias.text()`                    |
+| `character.name` (cast)            | `character.text()`                |
+| `cast.person.name` (movie context) | `cast.person().name()`            |
 
-(`person()` is Cast's `person` FK column; `persons()` is the Person
-universe.)
+(`person` is Cast's `person` FK column; `persons` is the Person
+universe — the bare universe name is plural exactly because bare `person`
+is the hot Cast handle.)
 
 ## Implicit primary on outputs
 
@@ -265,7 +275,7 @@ When the OUTPUT of a query column is an ID (not a string), Julia
 auto-resolves to the entity's primary field at print time. In Rust make it
 explicit — navigate to the string column:
 
-- `co × title` where `co` yields Company-id → `co.name().and(title())`
+- `co × title` where `co` yields Company-id → `co.name().and(title)`
 - `lk × …` where `lk` yields MovieLink-id → `lk.ty().text()`
 - `info → (gf : Info.info)` → already string-valued, no further resolution.
 
@@ -280,8 +290,8 @@ define a helper fn that returns a fresh instance:
 
 ```rust
 fn co_27() -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive + Probe {
-    company().when(country().ne("[pl]")
-                   .and(/* … the rest of the Company-side conjunction … */))
+    company.when(country.ne("[pl]")
+                 .and(/* … the rest of the Company-side conjunction … */))
 }
 ```
 
@@ -322,14 +332,19 @@ different siblings stay separate.
 `kw7()`, `kw8()`, `kw10()`, `voice3()`, `voice4()`, `writer5()`, `genre6()`,
 `murder4()`, `nordic8()`, `nordic9()`, `nordic10()`, `link3()`.
 
-Use as: `keyword().text().is_in(kw8())`.
+Use as: `keyword.text().is_in(kw8())`. (The set fns are local
+plan-returning helpers, not schema handles — they keep their parens.)
 
 ## Output formatting — query tails
 
-Every query ends with `min_row(q)` (from `queries::helpers`). It drives the
-query once, accumulates the lexicographic minimum of each output column
-independently (the JOB `MIN(...)` projection), and renders the columns
-joined with `" || "` — or `"(empty)"` if no row survived.
+Query fns return their PLAN — `fn qXa() -> impl Drive<R: Row>` — the bare
+combinator expression, no formatting. `min_row(q)` (from `queries::helpers`)
+is applied at the registry: each `ENTRIES` row is
+`(name, oracle, || min_row(qXa()))` (the non-capturing closure coerces to
+the `fn() -> String` entry type). `min_row` drives the query once,
+accumulates the lexicographic minimum of each output column independently
+(the JOB `MIN(...)` projection), and renders the columns joined with
+`" || "` — or `"(empty)"` if no row survived.
 
 Column shapes are handled by the `Row` trait: `&'static str`, `i64`, and
 nested `Prod` tuples thereof (`((a, b), c)` for `a × b × c`, etc.), so any
@@ -351,22 +366,22 @@ short-circuit) but reserved for genuinely sequential restriction, e.g. the
 
 ### Movie-rooted (templates 1-5, 11-15, 22)
 ```rust
-fn qXa() -> String {
-    min_row(movie()
+fn qXa() -> impl Drive<R: Row> {
+    movie
         .when(/* movie conjunct tree: a.and(b).and(c)… (member-checked) */)
-        .get(/* projection — usually a .and(…) product */))
+        .get(/* projection — usually a .and(…) product */)
 }
 ```
 
 ### Movie + cast filter + cast projection (templates 6-10, 16-20)
 ```rust
-fn qXa() -> String {
-    min_row(movie()
+fn qXa() -> impl Drive<R: Row> {
+    movie
         .when(/* movie conjunct tree */)
-        .get(cast()
+        .get(cast
              .when(/* cast conjunct tree */)
              .person().name()      // cast projection — navigation
-             .and(title())))
+             .and(title))
 }
 ```
 
@@ -376,10 +391,19 @@ ENTRIES key is the exact Julia name string ("2a", "11d", "22c").
 ENTRIES oracle is the exact second-arg string from `_q("name", "oracle")`.
 
 ## Pitfalls
-- Accessors return `&'static` columns — use them as method receivers
-  directly (`Movie::title().rx(…)`), no `&` borrows or `d` plumbing.
+- Leaf handles are ZST VALUES, not fns — no parens at the root
+  (`Movie::title.rx(…)`, `keyword.text()`), no `&` borrows or `d`
+  plumbing; the handle resolves to its `&'static` column via `IntoQuery`
+  when the plan is built.
+- BINDING CAPTURE: a bare handle in scope makes any same-named local a
+  unit-struct PATTERN, not a fresh binding — `let kind = …`, a closure
+  param `|info|`, a match arm fail to compile ("interpreted as a unit
+  struct, not a new binding"). Rename such locals (`let kd = …`). Same
+  reason `assert_eq!`/`assert_ne!` break under a glob import of a schema
+  exporting bare `kind` (the core macros bind `let kind` internally) —
+  test modules import schema names selectively.
 - Conjuncts need NO projection: `a.and(b)` consumes `b` via `member`, so a
-  value-bearing filter (`production_year().gt(2000)`) is a valid operand
+  value-bearing filter (`production_year.gt(2000)`) is a valid operand
   as-is. Same for `.minus`'s RHS and `.when`'s argument.
 - A conjunct tree is member-position ONLY. To compose or drive past it,
   hoist it into the upstream restriction: `x.when(a.and(b)).get(body)`, never
@@ -388,11 +412,11 @@ ENTRIES oracle is the exact second-arg string from `_q("name", "oracle")`.
 - `.or` cannot be driven (no `Drive` impl, by design — Julia's `∨` is
   probe-only). The enumerable union is `.union` (bag-concat, no dedup).
 - For `(production_year >= X) ∧ (production_year <= Y)` use
-  `production_year().ge(X).and(production_year().le(Y))`
+  `production_year.ge(X).and(production_year.le(Y))`
   — each comparison is its own Filter conjunct.
 - A nav method needs the matching entity-id value: `.text()` exists only
   where the chain is valued in an entity whose schema declares `text`. On a
   string-valued (or wrong-entity) query it does not resolve (compile
   error), which is the type system catching a wrong hop.
-- Don't forget the OUTERMOST `movie().when(…)` / `movie().get(…)` — the
+- Don't forget the OUTERMOST `movie.when(…)` / `movie.get(…)` — the
   query is anchored at the movie universe.

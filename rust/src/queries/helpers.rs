@@ -54,9 +54,9 @@ pub fn min_row<Q: Drive>(q: Q) -> String where Q::R: Row {
 /// Companies named *Film*/*Warner*, non-Polish production companies without
 /// a note — the `co` binding of queries 21a-c and 27a-c.
 pub fn film_or_warner_co() -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive + Probe {
-    company().when(country().ne("[pl]")
-                   .and(Company::name().rx(r"Film").or(Company::name().rx(r"Warner")))
-                   .and(Company::ty().text().eq("production companies").minus(Company::note())))
+    company.when(country.ne("[pl]")
+                   .and(Company::name.rx(r"Film").or(Company::name.rx(r"Warner")))
+                   .and(Company::ty.text().eq("production companies").minus(Company::note)))
 }
 
 /// The link-type label ("followed by", …) of each movie's "follow"-typed
@@ -64,5 +64,5 @@ pub fn film_or_warner_co() -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive
 /// Julia's `link → (MovieLink.type ~ r"follow")` (whose primary elision
 /// composes through to `LinkType.link`), so output products use it directly.
 pub fn follow_link() -> impl Query<D = Id<Movie>, R = &'static str> + Drive + Probe {
-    link().get(MovieLink::ty().text().rx(r"follow"))
+    link.get(MovieLink::ty.text().rx(r"follow"))
 }

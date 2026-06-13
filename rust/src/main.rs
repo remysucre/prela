@@ -1,3 +1,4 @@
+use prela::engine::IntoQuery;
 use prela::{Entry, job_schema, queries, tpch, tpch_schema};
 
 fn main() {
@@ -41,7 +42,8 @@ fn run_job() {
     let t = std::time::Instant::now();
     job_schema::job_init(std::path::Path::new("../cache"));
     eprintln!("load: {:.2}s  (movie n={}, person n={})",
-              t.elapsed().as_secs_f32(), job_schema::movie().n, job_schema::persons().n);
+              t.elapsed().as_secs_f32(),
+              job_schema::movie.iq().n, job_schema::persons.iq().n);
 
     let qs = queries::all_queries();
     eprintln!("{} queries registered", qs.len());
@@ -63,8 +65,8 @@ fn run_tpch() {
     tpch_schema::tpch_init(std::path::Path::new("../cache"));
     eprintln!("load: {:.2}s  (li n={}, ord n={}, ps n={})",
               t.elapsed().as_secs_f32(),
-              tpch_schema::lineitem().n, tpch_schema::orders().n,
-              tpch_schema::partsupp().n);
+              tpch_schema::lineitem.iq().n, tpch_schema::orders.iq().n,
+              tpch_schema::partsupp.iq().n);
 
     // QS=idiomatic|optimized|ddbcheat (default optimized)
     let variant = std::env::var("QS").unwrap_or_else(|_| "optimized".to_string());

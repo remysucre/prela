@@ -84,6 +84,35 @@ pub trait Probe: Query {
     }
 }
 
+// ===== IntoQuery — construction-time leaf resolution ====================
+// The combinator surface (`QueryExt`, the schema-generated nav traits,
+// `Bitset::over`) is rooted on `IntoQuery`, not `Query`: anything that can
+// RESOLVE to a plan node. Two kinds of implementor:
+//
+//   - every `Query` (identity blanket below) — plans pass through `iq`
+//     unchanged, so plan-on-plan combinators cost nothing new;
+//   - the schema-generated leaf HANDLES (`keyword`, `Movie::title`,
+//     universe handles like `movie`) — paren-free ZSTs whose `iq` fetches
+//     the `&'static` column/universe from the schema's OnceLock store ONCE,
+//     at plan construction. Handles implement `IntoQuery` directly and must
+//     NOT implement `Query` (that keeps them out of plans — every plan
+//     object is identical to one built from accessor fns — and avoids
+//     overlapping the identity blanket).
+pub trait IntoQuery {
+    type Q: Query;
+    fn iq(self) -> Self::Q;
+}
+impl<Q: Query> IntoQuery for Q {
+    type Q = Q;
+    #[inline(always)]
+    fn iq(self) -> Q { self }
+}
+
+/// The domain type of what `T` resolves to (`<T::Q as Query>::D`).
+pub type DOf<T> = <<T as IntoQuery>::Q as Query>::D;
+/// The value type of what `T` resolves to (`<T::Q as Query>::R`).
+pub type ROf<T> = <<T as IntoQuery>::Q as Query>::R;
+
 // blanket: &T inherits T's modes.
 impl<T: Query + ?Sized> Query for &T { type D = T::D; type R = T::R; }
 impl<T: Drive + ?Sized> Drive for &T {
@@ -198,9 +227,9 @@ impl<E: 'static> Dense for Id<E> {
 }
 
 // Entity → scalar hops are spelled by the `schema!`-generated NAVIGATION
-// traits (one method per field, blanket-implemented for queries valued in
-// the entity's ids — see src/schema.rs): `Movie::kind().text()` composes
-// with Kind's text column. Navigation superseded the old `Primary`/`.p()`
+// traits (one method per field, blanket-implemented for anything that
+// RESOLVES to a query valued in the entity's ids — see src/schema.rs):
+// `Movie::kind.text()` composes with Kind's text column. Navigation superseded the old `Primary`/`.p()`
 // elision: it names ANY field, not just the first declared one, and reads
 // as the chain it builds. (A Julia-style single-name `eq` that dispatches
 // on scalar vs entity-valued columns was analyzed and rejected:
@@ -674,7 +703,10 @@ pub struct Bitset<D: Dense = usize> {
 }
 
 impl<D: Dense> Bitset<D> {
-    pub fn empty(u: Universe<D>) -> Self {
+    /// `u` is anything that resolves to the universe — the `Universe` value
+    /// itself or a schema-generated universe handle (`orders`).
+    pub fn empty(u: impl IntoQuery<Q = Universe<D>>) -> Self {
+        let u = u.iq();
         Bitset { bs: vec![0u64; u.n.div_ceil(64)], n: u.n, _d: PhantomData }
     }
     /// A bitset over `u`, driven from `q`: set a bit at each emitted VALUE.
@@ -682,9 +714,12 @@ impl<D: Dense> Bitset<D> {
     /// constructor bit-sets a set's keys and a value-bearing query's values
     /// alike (julia-engine plan.jl `build_bitset`). Out-of-universe values —
     /// including `NO_ID` hole fills — are dropped by the `set` guard.
-    pub fn over<Q: Drive<R = D>>(u: Universe<D>, q: &Q) -> Self {
+    /// Both arguments resolve via `IntoQuery`: universe handles for `u`,
+    /// plans (usually by reference) or leaf handles for `q`.
+    pub fn over<Q: IntoQuery>(u: impl IntoQuery<Q = Universe<D>>, q: Q) -> Self
+    where Q::Q: Drive<R = D> {
         let mut b = Self::empty(u);
-        q.drive(|_, c| b.set(c));
+        q.iq().drive(|_, c| b.set(c));
         b
     }
     #[inline] pub fn set(&mut self, x: D) {
@@ -889,15 +924,21 @@ impl<Q: Probe, F: Fn(Q::R) -> S, S: Copy> Probe for Map<Q, F, S> {
 // constructors drive their input right here — those require `Self: Drive`
 // and consume their input, exactly like prela's `build_*` inside `prepare`.
 
-pub trait QueryExt: Query + Sized {
+// Rooted on `IntoQuery`: receiver and every relation argument resolve via
+// `.iq()` at construction, so leaf handles and plan nodes mix freely
+// (`keyword.text().eq(…)`, `movie.when(…)`). Return types are built from
+// `Self::Q`/`B::Q` — the resolved plan types — so the plans are identical
+// to ones built from `&'static` leaves directly.
+pub trait QueryExt: IntoQuery + Sized {
     /// `→` — compose two queries (bridge type = self's value type); reads
     /// navigationally: "get `b` at each of self's values".
     #[inline(always)]
-    fn get<B: Query<D = Self::R>>(self, b: B) -> Compose<Self, B> { Compose { a: self, b } }
+    fn get<B: IntoQuery>(self, b: B) -> Compose<Self::Q, B::Q>
+    where B::Q: Query<D = ROf<Self>> { Compose { a: self.iq(), b: b.iq() } }
 
     /// Postfix adjoint in drive position — streams flipped pairs, no state.
     #[inline(always)]
-    fn inv(self) -> InvStream<Self> where Self::R: Eq + Hash { InvStream { q: self } }
+    fn inv(self) -> InvStream<Self::Q> where ROf<Self>: Eq + Hash { InvStream { q: self.iq() } }
 
     /// `∧` / `×` / `⊗` — the product, in both of its uses (one node, one
     /// name; Julia: `∧(a, b) = ⊗(a, b)`). In member position (a conjunct
@@ -906,72 +947,76 @@ pub trait QueryExt: Query + Sized {
     /// drive/probe position it emits nested-pair values (output tuples) —
     /// restrict-then-project is `a.when(p).get(b)`.
     #[inline(always)]
-    fn and<B: Query<D = Self::D>>(self, b: B) -> Prod<Self, B> { Prod { a: self, b } }
+    fn and<B: IntoQuery>(self, b: B) -> Prod<Self::Q, B::Q>
+    where B::Q: Query<D = DOf<Self>> { Prod { a: self.iq(), b: b.iq() } }
 
     /// `∨` — probe-only membership union (`member` = a OR b). Driving it is
     /// a compile error; enumerate with `.union(b)` instead.
     #[inline(always)]
-    fn or<B: Query<D = Self::D>>(self, b: B) -> Disj<Self, B> { Disj { a: self, b } }
+    fn or<B: IntoQuery>(self, b: B) -> Disj<Self::Q, B::Q>
+    where B::Q: Query<D = DOf<Self>> { Disj { a: self.iq(), b: b.iq() } }
 
     /// `-` — value-bearing difference: self's pairs whose KEY is not a
     /// member of `b` (identity self ⟹ plain set difference).
     #[inline(always)]
-    fn minus<B: Query<D = Self::D>>(self, b: B) -> Diff<Self, B> { Diff { a: self, b } }
+    fn minus<B: IntoQuery>(self, b: B) -> Diff<Self::Q, B::Q>
+    where B::Q: Query<D = DOf<Self>> { Diff { a: self.iq(), b: b.iq() } }
 
     /// Enumerable bag union — drive self fully, then `b` fully, NO dedup
     /// (the drive-position complement of the probe-only `.or`). Feed it to
     /// deduping sinks, or collect it into a `MatSet` when duplicates would matter.
     #[allow(dead_code)] // no suite query drives a union today (every `∨` is member-position); kept as the sanctioned enumerable form, exercised by unit tests
     #[inline(always)]
-    fn union<B: Query<D = Self::D, R = Self::R>>(self, b: B) -> Union<Self, B> { Union { a: self, b } }
+    fn union<B: IntoQuery>(self, b: B) -> Union<Self::Q, B::Q>
+    where B::Q: Query<D = DOf<Self>, R = ROf<Self>> { Union { a: self.iq(), b: b.iq() } }
 
     // Predicate filters — all captured-closure forms of `filt`.
-    #[inline(always)] fn eq(self, v: Self::R) -> Filter<Self, impl Fn(Self::R) -> bool>
-        where Self::R: PartialEq { self.filt(move |x| x == v) }
-    #[inline(always)] fn ne(self, v: Self::R) -> Filter<Self, impl Fn(Self::R) -> bool>
-        where Self::R: PartialEq { self.filt(move |x| x != v) }
-    #[inline(always)] fn gt(self, v: Self::R) -> Filter<Self, impl Fn(Self::R) -> bool>
-        where Self::R: PartialOrd { self.filt(move |x| x > v) }
-    #[inline(always)] fn lt(self, v: Self::R) -> Filter<Self, impl Fn(Self::R) -> bool>
-        where Self::R: PartialOrd { self.filt(move |x| x < v) }
-    #[inline(always)] fn ge(self, v: Self::R) -> Filter<Self, impl Fn(Self::R) -> bool>
-        where Self::R: PartialOrd { self.filt(move |x| x >= v) }
-    #[inline(always)] fn le(self, v: Self::R) -> Filter<Self, impl Fn(Self::R) -> bool>
-        where Self::R: PartialOrd { self.filt(move |x| x <= v) }
-    #[inline(always)] fn in_v(self, vs: Vec<Self::R>) -> Filter<Self, impl Fn(Self::R) -> bool>
-        where Self::R: PartialEq { self.filt(move |x| vs.iter().any(|&v| v == x)) }
+    #[inline(always)] fn eq(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
+        where ROf<Self>: PartialEq { self.filt(move |x| x == v) }
+    #[inline(always)] fn ne(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
+        where ROf<Self>: PartialEq { self.filt(move |x| x != v) }
+    #[inline(always)] fn gt(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
+        where ROf<Self>: PartialOrd { self.filt(move |x| x > v) }
+    #[inline(always)] fn lt(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
+        where ROf<Self>: PartialOrd { self.filt(move |x| x < v) }
+    #[inline(always)] fn ge(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
+        where ROf<Self>: PartialOrd { self.filt(move |x| x >= v) }
+    #[inline(always)] fn le(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
+        where ROf<Self>: PartialOrd { self.filt(move |x| x <= v) }
+    #[inline(always)] fn in_v(self, vs: Vec<ROf<Self>>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
+        where ROf<Self>: PartialEq { self.filt(move |x| vs.iter().any(|&v| v == x)) }
     /// `in_v` over any `IntoIterator` — arrays, slices, the named set fns —
     /// collected once into the captured Vec.
-    #[inline(always)] fn is_in<I: IntoIterator<Item = Self::R>>(self, vs: I)
-        -> Filter<Self, impl Fn(Self::R) -> bool>
-        where Self::R: PartialEq {
-        let vs: Vec<Self::R> = vs.into_iter().collect();
+    #[inline(always)] fn is_in<I: IntoIterator<Item = ROf<Self>>>(self, vs: I)
+        -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
+        where ROf<Self>: PartialEq {
+        let vs: Vec<ROf<Self>> = vs.into_iter().collect();
         self.filt(move |x| vs.iter().any(|&v| v == x))
     }
     /// Restriction `a : b` — keep self's pairs whose VALUE is a `member` of
     /// `s` (any probe-able relation). Builds the dedicated `Restrict` node,
     /// node-for-node with Julia.
-    #[inline(always)] fn when<S: Probe<D = Self::R>>(self, s: S) -> Restrict<Self, S>
-        { Restrict { a: self, b: s } }
-    #[inline(always)] fn rx(self, re: &str) -> Filter<Self, impl Fn(Self::R) -> bool>
-        where Self: Query<R = &'static str> {
+    #[inline(always)] fn when<S: IntoQuery>(self, s: S) -> Restrict<Self::Q, S::Q>
+        where S::Q: Probe<D = ROf<Self>> { Restrict { a: self.iq(), b: s.iq() } }
+    #[inline(always)] fn rx(self, re: &str) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
+        where Self::Q: Query<R = &'static str> {
         let re = Regex::new(re).unwrap();
         self.filt(move |s| re.is_match(s))
     }
-    #[inline(always)] fn nrx(self, re: &str) -> Filter<Self, impl Fn(Self::R) -> bool>
-        where Self: Query<R = &'static str> {
+    #[inline(always)] fn nrx(self, re: &str) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
+        where Self::Q: Query<R = &'static str> {
         let re = Regex::new(re).unwrap();
         self.filt(move |s| !re.is_match(s))
     }
     /// Closure-predicate filter — for things like cross-column compares.
-    #[inline(always)] fn filt<F: Fn(Self::R) -> bool>(self, f: F) -> Filter<Self, F>
-        { Filter { a: self, p: f } }
+    #[inline(always)] fn filt<F: Fn(ROf<Self>) -> bool>(self, f: F) -> Filter<Self::Q, F>
+        { Filter { a: self.iq(), p: f } }
     /// Half-open range `[lo, hi)` — Julia `during(lo, hi)`.
-    #[inline(always)] fn during(self, lo: Self::R, hi: Self::R) -> Filter<Self, impl Fn(Self::R) -> bool>
-        where Self::R: PartialOrd { self.filt(move |x| x >= lo && x < hi) }
+    #[inline(always)] fn during(self, lo: ROf<Self>, hi: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
+        where ROf<Self>: PartialOrd { self.filt(move |x| x >= lo && x < hi) }
     /// Closed range `[lo, hi]` — Julia `lo..hi`.
-    #[inline(always)] fn between(self, lo: Self::R, hi: Self::R) -> Filter<Self, impl Fn(Self::R) -> bool>
-        where Self::R: PartialOrd { self.filt(move |x| x >= lo && x <= hi) }
+    #[inline(always)] fn between(self, lo: ROf<Self>, hi: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
+        where ROf<Self>: PartialOrd { self.filt(move |x| x >= lo && x <= hi) }
 
     /// Materialize — drive self once into the physical structure named by
     /// the target type (`FromQuery`, the relation mirror of `FromIterator`):
@@ -979,62 +1024,65 @@ pub trait QueryExt: Query + Sized {
     /// MatSet<_>>()` for a membership set (Julia: `prepare` probing a
     /// `Materialized`). The type annotation IS the visible physical choice.
     #[inline(always)]
-    fn collect<T: FromQuery<Self>>(self) -> T where Self: Drive { T::from_rel(self) }
+    fn collect<T: FromQuery<Self::Q>>(self) -> T where Self::Q: Drive { T::from_rel(self.iq()) }
 
     /// Julia's `r ← s` in drive position — drives self, probes `key` per
     /// row, emits (key-value, self-value). (With sets now identity
     /// relations, grouping by a set is just this general form: the set's
     /// key flows through the value slot.)
     #[inline(always)]
-    fn group_by<R: Query<D = Self::D>>(self, key: R) -> GroupBy<Self, R>
-    where R::R: Eq + Hash { GroupBy { src: self, key } }
+    fn group_by<R: IntoQuery>(self, key: R) -> GroupBy<Self::Q, R::Q>
+    where R::Q: Query<D = DOf<Self>>, ROf<R>: Eq + Hash
+        { GroupBy { src: self.iq(), key: key.iq() } }
 
     /// `▷ (op, init)` — per-key foldl into an eager cache.
     #[inline(always)]
-    fn fold<OP: Fn(S, Self::R) -> S, S: Copy>(self, init: S, op: OP) -> Fold<Self::D, S>
-    where Self: Drive { Fold::build(self, init, op) }
+    fn fold<OP: Fn(S, ROf<Self>) -> S, S: Copy>(self, init: S, op: OP) -> Fold<DOf<Self>, S>
+    where Self::Q: Drive { Fold::build(self.iq(), init, op) }
 
     /// `▷ f` with a callable — per-key whole-multiset reduce (Julia's
     /// BufFold): buffer each group, then cache `f(group)`. For reducers
     /// that need the whole group (count-distinct, median, …) rather than
     /// foldl's streaming `(S, R) -> S` shape.
     #[inline(always)]
-    fn buf_fold<F: Fn(SVec<Self::R>) -> S, S: Copy>(self, f: F) -> Fold<Self::D, S>
-    where Self: Drive { Fold::build_buf(self, f) }
+    fn buf_fold<F: Fn(SVec<ROf<Self>>) -> S, S: Copy>(self, f: F) -> Fold<DOf<Self>, S>
+    where Self::Q: Drive { Fold::build_buf(self.iq(), f) }
 
     /// `▷ (op, init)` with a dense id-keyed `Vec<S>` cache. Use when the
     /// key range is known to be `0..n` (`n` slots) and small/dense enough
     /// that a `Vec<S>` of size `n` beats the HashMap path of `fold`.
     #[inline(always)]
-    fn dense_fold<OP: Fn(S, Self::R) -> S, S: Copy>(self, n: usize, init: S, op: OP)
-        -> DenseFold<S, Self::D>
-    where Self: Drive, Self::D: Dense { DenseFold::build(self, n, init, op) }
+    fn dense_fold<OP: Fn(S, ROf<Self>) -> S, S: Copy>(self, n: usize, init: S, op: OP)
+        -> DenseFold<S, DOf<Self>>
+    where Self::Q: Drive, DOf<Self>: Dense { DenseFold::build(self.iq(), n, init, op) }
 
     /// Count-distinct — the `length ∘ unique` instance of `.buf_fold`. The
     /// closure sorts + dedups the per-key SVec on finalization — much
     /// faster than a HashSet per group for the typical small-group case.
     #[inline(always)]
-    fn count_distinct(self) -> Fold<Self::D, i64>
-    where Self: Drive, Self::R: Ord {
+    fn count_distinct(self) -> Fold<DOf<Self>, i64>
+    where Self::Q: Drive, ROf<Self>: Ord {
         self.buf_fold(|mut vs| { vs.sort_unstable(); vs.dedup(); vs.len() as i64 })
     }
 
     /// `↦ f` — per-row map.
     #[inline(always)]
-    fn map<F: Fn(Self::R) -> S, S: Copy>(self, f: F) -> Map<Self, F, S> {
-        Map::new(self, f)
+    fn map<F: Fn(ROf<Self>) -> S, S: Copy>(self, f: F) -> Map<Self::Q, F, S> {
+        Map::new(self.iq(), f)
     }
 
-    /// `⊵ (op, init)` — no-group foldl. Drives the whole query, returns scalar.
+    /// `⊵ (op, init)` — no-group foldl. Drives the whole query, returns
+    /// scalar. Consumes the receiver like every other combinator — fold a
+    /// plan you still need through a reference (`(&q).unwrap_fold(…)`).
     #[inline(always)]
-    fn unwrap_fold<OP: Fn(S, Self::R) -> S, S: Copy>(&self, init: S, op: OP) -> S
-    where Self: Drive {
+    fn unwrap_fold<OP: Fn(S, ROf<Self>) -> S, S: Copy>(self, init: S, op: OP) -> S
+    where Self::Q: Drive {
         let mut acc = init;
-        self.drive(|_, v| acc = op(acc, v));
+        self.iq().drive(|_, v| acc = op(acc, v));
         acc
     }
 }
-impl<Q: Query> QueryExt for Q {}
+impl<T: IntoQuery> QueryExt for T {}
 
 // ===== tests — tiny inline data, every node in every mode ===============
 
