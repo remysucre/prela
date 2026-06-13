@@ -23,48 +23,43 @@ pub const ENTRIES: &[super::Entry] = &[
 
 // q16a/q16d differ only in the episode_nr lower bound.
 fn q16ad(lo: i64) -> impl Drive<R: Row> {
-    movie
-        .when(company.country().eq("[us]")
-         .and(keyword.text().eq("character-name-in-title"))
-         .and(episode_nr.ge(lo))
-         .and(episode_nr.lt(100)))
-        .select(cast.person().alias().text()
-         .and(title))
+    movie.when(company.country().eq("[us]")
+          .and(keyword.text().eq("character-name-in-title"))
+          .and(episode_nr.ge(lo))
+          .and(episode_nr.lt(100)))
+       .select(cast.person().alias().text()
+          .and(title))
 }
 
 fn q16a() -> impl Drive<R: Row> { q16ad(50) }
 fn q16d() -> impl Drive<R: Row> { q16ad(5) }
 
 fn q16b() -> impl Drive<R: Row> {
-    movie
-        .when(company.country().eq("[us]")
-         .and(keyword.text().eq("character-name-in-title")))
-        .select(cast.person().alias().text()
-         .and(title))
+    movie.when(company.country().eq("[us]")
+          .and(keyword.text().eq("character-name-in-title")))
+       .select(cast.person().alias().text()
+          .and(title))
 }
 
 fn q16c() -> impl Drive<R: Row> {
-    movie
-        .when(company.country().eq("[us]")
-         .and(keyword.text().eq("character-name-in-title"))
-         .and(episode_nr.lt(100)))
-        .select(cast.person().alias().text()
-         .and(title))
+    movie.when(company.country().eq("[us]")
+          .and(keyword.text().eq("character-name-in-title"))
+          .and(episode_nr.lt(100)))
+       .select(cast.person().alias().text()
+          .and(title))
 }
 
 fn q17a() -> impl Drive<R: Row> {
-    movie
-        .when(company.country().eq("[us]")
-         .and(keyword.text().eq("character-name-in-title")))
-        .select(cast.person().name().rx(r"^B"))
+    movie.when(company.country().eq("[us]")
+          .and(keyword.text().eq("character-name-in-title")))
+       .select(cast.person().name().rx(r"^B"))
 }
 
 // q17b/c/d/f differ only in the person-name regex.
 fn q17_any_co(re: &str) -> impl Drive<R: Row> {
-    movie
-        .when(company
-         .and(keyword.text().eq("character-name-in-title")))
-        .select(cast.person().name().rx(re))
+    movie.when(company
+          .and(keyword.text().eq("character-name-in-title")))
+       .select(cast.person().name().rx(re))
 }
 
 fn q17b() -> impl Drive<R: Row> { q17_any_co(r"^Z") }
@@ -73,10 +68,9 @@ fn q17d() -> impl Drive<R: Row> { q17_any_co(r"Bert") }
 fn q17f() -> impl Drive<R: Row> { q17_any_co(r"B") }
 
 fn q17e() -> impl Drive<R: Row> {
-    movie
-        .when(company.country().eq("[us]")
-         .and(keyword.text().eq("character-name-in-title")))
-        .select(cast.person().name())
+    movie.when(company.country().eq("[us]")
+          .and(keyword.text().eq("character-name-in-title")))
+       .select(cast.person().name())
 }
 
 fn ib_18a() -> impl Query<R = &'static str, D = Id<Movie>> + Drive + Probe {
@@ -84,14 +78,13 @@ fn ib_18a() -> impl Query<R = &'static str, D = Id<Movie>> + Drive + Probe {
 }
 
 fn q18a() -> impl Drive<R: Row> {
-    movie
-        .when(ib_18a()
-         .and(cast.select(Cast::note.is_in(["(producer)", "(executive producer)"])
-                   .and(person.select(gender.eq("m")
-                               .and(Person::name.rx(r"Tim")))))))
-        .select(ib_18a()
-         .and(data.when(Data::ty.text().eq("votes")).text())
-         .and(title))
+    movie.when(ib_18a()
+          .and(cast.select(Cast::note.is_in(["(producer)", "(executive producer)"])
+                    .and(person.select(gender.eq("m")
+                                .and(Person::name.rx(r"Tim")))))))
+       .select(ib_18a()
+          .and(data.when(Data::ty.text().eq("votes")).text())
+          .and(title))
 }
 
 // Conjunct/diff tree (∧ = Prod, - = Diff) — consumed via `member` only, so
@@ -103,16 +96,15 @@ fn gf_18b() -> impl Query<D = Id<Info>> + Probe {
 }
 
 fn q18b() -> impl Drive<R: Row> {
-    movie
-        .when(info.when(gf_18b())
-         .and(production_year.ge(2008))
-         .and(production_year.le(2014))
-         .and(cast.select(Cast::note.is_in(writer5())
-                   .and(person.select(gender.eq("f"))))))
-        .select(info.when(gf_18b()).info()
-         .and(data.when(Data::ty.text().eq("rating")
-                   .and(Data::text.gt("8.0"))).text())
-         .and(title))
+    movie.when(info.when(gf_18b())
+          .and(production_year.ge(2008))
+          .and(production_year.le(2014))
+          .and(cast.select(Cast::note.is_in(writer5())
+                    .and(person.select(gender.eq("f"))))))
+       .select(info.when(gf_18b()).info()
+          .and(data.when(Data::ty.text().eq("rating")
+                    .and(Data::text.gt("8.0"))).text())
+          .and(title))
 }
 
 fn gf_18c() -> impl Query<D = Id<Info>> + Probe {
@@ -121,11 +113,10 @@ fn gf_18c() -> impl Query<D = Id<Info>> + Probe {
 }
 
 fn q18c() -> impl Drive<R: Row> {
-    movie
-        .when(info.when(gf_18c())
-         .and(cast.select(Cast::note.is_in(writer5())
-                   .and(person.select(gender.eq("m"))))))
-        .select(info.when(gf_18c()).info()
-         .and(data.when(Data::ty.text().eq("votes")).text())
-         .and(title))
+    movie.when(info.when(gf_18c())
+          .and(cast.select(Cast::note.is_in(writer5())
+                    .and(person.select(gender.eq("m"))))))
+       .select(info.when(gf_18c()).info()
+          .and(data.when(Data::ty.text().eq("votes")).text())
+          .and(title))
 }

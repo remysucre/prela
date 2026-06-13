@@ -20,19 +20,18 @@ Prela queries are readable even to those new to the language.
 Consider Join Order Benchmark [22a](https://github.com/gregrahn/join-order-benchmark/blob/master/22a.sql):
 
 ```rust
-movie
-    .when(info.select(Info::ty.text().eq("countries")
-               .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
-     .and(keyword.text().is_in(["murder", "murder-in-title", "blood", "violence"]))
-     .and(production_year.gt(2008))
-     .and(kind.text().is_in(["movie", "episode"])))
-    .select(title
-     .and(data.when(Data::text.lt("7.0")
-               .and(Data::ty.text().eq("rating"))).text())
-     .and(company.when(Company::note.nrx(r"\(USA\)")
-                  .and(Company::note.rx(r"\(200.*\)"))
-                  .and(country.ne("[us]"))
-                  .and(Company::ty.text().eq("production companies"))).name()))
+movie.when(info.select(Info::ty.text().eq("countries")
+                .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
+      .and(keyword.text().is_in(["murder", "murder-in-title", "blood", "violence"]))
+      .and(production_year.gt(2008))
+      .and(kind.text().is_in(["movie", "episode"])))
+   .select(title
+      .and(data.when(Data::text.lt("7.0")
+                .and(Data::ty.text().eq("rating"))).text())
+      .and(company.when(Company::note.nrx(r"\(USA\)")
+                   .and(Company::note.rx(r"\(200.*\)"))
+                   .and(country.ne("[us]"))
+                   .and(Company::ty.text().eq("production companies"))).name()))
 ```
 
 On paper, we write the same query in the algebra's notation:
