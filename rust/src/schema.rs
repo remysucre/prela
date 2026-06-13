@@ -26,7 +26,7 @@
 //       }
 //       impl<Q: Query<R = Id<Movie>> + Sized> MovieNav for Q {}
 //     so `cast().person().name()` spells the compose chain
-//     `cast().o(Cast::person()).o(Person::name())`. Coherence is safe:
+//     `cast().get(Cast::person()).get(Person::name())`. Coherence is safe:
 //     same-named methods on different entities' nav traits have disjoint
 //     receivers (a query's `R` equals exactly ONE `Id<E>`), so method
 //     resolution always finds a single applicable trait. Predicate ROOTS
@@ -216,7 +216,7 @@ macro_rules! schema {
     (@nav $Ent:ident; $Nav:ident; [$($acc:tt)*]) => {
         /// Generated navigation trait — for any query valued in this
         /// entity's ids, one method per field composing with that field's
-        /// column (`q.title()` ≡ `q.o(Movie::title())`). Blanket-implemented;
+        /// column (`q.title()` ≡ `q.get(Movie::title())`). Blanket-implemented;
         /// same-named methods on other entities' nav traits don't clash
         /// because the receivers' `R = Id<E>` bounds are disjoint.
         #[allow(dead_code)]
@@ -369,17 +369,17 @@ mod tests {
         // typed composition across three entities, in navigation form:
         // a predicate ROOT is an accessor (qualified `Film::genre()`, bare
         // `year()` for pub fields); every later hop is a nav method
-        // (`.gname()` ≡ `.o(Genre::gname())` via the generated GenreNav).
+        // (`.gname()` ≡ `.get(Genre::gname())` via the generated GenreNav).
         let q = film()
-            .in_s(Film::genre().gname().eq("horror"))
-            .in_s(year().lt(1990))
+            .when(Film::genre().gname().eq("horror"))
+            .when(year().lt(1990))
             .ftitle();
         let mut got = Vec::new();
         q.drive(|_, t| got.push(t));
         assert_eq!(got, vec!["Alien"]);
 
         // Multi<entity> column + nav through Tag's tag column
-        let q = film().in_s(Film::tags().tag().eq("noir")).ftitle();
+        let q = film().when(Film::tags().tag().eq("noir")).ftitle();
         let mut got = Vec::new();
         q.drive(|_, t| got.push(t));
         assert_eq!(got, vec!["Blade"]);

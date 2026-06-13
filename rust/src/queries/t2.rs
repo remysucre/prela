@@ -25,170 +25,126 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 fn q22d() -> String {
-    min_row(movie().in_s(
-        info().in_s(
-            Info::ty().text().eq("countries")
-                .and(Info::info().is_in(nordic10()))
-        )
-            .and(keyword().text().is_in(murder4())
-                .and(production_year().gt(2005)
-                    .and(kind().text().is_in(["movie", "episode"]))))
-    ).o(
-        title()
-            .x(data().in_s(
-                Data::text().lt("8.5")
-                    .and(Data::ty().text().eq("rating"))
-            ).text())
-            .x(company().in_s(
-                country().ne("[us]")
-                    .and(Company::ty().text().eq("production companies"))
-            ).name())
-    ))
+    min_row(movie()
+        .when(info().get(Info::ty().text().eq("countries")
+                         .and(Info::info().is_in(nordic10())))
+              .and(keyword().text().is_in(murder4()))
+              .and(production_year().gt(2005))
+              .and(kind().text().is_in(["movie", "episode"])))
+        .get(title()
+             .and(data().when(Data::text().lt("8.5")
+                              .and(Data::ty().text().eq("rating"))).text())
+             .and(company().when(country().ne("[us]")
+                                 .and(Company::ty().text().eq("production companies"))).name())))
 }
 
 fn q5b() -> String {
-    min_row(movie().in_s(
-        company().in_s(
-            Company::ty().text().eq("production companies")
-                .and(Company::note().rx(r"\(VHS\)")
-                    .and(Company::note().rx(r"\(USA\)")
-                        .and(Company::note().rx(r"\(1994\)"))))
-        )
-            .and(info().info().is_in(["USA", "America"])
-                .and(production_year().gt(2010)))
-    ).title())
+    min_row(movie()
+        .when(company().get(Company::ty().text().eq("production companies")
+                            .and(Company::note().rx(r"\(VHS\)"))
+                            .and(Company::note().rx(r"\(USA\)"))
+                            .and(Company::note().rx(r"\(1994\)")))
+              .and(info().info().is_in(["USA", "America"]))
+              .and(production_year().gt(2010)))
+        .title())
 }
 
 fn q5c() -> String {
-    min_row(movie().in_s(
-        company().in_s(
-            Company::ty().text().eq("production companies")
-                .and(Company::note().nrx(r"\(TV\)")
-                    .and(Company::note().rx(r"\(USA\)")))
-        )
-            .and(info().info().is_in(nordic10())
-                .and(production_year().gt(1990)))
-    ).title())
+    min_row(movie()
+        .when(company().get(Company::ty().text().eq("production companies")
+                            .and(Company::note().nrx(r"\(TV\)"))
+                            .and(Company::note().rx(r"\(USA\)")))
+              .and(info().info().is_in(nordic10()))
+              .and(production_year().gt(1990)))
+        .title())
 }
 
 fn q15a() -> String {
-    min_row(movie().in_s(
-        production_year().gt(2000)
-            .and(company().in_s(
-                country().eq("[us]")
-                    .and(Company::note().rx(r"\(200.*\)")
-                        .and(Company::note().rx(r"\(worldwide\)")))
-            )
-                .and(keyword()
-                    .and(aka())))
-    ).o(
-        info().in_s(
-            Info::ty().text().eq("release dates")
-                .and(Info::info().rx(r"^USA:.* 200")
-                    .and(Info::note().rx(r"internet")))
-        ).info()
-        .x(title())
-    ))
+    min_row(movie()
+        .when(production_year().gt(2000)
+              .and(company().get(country().eq("[us]")
+                                 .and(Company::note().rx(r"\(200.*\)"))
+                                 .and(Company::note().rx(r"\(worldwide\)"))))
+              .and(keyword())
+              .and(aka()))
+        .get(info().when(Info::ty().text().eq("release dates")
+                         .and(Info::info().rx(r"^USA:.* 200"))
+                         .and(Info::note().rx(r"internet"))).info()
+             .and(title())))
 }
 
 fn q15b() -> String {
-    min_row(movie().in_s(
-        company().in_s(
-            country().eq("[us]")
-                .and(Company::name().eq("YouTube")
-                    .and(Company::note().rx(r"\(200.*\)")
-                        .and(Company::note().rx(r"\(worldwide\)"))))
-        )
-            .and(keyword()
-                .and(aka()
-                    .and(production_year().ge(2005)
-                        .and(production_year().le(2010)))))
-    ).o(
-        info().in_s(
-            Info::ty().text().eq("release dates")
-                .and(Info::info().rx(r"^USA:.* 200")
-                    .and(Info::note().rx(r"internet")))
-        ).info()
-        .x(title())
-    ))
+    min_row(movie()
+        .when(company().get(country().eq("[us]")
+                            .and(Company::name().eq("YouTube"))
+                            .and(Company::note().rx(r"\(200.*\)"))
+                            .and(Company::note().rx(r"\(worldwide\)")))
+              .and(keyword())
+              .and(aka())
+              .and(production_year().ge(2005))
+              .and(production_year().le(2010)))
+        .get(info().when(Info::ty().text().eq("release dates")
+                         .and(Info::info().rx(r"^USA:.* 200"))
+                         .and(Info::note().rx(r"internet"))).info()
+             .and(title())))
 }
 
 fn q15c() -> String {
-    min_row(movie().in_s(
-        company().country().eq("[us]")
-            .and(keyword()
-                .and(aka()
-                    .and(production_year().gt(1990))))
-    ).o(
-        info().in_s(
-            Info::ty().text().eq("release dates")
-                .and(Info::info().rx(r"^USA:.* 199")
-                    .or(Info::info().rx(r"^USA:.* 200"))
-                    .and(Info::note().rx(r"internet")))
-        ).info()
-        .x(title())
-    ))
+    min_row(movie()
+        .when(company().country().eq("[us]")
+              .and(keyword())
+              .and(aka())
+              .and(production_year().gt(1990)))
+        .get(info().when(Info::ty().text().eq("release dates")
+                         .and(Info::info().rx(r"^USA:.* 199")
+                              .or(Info::info().rx(r"^USA:.* 200")))
+                         .and(Info::note().rx(r"internet"))).info()
+             .and(title())))
 }
 
 fn q15d() -> String {
-    min_row(movie().in_s(
-        company().country().eq("[us]")
-            .and(keyword()
-                .and(info().in_s(
-                    Info::ty().text().eq("release dates")
-                        .and(Info::note().rx(r"internet"))
-                )
-                    .and(production_year().gt(1990))))
-    ).o(
-        aka().text()
-            .x(title())
-    ))
+    min_row(movie()
+        .when(company().country().eq("[us]")
+              .and(keyword())
+              .and(info().get(Info::ty().text().eq("release dates")
+                              .and(Info::note().rx(r"internet"))))
+              .and(production_year().gt(1990)))
+        .get(aka().text()
+             .and(title())))
 }
 
 fn q11c() -> String {
-    min_row(movie().in_s(
-        keyword().text().is_in(["sequel", "revenge", "based-on-novel"])
-            .and(production_year().gt(1950)
-                .and(link()))
-    ).o(
-        company().in_s(
-            country().ne("[pl]")
-                .and(Company::name().rx(r"^20th Century Fox")
-                    .or(Company::name().rx(r"^Twentieth Century Fox"))
-                    .and(Company::ty().text().ne("production companies")
-                        .and(Company::note())))
-        ).o(Company::name().x(Company::note()))
-        .x(title())
-    ))
+    min_row(movie()
+        .when(keyword().text().is_in(["sequel", "revenge", "based-on-novel"])
+              .and(production_year().gt(1950))
+              .and(link()))
+        .get(company().when(country().ne("[pl]")
+                            .and(Company::name().rx(r"^20th Century Fox")
+                                 .or(Company::name().rx(r"^Twentieth Century Fox")))
+                            .and(Company::ty().text().ne("production companies"))
+                            .and(Company::note())).get(Company::name().and(Company::note()))
+             .and(title())))
 }
 
 fn q11d() -> String {
-    min_row(movie().in_s(
-        keyword().text().is_in(["sequel", "revenge", "based-on-novel"])
-            .and(production_year().gt(1950)
-                .and(link()))
-    ).o(
-        company().in_s(
-            country().ne("[pl]")
-                .and(Company::ty().text().ne("production companies")
-                    .and(Company::note()))
-        ).o(Company::name().x(Company::note()))
-        .x(title())
-    ))
+    min_row(movie()
+        .when(keyword().text().is_in(["sequel", "revenge", "based-on-novel"])
+              .and(production_year().gt(1950))
+              .and(link()))
+        .get(company().when(country().ne("[pl]")
+                            .and(Company::ty().text().ne("production companies"))
+                            .and(Company::note())).get(Company::name().and(Company::note()))
+             .and(title())))
 }
 
 fn q13d() -> String {
-    min_row(movie().in_s(
-        kind().text().eq("movie")
-            .and(info().ty().text().eq("release dates"))
-    ).o(
-        company().in_s(
-            country().eq("[us]")
-                .and(Company::ty().text().eq("production companies"))
-        ).name()
-        .x(data().in_s(Data::ty().text().eq("rating")).text())
-        .x(title())
-    ))
+    min_row(movie()
+        .when(kind().text().eq("movie")
+              .and(info().ty().text().eq("release dates")))
+        .get(company().when(country().eq("[us]")
+                            .and(Company::ty().text().eq("production companies"))).name()
+             .and(data().when(Data::ty().text().eq("rating")).text())
+             .and(title())))
 }
 
 // q6a/c/e share the marvel-cinematic-universe keyword and q6b/d the kw8
@@ -196,15 +152,17 @@ fn q13d() -> String {
 fn q6_marvel(year: i64) -> String {
     let kw = || keyword().text().eq("marvel-cinematic-universe");
     let downey = cast().person().name().rx(r"Downey.*Robert");
-    min_row(movie().in_s(production_year().gt(year).and(kw()))
-        .o(kw().x(title()).x(downey)))
+    min_row(movie()
+        .when(production_year().gt(year).and(kw()))
+        .get(kw().and(title()).and(downey)))
 }
 
 fn q6_comic(year: i64) -> String {
     let kw = || keyword().text().is_in(kw8());
     let downey = cast().person().name().rx(r"Downey.*Robert");
-    min_row(movie().in_s(production_year().gt(year).and(kw()))
-        .o(kw().x(title()).x(downey)))
+    min_row(movie()
+        .when(production_year().gt(year).and(kw()))
+        .get(kw().and(title()).and(downey)))
 }
 
 fn q6a() -> String { q6_marvel(2010) }
@@ -216,6 +174,7 @@ fn q6e() -> String { q6_marvel(2000) }
 fn q6f() -> String {
     let kw = || keyword().text().is_in(kw8());
     let cast_name = cast().person().name();
-    min_row(movie().in_s(production_year().gt(2000).and(kw()))
-        .o(kw().x(title()).x(cast_name)))
+    min_row(movie()
+        .when(production_year().gt(2000).and(kw()))
+        .get(kw().and(title()).and(cast_name)))
 }

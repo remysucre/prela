@@ -23,58 +23,48 @@ pub const ENTRIES: &[super::Entry] = &[
 
 // q16a/q16d differ only in the episode_nr lower bound.
 fn q16ad(lo: i64) -> String {
-    min_row(movie().in_s(
-        company().country().eq("[us]")
-            .and(keyword().text().eq("character-name-in-title"))
-            .and(episode_nr().ge(lo))
-            .and(episode_nr().lt(100))
-    ).o(
-        cast().person().alias().text()
-            .x(title())
-    ))
+    min_row(movie()
+        .when(company().country().eq("[us]")
+              .and(keyword().text().eq("character-name-in-title"))
+              .and(episode_nr().ge(lo))
+              .and(episode_nr().lt(100)))
+        .get(cast().person().alias().text()
+             .and(title())))
 }
 
 fn q16a() -> String { q16ad(50) }
 fn q16d() -> String { q16ad(5) }
 
 fn q16b() -> String {
-    min_row(movie().in_s(
-        company().country().eq("[us]")
-            .and(keyword().text().eq("character-name-in-title"))
-    ).o(
-        cast().person().alias().text()
-            .x(title())
-    ))
+    min_row(movie()
+        .when(company().country().eq("[us]")
+              .and(keyword().text().eq("character-name-in-title")))
+        .get(cast().person().alias().text()
+             .and(title())))
 }
 
 fn q16c() -> String {
-    min_row(movie().in_s(
-        company().country().eq("[us]")
-            .and(keyword().text().eq("character-name-in-title"))
-            .and(episode_nr().lt(100))
-    ).o(
-        cast().person().alias().text()
-            .x(title())
-    ))
+    min_row(movie()
+        .when(company().country().eq("[us]")
+              .and(keyword().text().eq("character-name-in-title"))
+              .and(episode_nr().lt(100)))
+        .get(cast().person().alias().text()
+             .and(title())))
 }
 
 fn q17a() -> String {
-    min_row(movie().in_s(
-        company().country().eq("[us]")
-            .and(keyword().text().eq("character-name-in-title"))
-    ).o(
-        cast().person().name().rx(r"^B")
-    ))
+    min_row(movie()
+        .when(company().country().eq("[us]")
+              .and(keyword().text().eq("character-name-in-title")))
+        .get(cast().person().name().rx(r"^B")))
 }
 
 // q17b/c/d/f differ only in the person-name regex.
 fn q17_any_co(re: &str) -> String {
-    min_row(movie().in_s(
-        company()
-            .and(keyword().text().eq("character-name-in-title"))
-    ).o(
-        cast().person().name().rx(re)
-    ))
+    min_row(movie()
+        .when(company()
+              .and(keyword().text().eq("character-name-in-title")))
+        .get(cast().person().name().rx(re)))
 }
 
 fn q17b() -> String { q17_any_co(r"^Z") }
@@ -83,33 +73,25 @@ fn q17d() -> String { q17_any_co(r"Bert") }
 fn q17f() -> String { q17_any_co(r"B") }
 
 fn q17e() -> String {
-    min_row(movie().in_s(
-        company().country().eq("[us]")
-            .and(keyword().text().eq("character-name-in-title"))
-    ).o(
-        cast().person().name()
-    ))
+    min_row(movie()
+        .when(company().country().eq("[us]")
+              .and(keyword().text().eq("character-name-in-title")))
+        .get(cast().person().name()))
 }
 
 fn ib_18a() -> impl Query<R = &'static str, D = Id<Movie>> + Drive + Probe {
-    info().in_s(Info::ty().text().eq("budget")).info()
+    info().when(Info::ty().text().eq("budget")).info()
 }
 
 fn q18a() -> String {
-    min_row(movie().in_s(
-        ib_18a()
-            .and(cast().in_s(
-                Cast::note().is_in(["(producer)", "(executive producer)"])
-                    .and(person().in_s(
-                        gender().eq("m")
-                            .and(Person::name().rx(r"Tim"))
-                    ))
-            ))
-    ).o(
-        ib_18a()
-            .x(data().in_s(Data::ty().text().eq("votes")).text())
-            .x(title())
-    ))
+    min_row(movie()
+        .when(ib_18a()
+              .and(cast().get(Cast::note().is_in(["(producer)", "(executive producer)"])
+                              .and(person().get(gender().eq("m")
+                                                .and(Person::name().rx(r"Tim")))))))
+        .get(ib_18a()
+             .and(data().when(Data::ty().text().eq("votes")).text())
+             .and(title())))
 }
 
 // Conjunct/diff tree (∧ = Prod, - = Diff) — consumed via `member` only, so
@@ -121,22 +103,16 @@ fn gf_18b() -> impl Query<D = Id<Info>> + Probe {
 }
 
 fn q18b() -> String {
-    min_row(movie().in_s(
-        info().in_s(gf_18b())
-            .and(production_year().ge(2008))
-            .and(production_year().le(2014))
-            .and(cast().in_s(
-                Cast::note().is_in(writer5())
-                    .and(person().in_s(gender().eq("f")))
-            ))
-    ).o(
-        info().in_s(gf_18b()).info()
-            .x(data().in_s(
-                Data::ty().text().eq("rating")
-                    .and(Data::text().gt("8.0"))
-            ).text())
-            .x(title())
-    ))
+    min_row(movie()
+        .when(info().when(gf_18b())
+              .and(production_year().ge(2008))
+              .and(production_year().le(2014))
+              .and(cast().get(Cast::note().is_in(writer5())
+                              .and(person().get(gender().eq("f"))))))
+        .get(info().when(gf_18b()).info()
+             .and(data().when(Data::ty().text().eq("rating")
+                              .and(Data::text().gt("8.0"))).text())
+             .and(title())))
 }
 
 fn gf_18c() -> impl Query<D = Id<Info>> + Probe {
@@ -145,15 +121,11 @@ fn gf_18c() -> impl Query<D = Id<Info>> + Probe {
 }
 
 fn q18c() -> String {
-    min_row(movie().in_s(
-        info().in_s(gf_18c())
-            .and(cast().in_s(
-                Cast::note().is_in(writer5())
-                    .and(person().in_s(gender().eq("m")))
-            ))
-    ).o(
-        info().in_s(gf_18c()).info()
-            .x(data().in_s(Data::ty().text().eq("votes")).text())
-            .x(title())
-    ))
+    min_row(movie()
+        .when(info().when(gf_18c())
+              .and(cast().get(Cast::note().is_in(writer5())
+                              .and(person().get(gender().eq("m"))))))
+        .get(info().when(gf_18c()).info()
+             .and(data().when(Data::ty().text().eq("votes")).text())
+             .and(title())))
 }

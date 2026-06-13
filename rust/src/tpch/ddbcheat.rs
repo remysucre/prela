@@ -88,9 +88,9 @@ fn q4() -> String {
         }
     }
     let live = orders()
-        .in_s(date().during(19930701, 19931001))
-        .in_s(is_late);
-    let counts = live.o(priority()).inv().fold(0_i64, |a, _| a + 1);
+        .when(date().during(19930701, 19931001))
+        .when(is_late);
+    let counts = live.get(priority()).inv().fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(&str, i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|a, b| a.0.cmp(b.0));
@@ -114,12 +114,12 @@ fn q8() -> String {
         ord_is_america[o] = Region::name().values[region.idx()] == "AMERICA";
     }
     let live = lineitem()
-        .in_s(Lineitem::part().ty().eq("ECONOMY ANODIZED STEEL"))
-        .in_s(order().filt(move |o: Id<Order>| ord_is_america[o.idx()]))
-        .in_s(order().date().between(19950101, 19961231));
+        .when(Lineitem::part().ty().eq("ECONOMY ANODIZED STEEL")
+              .and(order().filt(move |o: Id<Order>| ord_is_america[o.idx()]))
+              .and(order().date().between(19950101, 19961231)));
     let year = (&live).order().date().map(|d: i64| d / 10000);
     let snat_name = (&live).supplier().nation().name();
-    let scan = (&live).o(extendedprice().x(discount())).x(snat_name);
+    let scan = (&live).get(extendedprice().and(discount())).and(snat_name);
     let pair_fold = scan.group_by(year).fold((0.0_f64, 0.0_f64), |(b, t), ((e, dc), nm)| {
         let v = e * (1.0 - dc);
         (b + if nm == "BRAZIL" { v } else { 0.0 }, t + v)
@@ -144,15 +144,15 @@ fn q9() -> String {
     for i in 0..n_part {
         pa_is_green[i] = Part::name().values[i].contains("green");
     }
-    let sc: HashIdx<_, _> = PartSupp::part().x(PartSupp::supplier()).inv().supplycost().collect();
+    let sc: HashIdx<_, _> = PartSupp::part().and(PartSupp::supplier()).inv().supplycost().collect();
     let live = lineitem()
-        .in_s(Lineitem::part().filt(move |p: Id<Part>| pa_is_green[p.idx()]));
+        .when(Lineitem::part().filt(move |p: Id<Part>| pa_is_green[p.idx()]));
     let nation_id = (&live).supplier().nation();
     let year      = (&live).order().date().map(|d: i64| d / 10000);
-    let groups = nation_id.x(year);
-    let cost_per_li = Lineitem::part().x(Lineitem::supplier()).o(&sc);
-    let scan = (&live).o(
-        extendedprice().x(discount()).x(quantity()).x(cost_per_li)
+    let groups = nation_id.and(year);
+    let cost_per_li = Lineitem::part().and(Lineitem::supplier()).get(&sc);
+    let scan = (&live).get(
+        extendedprice().and(discount()).and(quantity()).and(cost_per_li)
     );
     let result = scan.group_by(groups).fold(0.0_f64, |a, (((e, dc), q), cost)| {
         a + e * (1.0 - dc) - cost * q
@@ -171,19 +171,18 @@ fn q9() -> String {
 
 fn q12() -> String {
     // ddbcheat (CP4.2d Evaluation Order in Conjunctions): predicates reordered
-    // by selectivity. Chained `.in_s` restrictions evaluate via
-    // &&-short-circuiting member checks, so the leftmost filter sees every
-    // row. The 1-year date range (~14%) is by far the most selective; do it
-    // first.
+    // by selectivity. The conjunction's member check is a flat &&-short-circuit
+    // left to right, so the leftmost filter sees every row. The 1-year date
+    // range (~14%) is by far the most selective; do it first.
     //   receiptdate ∈ [1994,1995): ~14%   (most selective)
     //   shipmode IN (MAIL, SHIP):  ~29%
     //   shipdate < commitdate:     ~49%
     //   commit < receipt:          ~62%   (barely filters)
     let live = lineitem()
-        .in_s(receiptdate().during(19940101, 19950101))
-        .in_s(shipmode().is_in(["MAIL", "SHIP"]))
-        .in_s(shipdate().x(commitdate()).filt(|(s, c)| s < c))
-        .in_s(commitdate().x(receiptdate()).filt(|(c, r)| c < r));
+        .when(receiptdate().during(19940101, 19950101)
+              .and(shipmode().is_in(["MAIL", "SHIP"]))
+              .and(shipdate().and(commitdate()).filt(|(s, c)| s < c))
+              .and(commitdate().and(receiptdate()).filt(|(c, r)| c < r)));
     let scan = (&live).shipmode();
     let prio = (&live).order().priority();
     let result = prio.group_by(scan).fold((0_i64, 0_i64), |(h, l), pr| {
@@ -218,7 +217,7 @@ fn q13() -> String {
         if !has_pattern { not_special.set(Id::new(o)); }
     }
 
-    let live_orders = orders().in_s(not_special);
+    let live_orders = orders().when(not_special);
     let count_per_cust = (&live_orders).date()
         .group_by((&live_orders).customer())
         .fold(0_i64, |a, _| a + 1);
@@ -289,7 +288,7 @@ fn q20() -> String {
     // the subsequent `availqty > threshold` test returns false for them
     // (matches the original Compose-probe-miss semantics).
     let mut sum_qty: Vec<f64> = vec![f64::NAN; n_ps];
-    let live_li = lineitem().in_s(shipdate().during(19940101, 19950101));
+    let live_li = lineitem().when(shipdate().during(19940101, 19950101));
     let (li_part, li_supplier, li_quantity) =
         (Lineitem::part(), Lineitem::supplier(), quantity());
     let ps_supplier = PartSupp::supplier();
@@ -312,15 +311,13 @@ fn q20() -> String {
     let sum_qty_v: VecRel<f64, Id<PartSupp>> = VecRel::new(sum_qty);
     let threshold = (&sum_qty_v).map(|s| 0.5 * s);
     let qual_ps = partsupp()
-        .in_s(PartSupp::part().name().filt(|n: &str| n.starts_with("forest")))
-        .in_s(availqty().map(|q| q as f64).x(threshold).filt(|(a, t)| a > t));
-    let canada_supps = supplier().in_s(
-        Supplier::nation().name().eq("CANADA")
-    );
+        .when(PartSupp::part().name().filt(|n: &str| n.starts_with("forest"))
+              .and(availqty().map(|q| q as f64).and(threshold).filt(|(a, t)| a > t)));
+    let canada_supps = supplier().when(Supplier::nation().name().eq("CANADA"));
     let qual_supps: MatSet<_> = qual_ps.supplier().collect();
-    let target = canada_supps.in_s(qual_supps);
+    let target = canada_supps.when(qual_supps);
     let mut rows: Vec<(&str, &str)> = Vec::new();
-    target.o(Supplier::name().x(Supplier::address())).drive(|_, (n, a)| rows.push((n, a)));
+    target.get(Supplier::name().and(Supplier::address())).drive(|_, (n, a)| rows.push((n, a)));
     rows.sort_by(|a, b| a.0.cmp(b.0));
     join_lines(rows.iter().map(|(n, a)| format!("{}|{}", n, a)))
 }
@@ -377,15 +374,16 @@ fn q21() -> String {
     }
 
     let qualifying = lineitem()
-        // Order: late filter (cross-col) → Saudi (1 byte) → F-order (1 byte)
-        // → multi (1 byte) → only-late (2 reads). Cheap-and-selective first.
-        .in_s(commitdate().x(receiptdate()).filt(|(c, r)| c < r))
-        .in_s(Lineitem::supplier().filt(move |s: Id<Supplier>| is_saudi[s.idx()]))
-        .in_s(order().filt(move |o: Id<Order>| is_f_ord[o.idx()]))
-        .in_s(order().filt(move |o: Id<Order>| multi[o.idx()]))
-        .in_s(order().x(Lineitem::supplier()).filt(move |(o, s): (Id<Order>, Id<Supplier>)| {
-            !late_multi[o.idx()] && late_first[o.idx()] == s.idx()
-        }));
+        // Conjunct order: late filter (cross-col) → Saudi (1 byte) → F-order
+        // (1 byte) → multi (1 byte) → only-late (2 reads). Cheap-and-selective
+        // first; the member check short-circuits left to right.
+        .when(commitdate().and(receiptdate()).filt(|(c, r)| c < r)
+              .and(Lineitem::supplier().filt(move |s: Id<Supplier>| is_saudi[s.idx()]))
+              .and(order().filt(move |o: Id<Order>| is_f_ord[o.idx()]))
+              .and(order().filt(move |o: Id<Order>| multi[o.idx()]))
+              .and(order().and(Lineitem::supplier()).filt(move |(o, s): (Id<Order>, Id<Supplier>)| {
+                  !late_multi[o.idx()] && late_first[o.idx()] == s.idx()
+              })));
     let counts = qualifying.group_by(Lineitem::supplier()).fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(Id<Supplier>, i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
@@ -406,9 +404,7 @@ fn q2() -> String {
     //                  ∧ (supplycost == (PS.part → min_per_part))
     //   target : (Su.acctbal ⊗ Su.name ⊗ Na.name ⊗ PS.part ⊗ Pa.mfgr
     //             ⊗ Su.address ⊗ Su.phone ⊗ Su.comment)
-    let eu_ps = partsupp().in_s(
-        PartSupp::supplier().nation().region().name().eq("EUROPE")
-    );
+    let eu_ps = partsupp().when(PartSupp::supplier().nation().region().name().eq("EUROPE"));
     // ddbcheat: partkey is a dense i64 0..N, so min-per-key fits in a
     // Vec<f64> indexed by partkey — no hash, no allocation per insert. The
     // a generic `.fold()` builds an AHashMap<i64,f64> which is ~2× the
@@ -422,10 +418,10 @@ fn q2() -> String {
         if c < min_per_part[p] { min_per_part[p] = c; }
     });
     let target = (&eu_ps)
-        .in_s(PartSupp::part().size().eq(15))
-        .in_s(PartSupp::part().ty().filt(|s: &str| s.ends_with("BRASS")))
-        .in_s(supplycost().x(PartSupp::part())
-             .filt(move |(c, p): (f64, Id<Part>)| c == min_per_part[p.idx()]));
+        .when(PartSupp::part().size().eq(15)
+              .and(PartSupp::part().ty().filt(|s: &str| s.ends_with("BRASS")))
+              .and(supplycost().and(PartSupp::part())
+                   .filt(move |(c, p): (f64, Id<Part>)| c == min_per_part[p.idx()])));
     // Project per PS row → (acct, sname, nname, pkey, mfgr, addr, phone, comm)
     let mut rows: Vec<(f64, &str, &str, Id<Part>, &str, &str, &str, &str)> = Vec::new();
     target.drive(|psi, _| {

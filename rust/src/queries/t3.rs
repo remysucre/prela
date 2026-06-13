@@ -23,48 +23,35 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 fn q7a() -> String {
-    min_row(movie().in_s(
-        production_year().ge(1980)
-            .and(production_year().le(1995))
-            .and(linked_by().ty().text().eq("features"))
-    ).o(
-        cast().o(
-            person().in_s(
-                alias().text().rx(r"a")
-                    .and(name_pcode_cf().ge("A"))
-                    .and(name_pcode_cf().le("F"))
-                    .and(
-                        gender().eq("m")
-                            .or(gender().eq("f")
-                                .and(Person::name().rx(r"^B")))
-                    )
-                    .and(bio().in_s(
-                        PersonInfo::ty().text().eq("mini biography")
-                            .and(PersonInfo::note().eq("Volker Boehm"))
-                    ))
-            ).name()
-        ).x(title())
-    ))
+    min_row(movie()
+        .when(production_year().ge(1980)
+              .and(production_year().le(1995))
+              .and(linked_by().ty().text().eq("features")))
+        .get(cast().get(person()
+                        .when(alias().text().rx(r"a")
+                              .and(name_pcode_cf().ge("A"))
+                              .and(name_pcode_cf().le("F"))
+                              .and(gender().eq("m")
+                                   .or(gender().eq("f").and(Person::name().rx(r"^B"))))
+                              .and(bio().get(PersonInfo::ty().text().eq("mini biography")
+                                             .and(PersonInfo::note().eq("Volker Boehm")))))
+                        .name())
+             .and(title())))
 }
 
 fn q7b() -> String {
-    min_row(movie().in_s(
-        production_year().ge(1980)
-            .and(production_year().le(1984))
-            .and(linked_by().ty().text().eq("features"))
-    ).o(
-        cast().o(
-            person().in_s(
-                alias().text().rx(r"a")
-                    .and(name_pcode_cf().rx(r"^D"))
-                    .and(gender().eq("m"))
-                    .and(bio().in_s(
-                        PersonInfo::ty().text().eq("mini biography")
-                            .and(PersonInfo::note().eq("Volker Boehm"))
-                    ))
-            ).name()
-        ).x(title())
-    ))
+    min_row(movie()
+        .when(production_year().ge(1980)
+              .and(production_year().le(1984))
+              .and(linked_by().ty().text().eq("features")))
+        .get(cast().get(person()
+                        .when(alias().text().rx(r"a")
+                              .and(name_pcode_cf().rx(r"^D"))
+                              .and(gender().eq("m"))
+                              .and(bio().get(PersonInfo::ty().text().eq("mini biography")
+                                             .and(PersonInfo::note().eq("Volker Boehm")))))
+                        .name())
+             .and(title())))
 }
 
 // Conjunct tree (∧ = Prod) — consumed via `member` only, so the value
@@ -75,215 +62,158 @@ fn bio_filter_7c() -> impl Query<D = Id<PersonInfo>> + Probe {
 }
 
 fn q7c() -> String {
-    min_row(movie().in_s(
-        production_year().ge(1980)
-            .and(production_year().le(2010))
-            .and(linked_by().ty().text().is_in(
-                ["references", "referenced in", "features", "featured in"]))
-    ).o(
-        cast().o(
-            person().in_s(
-                alias().text().rx(r"a|^A")
-                    .and(name_pcode_cf().ge("A"))
-                    .and(name_pcode_cf().le("F"))
-                    .and(
-                        gender().eq("m")
-                            .or(gender().eq("f")
-                                .and(Person::name().rx(r"^A")))
-                    )
-                    .and(bio().in_s(bio_filter_7c()))
-            ).o(
-                Person::name()
-                    .x(bio().in_s(bio_filter_7c())
-                        .info())
-            )
-        )
-    ))
+    min_row(movie()
+        .when(production_year().ge(1980)
+              .and(production_year().le(2010))
+              .and(linked_by().ty().text().is_in(
+                  ["references", "referenced in", "features", "featured in"])))
+        .get(cast().get(person()
+                        .when(alias().text().rx(r"a|^A")
+                              .and(name_pcode_cf().ge("A"))
+                              .and(name_pcode_cf().le("F"))
+                              .and(gender().eq("m")
+                                   .or(gender().eq("f").and(Person::name().rx(r"^A"))))
+                              .and(bio().when(bio_filter_7c())))
+                        .get(Person::name()
+                             .and(bio().when(bio_filter_7c()).info())))))
 }
 
 fn q8a() -> String {
     min_row(movie()
-        .in_s(company().in_s(
-            country().eq("[jp]")
-                .and(Company::note().rx(r"\(Japan\)"))
-                .and(Company::note().nrx(r"\(USA\)"))
-        ))
-            .o(
-                cast().in_s(
-                    Cast::note().eq("(voice: English version)")
-                        .and(role().text().eq("actress"))
-                        .and(person().in_s(
-                            Person::name().rx(r"Yo")
-                                .and(Person::name().nrx(r"Yu"))
-                        ))
-                ).person().alias().text()
-                .x(title())
-            ))
+        .when(company().get(country().eq("[jp]")
+                            .and(Company::note().rx(r"\(Japan\)"))
+                            .and(Company::note().nrx(r"\(USA\)"))))
+        .get(cast()
+             .when(Cast::note().eq("(voice: English version)")
+                   .and(role().text().eq("actress"))
+                   .and(person().when(Person::name().rx(r"Yo")
+                                      .and(Person::name().nrx(r"Yu")))))
+             .person().alias().text()
+             .and(title())))
 }
 
 fn q8b() -> String {
-    min_row(movie().in_s(
-        company().in_s(
-            country().eq("[jp]")
-                .and(Company::note().rx(r"\(Japan\)"))
-                .and(Company::note().nrx(r"\(USA\)"))
-                .and(Company::note().rx(r"\(2006\)")
-                    .or(Company::note().rx(r"\(2007\)")))
-        )
-            .and(production_year().ge(2006))
-            .and(production_year().le(2007))
-            .and(title().rx(r"^One Piece")
-                .or(title().rx(r"^Dragon Ball Z")))
-    ).o(
-        cast().in_s(
-            Cast::note().eq("(voice: English version)")
-                .and(role().text().eq("actress"))
-                .and(person().in_s(
-                    Person::name().rx(r"Yo")
-                        .and(Person::name().nrx(r"Yu"))
-                ))
-        ).person().alias().text()
-        .x(title())
-    ))
+    min_row(movie()
+        .when(company().get(country().eq("[jp]")
+                            .and(Company::note().rx(r"\(Japan\)"))
+                            .and(Company::note().nrx(r"\(USA\)"))
+                            .and(Company::note().rx(r"\(2006\)")
+                                 .or(Company::note().rx(r"\(2007\)"))))
+              .and(production_year().ge(2006))
+              .and(production_year().le(2007))
+              .and(title().rx(r"^One Piece").or(title().rx(r"^Dragon Ball Z"))))
+        .get(cast()
+             .when(Cast::note().eq("(voice: English version)")
+                   .and(role().text().eq("actress"))
+                   .and(person().when(Person::name().rx(r"Yo")
+                                      .and(Person::name().nrx(r"Yu")))))
+             .person().alias().text()
+             .and(title())))
 }
 
 // q8c/q8d differ only in the cast role.
 fn q8cd(role_: &'static str) -> String {
     min_row(movie()
-        .in_s(company().country().eq("[us]"))
-            .o(
-                cast().in_s(role().text().eq(role_))
-                    .person().alias().text()
-                    .x(title())
-            ))
+        .when(company().country().eq("[us]"))
+        .get(cast().when(role().text().eq(role_))
+             .person().alias().text()
+             .and(title())))
 }
 
 fn q8c() -> String { q8cd("writer") }
 fn q8d() -> String { q8cd("costume designer") }
 
 fn q9a() -> String {
-    min_row(movie().in_s(
-        company().in_s(
-            country().eq("[us]")
-                .and(Company::note().rx(r"\(USA\)")
-                    .or(Company::note().rx(r"\(worldwide\)")))
-        )
-            .and(production_year().ge(2005))
-            .and(production_year().le(2015))
-    ).o(
-        cast().in_s(
-            Cast::note().is_in(voice4())
-                .and(role().text().eq("actress"))
-                .and(person().in_s(
-                    gender().eq("f")
-                        .and(Person::name().rx(r"Ang"))
-                ))
-        ).o(
-            person().alias().text()
-                .x(character().text())
-        )
-        .x(title())
-    ))
+    min_row(movie()
+        .when(company().get(country().eq("[us]")
+                            .and(Company::note().rx(r"\(USA\)")
+                                 .or(Company::note().rx(r"\(worldwide\)"))))
+              .and(production_year().ge(2005))
+              .and(production_year().le(2015)))
+        .get(cast()
+             .when(Cast::note().is_in(voice4())
+                   .and(role().text().eq("actress"))
+                   .and(person().when(gender().eq("f")
+                                      .and(Person::name().rx(r"Ang")))))
+             .get(person().alias().text()
+                  .and(character().text()))
+             .and(title())))
 }
 
 fn q9b() -> String {
-    min_row(movie().in_s(
-        company().in_s(
-            country().eq("[us]")
-                .and(Company::note().rx(r"\(200.*\)"))
-                .and(Company::note().rx(r"\(USA\)")
-                    .or(Company::note().rx(r"\(worldwide\)")))
-        )
-            .and(production_year().ge(2007))
-            .and(production_year().le(2010))
-    ).o(
-        cast().in_s(
-            Cast::note().eq("(voice)")
-                .and(role().text().eq("actress"))
-                .and(person().in_s(
-                    gender().eq("f")
-                        .and(Person::name().rx(r"Angel"))
-                ))
-        ).o(
-            person().alias().text()
-                .x(character().text())
-                .x(person().name())
-        )
-        .x(title())
-    ))
+    min_row(movie()
+        .when(company().get(country().eq("[us]")
+                            .and(Company::note().rx(r"\(200.*\)"))
+                            .and(Company::note().rx(r"\(USA\)")
+                                 .or(Company::note().rx(r"\(worldwide\)"))))
+              .and(production_year().ge(2007))
+              .and(production_year().le(2010)))
+        .get(cast()
+             .when(Cast::note().eq("(voice)")
+                   .and(role().text().eq("actress"))
+                   .and(person().when(gender().eq("f")
+                                      .and(Person::name().rx(r"Angel")))))
+             .get(person().alias().text()
+                  .and(character().text())
+                  .and(person().name()))
+             .and(title())))
 }
 
 fn q9c() -> String {
     min_row(movie()
-        .in_s(company().country().eq("[us]"))
-            .o(
-                cast().in_s(
-                    Cast::note().is_in(voice4())
-                        .and(role().text().eq("actress"))
-                        .and(person().in_s(
-                            gender().eq("f")
-                                .and(Person::name().rx(r"An"))
-                        ))
-                ).o(
-                    person().alias().text()
-                        .x(character().text())
-                        .x(person().name())
-                )
-                .x(title())
-            ))
+        .when(company().country().eq("[us]"))
+        .get(cast()
+             .when(Cast::note().is_in(voice4())
+                   .and(role().text().eq("actress"))
+                   .and(person().when(gender().eq("f")
+                                      .and(Person::name().rx(r"An")))))
+             .get(person().alias().text()
+                  .and(character().text())
+                  .and(person().name()))
+             .and(title())))
 }
 
 fn q9d() -> String {
     min_row(movie()
-        .in_s(company().country().eq("[us]"))
-            .o(
-                cast().in_s(
-                    Cast::note().is_in(voice4())
-                        .and(role().text().eq("actress"))
-                        .and(person().gender().eq("f"))
-                ).o(
-                    person().alias().text()
-                        .x(person().name())
-                        .x(character().text())
-                )
-                .x(title())
-            ))
+        .when(company().country().eq("[us]"))
+        .get(cast()
+             .when(Cast::note().is_in(voice4())
+                   .and(role().text().eq("actress"))
+                   .and(person().when(gender().eq("f"))))
+             .get(person().alias().text()
+                  .and(person().name())
+                  .and(character().text()))
+             .and(title())))
 }
 
 fn q10a() -> String {
-    min_row(movie().in_s(
-        company().country().eq("[ru]")
-            .and(production_year().gt(2005))
-    ).o(
-        cast().in_s(
-            Cast::note().rx(r"\(voice\)")
-                .and(Cast::note().rx(r"\(uncredited\)"))
-                .and(role().text().eq("actor"))
-        ).character().text()
-        .x(title())
-    ))
+    min_row(movie()
+        .when(company().country().eq("[ru]")
+              .and(production_year().gt(2005)))
+        .get(cast()
+             .when(Cast::note().rx(r"\(voice\)")
+                   .and(Cast::note().rx(r"\(uncredited\)"))
+                   .and(role().text().eq("actor")))
+             .character().text()
+             .and(title())))
 }
 
 fn q10b() -> String {
-    min_row(movie().in_s(
-        company().country().eq("[ru]")
-            .and(production_year().gt(2010))
-    ).o(
-        cast().in_s(
-            Cast::note().rx(r"\(producer\)")
-                .and(role().text().eq("actor"))
-        ).character().text()
-        .x(title())
-    ))
+    min_row(movie()
+        .when(company().country().eq("[ru]")
+              .and(production_year().gt(2010)))
+        .get(cast()
+             .when(Cast::note().rx(r"\(producer\)")
+                   .and(role().text().eq("actor")))
+             .character().text()
+             .and(title())))
 }
 
 fn q10c() -> String {
-    min_row(movie().in_s(
-        company().country().eq("[us]")
-            .and(production_year().gt(1990))
-    ).o(
-        cast().in_s(Cast::note().rx(r"\(producer\)"))
-            .character().text()
-            .x(title())
-    ))
+    min_row(movie()
+        .when(company().country().eq("[us]")
+              .and(production_year().gt(1990)))
+        .get(cast().when(Cast::note().rx(r"\(producer\)"))
+             .character().text()
+             .and(title())))
 }

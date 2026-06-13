@@ -114,14 +114,14 @@ mod tests {
         }
 
         // a typed end-to-end drive (nav spelling) matches the untyped one
-        let typed = movie().in_s(kind().text().eq("movie"));
+        let typed = movie().when(kind().text().eq("movie"));
         let mut n_typed = 0usize;
         typed.drive(|_, _| n_typed += 1);
         let kk = load_strs("Kind_text");
         let mk = load_ids("Movie_kind");
         let mut n_untyped = 0usize;
         crate::engine::Universe::<usize>::new(mk.n_keys())
-            .in_s((&mk).o(&kk).eq("movie"))
+            .when((&mk).get(&kk).eq("movie"))
             .drive(|_, _| n_untyped += 1);
         assert_eq!(n_typed, n_untyped);
     }

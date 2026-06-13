@@ -7,25 +7,19 @@ use crate::queries::sets::{genre6, kw7, link3, murder4, nordic9, nordic10, voice
 use super::helpers::{film_or_warner_co, follow_link};
 
 fn co_28() -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive + Probe {
-    company().in_s(
-        country().ne("[us]")
-            .and(Company::note().nrx(r"\(USA\)"))
-            .and(Company::note().rx(r"\(200.*\)"))
-    )
+    company().when(country().ne("[us]")
+                   .and(Company::note().nrx(r"\(USA\)"))
+                   .and(Company::note().rx(r"\(200.*\)")))
 }
 
 fn dt_28ac() -> impl Query<R = Id<Data>, D = Id<Movie>> + Drive + Probe {
-    data().in_s(
-        Data::ty().text().eq("rating")
-            .and(Data::text().lt("8.5"))
-    )
+    data().when(Data::ty().text().eq("rating")
+                .and(Data::text().lt("8.5")))
 }
 
 fn dt_28b() -> impl Query<R = Id<Data>, D = Id<Movie>> + Drive + Probe {
-    data().in_s(
-        Data::ty().text().eq("rating")
-            .and(Data::text().gt("6.5"))
-    )
+    data().when(Data::ty().text().eq("rating")
+                .and(Data::text().gt("6.5")))
 }
 
 // Conjunct trees (∧ = Prod) — consumed via `member` only, so the value
@@ -41,50 +35,32 @@ fn gf_genre6() -> impl Query<D = Id<Info>> + Probe {
 }
 
 fn qlink_33a() -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe {
-    link().in_s(
-        MovieLink::ty().text().is_in(link3())
-            .and(target().in_s(
-                kind().text().eq("tv series")
-                    .and(company())
-                    .and(data().in_s(
-                        Data::ty().text().eq("rating")
-                            .and(Data::text().lt("3.0"))
-                    ))
-                    .and(production_year().ge(2005))
-                    .and(production_year().le(2008))
-            ))
-    )
+    link().when(MovieLink::ty().text().is_in(link3())
+                .and(target().when(kind().text().eq("tv series")
+                                   .and(company())
+                                   .and(data().when(Data::ty().text().eq("rating")
+                                                    .and(Data::text().lt("3.0"))))
+                                   .and(production_year().ge(2005))
+                                   .and(production_year().le(2008)))))
 }
 
 fn qlink_33b() -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe {
-    link().in_s(
-        MovieLink::ty().text().rx(r"follow")
-            .and(target().in_s(
-                kind().text().eq("tv series")
-                    .and(company())
-                    .and(data().in_s(
-                        Data::ty().text().eq("rating")
-                            .and(Data::text().lt("3.0"))
-                    ))
-                    .and(production_year().eq(2007))
-            ))
-    )
+    link().when(MovieLink::ty().text().rx(r"follow")
+                .and(target().when(kind().text().eq("tv series")
+                                   .and(company())
+                                   .and(data().when(Data::ty().text().eq("rating")
+                                                    .and(Data::text().lt("3.0"))))
+                                   .and(production_year().eq(2007)))))
 }
 
 fn qlink_33c() -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe {
-    link().in_s(
-        MovieLink::ty().text().is_in(link3())
-            .and(target().in_s(
-                kind().text().is_in(["tv series", "episode"])
-                    .and(company())
-                    .and(data().in_s(
-                        Data::ty().text().eq("rating")
-                            .and(Data::text().lt("3.5"))
-                    ))
-                    .and(production_year().ge(2000))
-                    .and(production_year().le(2010))
-            ))
-    )
+    link().when(MovieLink::ty().text().is_in(link3())
+                .and(target().when(kind().text().is_in(["tv series", "episode"])
+                                   .and(company())
+                                   .and(data().when(Data::ty().text().eq("rating")
+                                                    .and(Data::text().lt("3.5"))))
+                                   .and(production_year().ge(2000))
+                                   .and(production_year().le(2010)))))
 }
 
 pub const ENTRIES: &[super::Entry] = &[
@@ -111,409 +87,300 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 fn q27a() -> String {
-    min_row(movie().in_s(
-        complete_cast().in_s(
-            subject().text().is_in(["cast", "crew"])
-                .and(status().text().eq("complete"))
-        )
-            .and(film_or_warner_co())
-            .and(keyword().text().eq("sequel"))
-            .and(follow_link())
-            .and(info().in_s(Info::info().is_in(["Sweden", "Germany", "Swedish", "German"])))
-            .and(production_year().ge(1950))
-            .and(production_year().le(2000))
-    ).o(
-        film_or_warner_co().name()
-            .x(follow_link().ty().text())
-            .x(title())
-    ))
+    min_row(movie()
+        .when(complete_cast().get(subject().text().is_in(["cast", "crew"])
+                                  .and(status().text().eq("complete")))
+              .and(film_or_warner_co())
+              .and(keyword().text().eq("sequel"))
+              .and(follow_link())
+              .and(info().get(Info::info().is_in(["Sweden", "Germany", "Swedish", "German"])))
+              .and(production_year().ge(1950))
+              .and(production_year().le(2000)))
+        .get(film_or_warner_co().name()
+             .and(follow_link())
+             .and(title())))
 }
 
 fn q27b() -> String {
-    min_row(movie().in_s(
-        complete_cast().in_s(
-            subject().text().is_in(["cast", "crew"])
-                .and(status().text().eq("complete"))
-        )
-            .and(film_or_warner_co())
-            .and(keyword().text().eq("sequel"))
-            .and(follow_link())
-            .and(info().in_s(Info::info().is_in(["Sweden", "Germany", "Swedish", "German"])))
-            .and(production_year().eq(1998))
-    ).o(
-        film_or_warner_co().name()
-            .x(follow_link().ty().text())
-            .x(title())
-    ))
+    min_row(movie()
+        .when(complete_cast().get(subject().text().is_in(["cast", "crew"])
+                                  .and(status().text().eq("complete")))
+              .and(film_or_warner_co())
+              .and(keyword().text().eq("sequel"))
+              .and(follow_link())
+              .and(info().get(Info::info().is_in(["Sweden", "Germany", "Swedish", "German"])))
+              .and(production_year().eq(1998)))
+        .get(film_or_warner_co().name()
+             .and(follow_link())
+             .and(title())))
 }
 
 fn q27c() -> String {
-    min_row(movie().in_s(
-        complete_cast().in_s(
-            subject().text().eq("cast")
-                .and(status().text().rx(r"^complete"))
-        )
-            .and(film_or_warner_co())
-            .and(keyword().text().eq("sequel"))
-            .and(follow_link())
-            .and(info().in_s(Info::info().is_in(nordic9())))
-            .and(production_year().ge(1950))
-            .and(production_year().le(2010))
-    ).o(
-        film_or_warner_co().name()
-            .x(follow_link().ty().text())
-            .x(title())
-    ))
+    min_row(movie()
+        .when(complete_cast().get(subject().text().eq("cast")
+                                  .and(status().text().rx(r"^complete")))
+              .and(film_or_warner_co())
+              .and(keyword().text().eq("sequel"))
+              .and(follow_link())
+              .and(info().get(Info::info().is_in(nordic9())))
+              .and(production_year().ge(1950))
+              .and(production_year().le(2010)))
+        .get(film_or_warner_co().name()
+             .and(follow_link())
+             .and(title())))
 }
 
 fn q28a() -> String {
-    min_row(movie().in_s(
-        complete_cast().in_s(
-            subject().text().eq("crew")
-                .and(status().text().ne("complete+verified"))
-        )
-            .and(co_28())
-            .and(info().in_s(
-                Info::ty().text().eq("countries")
-                    .and(Info::info().is_in(nordic10()))
-            ))
-            .and(dt_28ac())
-            .and(keyword().text().is_in(murder4()))
-            .and(kind().text().is_in(["movie", "episode"]))
-            .and(production_year().gt(2000))
-    ).o(
-        co_28().name()
-            .x(dt_28ac().text())
-            .x(title())
-    ))
+    min_row(movie()
+        .when(complete_cast().get(subject().text().eq("crew")
+                                  .and(status().text().ne("complete+verified")))
+              .and(co_28())
+              .and(info().get(Info::ty().text().eq("countries")
+                              .and(Info::info().is_in(nordic10()))))
+              .and(dt_28ac())
+              .and(keyword().text().is_in(murder4()))
+              .and(kind().text().is_in(["movie", "episode"]))
+              .and(production_year().gt(2000)))
+        .get(co_28().name()
+             .and(dt_28ac().text())
+             .and(title())))
 }
 
 fn q28b() -> String {
-    min_row(movie().in_s(
-        complete_cast().in_s(
-            subject().text().eq("crew")
-                .and(status().text().ne("complete+verified"))
-        )
-            .and(co_28())
-            .and(info().in_s(
-                Info::ty().text().eq("countries")
-                    .and(Info::info().is_in(["Sweden", "Germany", "Swedish", "German"]))
-            ))
-            .and(dt_28b())
-            .and(keyword().text().is_in(murder4()))
-            .and(kind().text().is_in(["movie", "episode"]))
-            .and(production_year().gt(2005))
-    ).o(
-        co_28().name()
-            .x(dt_28b().text())
-            .x(title())
-    ))
+    min_row(movie()
+        .when(complete_cast().get(subject().text().eq("crew")
+                                  .and(status().text().ne("complete+verified")))
+              .and(co_28())
+              .and(info().get(Info::ty().text().eq("countries")
+                              .and(Info::info().is_in(["Sweden", "Germany", "Swedish", "German"]))))
+              .and(dt_28b())
+              .and(keyword().text().is_in(murder4()))
+              .and(kind().text().is_in(["movie", "episode"]))
+              .and(production_year().gt(2005)))
+        .get(co_28().name()
+             .and(dt_28b().text())
+             .and(title())))
 }
 
 fn q28c() -> String {
-    min_row(movie().in_s(
-        complete_cast().in_s(
-            subject().text().eq("cast")
-                .and(status().text().eq("complete"))
-        )
-            .and(co_28())
-            .and(info().in_s(
-                Info::ty().text().eq("countries")
-                    .and(Info::info().is_in(nordic10()))
-            ))
-            .and(dt_28ac())
-            .and(keyword().text().is_in(murder4()))
-            .and(kind().text().is_in(["movie", "episode"]))
-            .and(production_year().gt(2005))
-    ).o(
-        co_28().name()
-            .x(dt_28ac().text())
-            .x(title())
-    ))
+    min_row(movie()
+        .when(complete_cast().get(subject().text().eq("cast")
+                                  .and(status().text().eq("complete")))
+              .and(co_28())
+              .and(info().get(Info::ty().text().eq("countries")
+                              .and(Info::info().is_in(nordic10()))))
+              .and(dt_28ac())
+              .and(keyword().text().is_in(murder4()))
+              .and(kind().text().is_in(["movie", "episode"]))
+              .and(production_year().gt(2005)))
+        .get(co_28().name()
+             .and(dt_28ac().text())
+             .and(title())))
 }
 
 fn q29a() -> String {
-    min_row(movie().in_s(
-        complete_cast().in_s(
-            subject().text().eq("cast")
-                .and(status().text().eq("complete+verified"))
-        )
-            .and(company().country().eq("[us]"))
-            .and(info().in_s(
-                Info::ty().text().eq("release dates")
-                    .and(Info::info().rx(r"^Japan:.*200")
-                        .or(Info::info().rx(r"^USA:.*200")))
-            ))
-            .and(keyword().text().eq("computer-animation"))
-            .and(title().eq("Shrek 2"))
-            .and(production_year().ge(2000))
-            .and(production_year().le(2010))
-    ).o(
-        cast().in_s(
-            Cast::note().is_in(voice3())
-                .and(role().text().eq("actress"))
-                .and(character().text().eq("Queen"))
-                .and(person().in_s(
-                    gender().eq("f")
-                        .and(Person::name().rx(r"An"))
-                        .and(alias())
-                        .and(bio().in_s(PersonInfo::ty().text().eq("trivia")))
-                ))
-        ).o(
-            character().text()
-                .x(person().name())
-        )
-        .x(title())
-    ))
+    min_row(movie()
+        .when(complete_cast().get(subject().text().eq("cast")
+                                  .and(status().text().eq("complete+verified")))
+              .and(company().country().eq("[us]"))
+              .and(info().get(Info::ty().text().eq("release dates")
+                              .and(Info::info().rx(r"^Japan:.*200")
+                                   .or(Info::info().rx(r"^USA:.*200")))))
+              .and(keyword().text().eq("computer-animation"))
+              .and(title().eq("Shrek 2"))
+              .and(production_year().ge(2000))
+              .and(production_year().le(2010)))
+        .get(cast()
+             .when(Cast::note().is_in(voice3())
+                   .and(role().text().eq("actress"))
+                   .and(character().text().eq("Queen"))
+                   .and(person().when(gender().eq("f")
+                                      .and(Person::name().rx(r"An"))
+                                      .and(alias())
+                                      .and(bio().get(PersonInfo::ty().text().eq("trivia"))))))
+             .get(character().text()
+                  .and(person().name()))
+             .and(title())))
 }
 
 fn q29b() -> String {
-    min_row(movie().in_s(
-        complete_cast().in_s(
-            subject().text().eq("cast")
-                .and(status().text().eq("complete+verified"))
-        )
-            .and(company().country().eq("[us]"))
-            .and(info().in_s(
-                Info::ty().text().eq("release dates")
-                    .and(Info::info().rx(r"^USA:.*200"))
-            ))
-            .and(keyword().text().eq("computer-animation"))
-            .and(title().eq("Shrek 2"))
-            .and(production_year().ge(2000))
-            .and(production_year().le(2005))
-    ).o(
-        cast().in_s(
-            Cast::note().is_in(voice3())
-                .and(role().text().eq("actress"))
-                .and(character().text().eq("Queen"))
-                .and(person().in_s(
-                    gender().eq("f")
-                        .and(Person::name().rx(r"An"))
-                        .and(alias())
-                        .and(bio().in_s(PersonInfo::ty().text().eq("height")))
-                ))
-        ).o(
-            character().text()
-                .x(person().name())
-        )
-        .x(title())
-    ))
+    min_row(movie()
+        .when(complete_cast().get(subject().text().eq("cast")
+                                  .and(status().text().eq("complete+verified")))
+              .and(company().country().eq("[us]"))
+              .and(info().get(Info::ty().text().eq("release dates")
+                              .and(Info::info().rx(r"^USA:.*200"))))
+              .and(keyword().text().eq("computer-animation"))
+              .and(title().eq("Shrek 2"))
+              .and(production_year().ge(2000))
+              .and(production_year().le(2005)))
+        .get(cast()
+             .when(Cast::note().is_in(voice3())
+                   .and(role().text().eq("actress"))
+                   .and(character().text().eq("Queen"))
+                   .and(person().when(gender().eq("f")
+                                      .and(Person::name().rx(r"An"))
+                                      .and(alias())
+                                      .and(bio().get(PersonInfo::ty().text().eq("height"))))))
+             .get(character().text()
+                  .and(person().name()))
+             .and(title())))
 }
 
 fn q29c() -> String {
-    min_row(movie().in_s(
-        complete_cast().in_s(
-            subject().text().eq("cast")
-                .and(status().text().eq("complete+verified"))
-        )
-            .and(company().country().eq("[us]"))
-            .and(info().in_s(
-                Info::ty().text().eq("release dates")
-                    .and(Info::info().rx(r"^Japan:.*200")
-                        .or(Info::info().rx(r"^USA:.*200")))
-            ))
-            .and(keyword().text().eq("computer-animation"))
-            .and(production_year().ge(2000))
-            .and(production_year().le(2010))
-    ).o(
-        cast().in_s(
-            Cast::note().is_in(voice4())
-                .and(role().text().eq("actress"))
-                .and(person().in_s(
-                    gender().eq("f")
-                        .and(Person::name().rx(r"An"))
-                        .and(alias())
-                        .and(bio().in_s(PersonInfo::ty().text().eq("trivia")))
-                ))
-        ).o(
-            character().text()
-                .x(person().name())
-        )
-        .x(title())
-    ))
+    min_row(movie()
+        .when(complete_cast().get(subject().text().eq("cast")
+                                  .and(status().text().eq("complete+verified")))
+              .and(company().country().eq("[us]"))
+              .and(info().get(Info::ty().text().eq("release dates")
+                              .and(Info::info().rx(r"^Japan:.*200")
+                                   .or(Info::info().rx(r"^USA:.*200")))))
+              .and(keyword().text().eq("computer-animation"))
+              .and(production_year().ge(2000))
+              .and(production_year().le(2010)))
+        .get(cast()
+             .when(Cast::note().is_in(voice4())
+                   .and(role().text().eq("actress"))
+                   .and(person().when(gender().eq("f")
+                                      .and(Person::name().rx(r"An"))
+                                      .and(alias())
+                                      .and(bio().get(PersonInfo::ty().text().eq("trivia"))))))
+             .get(character().text()
+                  .and(person().name()))
+             .and(title())))
 }
 
 fn q30a() -> String {
-    min_row(movie().in_s(
-        complete_cast().in_s(
-            subject().text().is_in(["cast", "crew"])
-                .and(status().text().eq("complete+verified"))
-        )
-            .and(info().in_s(gf_horror()))
-            .and(keyword().text().is_in(kw7()))
-            .and(production_year().gt(2000))
-    ).o(
-        info().in_s(gf_horror()).info()
-            .x(data().in_s(Data::ty().text().eq("votes")).text())
-            .x(title())
-            .x(cast().in_s(
-                Cast::note().is_in(writer5())
-                    .and(person().gender().eq("m"))
-            ).person().name())
-    ))
+    min_row(movie()
+        .when(complete_cast().get(subject().text().is_in(["cast", "crew"])
+                                  .and(status().text().eq("complete+verified")))
+              .and(info().when(gf_horror()))
+              .and(keyword().text().is_in(kw7()))
+              .and(production_year().gt(2000)))
+        .get(info().when(gf_horror()).info()
+             .and(data().when(Data::ty().text().eq("votes")).text())
+             .and(title())
+             .and(cast().when(Cast::note().is_in(writer5())
+                              .and(person().when(gender().eq("m")))).person().name())))
 }
 
 fn q30b() -> String {
-    min_row(movie().in_s(
-        complete_cast().in_s(
-            subject().text().is_in(["cast", "crew"])
-                .and(status().text().eq("complete+verified"))
-        )
-            .and(info().in_s(gf_horror()))
-            .and(keyword().text().is_in(kw7()))
-            .and(production_year().gt(2000))
-            .and(title().rx(r"Freddy")
-                .or(title().rx(r"Jason")
-                    .or(title().rx(r"^Saw"))))
-    ).o(
-        info().in_s(gf_horror()).info()
-            .x(data().in_s(Data::ty().text().eq("votes")).text())
-            .x(title())
-            .x(cast().in_s(
-                Cast::note().is_in(writer5())
-                    .and(person().gender().eq("m"))
-            ).person().name())
-    ))
+    min_row(movie()
+        .when(complete_cast().get(subject().text().is_in(["cast", "crew"])
+                                  .and(status().text().eq("complete+verified")))
+              .and(info().when(gf_horror()))
+              .and(keyword().text().is_in(kw7()))
+              .and(production_year().gt(2000))
+              .and(title().rx(r"Freddy").or(title().rx(r"Jason")).or(title().rx(r"^Saw"))))
+        .get(info().when(gf_horror()).info()
+             .and(data().when(Data::ty().text().eq("votes")).text())
+             .and(title())
+             .and(cast().when(Cast::note().is_in(writer5())
+                              .and(person().when(gender().eq("m")))).person().name())))
 }
 
 fn q30c() -> String {
-    min_row(movie().in_s(
-        complete_cast().in_s(
-            subject().text().eq("cast")
-                .and(status().text().eq("complete+verified"))
-        )
-            .and(info().in_s(gf_genre6()))
-            .and(keyword().text().is_in(kw7()))
-    ).o(
-        info().in_s(gf_genre6()).info()
-            .x(data().in_s(Data::ty().text().eq("votes")).text())
-            .x(title())
-            .x(cast().in_s(
-                Cast::note().is_in(writer5())
-                    .and(person().gender().eq("m"))
-            ).person().name())
-    ))
+    min_row(movie()
+        .when(complete_cast().get(subject().text().eq("cast")
+                                  .and(status().text().eq("complete+verified")))
+              .and(info().when(gf_genre6()))
+              .and(keyword().text().is_in(kw7())))
+        .get(info().when(gf_genre6()).info()
+             .and(data().when(Data::ty().text().eq("votes")).text())
+             .and(title())
+             .and(cast().when(Cast::note().is_in(writer5())
+                              .and(person().when(gender().eq("m")))).person().name())))
 }
 
 fn q31a() -> String {
-    min_row(movie().in_s(
-        company().name().rx(r"^Lionsgate")
-            .and(info().in_s(gf_horror()))
-            .and(keyword().text().is_in(kw7()))
-    ).o(
-        info().in_s(gf_horror()).info()
-            .x(data().in_s(Data::ty().text().eq("votes")).text())
-            .x(title())
-            .x(cast().in_s(
-                Cast::note().is_in(writer5())
-                    .and(person().gender().eq("m"))
-            ).person().name())
-    ))
+    min_row(movie()
+        .when(company().name().rx(r"^Lionsgate")
+              .and(info().when(gf_horror()))
+              .and(keyword().text().is_in(kw7())))
+        .get(info().when(gf_horror()).info()
+             .and(data().when(Data::ty().text().eq("votes")).text())
+             .and(title())
+             .and(cast().when(Cast::note().is_in(writer5())
+                              .and(person().when(gender().eq("m")))).person().name())))
 }
 
 fn q31b() -> String {
-    min_row(movie().in_s(
-        company().in_s(
-            Company::name().rx(r"^Lionsgate")
-                .and(Company::note().rx(r"\(Blu-ray\)"))
-        )
-            .and(info().in_s(gf_horror()))
-            .and(keyword().text().is_in(kw7()))
-            .and(production_year().gt(2000))
-            .and(title().rx(r"Freddy")
-                .or(title().rx(r"Jason")
-                    .or(title().rx(r"^Saw"))))
-    ).o(
-        info().in_s(gf_horror()).info()
-            .x(data().in_s(Data::ty().text().eq("votes")).text())
-            .x(title())
-            .x(cast().in_s(
-                Cast::note().is_in(writer5())
-                    .and(person().gender().eq("m"))
-            ).person().name())
-    ))
+    min_row(movie()
+        .when(company().get(Company::name().rx(r"^Lionsgate")
+                            .and(Company::note().rx(r"\(Blu-ray\)")))
+              .and(info().when(gf_horror()))
+              .and(keyword().text().is_in(kw7()))
+              .and(production_year().gt(2000))
+              .and(title().rx(r"Freddy").or(title().rx(r"Jason")).or(title().rx(r"^Saw"))))
+        .get(info().when(gf_horror()).info()
+             .and(data().when(Data::ty().text().eq("votes")).text())
+             .and(title())
+             .and(cast().when(Cast::note().is_in(writer5())
+                              .and(person().when(gender().eq("m")))).person().name())))
 }
 
 fn q31c() -> String {
-    min_row(movie().in_s(
-        company().name().rx(r"^Lionsgate")
-            .and(info().in_s(gf_genre6()))
-            .and(keyword().text().is_in(kw7()))
-    ).o(
-        info().in_s(gf_genre6()).info()
-            .x(data().in_s(Data::ty().text().eq("votes")).text())
-            .x(title())
-            .x(cast().in_s(Cast::note().is_in(writer5()))
-                    .person().name())
-    ))
+    min_row(movie()
+        .when(company().name().rx(r"^Lionsgate")
+              .and(info().when(gf_genre6()))
+              .and(keyword().text().is_in(kw7())))
+        .get(info().when(gf_genre6()).info()
+             .and(data().when(Data::ty().text().eq("votes")).text())
+             .and(title())
+             .and(cast().when(Cast::note().is_in(writer5())).person().name())))
 }
 
 // q32a/q32b differ only in the keyword constant.
 fn q32(kw: &'static str) -> String {
-    min_row(movie().in_s(
-        keyword().text().eq(kw)
-            .and(link())
-    ).o(
-        link().ty().text()
-            .x(title())
-            .x(link().target().title())
-    ))
+    min_row(movie()
+        .when(keyword().text().eq(kw)
+              .and(link()))
+        .get(link().ty().text()
+             .and(title())
+             .and(link().target().title())))
 }
 
 fn q32a() -> String { q32("10,000-mile-club") }
 fn q32b() -> String { q32("character-name-in-title") }
 
 fn q33a() -> String {
-    min_row(movie().in_s(
-        kind().text().eq("tv series")
-            .and(company().country().eq("[us]"))
-            .and(qlink_33a())
-    ).o(
-        company().in_s(country().eq("[us]")).name()
-            .x(qlink_33a().target().company().name())
-            .x(data().in_s(Data::ty().text().eq("rating")).text())
-            .x(qlink_33a().target().o(data().in_s(
-                Data::ty().text().eq("rating")
-                    .and(Data::text().lt("3.0"))
-            ).text()))
-            .x(title())
-            .x(qlink_33a().target().title())
-    ))
+    min_row(movie()
+        .when(kind().text().eq("tv series")
+              .and(company().country().eq("[us]"))
+              .and(qlink_33a()))
+        .get(company().when(country().eq("[us]")).name()
+             .and(qlink_33a().target().company().name())
+             .and(data().when(Data::ty().text().eq("rating")).text())
+             .and(qlink_33a().target().get(data().when(Data::ty().text().eq("rating")
+                                                       .and(Data::text().lt("3.0"))).text()))
+             .and(title())
+             .and(qlink_33a().target().title())))
 }
 
 fn q33b() -> String {
-    min_row(movie().in_s(
-        kind().text().eq("tv series")
-            .and(company().country().eq("[nl]"))
-            .and(qlink_33b())
-    ).o(
-        company().in_s(country().eq("[nl]")).name()
-            .x(qlink_33b().target().company().name())
-            .x(data().in_s(Data::ty().text().eq("rating")).text())
-            .x(qlink_33b().target().o(data().in_s(
-                Data::ty().text().eq("rating")
-                    .and(Data::text().lt("3.0"))
-            ).text()))
-            .x(title())
-            .x(qlink_33b().target().title())
-    ))
+    min_row(movie()
+        .when(kind().text().eq("tv series")
+              .and(company().country().eq("[nl]"))
+              .and(qlink_33b()))
+        .get(company().when(country().eq("[nl]")).name()
+             .and(qlink_33b().target().company().name())
+             .and(data().when(Data::ty().text().eq("rating")).text())
+             .and(qlink_33b().target().get(data().when(Data::ty().text().eq("rating")
+                                                       .and(Data::text().lt("3.0"))).text()))
+             .and(title())
+             .and(qlink_33b().target().title())))
 }
 
 fn q33c() -> String {
-    min_row(movie().in_s(
-        kind().text().is_in(["tv series", "episode"])
-            .and(company().country().ne("[us]"))
-            .and(qlink_33c())
-    ).o(
-        company().in_s(country().ne("[us]")).name()
-            .x(qlink_33c().target().company().name())
-            .x(data().in_s(Data::ty().text().eq("rating")).text())
-            .x(qlink_33c().target().o(data().in_s(
-                Data::ty().text().eq("rating")
-                    .and(Data::text().lt("3.5"))
-            ).text()))
-            .x(title())
-            .x(qlink_33c().target().title())
-    ))
+    min_row(movie()
+        .when(kind().text().is_in(["tv series", "episode"])
+              .and(company().country().ne("[us]"))
+              .and(qlink_33c()))
+        .get(company().when(country().ne("[us]")).name()
+             .and(qlink_33c().target().company().name())
+             .and(data().when(Data::ty().text().eq("rating")).text())
+             .and(qlink_33c().target().get(data().when(Data::ty().text().eq("rating")
+                                                       .and(Data::text().lt("3.5"))).text()))
+             .and(title())
+             .and(qlink_33c().target().title())))
 }
