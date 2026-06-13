@@ -458,7 +458,7 @@ class="sourceCode rust"><code class="sourceCode rust"><span id="cb4-1"><a href="
 <span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> counts <span class="op">=</span> qualifying<span class="op">.</span>group_by(<span class="pp">Lineitem::</span>supplier)<span class="op">.</span>fold(<span class="dv">0_i64</span><span class="op">,</span> <span class="op">|</span>a<span class="op">,</span> _<span class="op">|</span> a <span class="op">+</span> <span class="dv">1</span>)<span class="op">;</span></span></code></pre></div>
 <p>The <code>let</code> bindings assign sub-queries to variables — which
 would require CTEs in SQL, but is simply a variable binding in
-Prela/Rust! Where SQL needs a UDF, Prela passes an ordinary closure,
+Prela/Rust. Where SQL needs a UDF, Prela passes an ordinary closure,
 e.g., the predicate in <code>.filt(|(c, r)| c &lt; r)</code> and the
 accumulator <code>|a, _| a + 1</code> passed to <code>fold</code>.</p>
 <p>The next new Prela construct excercised by this query is group-by
@@ -522,13 +522,13 @@ beautiful! I've written more about it <a
 href="https://remy.wang/blog/cps.html">here</a>. Long story short, CPS
 allows each combinator to be implemented in a few lines in a modular
 way, yet compiling to code that recovers efficient columnar
-execution!</p>
+execution.</p>
 <h2 id="performance">Performance</h2>
 <p>Some consider the query optimizer to be the heart of a database,
 transforming high-level queries into fast, executable code. I've also
 spent my graduate school years working on query optimizers, so it's
 probably quite surprising that Prela doesn't have one. In other words, a
-Prela query <em>is</em> also a query plan! Each query will be executed
+Prela query <em>is</em> also a query plan. Each query will be executed
 exactly as it is written, giving the programmer complete control over
 every aspect of query performance. Physical data structures can be
 selected with type annotations, and materialization points specified by
