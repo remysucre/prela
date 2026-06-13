@@ -183,10 +183,13 @@ pub(super) fn q17() -> String {
     // brand+container filter, not all ~200K parts. Identify the qualifying
     // parts up front, restrict the lineitem scan that feeds the avg fold
     // to those parts, then the avg is computed over a tiny slice.
-    let qual_part_set = part
-        .with(brand.eq("Brand#23").and(container.eq("MED BOX")))
-        .collect::<MatSet<_>>();
-    let live_li = Lineitem::part.with(&qual_part_set);
+    // Dense `Bitset` of qualifying part-ids (not a HashSet): membership is
+    // bit-tested on every lineitem in both the avg fold and the outer scan
+    // (~12M probes), so a bitmask beats a hash lookup — same hoist as q9's
+    // `green_parts` / q21's predicate bitsets.
+    let qual_parts = Bitset::over(part,
+        &part.with(brand.eq("Brand#23").and(container.eq("MED BOX"))));
+    let live_li = Lineitem::part.with(&qual_parts);
     let threshold_per_part = quantity.group_by(&live_li)
         .fold((0.0_f64, 0_i64), |(s, n), q| (s + q, n + 1))
         .map(|(s, n)| 0.2 * s / n as f64);
