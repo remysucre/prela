@@ -30,8 +30,7 @@ pub const ENTRIES: &[super::Entry] = &[
 //   .with    restriction (Julia `:`) — keep rows whose value is a member
 //   .eq / .ne / .gt / .lt / .ge / .le / .is_in / .rx / .nrx  predicates
 pub fn q6a_methods() -> impl Drive<R: Row> {
-    let kw_marvel = || keyword.text()
-                              .eq("marvel-cinematic-universe");
+    let kw_marvel = || keyword.eq("marvel-cinematic-universe");
     let q = movie
         .with(production_year.gt(2010)
          .and(kw_marvel()))
