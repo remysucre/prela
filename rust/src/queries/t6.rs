@@ -88,7 +88,7 @@ pub const ENTRIES: &[super::Entry] = &[
 
 fn q27a() -> impl Drive<R: Row> {
     movie.when(complete_cast.select(subject.text().is_in(["cast", "crew"])
-                             .and(status.text().eq("complete")))
+                               .and(status.text().eq("complete")))
           .and(film_or_warner_co())
           .and(keyword.text().eq("sequel"))
           .and(follow_link())
@@ -102,7 +102,7 @@ fn q27a() -> impl Drive<R: Row> {
 
 fn q27b() -> impl Drive<R: Row> {
     movie.when(complete_cast.select(subject.text().is_in(["cast", "crew"])
-                             .and(status.text().eq("complete")))
+                               .and(status.text().eq("complete")))
           .and(film_or_warner_co())
           .and(keyword.text().eq("sequel"))
           .and(follow_link())
@@ -115,7 +115,7 @@ fn q27b() -> impl Drive<R: Row> {
 
 fn q27c() -> impl Drive<R: Row> {
     movie.when(complete_cast.select(subject.text().eq("cast")
-                             .and(status.text().rx(r"^complete")))
+                               .and(status.text().rx(r"^complete")))
           .and(film_or_warner_co())
           .and(keyword.text().eq("sequel"))
           .and(follow_link())
@@ -129,10 +129,10 @@ fn q27c() -> impl Drive<R: Row> {
 
 fn q28a() -> impl Drive<R: Row> {
     movie.when(complete_cast.select(subject.text().eq("crew")
-                             .and(status.text().ne("complete+verified")))
+                               .and(status.text().ne("complete+verified")))
           .and(co_28())
           .and(info.select(Info::ty.text().eq("countries")
-                    .and(Info::info.is_in(nordic10()))))
+                      .and(Info::info.is_in(nordic10()))))
           .and(dt_28ac())
           .and(keyword.text().is_in(murder4()))
           .and(kind.text().is_in(["movie", "episode"]))
@@ -144,10 +144,10 @@ fn q28a() -> impl Drive<R: Row> {
 
 fn q28b() -> impl Drive<R: Row> {
     movie.when(complete_cast.select(subject.text().eq("crew")
-                             .and(status.text().ne("complete+verified")))
+                               .and(status.text().ne("complete+verified")))
           .and(co_28())
           .and(info.select(Info::ty.text().eq("countries")
-                    .and(Info::info.is_in(["Sweden", "Germany", "Swedish", "German"]))))
+                      .and(Info::info.is_in(["Sweden", "Germany", "Swedish", "German"]))))
           .and(dt_28b())
           .and(keyword.text().is_in(murder4()))
           .and(kind.text().is_in(["movie", "episode"]))
@@ -159,10 +159,10 @@ fn q28b() -> impl Drive<R: Row> {
 
 fn q28c() -> impl Drive<R: Row> {
     movie.when(complete_cast.select(subject.text().eq("cast")
-                             .and(status.text().eq("complete")))
+                               .and(status.text().eq("complete")))
           .and(co_28())
           .and(info.select(Info::ty.text().eq("countries")
-                    .and(Info::info.is_in(nordic10()))))
+                      .and(Info::info.is_in(nordic10()))))
           .and(dt_28ac())
           .and(keyword.text().is_in(murder4()))
           .and(kind.text().is_in(["movie", "episode"]))
@@ -174,11 +174,11 @@ fn q28c() -> impl Drive<R: Row> {
 
 fn q29a() -> impl Drive<R: Row> {
     movie.when(complete_cast.select(subject.text().eq("cast")
-                             .and(status.text().eq("complete+verified")))
+                               .and(status.text().eq("complete+verified")))
           .and(company.country().eq("[us]"))
           .and(info.select(Info::ty.text().eq("release dates")
-                    .and(Info::info.rx(r"^Japan:.*200")
-                     .or(Info::info.rx(r"^USA:.*200")))))
+                      .and(Info::info.rx(r"^Japan:.*200")
+                       .or(Info::info.rx(r"^USA:.*200")))))
           .and(keyword.text().eq("computer-animation"))
           .and(title.eq("Shrek 2"))
           .and(production_year.ge(2000))
@@ -192,16 +192,16 @@ fn q29a() -> impl Drive<R: Row> {
                           .and(alias)
                           .and(bio.select(PersonInfo::ty.text().eq("trivia"))))))
              .select(character.text()
-              .and(person.name()))
+                .and(person.name()))
           .and(title))
 }
 
 fn q29b() -> impl Drive<R: Row> {
     movie.when(complete_cast.select(subject.text().eq("cast")
-                             .and(status.text().eq("complete+verified")))
+                               .and(status.text().eq("complete+verified")))
           .and(company.country().eq("[us]"))
           .and(info.select(Info::ty.text().eq("release dates")
-                    .and(Info::info.rx(r"^USA:.*200"))))
+                      .and(Info::info.rx(r"^USA:.*200"))))
           .and(keyword.text().eq("computer-animation"))
           .and(title.eq("Shrek 2"))
           .and(production_year.ge(2000))
@@ -215,17 +215,17 @@ fn q29b() -> impl Drive<R: Row> {
                           .and(alias)
                           .and(bio.select(PersonInfo::ty.text().eq("height"))))))
              .select(character.text()
-              .and(person.name()))
+                .and(person.name()))
           .and(title))
 }
 
 fn q29c() -> impl Drive<R: Row> {
     movie.when(complete_cast.select(subject.text().eq("cast")
-                             .and(status.text().eq("complete+verified")))
+                               .and(status.text().eq("complete+verified")))
           .and(company.country().eq("[us]"))
           .and(info.select(Info::ty.text().eq("release dates")
-                    .and(Info::info.rx(r"^Japan:.*200")
-                     .or(Info::info.rx(r"^USA:.*200")))))
+                      .and(Info::info.rx(r"^Japan:.*200")
+                       .or(Info::info.rx(r"^USA:.*200")))))
           .and(keyword.text().eq("computer-animation"))
           .and(production_year.ge(2000))
           .and(production_year.le(2010)))
@@ -237,13 +237,13 @@ fn q29c() -> impl Drive<R: Row> {
                           .and(alias)
                           .and(bio.select(PersonInfo::ty.text().eq("trivia"))))))
              .select(character.text()
-              .and(person.name()))
+                .and(person.name()))
           .and(title))
 }
 
 fn q30a() -> impl Drive<R: Row> {
     movie.when(complete_cast.select(subject.text().is_in(["cast", "crew"])
-                             .and(status.text().eq("complete+verified")))
+                               .and(status.text().eq("complete+verified")))
           .and(info.when(gf_horror()))
           .and(keyword.text().is_in(kw7()))
           .and(production_year.gt(2000)))
@@ -256,7 +256,7 @@ fn q30a() -> impl Drive<R: Row> {
 
 fn q30b() -> impl Drive<R: Row> {
     movie.when(complete_cast.select(subject.text().is_in(["cast", "crew"])
-                             .and(status.text().eq("complete+verified")))
+                               .and(status.text().eq("complete+verified")))
           .and(info.when(gf_horror()))
           .and(keyword.text().is_in(kw7()))
           .and(production_year.gt(2000))
@@ -270,7 +270,7 @@ fn q30b() -> impl Drive<R: Row> {
 
 fn q30c() -> impl Drive<R: Row> {
     movie.when(complete_cast.select(subject.text().eq("cast")
-                             .and(status.text().eq("complete+verified")))
+                               .and(status.text().eq("complete+verified")))
           .and(info.when(gf_genre6()))
           .and(keyword.text().is_in(kw7())))
        .select(info.when(gf_genre6()).info()
@@ -293,7 +293,7 @@ fn q31a() -> impl Drive<R: Row> {
 
 fn q31b() -> impl Drive<R: Row> {
     movie.when(company.select(Company::name.rx(r"^Lionsgate")
-                       .and(Company::note.rx(r"\(Blu-ray\)")))
+                         .and(Company::note.rx(r"\(Blu-ray\)")))
           .and(info.when(gf_horror()))
           .and(keyword.text().is_in(kw7()))
           .and(production_year.gt(2000))

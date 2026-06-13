@@ -71,7 +71,7 @@ fn q4c() -> impl Drive<R: Row> { q4(1990, "2.0") }
 
 fn q13a() -> impl Drive<R: Row> {
     movie.when(company.select(country.eq("[de]")
-                       .and(Company::ty.text().eq("production companies")))
+                         .and(Company::ty.text().eq("production companies")))
           .and(kind.text().eq("movie")))
        .select(info.when(Info::ty.text().eq("release dates")).info()
           .and(data.when(Data::ty.text().eq("rating")).text())
@@ -85,14 +85,14 @@ fn q11a() -> impl Drive<R: Row> {
        .select(company.when(country.ne("[pl]")
                        .and(Company::name.rx(r"Film").or(Company::name.rx(r"Warner")))
                        .and(Company::ty.text().eq("production companies"))
-                       .minus(Company::note)).name()
+                     .minus(Company::note)).name()
           .and(link.ty().text().rx(r"follow"))
           .and(title))
 }
 
 fn q22a() -> impl Drive<R: Row> {
     movie.when(info.select(Info::ty.text().eq("countries")
-                    .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
+                      .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
           .and(keyword.text().is_in(murder4()))
           .and(production_year.gt(2008))
           .and(kind.text().is_in(["movie", "episode"])))
@@ -117,8 +117,8 @@ fn q1a() -> impl Drive<R: Row> {
 
 fn q5a() -> impl Drive<R: Row> {
     movie.when(company.select(Company::ty.text().eq("production companies")
-                       .and(Company::note.rx(r"\(theatrical\)"))
-                       .and(Company::note.rx(r"\(France\)")))
+                         .and(Company::note.rx(r"\(theatrical\)"))
+                         .and(Company::note.rx(r"\(France\)")))
           .and(info.info().is_in(nordic8()))
           .and(production_year.gt(2005)))
         .title()
@@ -126,7 +126,7 @@ fn q5a() -> impl Drive<R: Row> {
 
 fn q12a() -> impl Drive<R: Row> {
     movie.when(info.select(Info::ty.text().eq("genres")
-                    .and(Info::info.is_in(["Drama", "Horror"])))
+                      .and(Info::info.is_in(["Drama", "Horror"])))
           .and(production_year.ge(2005))
           .and(production_year.le(2008)))
        .select(company.when(country.eq("[us]")
@@ -140,7 +140,7 @@ fn q14a() -> impl Drive<R: Row> {
     movie.when(keyword.text().is_in(murder4())
           .and(kind.text().eq("movie"))
           .and(info.select(Info::ty.text().eq("countries")
-                    .and(Info::info.is_in(["Sweden","Norway","Germany","Denmark","Swedish","Denish","Norwegian","German","USA","American"]))))
+                      .and(Info::info.is_in(["Sweden","Norway","Germany","Denmark","Swedish","Denish","Norwegian","German","USA","American"]))))
           .and(production_year.gt(2010)))
        .select(data.when(Data::ty.text().eq("rating")
                     .and(Data::text.lt("8.5"))).text()
@@ -177,7 +177,7 @@ fn q11b() -> impl Drive<R: Row> {
        .select(company.when(country.ne("[pl]")
                        .and(Company::name.rx(r"Film").or(Company::name.rx(r"Warner")))
                        .and(Company::ty.text().eq("production companies"))
-                       .minus(Company::note)).name()
+                     .minus(Company::note)).name()
           .and(link.ty().text().rx(r"follows"))
           .and(title))
 }
@@ -214,7 +214,7 @@ fn q1d() -> impl Drive<R: Row> {
 
 fn q12b() -> impl Drive<R: Row> {
     movie.when(company.select(country.eq("[us]")
-                       .and(Company::ty.text().is_in(["production companies", "distributors"])))
+                         .and(Company::ty.text().is_in(["production companies", "distributors"])))
           .and(data.ty().text().eq("bottom 10 rank"))
           .and(production_year.gt(2000))
           .and(title.rx(r"^Birdemic").or(title.rx(r"Movie"))))
@@ -224,7 +224,7 @@ fn q12b() -> impl Drive<R: Row> {
 
 fn q12c() -> impl Drive<R: Row> {
     movie.when(info.select(Info::ty.text().eq("genres")
-                    .and(Info::info.is_in(["Drama", "Horror", "Western", "Family"])))
+                      .and(Info::info.is_in(["Drama", "Horror", "Western", "Family"])))
           .and(production_year.ge(2000))
           .and(production_year.le(2010)))
        .select(company.when(country.eq("[us]")
@@ -249,7 +249,7 @@ fn q14b() -> impl Drive<R: Row> {
     movie.when(keyword.text().is_in(["murder", "murder-in-title"])
           .and(kind.text().eq("movie"))
           .and(info.select(Info::ty.text().eq("countries")
-                    .and(Info::info.is_in(["Sweden","Norway","Germany","Denmark","Swedish","Denish","Norwegian","German","USA","American"]))))
+                      .and(Info::info.is_in(["Sweden","Norway","Germany","Denmark","Swedish","Denish","Norwegian","German","USA","American"]))))
           .and(production_year.gt(2010))
           .and(title.rx(r"murder").or(title.rx(r"Murder")).or(title.rx(r"Mord"))))
        .select(data.when(Data::ty.text().eq("rating")
@@ -261,7 +261,7 @@ fn q14c() -> impl Drive<R: Row> {
     movie.when(keyword.text().is_in(murder4())
           .and(kind.text().is_in(["movie", "episode"]))
           .and(info.select(Info::ty.text().eq("countries")
-                    .and(Info::info.is_in(nordic10()))))
+                      .and(Info::info.is_in(nordic10()))))
           .and(production_year.gt(2005)))
        .select(data.when(Data::ty.text().eq("rating")
                     .and(Data::text.lt("8.5"))).text()
@@ -270,7 +270,7 @@ fn q14c() -> impl Drive<R: Row> {
 
 fn q22b() -> impl Drive<R: Row> {
     movie.when(info.select(Info::ty.text().eq("countries")
-                    .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
+                      .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
           .and(keyword.text().is_in(murder4()))
           .and(production_year.gt(2009))
           .and(kind.text().is_in(["movie", "episode"])))
@@ -285,7 +285,7 @@ fn q22b() -> impl Drive<R: Row> {
 
 fn q22c() -> impl Drive<R: Row> {
     movie.when(info.select(Info::ty.text().eq("countries")
-                    .and(Info::info.is_in(nordic10())))
+                      .and(Info::info.is_in(nordic10())))
           .and(keyword.text().is_in(murder4()))
           .and(production_year.gt(2005))
           .and(kind.text().is_in(["movie", "episode"])))

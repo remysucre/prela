@@ -21,7 +21,7 @@ Consider Join Order Benchmark [22a](https://github.com/gregrahn/join-order-bench
 
 ```rust
 movie.when(info.select(Info::ty.text().eq("countries")
-                .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
+                  .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
       .and(keyword.text().is_in(["murder", "murder-in-title", "blood", "violence"]))
       .and(production_year.gt(2008))
       .and(kind.text().is_in(["movie", "episode"])))

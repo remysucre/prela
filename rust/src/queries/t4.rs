@@ -80,8 +80,8 @@ fn ib_18a() -> impl Query<R = &'static str, D = Id<Movie>> + Drive + Probe {
 fn q18a() -> impl Drive<R: Row> {
     movie.when(ib_18a()
           .and(cast.select(Cast::note.is_in(["(producer)", "(executive producer)"])
-                    .and(person.select(gender.eq("m")
-                                .and(Person::name.rx(r"Tim")))))))
+                      .and(person.select(gender.eq("m")
+                                    .and(Person::name.rx(r"Tim")))))))
        .select(ib_18a()
           .and(data.when(Data::ty.text().eq("votes")).text())
           .and(title))
@@ -100,7 +100,7 @@ fn q18b() -> impl Drive<R: Row> {
           .and(production_year.ge(2008))
           .and(production_year.le(2014))
           .and(cast.select(Cast::note.is_in(writer5())
-                    .and(person.select(gender.eq("f"))))))
+                      .and(person.select(gender.eq("f"))))))
        .select(info.when(gf_18b()).info()
           .and(data.when(Data::ty.text().eq("rating")
                     .and(Data::text.gt("8.0"))).text())
@@ -115,7 +115,7 @@ fn gf_18c() -> impl Query<D = Id<Info>> + Probe {
 fn q18c() -> impl Drive<R: Row> {
     movie.when(info.when(gf_18c())
           .and(cast.select(Cast::note.is_in(writer5())
-                    .and(person.select(gender.eq("m"))))))
+                      .and(person.select(gender.eq("m"))))))
        .select(info.when(gf_18c()).info()
           .and(data.when(Data::ty.text().eq("votes")).text())
           .and(title))
