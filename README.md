@@ -27,8 +27,26 @@ The implementation follows [continuation-passing style](https://en.wikipedia.org
 ## Example
 
 Prela queries are readable even to those new to the language. 
-Consider Join Order Benchmark [22a](https://github.com/gregrahn/join-order-benchmark/blob/master/22a.sql),
-written in the algebra's notation:
+Consider Join Order Benchmark [22a](https://github.com/gregrahn/join-order-benchmark/blob/master/22a.sql) —
+this is the actual code from the test suite:
+
+```rust
+movie
+    .when(info.get(Info::ty.text().eq("countries")
+                   .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
+          .and(keyword.text().is_in(["murder", "murder-in-title", "blood", "violence"]))
+          .and(production_year.gt(2008))
+          .and(kind.text().is_in(["movie", "episode"])))
+    .get(title
+         .and(data.when(Data::text.lt("7.0")
+                        .and(Data::ty.text().eq("rating"))).text())
+         .and(company.when(Company::note.nrx(r"\(USA\)")
+                           .and(Company::note.rx(r"\(200.*\)"))
+                           .and(country.ne("[us]"))
+                           .and(Company::ty.text().eq("production companies"))).name()))
+```
+
+On paper, we write the same query in the algebra's notation:
 
 ```julia
 movie
@@ -83,16 +101,15 @@ One way to think about this is a very extreme form
 
 With that in mind, let us consider a simplified version of the query above:
 
-```julia
-movie : (production_year > 2008) → title
-```
-
-In the executable Rust embedding the same query is a method chain —
-each combinator below has a method spelling
-(`:` is `.when`, `→` is `.get`, and so on):
-
 ```rust
 movie.when(production_year.gt(2008)).get(title)
+```
+
+or, on paper, in the algebra's notation — each combinator has a method
+spelling (`:` is `.when`, `→` is `.get`, and so on):
+
+```julia
+movie : (production_year > 2008) → title
 ```
 
 Here, `title` and `production_year` are both attributes of
@@ -106,9 +123,9 @@ Here, `title` and `production_year` are both attributes of
 Overall, each "column table" can be thought of as a map from the primary
  key to its corresponding value.
 
-Binary operators like `>` and `in` are regular Julia functions,
- but overloaded to operate on relations.
-For example, `production_year > 2008` returns a binary relation that's
+Comparisons like `.gt(…)` and `.is_in(…)` (`>` and `in` on paper) are
+ regular Rust methods on relations.
+For example, `production_year.gt(2008)` returns a binary relation that's
  a subset of `production_year`, such that the second column (the "value" column)
  contains only values greater than 2008.
 The same thing happens for `Info.type == "countries"` and `Info.info in ("Germany", "German", "USA", "American")`
@@ -138,14 +155,13 @@ From this perspective, it is then natural to see `→`
  as a generalization of the function composition ($f \circ g$):
  `R → S` first "applies" `R` to each `x` to get a bunch of `y`,
  then for each `y`, apply `S` to get a bunch of `z`.
-In code:
+In code — this is the engine's actual `Compose` implementation, with the
+continuation `k` receiving each `(x, z)`:
 
-```julia
-function R → S(x)
-  for y in R[x]:
-    for z in S[z]:
-      print((x, z))
-end
+```rust
+fn drive<K: FnMut(D, R)>(&self, mut k: K) {
+    self.a.drive(|x, y| self.b.probe(y, |z| k(x, z)));
+}
 ```
 
 In math: $R \rightarrow S = \lbrace (x, z) \mid \exists y . (x, y) \in R \land (y, z) \in S \rbrace$.
@@ -200,30 +216,35 @@ Since Prela is directly embedded in the host language,
  *for free*.
 Consider TPCH [q21](https://github.com/dragansah/tpch-dbgen/blob/master/tpch-queries/21.sql):
 
-```julia
-late = lineitem : (receiptdate > commitdate)
-n_distinct = vs -> length(unique(vs))
+```rust
+let late = lineitem.when(commitdate.and(receiptdate).filt(|(c, r)| c < r));
 
-qualifying = late : (Li.supplier → (Su.nation → Na.name == "SAUDI ARABIA"))
-                  ∧ (order → (Ord.status == "F")
-                             # EXISTS another supplier on the order (across all lineitems)
-                           ∧ ((order ← Li.supplier) ▷ n_distinct > 1)
-                             # NOT EXISTS another LATE supplier (only L1 is late)
-                           ∧ ((order ← late → Li.supplier) ▷ n_distinct == 1))
+// EXISTS another supplier on the order (across all lineitems)
+let multi_supp = Lineitem::supplier.group_by(order).count_distinct().gt(1);
+// NOT EXISTS another LATE supplier (only L1 is late)
+let only_late = (&late).get(Lineitem::supplier)
+    .group_by((&late).get(order))
+    .count_distinct().eq(1);
 
-counts = (Li.supplier ← qualifying) ▷ ((a, _) -> a + 1, 0)
-counts × Su.name
+let saudi = supplier.and(Supplier::nation.name().eq("SAUDI ARABIA"));
+let f_ords = orders.and(Order::status.eq("F"));
+let qualifying = (&late)
+    .when(Lineitem::supplier.get(saudi)
+          .and(order.get(f_ords.and(multi_supp).and(only_late))));
+
+let counts = qualifying.group_by(Lineitem::supplier).fold(0_i64, |a, _| a + 1);
 ```
 
-The first line assigns the result of a query to the variable `late`,
+The `let` bindings assign sub-queries to variables —
  which would require CTEs in SQL,
- but is simply a variable assignment in Prela/Julia!
-The second line defines the `n_distinct` function to be used later
- in aggregation, which again requires UDFs in SQL,
- but is just a regular anonymous Julia function.
+ but is simply a variable binding in Prela/Rust!
+Where SQL needs a UDF, Prela passes an ordinary closure: the `.filt(|(c, r)| c < r)`
+ cross-column compare, the `|a, _| a + 1` counting fold — and `.count_distinct()`
+ itself is just sugar for `.buf_fold(|vs| …)` with a sort-and-dedup closure.
 
 The next new Prela construct excercised by this query is group-by aggregation.
-Let's focus on the expression `(order ← Li.supplier) ▷ n_distinct > 1`.
+Let's focus on the expression `Lineitem::supplier.group_by(order).count_distinct().gt(1)`
+ (on paper: `(order ← Li.supplier) ▷ n_distinct > 1`).
 Intuitively, this can be read as
 "group the suppliers by their orders, then `COUNT DISTINCT`, and keep the groups
  with more than 1 distinct suppliers.
@@ -237,24 +258,26 @@ GROUP BY order
 ```
 
 To understand how the Prela query works, we shall first introduce one more combinator,
- the inverse `'`: `R'` just flips the columns of `R`, so if `R: X -> Y`,
+ the inverse `.inv()` (`'` on paper): `R'` just flips the columns of `R`, so if `R: X -> Y`,
  then `R': Y -> X`, like how you invert a function. 
 
-Now, back to the query: the "left compose" `←` is short hand for
- "compose with inverse", i.e. `order ← Li.supplier` means `order' → Li.supplier`.
-Here, the `order` relation has type `Li -> Order`, so its inverse `order'`
+Now, back to the query: `s.group_by(r)` (the "left compose" `r ← s` on paper) is
+ short hand for "compose with inverse": `Lineitem::supplier.group_by(order)`
+ means `order' → Li.supplier`.
+Here, the `order` relation has type `Li -> Order`, so its inverse
  has type `Order -> Li` and maps each order to the lineitem.
-Then, `Li.supplier` has type `Li -> Supplier`,
- so the composition `order' → Li.supplier` has type `Order -> Supplier`,
+Then, `Lineitem::supplier` has type `Li -> Supplier`,
+ so the composition has type `Order -> Supplier`,
  mapping each order to its supplier.
-Next, the `▷` combinator groups its LHS relation by the first column,
- and computes the aggregate over its second column using the supplied aggregator function. 
+Next, the fold family (`.fold`, `.buf_fold`, `.count_distinct`; `▷` on paper)
+ groups its receiver by the first column,
+ and computes the aggregate over the second column using the supplied function. 
 In our case, we group the suppliers by order, then count the number of distinct suppliers per group.
-Finally, `>` works as before and filters the LHS relation to keep the orders
+Finally, `.gt(1)` works as before and filters the relation to keep the orders
  that are supplied by more than 1 distinct suppliers,
  which corresponds to the `HAVING` clause in SQL but requires no special treatment in Prela.
-`▷` may appear limiting as it "can only group by one attribute", but that is not true -
- grouping by multiple attributes can be achieved by left-composing with a product!
+Grouping may appear limiting as it "can only group by one attribute", but that is not true -
+ grouping by multiple attributes can be achieved by grouping by a product!
  I'll leave that as an excercise for the reader.
 
 See [rust/src/queries/](./rust/src/queries/) (all 113 JOB queries) and
@@ -313,44 +336,41 @@ What's powerful about continuations is that they *compose*:
 
 Let's look at some code.
 
-First, suppose there's an `iter` function that takes a continuation `k`
+First, suppose there's a `drive` function that takes a continuation `k`
  and applies it per `x`:
 
-```
-def iter(xs, k):
-  for x in xs:
-    k(x)
-```
-
-A `map` then takes an `iter` and returns another one by *doing* `f`:
-
-```
-def map(iter, f):
-  xs, k -> iter(xs, x -> k(f(x)))
+```rust
+fn drive<K: FnMut(i64)>(xs: &[i64], mut k: K) {
+    for &x in xs { k(x); }
+}
 ```
 
-Now, suppose `blah.map(f)` desugars to `map(blah, f)`, then `iter.map(f)`
- becomes `map(f, iter)`.
+A `map` then takes a drive-able thing and returns another one by *doing* `f`:
 
-If we inline the definition, then `iter.map(x -> x + 1).map(x -> x * 2)`
- becomes a brand new iter that fuses both `map`s into one pass:
-
+```rust
+fn map<K: FnMut(i64)>(xs: &[i64], f: impl Fn(i64) -> i64, mut k: K) {
+    drive(xs, |x| k(f(x)))
+}
 ```
-def iter_mapped(xs, k):
-  for x in xs:
-    k((x + 1) * 2)
+
+If we inline the definitions, then `xs.map(|x| x + 1).map(|x| x * 2)`
+ becomes a brand new drive that fuses both `map`s into one pass:
+
+```rust
+fn fused<K: FnMut(i64)>(xs: &[i64], mut k: K) {
+    for &x in xs { k((x + 1) * 2); }
+}
 ```
 
 There's no intermediate list at all: each `x` flows through `+ 1` and `* 2`
  and arrives in `k` before the next `x` is read.
 Instead of applying `f` to each `x` and returning the new list,
  `map` applies `f`, then immediately applies the continuation `k` to the result.
-Finally, to get the result out, we supply an *collect* continuation:
+Finally, to get the result out, we supply a *collect* continuation:
 
-```
-def collect(iter):
-  ys = []
-  iter(y -> ys.insert(y))
+```rust
+let mut ys = Vec::new();
+drive(xs, |y| ys.push(y));
 ```
 
 We can chain together any number of steps, and after inlining,
