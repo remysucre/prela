@@ -68,7 +68,7 @@ And instead of explicit conditions,
 To understand what's going on under the hood, we should first clarify
  the data model used by Prela.
 The theoretical foundation of Prela is a formalism of relations
- 100 years older than Codd's relational model,
+ 100 years older than the familiar *relational* algebra,
  called (confusingly) [*relation* algebra](https://en.wikipedia.org/wiki/Relation_algebra).
 To avoid confusion, I will call it
  [Tarski's Algebra of Relations](https://www.cl.cam.ac.uk/teaching/1415/Databases/Tarski_1941.pdf) (TAR)
