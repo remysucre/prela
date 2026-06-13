@@ -128,9 +128,9 @@ fn q12() -> String {
     //   commit  < receipt:         ~62%  (barely filters; runs last)
     let live = lineitem
         .when(receiptdate.during(19940101, 19950101)
-              .and(shipmode.is_in(["MAIL", "SHIP"]))
-              .and(shipdate.and(commitdate).filt(|(s, c)| s < c))
-              .and(commitdate.and(receiptdate).filt(|(c, r)| c < r)));
+         .and(shipmode.is_in(["MAIL", "SHIP"]))
+         .and(shipdate.and(commitdate).filt(|(s, c)| s < c))
+         .and(commitdate.and(receiptdate).filt(|(c, r)| c < r)));
     let scan = (&live).shipmode();
     let prio = (&live).order().priority();
     let result = prio.group_by(scan).fold((0_i64, 0_i64), |(h, l), pr| {
@@ -156,7 +156,7 @@ fn q13() -> String {
     let f_special = memmem::Finder::new("special");
     let live_orders = orders
         .when(Order::customer.ne(Dense::NONE)    // skip sparse orderkey gaps (hole fill NO_ID)
-              .and(Order::comment.filt(move |c: &str| {
+         .and(Order::comment.filt(move |c: &str| {
                   match f_special.find(c.as_bytes()) {
                       Some(p) => !c[p + "special".len()..].contains("requests"),
                       None => true,
@@ -193,7 +193,7 @@ pub(super) fn q17() -> String {
     let tpp: HashIdx<_, _> = threshold_per_part.collect();
     let live = lineitem
         .when((&live_li)
-              .and(quantity.and(Lineitem::part.get(&tpp)).filt(|(q, t)| q < t)));
+         .and(quantity.and(Lineitem::part.get(&tpp)).filt(|(q, t)| q < t)));
     let sum = live.get(extendedprice)
         .unwrap_fold(0.0_f64, |a, e| a + e);
     f(sum / 7.0)
@@ -268,7 +268,7 @@ fn q21() -> String {
     let only_late_bs  = Bitset::over(orders, &only_late);
     let qualifying = (&late)
         .when(Lineitem::supplier.get(&saudi_bs)
-              .and(order.get((&f_ords_bs).and(&multi_supp_bs).and(&only_late_bs))));
+         .and(order.get((&f_ords_bs).and(&multi_supp_bs).and(&only_late_bs))));
     let counts = qualifying.group_by(Lineitem::supplier).fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(Id<Supplier>, i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
@@ -328,8 +328,8 @@ fn q2() -> String {
         .dense_fold(part.iq().n, f64::INFINITY, |a, c| if c < a { c } else { a });
     let target = (&eu_ps)
         .when(PartSupp::part.size().eq(15)
-              .and(PartSupp::part.ty().filt(|s: &str| s.ends_with("BRASS")))
-              .and(supplycost.and(PartSupp::part.get(&min_per_part)).filt(|(c, m)| c == m)));
+         .and(PartSupp::part.ty().filt(|s: &str| s.ends_with("BRASS")))
+         .and(supplycost.and(PartSupp::part.get(&min_per_part)).filt(|(c, m)| c == m)));
     // Project per PS row → (acct, sname, nname, pkey, mfgr, addr, phone, comm)
     let mut rows: Vec<(f64, &str, &str, Id<Part>, &str, &str, &str, &str)> = Vec::new();
     target.drive(|psi, _| {

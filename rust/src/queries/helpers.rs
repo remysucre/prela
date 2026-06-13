@@ -55,8 +55,8 @@ pub fn min_row<Q: Drive>(q: Q) -> String where Q::R: Row {
 /// a note — the `co` binding of queries 21a-c and 27a-c.
 pub fn film_or_warner_co() -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive + Probe {
     company.when(country.ne("[pl]")
-                   .and(Company::name.rx(r"Film").or(Company::name.rx(r"Warner")))
-                   .and(Company::ty.text().eq("production companies").minus(Company::note)))
+            .and(Company::name.rx(r"Film").or(Company::name.rx(r"Warner")))
+            .and(Company::ty.text().eq("production companies").minus(Company::note)))
 }
 
 /// The link-type label ("followed by", …) of each movie's "follow"-typed

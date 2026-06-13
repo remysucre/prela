@@ -41,7 +41,7 @@ pub const ENTRIES: &[super::Entry] = &[
 fn q2(cc: &'static str) -> impl Drive<R: Row> {
     movie
         .when(keyword.text().eq("character-name-in-title")
-              .and(company.country().eq(cc)))
+         .and(company.country().eq(cc)))
         .title()
 }
 
@@ -53,8 +53,8 @@ fn q2d() -> impl Drive<R: Row> { q2("[us]") }
 fn q3b() -> impl Drive<R: Row> {
     movie
         .when(keyword.text().rx(r"sequel")
-              .and(info.info().eq("Bulgaria"))
-              .and(production_year.gt(2010)))
+         .and(info.info().eq("Bulgaria"))
+         .and(production_year.gt(2010)))
         .title()
 }
 
@@ -62,10 +62,10 @@ fn q3b() -> impl Drive<R: Row> {
 fn q4(year: i64, rating: &'static str) -> impl Drive<R: Row> {
     movie
         .when(keyword.text().rx(r"sequel")
-              .and(production_year.gt(year)))
+         .and(production_year.gt(year)))
         .get(data.when(Data::ty.text().eq("rating")
-                         .and(Data::text.gt(rating))).text()
-             .and(title))
+                  .and(Data::text.gt(rating))).text()
+         .and(title))
 }
 
 fn q4a() -> impl Drive<R: Row> { q4(2005, "5.0") }
@@ -75,105 +75,105 @@ fn q4c() -> impl Drive<R: Row> { q4(1990, "2.0") }
 fn q13a() -> impl Drive<R: Row> {
     movie
         .when(company.get(country.eq("[de]")
-                            .and(Company::ty.text().eq("production companies")))
-              .and(kind.text().eq("movie")))
+                      .and(Company::ty.text().eq("production companies")))
+         .and(kind.text().eq("movie")))
         .get(info.when(Info::ty.text().eq("release dates")).info()
-             .and(data.when(Data::ty.text().eq("rating")).text())
-             .and(title))
+         .and(data.when(Data::ty.text().eq("rating")).text())
+         .and(title))
 }
 
 fn q11a() -> impl Drive<R: Row> {
     movie
         .when(keyword.text().eq("sequel")
-              .and(production_year.ge(1950))
-              .and(production_year.le(2000)))
+         .and(production_year.ge(1950))
+         .and(production_year.le(2000)))
         .get(company.when(country.ne("[pl]")
-                            .and(Company::name.rx(r"Film").or(Company::name.rx(r"Warner")))
-                            .and(Company::ty.text().eq("production companies"))
-                            .minus(Company::note)).name()
-             .and(link.ty().text().rx(r"follow"))
-             .and(title))
+                     .and(Company::name.rx(r"Film").or(Company::name.rx(r"Warner")))
+                     .and(Company::ty.text().eq("production companies"))
+                     .minus(Company::note)).name()
+         .and(link.ty().text().rx(r"follow"))
+         .and(title))
 }
 
 fn q22a() -> impl Drive<R: Row> {
     movie
         .when(info.get(Info::ty.text().eq("countries")
-                         .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
-              .and(keyword.text().is_in(murder4()))
-              .and(production_year.gt(2008))
-              .and(kind.text().is_in(["movie", "episode"])))
+                   .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
+         .and(keyword.text().is_in(murder4()))
+         .and(production_year.gt(2008))
+         .and(kind.text().is_in(["movie", "episode"])))
         .get(title
-             .and(data.when(Data::text.lt("7.0")
-                              .and(Data::ty.text().eq("rating"))).text())
-             .and(company.when(Company::note.nrx(r"\(USA\)")
-                                 .and(Company::note.rx(r"\(200.*\)"))
-                                 .and(country.ne("[us]"))
-                                 .and(Company::ty.text().eq("production companies"))).name()))
+         .and(data.when(Data::text.lt("7.0")
+                   .and(Data::ty.text().eq("rating"))).text())
+         .and(company.when(Company::note.nrx(r"\(USA\)")
+                      .and(Company::note.rx(r"\(200.*\)"))
+                      .and(country.ne("[us]"))
+                      .and(Company::ty.text().eq("production companies"))).name()))
 }
 
 fn q1a() -> impl Drive<R: Row> {
     movie
         .when(data.ty().text().eq("top 250 rank"))
         .get(company.when(Company::ty.text().eq("production companies")
-                            .and(Company::note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)"))
-                            .and(Company::note.rx(r"\(co-production\)")
-                                 .or(Company::note.rx(r"\(presents\)")))).note()
-             .and(title)
-             .and(production_year))
+                     .and(Company::note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)"))
+                     .and(Company::note.rx(r"\(co-production\)")
+                      .or(Company::note.rx(r"\(presents\)")))).note()
+         .and(title)
+         .and(production_year))
 }
 
 fn q5a() -> impl Drive<R: Row> {
     movie
         .when(company.get(Company::ty.text().eq("production companies")
-                            .and(Company::note.rx(r"\(theatrical\)"))
-                            .and(Company::note.rx(r"\(France\)")))
-              .and(info.info().is_in(nordic8()))
-              .and(production_year.gt(2005)))
+                      .and(Company::note.rx(r"\(theatrical\)"))
+                      .and(Company::note.rx(r"\(France\)")))
+         .and(info.info().is_in(nordic8()))
+         .and(production_year.gt(2005)))
         .title()
 }
 
 fn q12a() -> impl Drive<R: Row> {
     movie
         .when(info.get(Info::ty.text().eq("genres")
-                         .and(Info::info.is_in(["Drama", "Horror"])))
-              .and(production_year.ge(2005))
-              .and(production_year.le(2008)))
+                   .and(Info::info.is_in(["Drama", "Horror"])))
+         .and(production_year.ge(2005))
+         .and(production_year.le(2008)))
         .get(company.when(country.eq("[us]")
-                            .and(Company::ty.text().eq("production companies"))).name()
-             .and(data.when(Data::ty.text().eq("rating")
-                              .and(Data::text.gt("8.0"))).text())
-             .and(title))
+                     .and(Company::ty.text().eq("production companies"))).name()
+         .and(data.when(Data::ty.text().eq("rating")
+                   .and(Data::text.gt("8.0"))).text())
+         .and(title))
 }
 
 fn q14a() -> impl Drive<R: Row> {
     movie
         .when(keyword.text().is_in(murder4())
-              .and(kind.text().eq("movie"))
-              .and(info.get(Info::ty.text().eq("countries")
-                              .and(Info::info.is_in(["Sweden","Norway","Germany","Denmark","Swedish","Denish","Norwegian","German","USA","American"]))))
-              .and(production_year.gt(2010)))
+         .and(kind.text().eq("movie"))
+         .and(info.get(Info::ty.text().eq("countries")
+                   .and(Info::info.is_in(["Sweden","Norway","Germany","Denmark","Swedish","Denish","Norwegian","German","USA","American"]))))
+         .and(production_year.gt(2010)))
         .get(data.when(Data::ty.text().eq("rating")
-                         .and(Data::text.lt("8.5"))).text()
-             .and(title))
+                  .and(Data::text.lt("8.5"))).text()
+         .and(title))
 }
 
 fn q1b() -> impl Drive<R: Row> {
     movie
         .when(data.ty().text().eq("bottom 10 rank")
-              .and(production_year.ge(2005))
-              .and(production_year.le(2010)))
+         .and(production_year.ge(2005))
+         .and(production_year.le(2010)))
         .get(company.when(Company::ty.text().eq("production companies")
-                            .and(Company::note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)"))).note()
-             .and(title)
-             .and(production_year))
+                     .and(Company::note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)"))).note()
+         .and(title)
+         .and(production_year))
 }
 
 // q3a/q3c differ only in the country list and the year cutoff.
 fn q3ac(countries: Vec<&'static str>, year: i64) -> impl Drive<R: Row> {
     movie
         .when(keyword.text().rx(r"sequel")
-              .and(info.info().is_in(countries))
-              .and(production_year.gt(year)))
+         .and(info.info().is_in(countries))
+         .and(production_year.gt(year)))
         .title()
 }
 
@@ -185,138 +185,138 @@ fn q3c() -> impl Drive<R: Row> {
 fn q11b() -> impl Drive<R: Row> {
     movie
         .when(keyword.text().eq("sequel")
-              .and(production_year.eq(1998))
-              .and(title.rx(r"Money")))
+         .and(production_year.eq(1998))
+         .and(title.rx(r"Money")))
         .get(company.when(country.ne("[pl]")
-                            .and(Company::name.rx(r"Film").or(Company::name.rx(r"Warner")))
-                            .and(Company::ty.text().eq("production companies"))
-                            .minus(Company::note)).name()
-             .and(link.ty().text().rx(r"follows"))
-             .and(title))
+                     .and(Company::name.rx(r"Film").or(Company::name.rx(r"Warner")))
+                     .and(Company::ty.text().eq("production companies"))
+                     .minus(Company::note)).name()
+         .and(link.ty().text().rx(r"follows"))
+         .and(title))
 }
 
 fn q13b() -> impl Drive<R: Row> {
     movie
         .when(kind.text().eq("movie")
-              .and(info.ty().text().eq("release dates"))
-              .and(title.ne(""))
-              .and(title.rx(r"Champion").or(title.rx(r"Loser"))))
+         .and(info.ty().text().eq("release dates"))
+         .and(title.ne(""))
+         .and(title.rx(r"Champion").or(title.rx(r"Loser"))))
         .get(company.when(country.eq("[us]")
-                            .and(Company::ty.text().eq("production companies"))).name()
-             .and(data.when(Data::ty.text().eq("rating")).text())
-             .and(title))
+                     .and(Company::ty.text().eq("production companies"))).name()
+         .and(data.when(Data::ty.text().eq("rating")).text())
+         .and(title))
 }
 
 fn q1c() -> impl Drive<R: Row> {
     movie
         .when(data.ty().text().eq("top 250 rank")
-              .and(production_year.gt(2010)))
+         .and(production_year.gt(2010)))
         .get(company.when(Company::ty.text().eq("production companies")
-                            .and(Company::note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)"))
-                            .and(Company::note.rx(r"\(co-production\)"))).note()
-             .and(title)
-             .and(production_year))
+                     .and(Company::note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)"))
+                     .and(Company::note.rx(r"\(co-production\)"))).note()
+         .and(title)
+         .and(production_year))
 }
 
 fn q1d() -> impl Drive<R: Row> {
     movie
         .when(data.ty().text().eq("bottom 10 rank")
-              .and(production_year.gt(2000)))
+         .and(production_year.gt(2000)))
         .get(company.when(Company::ty.text().eq("production companies")
-                            .and(Company::note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)"))).note()
-             .and(title)
-             .and(production_year))
+                     .and(Company::note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)"))).note()
+         .and(title)
+         .and(production_year))
 }
 
 fn q12b() -> impl Drive<R: Row> {
     movie
         .when(company.get(country.eq("[us]")
-                            .and(Company::ty.text().is_in(["production companies", "distributors"])))
-              .and(data.ty().text().eq("bottom 10 rank"))
-              .and(production_year.gt(2000))
-              .and(title.rx(r"^Birdemic").or(title.rx(r"Movie"))))
+                      .and(Company::ty.text().is_in(["production companies", "distributors"])))
+         .and(data.ty().text().eq("bottom 10 rank"))
+         .and(production_year.gt(2000))
+         .and(title.rx(r"^Birdemic").or(title.rx(r"Movie"))))
         .get(info.when(Info::ty.text().eq("budget")).info()
-             .and(title))
+         .and(title))
 }
 
 fn q12c() -> impl Drive<R: Row> {
     movie
         .when(info.get(Info::ty.text().eq("genres")
-                         .and(Info::info.is_in(["Drama", "Horror", "Western", "Family"])))
-              .and(production_year.ge(2000))
-              .and(production_year.le(2010)))
+                   .and(Info::info.is_in(["Drama", "Horror", "Western", "Family"])))
+         .and(production_year.ge(2000))
+         .and(production_year.le(2010)))
         .get(company.when(country.eq("[us]")
-                            .and(Company::ty.text().eq("production companies"))).name()
-             .and(data.when(Data::ty.text().eq("rating")
-                              .and(Data::text.gt("7.0"))).text())
-             .and(title))
+                     .and(Company::ty.text().eq("production companies"))).name()
+         .and(data.when(Data::ty.text().eq("rating")
+                   .and(Data::text.gt("7.0"))).text())
+         .and(title))
 }
 
 fn q13c() -> impl Drive<R: Row> {
     movie
         .when(kind.text().eq("movie")
-              .and(info.ty().text().eq("release dates"))
-              .and(title.ne(""))
-              .and(title.rx(r"^Champion").or(title.rx(r"^Loser"))))
+         .and(info.ty().text().eq("release dates"))
+         .and(title.ne(""))
+         .and(title.rx(r"^Champion").or(title.rx(r"^Loser"))))
         .get(company.when(country.eq("[us]")
-                            .and(Company::ty.text().eq("production companies"))).name()
-             .and(data.when(Data::ty.text().eq("rating")).text())
-             .and(title))
+                     .and(Company::ty.text().eq("production companies"))).name()
+         .and(data.when(Data::ty.text().eq("rating")).text())
+         .and(title))
 }
 
 fn q14b() -> impl Drive<R: Row> {
     movie
         .when(keyword.text().is_in(["murder", "murder-in-title"])
-              .and(kind.text().eq("movie"))
-              .and(info.get(Info::ty.text().eq("countries")
-                              .and(Info::info.is_in(["Sweden","Norway","Germany","Denmark","Swedish","Denish","Norwegian","German","USA","American"]))))
-              .and(production_year.gt(2010))
-              .and(title.rx(r"murder").or(title.rx(r"Murder")).or(title.rx(r"Mord"))))
+         .and(kind.text().eq("movie"))
+         .and(info.get(Info::ty.text().eq("countries")
+                   .and(Info::info.is_in(["Sweden","Norway","Germany","Denmark","Swedish","Denish","Norwegian","German","USA","American"]))))
+         .and(production_year.gt(2010))
+         .and(title.rx(r"murder").or(title.rx(r"Murder")).or(title.rx(r"Mord"))))
         .get(data.when(Data::ty.text().eq("rating")
-                         .and(Data::text.gt("6.0"))).text()
-             .and(title))
+                  .and(Data::text.gt("6.0"))).text()
+         .and(title))
 }
 
 fn q14c() -> impl Drive<R: Row> {
     movie
         .when(keyword.text().is_in(murder4())
-              .and(kind.text().is_in(["movie", "episode"]))
-              .and(info.get(Info::ty.text().eq("countries")
-                              .and(Info::info.is_in(nordic10()))))
-              .and(production_year.gt(2005)))
+         .and(kind.text().is_in(["movie", "episode"]))
+         .and(info.get(Info::ty.text().eq("countries")
+                   .and(Info::info.is_in(nordic10()))))
+         .and(production_year.gt(2005)))
         .get(data.when(Data::ty.text().eq("rating")
-                         .and(Data::text.lt("8.5"))).text()
-             .and(title))
+                  .and(Data::text.lt("8.5"))).text()
+         .and(title))
 }
 
 fn q22b() -> impl Drive<R: Row> {
     movie
         .when(info.get(Info::ty.text().eq("countries")
-                         .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
-              .and(keyword.text().is_in(murder4()))
-              .and(production_year.gt(2009))
-              .and(kind.text().is_in(["movie", "episode"])))
+                   .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
+         .and(keyword.text().is_in(murder4()))
+         .and(production_year.gt(2009))
+         .and(kind.text().is_in(["movie", "episode"])))
         .get(title
-             .and(data.when(Data::text.lt("7.0")
-                              .and(Data::ty.text().eq("rating"))).text())
-             .and(company.when(Company::note.nrx(r"\(USA\)")
-                                 .and(Company::note.rx(r"\(200.*\)"))
-                                 .and(country.ne("[us]"))
-                                 .and(Company::ty.text().eq("production companies"))).name()))
+         .and(data.when(Data::text.lt("7.0")
+                   .and(Data::ty.text().eq("rating"))).text())
+         .and(company.when(Company::note.nrx(r"\(USA\)")
+                      .and(Company::note.rx(r"\(200.*\)"))
+                      .and(country.ne("[us]"))
+                      .and(Company::ty.text().eq("production companies"))).name()))
 }
 
 fn q22c() -> impl Drive<R: Row> {
     movie
         .when(info.get(Info::ty.text().eq("countries")
-                         .and(Info::info.is_in(nordic10())))
-              .and(keyword.text().is_in(murder4()))
-              .and(production_year.gt(2005))
-              .and(kind.text().is_in(["movie", "episode"])))
+                   .and(Info::info.is_in(nordic10())))
+         .and(keyword.text().is_in(murder4()))
+         .and(production_year.gt(2005))
+         .and(kind.text().is_in(["movie", "episode"])))
         .get(title
-             .and(data.when(Data::text.lt("8.5")
-                              .and(Data::ty.text().eq("rating"))).text())
-             .and(company.when(Company::note.nrx(r"\(USA\)")
-                                 .and(Company::note.rx(r"\(200.*\)"))
-                                 .and(country.ne("[us]"))
-                                 .and(Company::ty.text().eq("production companies"))).name()))
+         .and(data.when(Data::text.lt("8.5")
+                   .and(Data::ty.text().eq("rating"))).text())
+         .and(company.when(Company::note.nrx(r"\(USA\)")
+                      .and(Company::note.rx(r"\(200.*\)"))
+                      .and(country.ne("[us]"))
+                      .and(Company::ty.text().eq("production companies"))).name()))
 }

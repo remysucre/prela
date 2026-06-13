@@ -115,8 +115,8 @@ fn q8() -> String {
     }
     let live = lineitem
         .when(Lineitem::part.ty().eq("ECONOMY ANODIZED STEEL")
-              .and(order.filt(move |o: Id<Order>| ord_is_america[o.idx()]))
-              .and(order.date().between(19950101, 19961231)));
+         .and(order.filt(move |o: Id<Order>| ord_is_america[o.idx()]))
+         .and(order.date().between(19950101, 19961231)));
     let year = (&live).order().date().map(|d: i64| d / 10000);
     let snat_name = (&live).supplier().nation().name();
     let scan = (&live).get(extendedprice.and(discount)).and(snat_name);
@@ -180,9 +180,9 @@ fn q12() -> String {
     //   commit < receipt:          ~62%   (barely filters)
     let live = lineitem
         .when(receiptdate.during(19940101, 19950101)
-              .and(shipmode.is_in(["MAIL", "SHIP"]))
-              .and(shipdate.and(commitdate).filt(|(s, c)| s < c))
-              .and(commitdate.and(receiptdate).filt(|(c, r)| c < r)));
+         .and(shipmode.is_in(["MAIL", "SHIP"]))
+         .and(shipdate.and(commitdate).filt(|(s, c)| s < c))
+         .and(commitdate.and(receiptdate).filt(|(c, r)| c < r)));
     let scan = (&live).shipmode();
     let prio = (&live).order().priority();
     let result = prio.group_by(scan).fold((0_i64, 0_i64), |(h, l), pr| {
@@ -312,7 +312,7 @@ fn q20() -> String {
     let threshold = (&sum_qty_v).map(|s| 0.5 * s);
     let qual_ps = partsupp
         .when(PartSupp::part.name().filt(|n: &str| n.starts_with("forest"))
-              .and(availqty.map(|q| q as f64).and(threshold).filt(|(a, t)| a > t)));
+         .and(availqty.map(|q| q as f64).and(threshold).filt(|(a, t)| a > t)));
     let canada_supps = supplier.when(Supplier::nation.name().eq("CANADA"));
     let qual_supps: MatSet<_> = qual_ps.supplier().collect();
     let target = canada_supps.when(qual_supps);
@@ -378,10 +378,10 @@ fn q21() -> String {
         // (1 byte) → multi (1 byte) → only-late (2 reads). Cheap-and-selective
         // first; the member check short-circuits left to right.
         .when(commitdate.and(receiptdate).filt(|(c, r)| c < r)
-              .and(Lineitem::supplier.filt(move |s: Id<Supplier>| is_saudi[s.idx()]))
-              .and(order.filt(move |o: Id<Order>| is_f_ord[o.idx()]))
-              .and(order.filt(move |o: Id<Order>| multi[o.idx()]))
-              .and(order.and(Lineitem::supplier).filt(move |(o, s): (Id<Order>, Id<Supplier>)| {
+         .and(Lineitem::supplier.filt(move |s: Id<Supplier>| is_saudi[s.idx()]))
+         .and(order.filt(move |o: Id<Order>| is_f_ord[o.idx()]))
+         .and(order.filt(move |o: Id<Order>| multi[o.idx()]))
+         .and(order.and(Lineitem::supplier).filt(move |(o, s): (Id<Order>, Id<Supplier>)| {
                   !late_multi[o.idx()] && late_first[o.idx()] == s.idx()
               })));
     let counts = qualifying.group_by(Lineitem::supplier).fold(0_i64, |a, _| a + 1);
@@ -419,8 +419,8 @@ fn q2() -> String {
     });
     let target = (&eu_ps)
         .when(PartSupp::part.size().eq(15)
-              .and(PartSupp::part.ty().filt(|s: &str| s.ends_with("BRASS")))
-              .and(supplycost.and(PartSupp::part)
+         .and(PartSupp::part.ty().filt(|s: &str| s.ends_with("BRASS")))
+         .and(supplycost.and(PartSupp::part)
                    .filt(move |(c, p): (f64, Id<Part>)| c == min_per_part[p.idx()])));
     // Project per PS row → (acct, sname, nname, pkey, mfgr, addr, phone, comm)
     let mut rows: Vec<(f64, &str, &str, Id<Part>, &str, &str, &str, &str)> = Vec::new();

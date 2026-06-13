@@ -165,7 +165,7 @@ JOB 22a's first conjunct — Julia `info → (Info.type == "countries") ∧
 
 ```rust
 info.get(Info::ty.text().eq("countries")
-         .and(Info::info.is_in([…])))
+     .and(Info::info.is_in([…])))
 ```
 
 while its subqueries `data : (…) ∧ (…) → Data.data` are genuine
@@ -291,7 +291,7 @@ define a helper fn that returns a fresh instance:
 ```rust
 fn co_27() -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive + Probe {
     company.when(country.ne("[pl]")
-                 .and(/* … the rest of the Company-side conjunction … */))
+            .and(/* … the rest of the Company-side conjunction … */))
 }
 ```
 
@@ -381,9 +381,16 @@ fn qXa() -> impl Drive<R: Row> {
         .get(cast
              .when(/* cast conjunct tree */)
              .person().name()      // cast projection — navigation
-             .and(title))
+         .and(title))
 }
 ```
+
+## Layout
+A continuation conjunct (`.and`/`.or`/`.minus` on its own line) is indented
+one space past the `.` of the method call it continues — e.g. the `.and`
+siblings of a `.when(…)` sit one space in from `.when`, NOT aligned under the
+first conjunct. This keeps deep conjunctions compact; see any multi-conjunct
+query (e.g. `q22a`).
 
 ## Naming
 Each query fn: `q<lowercase id>` (e.g. `q2a`, `q11d`, `q22c`).

@@ -34,9 +34,9 @@ pub fn q6a_methods() -> impl Drive<R: Row> {
                               .eq("marvel-cinematic-universe");
     let q = movie
         .when(production_year.gt(2010)
-              .and(kw_marvel()))
+         .and(kw_marvel()))
         .get(kw_marvel()
-             .and(title)
-             .and(cast.person().name().rx(r"Downey.*Robert")));
+         .and(title)
+         .and(cast.person().name().rx(r"Downey.*Robert")));
     q
 }

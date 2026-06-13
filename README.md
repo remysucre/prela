@@ -22,17 +22,17 @@ Consider Join Order Benchmark [22a](https://github.com/gregrahn/join-order-bench
 ```rust
 movie
     .when(info.get(Info::ty.text().eq("countries")
-                   .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
-          .and(keyword.text().is_in(["murder", "murder-in-title", "blood", "violence"]))
-          .and(production_year.gt(2008))
-          .and(kind.text().is_in(["movie", "episode"])))
+              .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
+     .and(keyword.text().is_in(["murder", "murder-in-title", "blood", "violence"]))
+     .and(production_year.gt(2008))
+     .and(kind.text().is_in(["movie", "episode"])))
     .get(title
          .and(data.when(Data::text.lt("7.0")
-                        .and(Data::ty.text().eq("rating"))).text())
+                   .and(Data::ty.text().eq("rating"))).text())
          .and(company.when(Company::note.nrx(r"\(USA\)")
-                           .and(Company::note.rx(r"\(200.*\)"))
-                           .and(country.ne("[us]"))
-                           .and(Company::ty.text().eq("production companies"))).name()))
+                      .and(Company::note.rx(r"\(200.*\)"))
+                      .and(country.ne("[us]"))
+                      .and(Company::ty.text().eq("production companies"))).name()))
 ```
 
 On paper, we write the same query in the algebra's notation:
@@ -219,7 +219,7 @@ let saudi = supplier.and(Supplier::nation.name().eq("SAUDI ARABIA"));
 let f_ords = orders.and(Order::status.eq("F"));
 let qualifying = (&late)
     .when(Lineitem::supplier.get(saudi)
-          .and(order.get(f_ords.and(multi_supp).and(only_late))));
+     .and(order.get(f_ords.and(multi_supp).and(only_late))));
 
 let counts = qualifying.group_by(Lineitem::supplier).fold(0_i64, |a, _| a + 1);
 ```
