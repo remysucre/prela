@@ -189,7 +189,7 @@ let counts = qualifying.group_by(Lineitem::supplier).fold(0_i64, |a, _| a + 1);
 ```
 
 The `let` bindings assign sub-queries to variables — which would require CTEs in SQL,
- but is simply a variable binding in Prela/Rust!
+ but is simply a variable binding in Prela/Rust.
 Where SQL needs a UDF, Prela passes an ordinary closure,
  e.g., the predicate in `.filt(|(c, r)| c < r)`
  and the accumulator `|a, _| a + 1` passed to `fold`. 
@@ -254,7 +254,7 @@ Actually, I never really understood CPS until working on Prela,
 I've written more about it [here](https://remy.wang/blog/cps.html). 
 Long story short, CPS allows each combinator to be implemented
  in a few lines in a modular way,
- yet compiling to code that recovers efficient columnar execution!
+ yet compiling to code that recovers efficient columnar execution.
 
 ## Performance
 
@@ -262,7 +262,7 @@ Some consider the query optimizer to be the heart of a database,
  transforming high-level queries into fast, executable code.
 I've also spent my graduate school years working on query optimizers,
  so it's probably quite surprising that Prela doesn't have one.
-In other words, a Prela query *is* also a query plan!
+In other words, a Prela query *is* also a query plan.
 Each query will be executed exactly as it is written,
  giving the programmer complete control over every
  aspect of query performance.
