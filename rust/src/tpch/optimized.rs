@@ -254,24 +254,23 @@ fn q21() -> String {
     };
     let supp_state = Lineitem::supplier.group_by(order)
         .dense_fold(orders.iq().n, (None, false), track);
-    let multi_supp = orders.with(supp_state.filt(|(_, m): (Option<Id<Supplier>>, bool)| m));
     let late_supp_state = (&late).select(Lineitem::supplier)
         .group_by((&late).select(order))
         .dense_fold(orders.iq().n, (None, false), track);
-    let only_late = orders.with(late_supp_state
-        .filt(|(first, multi): (Option<Id<Supplier>>, bool)| first.is_some() && !multi));
-    let saudi = supplier.with(Supplier::nation.eq("SAUDI ARABIA"));
-    let f_ords = orders.with(Order::status.eq("F"));
-    // Hoist each per-row membership probe into a dense `Bitset` over its
-    // domain — the ∧ chain on `qualifying` becomes 4 bit-tests per row
-    // instead of lazy Dict/regex probe chains.
-    let saudi_bs      = Bitset::over(supplier, &saudi);
-    let f_ords_bs     = Bitset::over(orders, &f_ords);
-    let multi_supp_bs = Bitset::over(orders, &multi_supp);
-    let only_late_bs  = Bitset::over(orders, &only_late);
+    // Only the SAUDI suppliers' late lineitems can qualify, so `saudi` is the
+    // selective FIRST conjunct — precompute it as a Bitset (bit-tested per
+    // late lineitem; supplier.n is tiny). The order predicates (status F,
+    // >1 distinct supplier, exactly-one-late) ride behind it: rather than
+    // materialize each as an order-wide Bitset (three 6M-row build scans),
+    // probe the status column and the dense-fold states directly — they fire
+    // only on the handful of saudi-late survivors the `.and` short-circuits to.
+    let saudi_bs   = Bitset::over(supplier, &supplier.with(Supplier::nation.eq("SAUDI ARABIA")));
+    let f_ord      = Order::status.eq("F");
+    let multi_supp = supp_state.filt(|(_, m): (Option<Id<Supplier>>, bool)| m);
+    let only_late  = late_supp_state.filt(|(f, m): (Option<Id<Supplier>>, bool)| f.is_some() && !m);
     let qualifying = (&late)
         .with(Lineitem::supplier.select(&saudi_bs)
-         .and(order.select((&f_ords_bs).and(&multi_supp_bs).and(&only_late_bs))));
+         .and(order.select((&f_ord).and(&multi_supp).and(&only_late))));
     let counts = qualifying.group_by(Lineitem::supplier).fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(Id<Supplier>, i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
