@@ -161,7 +161,7 @@ pub const NO_ID: usize = usize::MAX;
 // and queries, unchanged); `D = Id<E>` carries a phantom entity tag so that
 // composing through mismatched entities is a COMPILE error — e.g. with
 // `movie_keyword: Query<D = Id<Movie>, R = Id<Keyword>>` and
-// `person_name: Query<D = Id<Person>>`, `movie_keyword.get(person_name)`
+// `person_name: Query<D = Id<Person>>`, `movie_keyword.select(person_name)`
 // fails to type-check (expected `Id<Keyword>`, found `Id<Person>`).
 pub trait Dense: Copy + Eq + Hash + 'static {
     /// Missing-id sentinel for this domain — fails every bounds check.
@@ -931,9 +931,9 @@ impl<Q: Probe, F: Fn(Q::R) -> S, S: Copy> Probe for Map<Q, F, S> {
 // to ones built from `&'static` leaves directly.
 pub trait QueryExt: IntoQuery + Sized {
     /// `→` — compose two queries (bridge type = self's value type); reads
-    /// navigationally: "get `b` at each of self's values".
+    /// navigationally: "select `b` at each of self's values".
     #[inline(always)]
-    fn get<B: IntoQuery>(self, b: B) -> Compose<Self::Q, B::Q>
+    fn select<B: IntoQuery>(self, b: B) -> Compose<Self::Q, B::Q>
     where B::Q: Query<D = ROf<Self>> { Compose { a: self.iq(), b: b.iq() } }
 
     /// Postfix adjoint in drive position — streams flipped pairs, no state.
@@ -945,7 +945,7 @@ pub trait QueryExt: IntoQuery + Sized {
     /// tree fed to `.when`, `.minus`'s rhs, …) the `member` override
     /// short-circuits flat across the legs without building pair values; in
     /// drive/probe position it emits nested-pair values (output tuples) —
-    /// restrict-then-project is `a.when(p).get(b)`.
+    /// restrict-then-project is `a.when(p).select(b)`.
     #[inline(always)]
     fn and<B: IntoQuery>(self, b: B) -> Prod<Self::Q, B::Q>
     where B::Q: Query<D = DOf<Self>> { Prod { a: self.iq(), b: b.iq() } }
@@ -1120,10 +1120,10 @@ mod tests {
         let f = films();
         let c = cast();
         // cast ∘ (films probed at cast values)? — compose cast: i64→i64 with films
-        assert_eq!(drive_all(&(&c).get(&f)), vec![]); // cast values 7,8 not film keys <3
+        assert_eq!(drive_all(&(&c).select(&f)), vec![]); // cast values 7,8 not film keys <3
         assert_eq!(drive_all(&(&f).filt(|v| v > 15)), vec![(1, 20), (2, 30)]);
         let u = Universe::new(2);
-        assert_eq!(drive_all(&u.get(&f)), vec![(0, 10), (1, 20)]);
+        assert_eq!(drive_all(&u.select(&f)), vec![(0, 10), (1, 20)]);
         assert_eq!(drive_all(&(&f).and(&f)), vec![(0, (10, 10)), (1, (20, 20)), (2, (30, 30))]);
     }
 
@@ -1228,7 +1228,7 @@ mod tests {
         assert!(u2.minus(&ms).member(1) && !u2.minus(&ms).member(0));
         // identity composes like any relation
         let f = films();
-        assert_eq!(drive_all(&(&people).get(&f)), vec![(0, 10), (2, 30)]);
+        assert_eq!(drive_all(&(&people).select(&f)), vec![(0, 10), (2, 30)]);
     }
 
     #[test]
@@ -1322,16 +1322,16 @@ mod tests {
         let kname: VecRel<&'static str, Id<K>> =
             VecRel::new(vec!["alpha", "beta"]);
         // compose through the typed bridge (Id<K> = Id<K>) — the shape the
-        // schema!-generated nav methods build (`q.kname()` ≡ `q.get(kname)`)
+        // schema!-generated nav methods build (`q.kname()` ≡ `q.select(kname)`)
         let mut got = Vec::new();
-        (&mk).get(&kname).drive(|m, n| got.push((m.0, n)));
+        (&mk).select(&kname).drive(|m, n| got.push((m.0, n)));
         assert_eq!(got, vec![(0, "beta"), (1, "alpha"), (2, "beta")]);
         let mut got = Vec::new();
-        (&mk).get(&kname).eq("beta").drive(|m, n| got.push((m.0, n)));
+        (&mk).select(&kname).eq("beta").drive(|m, n| got.push((m.0, n)));
         assert_eq!(got, vec![(0, "beta"), (2, "beta")]);
         // member position through a typed universe restriction
         let u: Universe<Id<M>> = Universe::new(3);
-        let live = u.when((&mk).get(&kname).eq("alpha"));
+        let live = u.when((&mk).select(&kname).eq("alpha"));
         assert!(live.member(Id::new(1)) && !live.member(Id::new(0)));
         assert!(!live.member(Id::NONE));
         // typed ids work as fold/group keys (Eq + Hash + Ord)

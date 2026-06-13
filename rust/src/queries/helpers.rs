@@ -64,5 +64,5 @@ pub fn film_or_warner_co() -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive
 /// Julia's `link → (MovieLink.type ~ r"follow")` (whose primary elision
 /// composes through to `LinkType.link`), so output products use it directly.
 pub fn follow_link() -> impl Query<D = Id<Movie>, R = &'static str> + Drive + Probe {
-    link.get(MovieLink::ty.text().rx(r"follow"))
+    link.select(MovieLink::ty.text().rx(r"follow"))
 }

@@ -41,7 +41,7 @@
 //           fn title(self) -> Compose<Self::Q, &'static …> { … } // per field
 //       }
 //     so `cast.person().name()` spells the compose chain
-//     `cast.get(Cast::person).get(Person::name)` — the leaf handle roots
+//     `cast.select(Cast::person).select(Person::name)` — the leaf handle roots
 //     the chain paren-free, and every later hop is a nav method. Coherence
 //     is safe: same-named methods on different entities' nav traits have
 //     disjoint receivers (a resolved query's `R` equals exactly ONE
@@ -243,7 +243,7 @@ macro_rules! schema {
         /// Generated navigation trait — for anything resolving (via
         /// `IntoQuery`) to a query valued in this entity's ids, one method
         /// per field composing with that field's column (`q.title()` ≡
-        /// `q.get(Movie::title)`). Blanket-implemented; same-named methods
+        /// `q.select(Movie::title)`). Blanket-implemented; same-named methods
         /// on other entities' nav traits don't clash because the resolved
         /// receivers' `R = Id<E>` bounds are disjoint.
         #[allow(dead_code)]
@@ -427,7 +427,7 @@ mod tests {
         // typed composition across three entities, in navigation form:
         // a predicate ROOT is a paren-free handle (qualified `Film::genre`,
         // bare `year` for pub fields); every later hop is a nav method
-        // (`.gname()` ≡ `.get(Genre::gname)` via the generated GenreNav).
+        // (`.gname()` ≡ `.select(Genre::gname)` via the generated GenreNav).
         let q = film
             .when(Film::genre.gname().eq("horror"))
             .when(year.lt(1990))

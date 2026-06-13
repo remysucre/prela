@@ -67,7 +67,7 @@ fn q1() -> String {
     // Julia: ((returnflag ⊗ Li.status) ← (lineitem → shipdate <= "..." : qty ⊗ ext ⊗ disc ⊗ tax))
     //        ▷ (cmb, ...) ↦ out
     let live = lineitem.when(shipdate.le(19980902));
-    let scan = live.get(
+    let scan = live.select(
         quantity.and(extendedprice).and(discount).and(tax)
     );
     let group_key = returnflag.and(Lineitem::status);
@@ -101,7 +101,7 @@ fn q6() -> String {
         .when(shipdate.during(19940101, 19950101)
          .and(discount.between(0.05, 0.07))
          .and(quantity.lt(24.0)));
-    let sum = live.get(extendedprice.and(discount))
+    let sum = live.select(extendedprice.and(discount))
         .unwrap_fold(0.0, |acc, (e, dc)| acc + e * dc);
     f(sum)
 }
@@ -137,7 +137,7 @@ fn q14() -> String {
     // Algebraic port (matches Julia _q14, just with nested tuple destructure
     // since Rust ⊗ can't type-level-flatten like Julia's).
     let live = lineitem.when(shipdate.during(19950901, 19951001));
-    let scan = live.get(
+    let scan = live.select(
         extendedprice.and(discount).and(Lineitem::part.ty())
     );
     let (promo, total) = scan.unwrap_fold((0.0, 0.0), |(p, t), ((e, dc), typ)| {
@@ -167,7 +167,7 @@ fn q3() -> String {
         .when(shipdate.gt(19950315)
          .and(order.date().lt(19950315))
          .and(order.customer().mktsegment().eq("BUILDING")))
-        .get(extendedprice.and(discount));
+        .select(extendedprice.and(discount));
     let revenue = item.group_by(order)
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
     let mut rows: Vec<(Id<Order>, f64)> = Vec::new();
@@ -224,8 +224,8 @@ fn q5() -> String {
         .when(order.date().during(19940101, 19950101)
          .and((&s_nation).region().name().eq("ASIA"))
          .and((&c_nation).and(&s_nation).filt(|(c, s)| c == s)));
-    let groups = (&live).get((&s_nation).name());
-    let scan = (&live).get(extendedprice.and(discount));
+    let groups = (&live).select((&s_nation).name());
+    let scan = (&live).select(extendedprice.and(discount));
     let result = scan.group_by(groups).fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
     let mut rows: Vec<(&str, f64)> = Vec::new();
     result.drive(|k, v| rows.push((k, v)));
@@ -243,11 +243,11 @@ fn q7() -> String {
          .and((&snat).and(&cnat).filt(|(s, c)| {
                   (s == "FRANCE" && c == "GERMANY") || (s == "GERMANY" && c == "FRANCE")
               })));
-    let sname = (&live).get(&snat);
-    let cname = (&live).get(&cnat);
+    let sname = (&live).select(&snat);
+    let cname = (&live).select(&cnat);
     let year = (&live).shipdate().map(|d: i64| d / 10000);
     let groups = sname.and(cname).and(year);
-    let scan = (&live).get(extendedprice.and(discount));
+    let scan = (&live).select(extendedprice.and(discount));
     let result = scan.group_by(groups).fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
     let mut rows: Vec<(((&str, &str), i64), f64)> = Vec::new();
     result.drive(|k, v| rows.push((k, v)));
@@ -268,7 +268,7 @@ fn q8() -> String {
          .and(order.date().between(19950101, 19961231)));
     let year = (&live).order().date().map(|d: i64| d / 10000);
     let snat_name = (&live).supplier().nation().name();
-    let scan = (&live).get(extendedprice.and(discount)).and(snat_name);
+    let scan = (&live).select(extendedprice.and(discount)).and(snat_name);
     let pair_fold = scan.group_by(year).fold((0.0_f64, 0.0_f64), |(b, t), ((e, dc), nm)| {
         let v = e * (1.0 - dc);
         (b + if nm == "BRAZIL" { v } else { 0.0 }, t + v)
@@ -290,8 +290,8 @@ fn q9() -> String {
     let sname = (&live).supplier().nation().name();
     let year  = (&live).order().date().map(|d: i64| d / 10000);
     let groups = sname.and(year);
-    let cost_per_li = Lineitem::part.and(Lineitem::supplier).get(&sc);
-    let scan = (&live).get(
+    let cost_per_li = Lineitem::part.and(Lineitem::supplier).select(&sc);
+    let scan = (&live).select(
         extendedprice.and(discount).and(quantity).and(cost_per_li)
     );
     let result = scan.group_by(groups).fold(0.0_f64, |a, (((e, dc), q), cost)| {
@@ -309,7 +309,7 @@ fn q10() -> String {
     let live = lineitem
         .when(returnflag.eq("R")
          .and(order.date().during(19931001, 19940101)));
-    let revenue = live.get(extendedprice.and(discount))
+    let revenue = live.select(extendedprice.and(discount))
         .group_by(order.customer())
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
     let mut rows: Vec<(Id<Customer>, f64)> = Vec::new();
@@ -337,7 +337,7 @@ fn q11() -> String {
     //   threshold = 0.0001 * unwrap(value_per_part ⊵ (+, 0.0))
     //   value_per_part > threshold
     let live_ps = partsupp.when(PartSupp::supplier.nation().name().eq("GERMANY"));
-    let value_per_part = (&live_ps).get(supplycost.and(availqty))
+    let value_per_part = (&live_ps).select(supplycost.and(availqty))
         .group_by((&live_ps).part())
         .fold(0.0, |a, (c, q)| a + c * (q as f64));
     // Scalar-subquery escape: drive the fold once into a total, derive threshold.
@@ -400,7 +400,7 @@ fn q13() -> String {
 
 fn q15() -> String {
     let live = lineitem.when(shipdate.during(19960101, 19960401));
-    let revenue = (&live).get(extendedprice.and(discount))
+    let revenue = (&live).select(extendedprice.and(discount))
         .group_by(Lineitem::supplier)
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
     let max_rev = (&revenue).unwrap_fold(0.0, f64::max);
@@ -427,7 +427,7 @@ fn q16() -> String {
          .and(PartSupp::part.ty().filt(|s: &str| !s.starts_with("MEDIUM POLISHED")))
          .and(PartSupp::part.size().is_in([49, 14, 23, 45, 19, 3, 36, 9]))
          .and(PartSupp::supplier.comment().nrx("Customer.*Complaints")));
-    let group = (&live_ps).get(PartSupp::part.get(brand.and(ty).and(size)));
+    let group = (&live_ps).select(PartSupp::part.select(brand.and(ty).and(size)));
     let supp  = (&live_ps).supplier();
     let counts = supp.group_by(group).count_distinct();
     let mut rows: Vec<(((&str, &str), i64), i64)> = Vec::new();
@@ -451,8 +451,8 @@ fn q17() -> String {
     let live = lineitem
         .when(Lineitem::part.brand().eq("Brand#23")
          .and(Lineitem::part.container().eq("MED BOX"))
-         .and(quantity.and(Lineitem::part.get(&tpp)).filt(|(q, t)| q < t)));
-    let sum = live.get(extendedprice)
+         .and(quantity.and(Lineitem::part.select(&tpp)).filt(|(q, t)| q < t)));
+    let sum = live.select(extendedprice)
         .unwrap_fold(0.0_f64, |a, e| a + e);
     f(sum / 7.0)
 }
@@ -486,7 +486,7 @@ fn q18() -> String {
 fn q19() -> String {
     // 3-branch disjunctive predicate folded into a single closure-filter.
     // The compose chain produces (brand, container, size, qty) per lineitem.
-    let pred = Lineitem::part.get(brand.and(container).and(size))
+    let pred = Lineitem::part.select(brand.and(container).and(size))
         .and(quantity)
         .filt(|(((br, ct), sz), q)| {
             let in_v = |arr: &[&str], s: &str| arr.iter().any(|&a| a == s);
@@ -501,7 +501,7 @@ fn q19() -> String {
         .when(shipmode.is_in(["AIR", "AIR REG"])
          .and(shipinstruct.eq("DELIVER IN PERSON"))
          .and(pred));
-    let sum = live.get(extendedprice.and(discount))
+    let sum = live.select(extendedprice.and(discount))
         .unwrap_fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
     f(sum)
 }
@@ -516,9 +516,9 @@ fn q20() -> String {
     //        target : (Su.name ⊗ Su.address)
     let live_li = lineitem.when(shipdate.during(19940101, 19950101));
     let sum_qty = (&live_li).quantity()
-        .group_by((&live_li).get(Lineitem::part.and(Lineitem::supplier)))
+        .group_by((&live_li).select(Lineitem::part.and(Lineitem::supplier)))
         .fold(0.0_f64, |a, q| a + q);
-    let threshold = PartSupp::part.and(PartSupp::supplier).get(&sum_qty).map(|s| 0.5 * s);
+    let threshold = PartSupp::part.and(PartSupp::supplier).select(&sum_qty).map(|s| 0.5 * s);
     let qual_ps = partsupp
         .when(PartSupp::part.name().filt(|n: &str| n.starts_with("forest"))
          .and(availqty.map(|q| q as f64).and(threshold).filt(|(a, t)| a > t)));
@@ -526,7 +526,7 @@ fn q20() -> String {
     let qual_supps: MatSet<_> = qual_ps.supplier().collect();
     let target = canada_supps.when(qual_supps);
     let mut rows: Vec<(&str, &str)> = Vec::new();
-    target.get(Supplier::name.and(Supplier::address)).drive(|_, (n, a)| rows.push((n, a)));
+    target.select(Supplier::name.and(Supplier::address)).drive(|_, (n, a)| rows.push((n, a)));
     rows.sort_by(|a, b| a.0.cmp(b.0));
     join_lines(rows.iter().map(|(n, a)| format!("{}|{}", n, a)))
 }
@@ -543,14 +543,14 @@ fn q21() -> String {
     //   (Li.supplier ← qualifying) ▷ ((a, _) -> a + 1, 0) ⊗ Su.name
     let late = lineitem.when(commitdate.and(receiptdate).filt(|(c, r)| c < r));
     let multi_supp = Lineitem::supplier.group_by(order).count_distinct().gt(1);
-    let only_late = (&late).get(Lineitem::supplier)
-        .group_by((&late).get(order))
+    let only_late = (&late).select(Lineitem::supplier)
+        .group_by((&late).select(order))
         .count_distinct().eq(1);
     let saudi = supplier.and(Supplier::nation.name().eq("SAUDI ARABIA"));
     let f_ords = orders.and(Order::status.eq("F"));
     let qualifying = (&late)
-        .when(Lineitem::supplier.get(saudi)
-         .and(order.get(f_ords.and(multi_supp).and(only_late))));
+        .when(Lineitem::supplier.select(saudi)
+         .and(order.select(f_ords.and(multi_supp).and(only_late))));
     let counts = qualifying.group_by(Lineitem::supplier).fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(Id<Supplier>, i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
@@ -574,7 +574,7 @@ fn q22() -> String {
     let codes = ["13","31","23","29","30","18","17"];
     let prefix_ok = customer.when((&prefix).is_in(codes));
     let pos = (&prefix_ok).when(Customer::acctbal.gt(0.0));
-    let (sum_p, cnt_p) = pos.get(Customer::acctbal)
+    let (sum_p, cnt_p) = pos.select(Customer::acctbal)
         .unwrap_fold((0.0_f64, 0_i64), |(s, n), v| (s + v, n + 1));
     let avg = sum_p / cnt_p as f64;
     let custs_with_orders: MatSet<_> = Order::customer.collect();
@@ -608,7 +608,7 @@ fn q2() -> String {
     let target = (&eu_ps)
         .when(PartSupp::part.size().eq(15)
          .and(PartSupp::part.ty().filt(|s: &str| s.ends_with("BRASS")))
-         .and(supplycost.and(PartSupp::part.get(&min_per_part)).filt(|(c, m)| c == m)));
+         .and(supplycost.and(PartSupp::part.select(&min_per_part)).filt(|(c, m)| c == m)));
     // Project per PS row → (acct, sname, nname, pkey, mfgr, addr, phone, comm)
     let mut rows: Vec<(f64, &str, &str, Id<Part>, &str, &str, &str, &str)> = Vec::new();
     target.drive(|psi, _| {

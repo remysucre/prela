@@ -21,18 +21,18 @@ Consider Join Order Benchmark [22a](https://github.com/gregrahn/join-order-bench
 
 ```rust
 movie
-    .when(info.get(Info::ty.text().eq("countries")
-              .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
+    .when(info.select(Info::ty.text().eq("countries")
+               .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
      .and(keyword.text().is_in(["murder", "murder-in-title", "blood", "violence"]))
      .and(production_year.gt(2008))
      .and(kind.text().is_in(["movie", "episode"])))
-    .get(title
-         .and(data.when(Data::text.lt("7.0")
-                   .and(Data::ty.text().eq("rating"))).text())
-         .and(company.when(Company::note.nrx(r"\(USA\)")
-                      .and(Company::note.rx(r"\(200.*\)"))
-                      .and(country.ne("[us]"))
-                      .and(Company::ty.text().eq("production companies"))).name()))
+    .select(title
+     .and(data.when(Data::text.lt("7.0")
+               .and(Data::ty.text().eq("rating"))).text())
+     .and(company.when(Company::note.nrx(r"\(USA\)")
+                  .and(Company::note.rx(r"\(200.*\)"))
+                  .and(country.ne("[us]"))
+                  .and(Company::ty.text().eq("production companies"))).name()))
 ```
 
 On paper, we write the same query in the algebra's notation:
@@ -91,11 +91,11 @@ One way to think about this is a very extreme form
 With that in mind, let us consider a simplified version of the query above:
 
 ```rust
-movie.when(production_year.gt(2008)).get(title)
+movie.when(production_year.gt(2008)).select(title)
 ```
 
 or, on paper, in the algebra's notation — each combinator has a method
-spelling (`:` is `.when`, `→` is `.get`, and so on):
+spelling (`:` is `.when`, `→` is `.select`, and so on):
 
 ```julia
 movie : (production_year > 2008) → title
@@ -211,15 +211,15 @@ let late = lineitem.when(commitdate.and(receiptdate).filt(|(c, r)| c < r));
 // EXISTS another supplier on the order (across all lineitems)
 let multi_supp = Lineitem::supplier.group_by(order).count_distinct().gt(1);
 // NOT EXISTS another LATE supplier (only L1 is late)
-let only_late = (&late).get(Lineitem::supplier)
-    .group_by((&late).get(order))
+let only_late = (&late).select(Lineitem::supplier)
+    .group_by((&late).select(order))
     .count_distinct().eq(1);
 
 let saudi = supplier.and(Supplier::nation.name().eq("SAUDI ARABIA"));
 let f_ords = orders.and(Order::status.eq("F"));
 let qualifying = (&late)
-    .when(Lineitem::supplier.get(saudi)
-     .and(order.get(f_ords.and(multi_supp).and(only_late))));
+    .when(Lineitem::supplier.select(saudi)
+     .and(order.select(f_ords.and(multi_supp).and(only_late))));
 
 let counts = qualifying.group_by(Lineitem::supplier).fold(0_i64, |a, _| a + 1);
 ```
@@ -394,15 +394,13 @@ We've taken liberty refactoring the JOB schema to make Prela queries
 Overall, the main takeaway from the numbers is that 
 *the simplicity of Prela does not hold it back from running fast*.
 
-The plots below compare the run time of the Rust implementation — plus the
- retired Julia staged engine (`julia-engine` branch) as a historic series —
- against DuckDB 1.5.3 (1 thread) as baseline, over TPCH and the Join Order
- Benchmark.
-On JOB, Rust Prela runs the 113 queries in 5.0s and Julia in 9.6s vs
- DuckDB's 15.3s (3.1× and 1.6× faster, winning 99 and 83 of 113).
-On TPC-H SF=1, idiomatic Rust Prela matches DuckDB's vectorized engine
- (0.91s vs 0.86s) and the hand-optimized variant beats it 2× (0.44s);
- the Julia implementation trails at 1.4–3.3s.
+The plots below compare Prela against DuckDB 1.5.3 (1 thread) as baseline,
+ over TPC-H and the Join Order Benchmark.
+On JOB, Prela runs the 113 queries in 5.2s vs DuckDB's 15.3s
+ (3.0× faster, winning 99 of 113).
+On TPC-H SF=1, idiomatic Prela is within ~1.4× of DuckDB's vectorized engine
+ (1.18s vs 0.86s), and the hand-optimized variant — the same algebra with the
+ plans a cost-based optimizer would pick — beats it ~1.6× (0.55s).
 
 <p>
   <img src="./rust/bench/tpch_scatter.png" width="49%" alt="TPC-H SF=1">

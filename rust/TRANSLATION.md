@@ -13,7 +13,7 @@ Rust entity ids are **0-based** (internal id = natural key − 1) and
 `DenseFold`) are generic over `D: Dense`, and the `schema!`-generated
 columns instantiate them with `D = Id<Entity>` — a `repr(transparent)`
 wrapper over `usize` carrying the entity tag, so composing through
-mismatched entities is a COMPILE error (`Movie::keyword.get(Person::name)`
+mismatched entities is a COMPILE error (`Movie::keyword.select(Person::name)`
 does not type-check). Scalar value columns (years, sizes, counts, dates,
 prices) stay `i64`/`f64` — id columns and number columns are distinct types.
 The binary cache (format v2 — `rust/src/format.rs`) stores the FINAL
@@ -53,7 +53,7 @@ the identity relation over the entity's ids), and a NAVIGATION trait
 (`Movie(movie) / MovieNav`) with one method per field,
 blanket-implemented for everything that resolves (via `IntoQuery`) to a
 query whose value type is the entity's id — so any `Id<Movie>`-valued
-chain can continue `.title()`, `.cast()`, … (each ≡ `.get(Movie::field)`).
+chain can continue `.title()`, `.cast()`, … (each ≡ `.select(Movie::field)`).
 Columns sit in a global `OnceLock` store, so query fns take no data
 argument. The macro also emits
 a `MANIFEST` of (entity, field, cache kind) — regen verifies the cache it
@@ -74,7 +74,7 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 fn q2a() -> impl Drive<R: Row> {
-    movie.when(/* ... */).get(/* ... */)
+    movie.when(/* ... */).select(/* ... */)
 }
 
 // ... more queries
@@ -96,7 +96,7 @@ Consequences:
 - There is no `.k()` / `keys()` projection. A value-bearing query is used
   as a set operand directly: `.when(rel)`, `a.and(rel)`, `a.minus(rel)` all
   consume `rel` via `member` only.
-- `s : q` (set ∘ query) is plain `Compose` — `s.get(q)` — because the
+- `s : q` (set ∘ query) is plain `Compose` — `s.select(q)` — because the
   identity's value IS the key.
 - Identity relations send their keys through the value slot of `drive`, so
   the one `Bitset::over` / `MatSet` `FromQuery` impl serves sets and
@@ -115,8 +115,8 @@ two faces of the one node:
   conjunct tree costs exactly what a dedicated Conj node would.
 - **drive/probe position**: it is the product and emits nested-pair values.
 
-So a restricted scan is never written `a.and(p).get(b)` (that would compose
-on the PAIR value and not type-check); it is `a.when(p).get(b)` — drive `a`,
+So a restricted scan is never written `a.and(p).select(b)` (that would compose
+on the PAIR value and not type-check); it is `a.when(p).select(b)` — drive `a`,
 member-check `p`, probe `b` — the post-unification spelling of Julia's
 `a : p → b`.
 
@@ -124,10 +124,10 @@ member-check `p`, probe `b` — the post-unification spelling of Julia's
 
 | Julia               | Rust                                      | Notes |
 |---------------------|-------------------------------------------|-------|
-| `a → b` (Q ∘ Q)     | `a.get(b)`                                  | bridge = a's value type |
+| `a → b` (Q ∘ Q)     | `a.select(b)`                                  | bridge = a's value type |
 | `a : b` (restrict)  | `a.when(b)`                               | builds the dedicated `Restrict` node — node-for-node with Julia. Keep rows of a whose VALUE is a `member` of b (any probe-able b); a's value flows through unchanged |
-| `s : q` (s a set)   | `s.get(q)`                                  | identity relation composes like any other |
-| `(movie → …)`       | `movie.get(…)`                           | Universe ∘ Query |
+| `s : q` (s a set)   | `s.select(q)`                                  | identity relation composes like any other |
+| `(movie → …)`       | `movie.select(…)`                           | Universe ∘ Query |
 | `a ∧ b`             | `a.and(b)`                                | alias for `⊗` (= `Prod`); in member position the `member` fast path short-circuits flat without building pairs |
 | `a ∨ b`             | `a.or(b)`                                 | probe-only membership union (`Disj`); driving it is a COMPILE error |
 | (enumerable union)  | `a.union(b)`                              | bag-concat `Union` (drive a then b, NO dedup); Julia has this only as a design note next to `drive(::Disj)` — Rust implements it. Feed it to deduping sinks (`Bitset::over`, `.collect::<MatSet<_>>()`), or materialize first when duplicates would change results |
@@ -155,7 +155,7 @@ with `:` are semantically interchangeable — membership through `Compose`
 the suites pin both paths. The translation does NOT get to choose: it
 preserves the operator the Julia source wrote.
 
-- `edge → tree` ⇒ `edge.get(tree)` — or the nav method when the hop is a
+- `edge → tree` ⇒ `edge.select(tree)` — or the nav method when the hop is a
   single field (`company → (Company.country == "[de]")` ⇒
   `company.country().eq("[de]")`; nav IS compose).
 - `edge : tree` ⇒ `edge.when(tree)`.
@@ -164,7 +164,7 @@ JOB 22a's first conjunct — Julia `info → (Info.type == "countries") ∧
 (Info.info in (…))` — is therefore
 
 ```rust
-info.get(Info::ty.text().eq("countries")
+info.select(Info::ty.text().eq("countries")
      .and(Info::info.is_in([…])))
 ```
 
@@ -234,7 +234,7 @@ and field names ARE the cache filenames (`Info_ty.bin`). `Person.info` →
 
 Julia writes `keyword == "x"` and means "the keyword id, resolved to its
 label, equals x". Rust spells the hop as the field's nav method —
-`keyword.text()` ≡ `keyword.get(Keyword::text)`, defined exactly where
+`keyword.text()` ≡ `keyword.select(Keyword::text)`, defined exactly where
 the chain's value type is the entity id `Id<E>` (same-named methods on
 other entities' traits don't apply: the receivers are disjoint).
 
@@ -369,7 +369,7 @@ short-circuit) but reserved for genuinely sequential restriction, e.g. the
 fn qXa() -> impl Drive<R: Row> {
     movie
         .when(/* movie conjunct tree: a.and(b).and(c)… (member-checked) */)
-        .get(/* projection — usually a .and(…) product */)
+        .select(/* projection — usually a .and(…) product */)
 }
 ```
 
@@ -378,7 +378,7 @@ fn qXa() -> impl Drive<R: Row> {
 fn qXa() -> impl Drive<R: Row> {
     movie
         .when(/* movie conjunct tree */)
-        .get(cast
+        .select(cast
              .when(/* cast conjunct tree */)
              .person().name()      // cast projection — navigation
          .and(title))
@@ -413,8 +413,8 @@ ENTRIES oracle is the exact second-arg string from `_q("name", "oracle")`.
   value-bearing filter (`production_year.gt(2000)`) is a valid operand
   as-is. Same for `.minus`'s RHS and `.when`'s argument.
 - A conjunct tree is member-position ONLY. To compose or drive past it,
-  hoist it into the upstream restriction: `x.when(a.and(b)).get(body)`, never
-  `x.get(a.and(b).get(body))` — `.and` is the product, so the latter would try
+  hoist it into the upstream restriction: `x.when(a.and(b)).select(body)`, never
+  `x.select(a.and(b).select(body))` — `.and` is the product, so the latter would try
   to compose on the pair value (compile error at best).
 - `.or` cannot be driven (no `Drive` impl, by design — Julia's `∨` is
   probe-only). The enumerable union is `.union` (bag-concat, no dedup).
@@ -425,5 +425,5 @@ ENTRIES oracle is the exact second-arg string from `_q("name", "oracle")`.
   where the chain is valued in an entity whose schema declares `text`. On a
   string-valued (or wrong-entity) query it does not resolve (compile
   error), which is the type system catching a wrong hop.
-- Don't forget the OUTERMOST `movie.when(…)` / `movie.get(…)` — the
+- Don't forget the OUTERMOST `movie.when(…)` / `movie.select(…)` — the
   query is anchored at the movie universe.

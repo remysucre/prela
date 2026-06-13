@@ -109,21 +109,19 @@ compile-time access modes — see `rust/src/engine.rs`).
 ```bash
 cd rust
 cargo run --release            # JOB suite
-cargo run --release -- tpch    # TPC-H (QS=idiomatic|optimized|ddbcheat)
+cargo run --release -- tpch    # TPC-H (QS=idiomatic|optimized)
 ```
 
 ### Regenerate the comparison plots
 
 ```bash
 cd rust/bench
-python3 plot_tpch.py   # → tpch_scatter.png  (Rust + DuckDB + historic Julia)
+python3 plot_tpch.py   # → tpch_scatter.png  (idiomatic + optimized vs DuckDB)
 python3 plot_job.py    # → job_scatter.png
 ```
 
 Both scripts read from `data/` and write the PNG next to themselves. The
-Rust timings come from the bench runs above; the Julia series
-(`data/julia_*.txt`) are historic captures from the `julia-engine` branch,
-kept for the comparison plots; the DuckDB baselines
+Prela timings come from the bench runs above; the DuckDB baselines
 (`data/job_duck.txt`, `data/duckdb_st.txt`) are checked in.
 
 ### Regenerate the DuckDB baseline + TPCH oracles

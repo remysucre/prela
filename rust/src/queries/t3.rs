@@ -27,13 +27,13 @@ fn q7a() -> impl Drive<R: Row> {
         .when(production_year.ge(1980)
          .and(production_year.le(1995))
          .and(linked_by.ty().text().eq("features")))
-        .get(cast.get(person
+        .select(cast.select(person
                         .when(alias.text().rx(r"a")
                          .and(name_pcode_cf.ge("A"))
                          .and(name_pcode_cf.le("F"))
                          .and(gender.eq("m")
                           .or(gender.eq("f").and(Person::name.rx(r"^B"))))
-                         .and(bio.get(PersonInfo::ty.text().eq("mini biography")
+                         .and(bio.select(PersonInfo::ty.text().eq("mini biography")
                                   .and(PersonInfo::note.eq("Volker Boehm")))))
                         .name())
          .and(title))
@@ -44,11 +44,11 @@ fn q7b() -> impl Drive<R: Row> {
         .when(production_year.ge(1980)
          .and(production_year.le(1984))
          .and(linked_by.ty().text().eq("features")))
-        .get(cast.get(person
+        .select(cast.select(person
                         .when(alias.text().rx(r"a")
                          .and(name_pcode_cf.rx(r"^D"))
                          .and(gender.eq("m"))
-                         .and(bio.get(PersonInfo::ty.text().eq("mini biography")
+                         .and(bio.select(PersonInfo::ty.text().eq("mini biography")
                                   .and(PersonInfo::note.eq("Volker Boehm")))))
                         .name())
          .and(title))
@@ -67,23 +67,23 @@ fn q7c() -> impl Drive<R: Row> {
          .and(production_year.le(2010))
          .and(linked_by.ty().text().is_in(
                   ["references", "referenced in", "features", "featured in"])))
-        .get(cast.get(person
+        .select(cast.select(person
                         .when(alias.text().rx(r"a|^A")
                          .and(name_pcode_cf.ge("A"))
                          .and(name_pcode_cf.le("F"))
                          .and(gender.eq("m")
                           .or(gender.eq("f").and(Person::name.rx(r"^A"))))
                          .and(bio.when(bio_filter_7c())))
-                        .get(Person::name
+                        .select(Person::name
                          .and(bio.when(bio_filter_7c()).info()))))
 }
 
 fn q8a() -> impl Drive<R: Row> {
     movie
-        .when(company.get(country.eq("[jp]")
+        .when(company.select(country.eq("[jp]")
                       .and(Company::note.rx(r"\(Japan\)"))
                       .and(Company::note.nrx(r"\(USA\)"))))
-        .get(cast
+        .select(cast
              .when(Cast::note.eq("(voice: English version)")
               .and(role.text().eq("actress"))
               .and(person.when(Person::name.rx(r"Yo")
@@ -94,7 +94,7 @@ fn q8a() -> impl Drive<R: Row> {
 
 fn q8b() -> impl Drive<R: Row> {
     movie
-        .when(company.get(country.eq("[jp]")
+        .when(company.select(country.eq("[jp]")
                       .and(Company::note.rx(r"\(Japan\)"))
                       .and(Company::note.nrx(r"\(USA\)"))
                       .and(Company::note.rx(r"\(2006\)")
@@ -102,7 +102,7 @@ fn q8b() -> impl Drive<R: Row> {
          .and(production_year.ge(2006))
          .and(production_year.le(2007))
          .and(title.rx(r"^One Piece").or(title.rx(r"^Dragon Ball Z"))))
-        .get(cast
+        .select(cast
              .when(Cast::note.eq("(voice: English version)")
               .and(role.text().eq("actress"))
               .and(person.when(Person::name.rx(r"Yo")
@@ -115,7 +115,7 @@ fn q8b() -> impl Drive<R: Row> {
 fn q8cd(role_: &'static str) -> impl Drive<R: Row> {
     movie
         .when(company.country().eq("[us]"))
-        .get(cast.when(role.text().eq(role_))
+        .select(cast.when(role.text().eq(role_))
              .person().alias().text()
          .and(title))
 }
@@ -125,35 +125,35 @@ fn q8d() -> impl Drive<R: Row> { q8cd("costume designer") }
 
 fn q9a() -> impl Drive<R: Row> {
     movie
-        .when(company.get(country.eq("[us]")
+        .when(company.select(country.eq("[us]")
                       .and(Company::note.rx(r"\(USA\)")
                        .or(Company::note.rx(r"\(worldwide\)"))))
          .and(production_year.ge(2005))
          .and(production_year.le(2015)))
-        .get(cast
+        .select(cast
              .when(Cast::note.is_in(voice4())
               .and(role.text().eq("actress"))
               .and(person.when(gender.eq("f")
                           .and(Person::name.rx(r"Ang")))))
-             .get(person.alias().text()
+             .select(person.alias().text()
               .and(character.text()))
          .and(title))
 }
 
 fn q9b() -> impl Drive<R: Row> {
     movie
-        .when(company.get(country.eq("[us]")
+        .when(company.select(country.eq("[us]")
                       .and(Company::note.rx(r"\(200.*\)"))
                       .and(Company::note.rx(r"\(USA\)")
                        .or(Company::note.rx(r"\(worldwide\)"))))
          .and(production_year.ge(2007))
          .and(production_year.le(2010)))
-        .get(cast
+        .select(cast
              .when(Cast::note.eq("(voice)")
               .and(role.text().eq("actress"))
               .and(person.when(gender.eq("f")
                           .and(Person::name.rx(r"Angel")))))
-             .get(person.alias().text()
+             .select(person.alias().text()
               .and(character.text())
               .and(person.name()))
          .and(title))
@@ -162,12 +162,12 @@ fn q9b() -> impl Drive<R: Row> {
 fn q9c() -> impl Drive<R: Row> {
     movie
         .when(company.country().eq("[us]"))
-        .get(cast
+        .select(cast
              .when(Cast::note.is_in(voice4())
               .and(role.text().eq("actress"))
               .and(person.when(gender.eq("f")
                           .and(Person::name.rx(r"An")))))
-             .get(person.alias().text()
+             .select(person.alias().text()
               .and(character.text())
               .and(person.name()))
          .and(title))
@@ -176,11 +176,11 @@ fn q9c() -> impl Drive<R: Row> {
 fn q9d() -> impl Drive<R: Row> {
     movie
         .when(company.country().eq("[us]"))
-        .get(cast
+        .select(cast
              .when(Cast::note.is_in(voice4())
               .and(role.text().eq("actress"))
               .and(person.when(gender.eq("f"))))
-             .get(person.alias().text()
+             .select(person.alias().text()
               .and(person.name())
               .and(character.text()))
          .and(title))
@@ -190,7 +190,7 @@ fn q10a() -> impl Drive<R: Row> {
     movie
         .when(company.country().eq("[ru]")
          .and(production_year.gt(2005)))
-        .get(cast
+        .select(cast
              .when(Cast::note.rx(r"\(voice\)")
               .and(Cast::note.rx(r"\(uncredited\)"))
               .and(role.text().eq("actor")))
@@ -202,7 +202,7 @@ fn q10b() -> impl Drive<R: Row> {
     movie
         .when(company.country().eq("[ru]")
          .and(production_year.gt(2010)))
-        .get(cast
+        .select(cast
              .when(Cast::note.rx(r"\(producer\)")
               .and(role.text().eq("actor")))
              .character().text()
@@ -213,7 +213,7 @@ fn q10c() -> impl Drive<R: Row> {
     movie
         .when(company.country().eq("[us]")
          .and(production_year.gt(1990)))
-        .get(cast.when(Cast::note.rx(r"\(producer\)"))
+        .select(cast.when(Cast::note.rx(r"\(producer\)"))
              .character().text()
          .and(title))
 }

@@ -25,7 +25,7 @@ fn q1() -> String {
     // Julia: ((returnflag ⊗ Li.status) ← (lineitem → shipdate <= "..." : qty ⊗ ext ⊗ disc ⊗ tax))
     //        ▷ (cmb, ...) ↦ out
     let live = lineitem.when(shipdate.le(19980902));
-    let scan = live.get(
+    let scan = live.select(
         quantity.and(extendedprice).and(discount).and(tax)
     );
     // Pack (returnflag, status) single-byte values into a small usize index
@@ -92,12 +92,12 @@ fn q9() -> String {
         part,
         &part.when(Part::name.filt(|n: &str| n.contains("green"))),
     );
-    let live = lineitem.when(Lineitem::part.get(&green_parts));
+    let live = lineitem.when(Lineitem::part.select(&green_parts));
     let nation_id = (&live).supplier().nation();
     let year      = (&live).order().date().map(|d: i64| d / 10000);
     let groups = nation_id.and(year);
-    let cost_per_li = Lineitem::part.and(Lineitem::supplier).get(&sc);
-    let scan = (&live).get(
+    let cost_per_li = Lineitem::part.and(Lineitem::supplier).select(&sc);
+    let scan = (&live).select(
         extendedprice.and(discount).and(quantity).and(cost_per_li)
     );
     let result = scan.group_by(groups).fold(0.0_f64, |a, (((e, dc), q), cost)| {
@@ -193,8 +193,8 @@ pub(super) fn q17() -> String {
     let tpp: HashIdx<_, _> = threshold_per_part.collect();
     let live = lineitem
         .when((&live_li)
-         .and(quantity.and(Lineitem::part.get(&tpp)).filt(|(q, t)| q < t)));
-    let sum = live.get(extendedprice)
+         .and(quantity.and(Lineitem::part.select(&tpp)).filt(|(q, t)| q < t)));
+    let sum = live.select(extendedprice)
         .unwrap_fold(0.0_f64, |a, e| a + e);
     f(sum / 7.0)
 }
@@ -252,8 +252,8 @@ fn q21() -> String {
     let supp_state = Lineitem::supplier.group_by(order)
         .dense_fold(orders.iq().n, (None, false), track);
     let multi_supp = orders.when(supp_state.filt(|(_, m): (Option<Id<Supplier>>, bool)| m));
-    let late_supp_state = (&late).get(Lineitem::supplier)
-        .group_by((&late).get(order))
+    let late_supp_state = (&late).select(Lineitem::supplier)
+        .group_by((&late).select(order))
         .dense_fold(orders.iq().n, (None, false), track);
     let only_late = orders.when(late_supp_state
         .filt(|(first, multi): (Option<Id<Supplier>>, bool)| first.is_some() && !multi));
@@ -267,8 +267,8 @@ fn q21() -> String {
     let multi_supp_bs = Bitset::over(orders, &multi_supp);
     let only_late_bs  = Bitset::over(orders, &only_late);
     let qualifying = (&late)
-        .when(Lineitem::supplier.get(&saudi_bs)
-         .and(order.get((&f_ords_bs).and(&multi_supp_bs).and(&only_late_bs))));
+        .when(Lineitem::supplier.select(&saudi_bs)
+         .and(order.select((&f_ords_bs).and(&multi_supp_bs).and(&only_late_bs))));
     let counts = qualifying.group_by(Lineitem::supplier).fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(Id<Supplier>, i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
@@ -292,7 +292,7 @@ pub(super) fn q22() -> String {
     let codes = ["13","31","23","29","30","18","17"];
     let prefix_ok = customer.when((&prefix).is_in(codes));
     let pos = (&prefix_ok).when(Customer::acctbal.gt(0.0));
-    let (sum_p, cnt_p) = pos.get(Customer::acctbal)
+    let (sum_p, cnt_p) = pos.select(Customer::acctbal)
         .unwrap_fold((0.0_f64, 0_i64), |(s, n), v| (s + v, n + 1));
     let avg = sum_p / cnt_p as f64;
     // Packed bitset over the dense customer universe — replaces the
@@ -329,7 +329,7 @@ fn q2() -> String {
     let target = (&eu_ps)
         .when(PartSupp::part.size().eq(15)
          .and(PartSupp::part.ty().filt(|s: &str| s.ends_with("BRASS")))
-         .and(supplycost.and(PartSupp::part.get(&min_per_part)).filt(|(c, m)| c == m)));
+         .and(supplycost.and(PartSupp::part.select(&min_per_part)).filt(|(c, m)| c == m)));
     // Project per PS row → (acct, sname, nname, pkey, mfgr, addr, phone, comm)
     let mut rows: Vec<(f64, &str, &str, Id<Part>, &str, &str, &str, &str)> = Vec::new();
     target.drive(|psi, _| {

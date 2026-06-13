@@ -128,7 +128,7 @@ mod tests {
         let mk = load_ids("Movie_kind");
         let mut n_untyped = 0usize;
         crate::engine::Universe::<usize>::new(mk.n_keys())
-            .when((&mk).get(&kk).eq("movie"))
+            .when((&mk).select(&kk).eq("movie"))
             .drive(|_, _| n_untyped += 1);
         assert_eq!(n_typed, n_untyped);
     }

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-# TPC-H SF=1 single-threaded — single scatter overlay of "idiomatic" Rust
-# and Julia prela vs DuckDB-ST. The idiomatic Rust series is the honest
-# baseline (no per-query algorithmic rewriting; just the algebra-port of
-# the Julia originals); Julia uses the same algebra in its native form.
-# Diagonal y=x marks parity.
+# TPC-H SF=1 single-threaded — scatter overlay of "idiomatic" and
+# "optimized" Rust prela vs DuckDB-ST. Idiomatic is the honest baseline
+# (no per-query rewriting; just the algebra ports); optimized hand-encodes
+# the plans a stats-driven optimizer would pick. Diagonal y=x marks parity.
 #
-# Reads warm run-2 timings from data/{idiomatic,optimized,ddbcheat}.txt
+# Reads warm run-2 timings from data/{idiomatic,optimized}.txt
 # and DuckDB `.timer on` output from data/duckdb_st.txt.
 # Writes tpch_scatter.png next to this script.
 
@@ -40,54 +39,29 @@ def parse_duck(path):
     return out
 
 
-def parse_julia(path):
-    """Parse `name<TAB>seconds` lines from julia/bench.jl output. Query
-    names look like 'q1', 'q2', etc.; we map to ints for joint plotting."""
-    out = {}
-    with open(path) as f:
-        for line in f:
-            parts = line.strip().split()
-            if len(parts) != 2:
-                continue
-            name = parts[0].lstrip("qQ")
-            try:
-                out[int(name)] = float(parts[1])
-            except ValueError:
-                pass
-    return out
 
 
 def main():
     ido   = parse_rust(DATA / "idiomatic.txt")
     opt   = parse_rust(DATA / "optimized.txt")
     duck  = parse_duck(DATA / "duckdb_st.txt")
-    j_ido = parse_julia(DATA / "julia_tpch_idiomatic.txt")
-    j_opt = parse_julia(DATA / "julia_tpch_optimized.txt")
 
     qs = list(range(1, 23))
     xs  = [duck[q]  for q in qs]
     yr  = [ido[q]   for q in qs]
     yo  = [opt[q]   for q in qs]
-    yji = [j_ido[q] for q in qs]
-    yjo = [j_opt[q] for q in qs]
 
-    lo = min(min(xs), min(yr), min(yo), min(yji), min(yjo)) * 0.5
-    hi = max(max(xs), max(yr), max(yo), max(yji), max(yjo)) * 2.0
+    lo = min(min(xs), min(yr), min(yo)) * 0.5
+    hi = max(max(xs), max(yr), max(yo)) * 2.0
 
     fig, ax = plt.subplots(figsize=(8, 8))
     ax.plot([lo, hi], [lo, hi], color="#888", linestyle="--", linewidth=1,
             label="y = x (parity)")
-    ax.scatter(xs, yji, s=40, color="#9461D9", edgecolor="black",
-               linewidth=0.4, alpha=0.7, label="Julia prela (idiomatic)",
-               zorder=2)
-    ax.scatter(xs, yjo, s=40, color="#5B2DB0", edgecolor="black",
-               linewidth=0.4, alpha=0.85, label="Julia prela (optimized)",
-               zorder=3, marker="D")
     ax.scatter(xs, yr, s=40, color="#2BA84A", edgecolor="black",
-               linewidth=0.4, alpha=0.85, label="Rust prela (idiomatic)",
+               linewidth=0.4, alpha=0.85, label="prela (idiomatic)",
                zorder=4)
     ax.scatter(xs, yo, s=40, color="#E07B1C", edgecolor="black",
-               linewidth=0.4, alpha=0.85, label="Rust prela (optimized)",
+               linewidth=0.4, alpha=0.85, label="prela (optimized)",
                zorder=5, marker="D")
 
     ax.set_xscale("log"); ax.set_yscale("log")
@@ -99,11 +73,10 @@ def main():
 
     tx  = sum(xs)
     tr  = sum(yr);  to  = sum(yo)
-    tji = sum(yji); tjo = sum(yjo)
     ax.set_title(
         f"TPC-H SF=1 — prela vs DuckDB single-threaded\n"
-        f"Rust ido {tr:>5.2f}s ({tr/tx:.2f}×)   Rust opt {to:>5.2f}s ({to/tx:.2f}×)\n"
-        f"Julia ido {tji:>5.2f}s ({tji/tx:.2f}×)   Julia opt {tjo:>5.2f}s ({tjo/tx:.2f}×)"
+        f"DuckDB {tx:>5.2f}s   idiomatic {tr:>5.2f}s ({tr/tx:.2f}×)   "
+        f"optimized {to:>5.2f}s ({to/tx:.2f}×)"
     )
     ax.legend(loc="upper left", fontsize=9)
 
