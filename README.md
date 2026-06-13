@@ -9,6 +9,11 @@ It is implemented as a library of *query combinators* (think [parser combinators
  allowing the user to freely intermix queries with code in the host programming language. 
 The implementation follows [continuation-passing style](https://remy.wang/blog/cps.html),
  resulting in a core engine under 1k lines of code that compiles to efficient columnar execution.
+Unlike almost all SQL databases, Prela does not come with its query optimizer,
+ and queries are executed exactly as they are written.
+This gives the user complete control over all aspects of query planning,
+ including join ordering, operator pushdown, materialization, and selection of physical data structures.
+Nevertheless, the most idiomatic way to write a query already performs well in our experiments. 
 
 > [!NOTE]
 > Prela is a research prototype in early development. 
