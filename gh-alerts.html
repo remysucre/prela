@@ -1,0 +1,23 @@
+<style>
+  /* GitHub-style alert callouts. pandoc renders `> [!NOTE]` (etc.) as
+     <div class="note"><div class="title"><p>Note</p></div> … </div>. */
+  .note, .tip, .important, .warning, .caution {
+    margin: 1em 0 1em 1.7em;
+    padding-left: 1em;
+    border-left: 2px solid var(--alert-color, #888);
+  }
+  .note > :last-child, .tip > :last-child, .important > :last-child,
+  .warning > :last-child, .caution > :last-child { margin-bottom: 0; }
+  .note .title, .tip .title, .important .title,
+  .warning .title, .caution .title {
+    font-weight: 600;
+    color: var(--alert-color, inherit);
+  }
+  .note .title > p, .tip .title > p, .important .title > p,
+  .warning .title > p, .caution .title > p { margin: 0; }
+  .note      { --alert-color: #0969da; }
+  .tip       { --alert-color: #1a7f37; }
+  .important { --alert-color: #8250df; }
+  .warning   { --alert-color: #9a6700; }
+  .caution   { --alert-color: #cf222e; }
+</style>

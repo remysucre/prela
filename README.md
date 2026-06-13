@@ -3,7 +3,7 @@
 > "The calculus of relations has an intrinsic charm and beauty which makes it a source of intellectual
 > delight to all who become acquainted with it." —Alfred Tarski
 
-Prela is an embedded query language focusing on compositionality and control. 
+[**Prela**](https://github.com/remysucre/prela) is an embedded query language focusing on compositionality and control. 
 Its queries are concise, clear, and fast.
 It is implemented as a library of *query combinators* (think [parser combinators](https://en.wikipedia.org/wiki/Parser_combinator)),
  allowing the user to freely intermix queries with code in the host programming language. 

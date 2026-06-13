@@ -1,12 +1,576 @@
 <!DOCTYPE html>
-<html lang="en">
+<html xmlns="http://www.w3.org/1999/xhtml">
 <head>
-  <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="0; url=https://github.com/remysucre/prela">
-  <title>Redirecting...</title>
-  <script>window.location.replace("https://github.com/remysucre/prela");</script>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc 3.10" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>README</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      white-space: pre-wrap;
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: 1.5em;}
+    div.column{flex: auto;}
+    @media screen {
+    div.columns{gap: min(4vw, 1.5em);}
+    div.column{overflow-x: auto;}
+    }
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    /* CSS for syntax highlighting */
+    html { -webkit-text-size-adjust: 100%; }
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { color: #008000; } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { color: #008000; font-weight: bold; } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+  </style>
+  <style>
+    /* GitHub-style alert callouts. pandoc renders `> [!NOTE]` (etc.) as
+       <div class="note"><div class="title"><p>Note</p></div> … </div>. */
+    .note, .tip, .important, .warning, .caution {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid var(--alert-color, #888);
+    }
+    .note > :last-child, .tip > :last-child, .important > :last-child,
+    .warning > :last-child, .caution > :last-child { margin-bottom: 0; }
+    .note .title, .tip .title, .important .title,
+    .warning .title, .caution .title {
+      font-weight: 600;
+      color: var(--alert-color, inherit);
+    }
+    .note .title > p, .tip .title > p, .important .title > p,
+    .warning .title > p, .caution .title > p { margin: 0; }
+    .note      { --alert-color: #0969da; }
+    .tip       { --alert-color: #1a7f37; }
+    .important { --alert-color: #8250df; }
+    .warning   { --alert-color: #9a6700; }
+    .caution   { --alert-color: #cf222e; }
+  </style>
+  <script defer=""
+  src="https://cdn.jsdelivr.net/npm/katex@latest/dist/katex.min.js"></script>
+  <script>document.addEventListener("DOMContentLoaded", function () {
+ var mathElements = document.getElementsByClassName("math");
+ var macros = [];
+ for (var i = 0; i < mathElements.length; i++) {
+  var texText = mathElements[i].firstChild;
+  if (mathElements[i].tagName == "SPAN") {
+   katex.render(texText.data, mathElements[i], {
+    displayMode: mathElements[i].classList.contains('display'),
+    throwOnError: false,
+    macros: macros,
+    fleqn: false
+   });
+}}});
+  </script>
+  <link rel="stylesheet"
+  href="https://cdn.jsdelivr.net/npm/katex@latest/dist/katex.min.css" />
 </head>
 <body>
-  <p>Redirecting to <a href="https://github.com/remysucre/prela">https://github.com/remysucre/prela</a>…</p>
+<h1 id="prela-a-compositional--controllable-query-language">Prela: A
+Compositional &amp; Controllable Query Language</h1>
+<blockquote>
+<p>"The calculus of relations has an intrinsic charm and beauty which
+makes it a source of intellectual delight to all who become acquainted
+with it." —Alfred Tarski</p>
+</blockquote>
+<p><a
+href="https://github.com/remysucre/prela"><strong>Prela</strong></a> is
+an embedded query language focusing on compositionality and control. Its
+queries are concise, clear, and fast. It is implemented as a library of
+<em>query combinators</em> (think <a
+href="https://en.wikipedia.org/wiki/Parser_combinator">parser
+combinators</a>), allowing the user to freely intermix queries with code
+in the host programming language. The implementation follows <a
+href="https://remy.wang/blog/cps.html">continuation-passing style</a>,
+resulting in a core engine under 1k lines of code that compiles to
+efficient columnar execution. Unlike almost all SQL databases, Prela
+does not come with its query optimizer, and queries are executed exactly
+as they are written. This gives the user complete control over all
+aspects of query planning, including join ordering, operator pushdown,
+materialization, and selection of physical data structures.
+Nevertheless, the most idiomatic way to write a query already performs
+well in our experiments.</p>
+<div class="note">
+<div class="title">
+<p>Note</p>
+</div>
+<p>Prela is a research prototype in early development. Expect constant
+and sweeping changes to both language design and implementation.</p>
+</div>
+<h2 id="example">Example</h2>
+<p>Consider Join Order Benchmark <a
+href="https://github.com/gregrahn/join-order-benchmark/blob/master/22a.sql">22a</a>:</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode rust"><code class="sourceCode rust"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>movie<span class="op">.</span>with(info<span class="op">.</span>select(<span class="pp">Info::</span>ty<span class="op">.</span>text()<span class="op">.</span>eq(<span class="st">&quot;countries&quot;</span>)</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>                  <span class="op">.</span>and(<span class="pp">Info::</span>info<span class="op">.</span>is_in([<span class="st">&quot;Germany&quot;</span><span class="op">,</span> <span class="st">&quot;German&quot;</span><span class="op">,</span> <span class="st">&quot;USA&quot;</span><span class="op">,</span> <span class="st">&quot;American&quot;</span>])))</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>      <span class="op">.</span>and(keyword<span class="op">.</span>text()<span class="op">.</span>is_in([<span class="st">&quot;murder&quot;</span><span class="op">,</span> <span class="st">&quot;murder-in-title&quot;</span><span class="op">,</span> <span class="st">&quot;blood&quot;</span><span class="op">,</span> <span class="st">&quot;violence&quot;</span>]))</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>      <span class="op">.</span>and(production_year<span class="op">.</span>gt(<span class="dv">2008</span>))</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>      <span class="op">.</span>and(kind<span class="op">.</span>text()<span class="op">.</span>is_in([<span class="st">&quot;movie&quot;</span><span class="op">,</span> <span class="st">&quot;episode&quot;</span>])))</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>   <span class="op">.</span>select(title</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>      <span class="op">.</span>and(data<span class="op">.</span>with(<span class="pp">Data::</span>text<span class="op">.</span>lt(<span class="st">&quot;7.0&quot;</span>)</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>                <span class="op">.</span>and(<span class="pp">Data::</span>ty<span class="op">.</span>text()<span class="op">.</span>eq(<span class="st">&quot;rating&quot;</span>)))<span class="op">.</span>text())</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>      <span class="op">.</span>and(company<span class="op">.</span>with(<span class="pp">Company::</span>note<span class="op">.</span>nrx(<span class="st">r&quot;\(USA\)&quot;</span>)</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>                   <span class="op">.</span>and(<span class="pp">Company::</span>note<span class="op">.</span>rx(<span class="st">r&quot;\(200.*\)&quot;</span>))</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>                   <span class="op">.</span>and(country<span class="op">.</span>ne(<span class="st">&quot;[us]&quot;</span>))</span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>                   <span class="op">.</span>and(<span class="pp">Company::</span>ty<span class="op">.</span>text()<span class="op">.</span>eq(<span class="st">&quot;production companies&quot;</span>)))<span class="op">.</span>name()))</span></code></pre></div>
+<p>Intuitively, the query looks for <code>movies</code> satisfying
+several conditions:</p>
+<ul>
+<li>It's German or American</li>
+<li>It's a thriller</li>
+<li>It's produced after 2008</li>
+<li>It's a movie or a TV series episode (which we'll also just call a
+"movie")</li>
+</ul>
+<p>Then, for each such movie, output the following attributes:</p>
+<ul>
+<li>Its title</li>
+<li>Its rating, if lower than 7</li>
+<li>Its production company, if satisfying further conditions</li>
+</ul>
+<p>In SQL's way of thinking, <code>movie</code> would be in the
+<code>FROM</code> clause (along with other tables involved),
+<code>with</code> corresponds to the <code>WHERE</code> clause,<a
+href="#fn1" class="footnote-ref" id="fnref1"
+role="doc-noteref"><sup>1</sup></a> and <code>select</code> corresponds
+to the <code>SELECT</code> clause. But unlike SQL, Prela can freely
+interleave predicates and outputs, resulting in more natural queries as
+shown above. You can also think of <code>data.with(...).text()</code>
+and <code>company.with(...).name()</code> parts as <em>subqueries</em>
+which require special syntax in SQL, but are just subexpressions in
+Prela. And instead of explicit conditions, joins in Prela are reflected
+by the <em>structure</em> of the query in a navigational style.</p>
+<h2 id="data-model-and-simple-queries">Data Model and Simple
+Queries</h2>
+<p>To understand what's going on under the hood, we should first clarify
+the data model used by Prela. The theoretical foundation of Prela is a
+formalism of relations 100 years older than the familiar
+<em>relational</em> algebra, called (confusingly) <a
+href="https://en.wikipedia.org/wiki/Relation_algebra"><em>relation</em>
+algebra</a>. To avoid confusion, I will call it <a
+href="https://www.cl.cam.ac.uk/teaching/1415/Databases/Tarski_1941.pdf">Tarski's
+Algebra of Relations</a> (TAR) after the logician responsible for its
+modern formalization. In TAR (and therefore Prela), everything is a
+<em>binary</em> relation, and a query is built up with operators that
+take in and produce binary relations, which I call <em>relation
+combinators</em>. One way to think about this is a very extreme form of
+normalization: every table with k columns is "shredded" into k binary
+tables, one per column.</p>
+<p>Let us consider a simplified version of the query above:</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode rust"><code class="sourceCode rust"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>movie<span class="op">.</span>with(production_year<span class="op">.</span>gt(<span class="dv">2008</span>))<span class="op">.</span>select(title)</span></code></pre></div>
+<p>Here, <code>title</code> and <code>production_year</code> are both
+attributes of the same table in the original schema, but in Prela, each
+of them becomes a binary relation, mapping every movie (ID) to its title
+and production year, respectively. <code>movie</code> is also a binary
+relation, albeit a little special: it corresponds to the primary-key ID
+column of the original table, and is the <em>identity</em> relation over
+the IDs; in other words, <code>movie</code> contains <code>(i, i)</code>
+for every ID <code>i</code> in the table. Overall, each "column table"
+can be thought of as a map from the primary key to its corresponding
+value.</p>
+<p>Comparisons like <code>.gt()</code> and <code>.is_in()</code> are
+regular Rust methods on relations. For example,
+<code>production_year.gt(2008)</code> returns a binary relation that's a
+subset of <code>production_year</code>, such that the second column (the
+"value" column) contains only values greater than 2008.</p>
+<p>Next, <code>.with()</code> is the <em>restriction</em> combinator:
+<code>r.with(s)</code> restricts the last column of the <code>r</code>
+with the first column of the <code>s</code>; i.e., it is exactly a
+left-semijoin. In this example,
+<code>movie.with(production_year.gt(2008))</code> semijoins
+<code>movie</code> with the filterd-out <code>production_year</code>
+relation, and since <code>movie</code> is the identity relation, we're
+left with the IDs for movies made after 2008.</p>
+<p>The <code>.select()</code> combinator is <em>relational
+composition</em>. It is the workhorse of both Prela and TAR. The key to
+understanding relational composition is to view relations as a
+generalization of functions: a binary relation of type
+<code>(X, Y)</code> generalizes a function of type
+<code>X -&gt; Y</code> by allowing multiple different "output"
+(<code>Y</code>) values per "input" (<code>X</code>). For this reason,
+we will abuse <code>X -&gt; Y</code> to denote the type of a binary
+relation.</p>
+<p>From this perspective, it is then natural to see <code>select</code>
+as a generalization of the function composition (<span
+class="math inline">f \circ g</span>): <code>r.select(s)</code> first
+"applies" <code>r</code> to each <code>x</code> to get a bunch of
+<code>y</code>, then for each <code>y</code>, apply <code>s</code> to
+get a bunch of <code>z</code>.</p>
+<p>In math: <span class="math inline">R \circ S = \lbrace (x, z) \mid
+\exists y . (x, y) \in R \land (y, z) \in S \rbrace</span>. In standard
+relational algebra: <span class="math inline">R \circ S = \pi_{x, z}(R
+\Join_{R.y = S.y} S)</span> where R's schema is over x and y, and S's
+schema is over y and z.</p>
+<p>Going back to our example, <code>.select()</code> takes two
+inputs:</p>
+<ul>
+<li><code>movie.with(production_year.gt(2008))</code>, which has all
+movies after 2008 and is of type <code>Movie -&gt; Movie</code></li>
+<li><code>title</code> which has type
+<code>Movie -&gt; String</code></li>
+</ul>
+<p>Their composition then produces an output of type
+<code>Movie -&gt; String</code>, namely, a mapping from each qualifying
+movie to its title.</p>
+<p>Another (perhaps more natural) way to think about all these is to
+pretend every movie is a JSON object called <code>movie</code>, and its
+attributes like <code>title</code> and <code>production_year</code> are
+JSON attributes, then <code>.select()</code> will feel like field
+access, and <code>.with()</code> lets you specify filters.</p>
+<p>There is one more construct in our original example, namely the
+<em>product</em> combinator <code>.and()</code>. It takes two relations
+of types <code>X -&gt; Y</code> and <code>X -&gt; Z</code>, and joins
+them on <code>X</code> to produce an output of type
+<code>X -&gt; (Y, Z)</code>. When used as a conjunction in the
+<code>with</code> clause, product allows us to combine different
+predicates:</p>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode rust"><code class="sourceCode rust"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>      <span class="op">.</span>and(production_year<span class="op">.</span>gt(<span class="dv">2008</span>))</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>      <span class="op">.</span>and(kind<span class="op">.</span>text()<span class="op">.</span>is_in([<span class="st">&quot;movie&quot;</span><span class="op">,</span> <span class="st">&quot;episode&quot;</span>])))</span></code></pre></div>
+<p>When used in <code>select</code>, it combines different columns in
+the output: in the full example, we output title, data (with additional
+filters), and company name - the last because
+<code>company.with(...).name()</code> computes a relation of type
+<code>Movie -&gt; String</code> mapping each movie to its company's
+name.</p>
+<h2 id="ctes-udfs-and-aggregation">CTEs, UDFs, and Aggregation</h2>
+<p>Since Prela is directly embedded in the host language, we can borrow
+many constructs from the host to get many features that are considered
+advanced in other query languages, <em>for free</em>. Consider TPCH <a
+href="https://github.com/dragansah/tpch-dbgen/blob/master/tpch-queries/21.sql">q21</a>:</p>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode rust"><code class="sourceCode rust"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> late <span class="op">=</span> lineitem<span class="op">.</span>with(commitdate<span class="op">.</span>and(receiptdate)<span class="op">.</span>filt(<span class="op">|</span>(c<span class="op">,</span> r)<span class="op">|</span> c <span class="op">&lt;</span> r))<span class="op">;</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="co">// EXISTS another supplier on the order (across all lineitems)</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> multi_supp <span class="op">=</span> <span class="pp">Lineitem::</span>supplier<span class="op">.</span>group_by(order)<span class="op">.</span>count_distinct()<span class="op">.</span>gt(<span class="dv">1</span>)<span class="op">;</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="co">// NOT EXISTS another LATE supplier (only L1 is late)</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> only_late <span class="op">=</span> (<span class="op">&amp;</span>late)<span class="op">.</span>select(<span class="pp">Lineitem::</span>supplier)</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>group_by((<span class="op">&amp;</span>late)<span class="op">.</span>select(order))</span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>count_distinct()<span class="op">.</span>eq(<span class="dv">1</span>)<span class="op">;</span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> saudi <span class="op">=</span> supplier<span class="op">.</span>and(<span class="pp">Supplier::</span>nation<span class="op">.</span>name()<span class="op">.</span>eq(<span class="st">&quot;SAUDI ARABIA&quot;</span>))<span class="op">;</span></span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> f_ords <span class="op">=</span> orders<span class="op">.</span>and(<span class="pp">Order::</span>status<span class="op">.</span>eq(<span class="st">&quot;F&quot;</span>))<span class="op">;</span></span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> qualifying <span class="op">=</span> (<span class="op">&amp;</span>late)</span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>with(<span class="pp">Lineitem::</span>supplier<span class="op">.</span>select(saudi)</span>
+<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a>     <span class="op">.</span>and(order<span class="op">.</span>select(f_ords<span class="op">.</span>and(multi_supp)<span class="op">.</span>and(only_late))))<span class="op">;</span></span>
+<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> counts <span class="op">=</span> qualifying<span class="op">.</span>group_by(<span class="pp">Lineitem::</span>supplier)<span class="op">.</span>fold(<span class="dv">0_i64</span><span class="op">,</span> <span class="op">|</span>a<span class="op">,</span> _<span class="op">|</span> a <span class="op">+</span> <span class="dv">1</span>)<span class="op">;</span></span></code></pre></div>
+<p>The <code>let</code> bindings assign sub-queries to variables — which
+would require CTEs in SQL, but is simply a variable binding in
+Prela/Rust! Where SQL needs a UDF, Prela passes an ordinary closure,
+e.g., the predicate in <code>.filt(|(c, r)| c &lt; r)</code> and the
+accumulator <code>|a, _| a + 1</code> passed to <code>fold</code>.</p>
+<p>The next new Prela construct excercised by this query is group-by
+aggregation. Let's focus on the expression
+<code>Lineitem::supplier.group_by(order).count_distinct().gt(1)</code>.
+You can probably guess it corresponds to the SQL query:</p>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode SQL"><code class="sourceCode sql"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>  <span class="kw">SELECT</span> <span class="kw">order</span>, supplier</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>    <span class="kw">FROM</span> lineitem</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="kw">GROUP</span> <span class="kw">BY</span> <span class="kw">order</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>  <span class="kw">HAVING</span> <span class="fu">COUNT</span> <span class="kw">DISTINCT</span>(supplier) <span class="op">&gt;</span> <span class="dv">1</span></span></code></pre></div>
+<p>In SQL, <code>GROUP BY</code>, <code>HAVING</code>, and
+<code>COUNT</code> must all come together, and missing a clause triggers
+a parse error. But in our Prela query, <code>.group_by()</code>,
+<code>count_distinct()</code>, and <code>.gt()</code> are just regular
+Rust functions, so how do we make sure all of them are called together?
+We don't.</p>
+<p>To understand how things work, we shall first introduce one more
+combinator, the inverse <code>.inv()</code>: it just flips the columns
+of <code>R</code>, so if <code>R: X -&gt; Y</code>, then
+<code>R': Y -&gt; X</code>, like how you invert a function.</p>
+<p>Now, back to the query: <code>s.group_by(r)</code> is short hand for
+"compose with inverse": <code>Lineitem::supplier.group_by(order)</code>
+means <code>order.inv().select(Lineitem::supplier)</code>. Here, the
+<code>order</code> relation has type <code>Li -&gt; Order</code>, so its
+inverse has type <code>Order -&gt; Li</code> and maps each order to the
+lineitem. Then, <code>Lineitem::supplier</code> has type
+<code>Li -&gt; Supplier</code>, so the composition has type
+<code>Order -&gt; Supplier</code>, mapping each order to its supplier.
+Next, each aggregation operator, <code>.fold()</code>,
+<code>.buf_fold()</code>, <code>.count_distinct()</code>, groups its
+receiver by the first column, and computes the aggregate over the second
+column using the supplied function. In our case, we group the suppliers
+by order, then count the number of distinct suppliers per group.
+Finally, <code>.gt(1)</code> works as before and filters the relation to
+keep the orders that are supplied by more than 1 distinct suppliers,
+which corresponds to the <code>HAVING</code> clause in SQL but requires
+no special treatment in Prela. Grouping may appear limiting as it "can
+only group by one attribute", but that is not true - grouping by
+multiple attributes can be achieved by grouping by a product! I'll leave
+that as an excercise for the reader.</p>
+<h2 id="implementation">Implementation</h2>
+<p>If implemented naively, Prela would be pretty slow. Indeed, the first
+prototype was around 100x slower than DuckDB! The naive implementation
+literally had each combinator take in and produce relations, which leads
+to a lot of materialized intermediates that are only filtered down later
+on. There are <a
+href="https://www.vldb.org/pvldb/vol11/p2209-kersten.pdf">two standard
+solutions</a> in DB to this problem: implement the <a
+href="https://cs-people.bu.edu/mathan/reading-groups/papers-classics/volcano.pdf">iterator
+model</a> and vectorize it to make it fast, or compile the query into
+low-level code running tight loops. Both approach involve significant
+effort. To be honest, I almost gave up at that point, because building a
+vectorized or compiled DB is much too large of a scope. Until I
+remembered some dark magic I picked up from my functional programming
+days - <a
+href="https://en.wikipedia.org/wiki/Continuation-passing_style">continuation-passing
+style</a> (CPS). Actually, I never really understood CPS until working
+on Prela, and when it clicked, I literally cried because the idea was so
+beautiful! I've written more about it <a
+href="https://remy.wang/blog/cps.html">here</a>. Long story short, CPS
+allows each combinator to be implemented in a few lines in a modular
+way, yet compiling to code that recovers efficient columnar
+execution!</p>
+<h2 id="performance">Performance</h2>
+<p>Some consider the query optimizer to be the heart of a database,
+transforming high-level queries into fast, executable code. I've also
+spent my graduate school years working on query optimizers, so it's
+probably quite surprising that Prela doesn't have one. In other words, a
+Prela query <em>is</em> also a query plan! Each query will be executed
+exactly as it is written, giving the programmer complete control over
+every aspect of query performance. Physical data structures can be
+selected with type annotations, and materialization points specified by
+calls to <code>.collect()</code>. I will write more about that later,
+but for now, treat yourself to the queries here: see <a
+href="./rust/src/queries/">rust/src/queries/</a> for all 113 JOB
+queries, and <a
+href="./rust/src/tpch/common.rs">rust/src/tpch/common.rs</a> for
+TPC-H.</p>
+<p>The plots below compare Prela against DuckDB 1.5.3 (1 thread) as
+baseline, over TPC-H and the Join Order Benchmark. On JOB, Prela runs
+the 113 queries in 5.2s vs DuckDB's 15.3s (3.0× faster, winning 99 of
+113). On TPC-H SF=1, idiomatic Prela is within ~1.4× of DuckDB's
+vectorized engine (1.18s vs 0.86s), and an optimized variant beats it by
+~1.6× (0.55s).</p>
+<p>
+  <img src="./rust/bench/tpch_scatter.png" width="49%" alt="TPC-H SF=1">
+  <img src="./rust/bench/job_scatter.png" width="49%" alt="JOB">
+</p>
+
+<section id="footnotes" class="footnotes footnotes-end-of-document"
+role="doc-endnotes">
+<hr />
+<ol>
+<li id="fn1"><p>Sadly <code>where</code> is reserved in Rust.<a
+href="#fnref1" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+</ol>
+</section>
 </body>
 </html>
