@@ -229,12 +229,70 @@ impl<E: 'static> Dense for Id<E> {
 // Entity → scalar hops are spelled by the `schema!`-generated NAVIGATION
 // traits (one method per field, blanket-implemented for anything that
 // RESOLVES to a query valued in the entity's ids — see src/schema.rs):
-// `Movie::kind.text()` composes with Kind's text column. Navigation superseded the old `Primary`/`.p()`
-// elision: it names ANY field, not just the first declared one, and reads
-// as the chain it builds. (A Julia-style single-name `eq` that dispatches
-// on scalar vs entity-valued columns was analyzed and rejected:
-// overload-by-second-trait is ambiguous under coherence — nav traits avoid
-// that wall because their receivers' `R = Id<E>` bounds are disjoint.)
+// `Movie::kind.text()` composes with Kind's text column.
+//
+// ===== primary-field elision (Julia's `==` on an entity value) ==========
+// A comparison on an entity-valued query auto-navigates to the entity's
+// PRIMARY (first-declared) scalar field before comparing — `keyword.eq("x")`
+// ≡ `keyword.text().eq("x")`. The dispatch is on the RECEIVER's value type,
+// not the argument: `Field` carries a GAT holding the (concrete) elided
+// QUERY — `Q` for a scalar, `Compose<Q, &Primary>` for an `Id<E>` — while the
+// comparator's closure stays method-level RPITIT. (The earlier dead end put
+// the closure in the GAT, which is impossible; keeping the GAT query-only is
+// the way through.) Scalar columns elide to identity, so explicit navigation
+// (`kind.text().eq(..)`) keeps working unchanged.
+
+/// An entity tag whose first-declared field is scalar — `schema!` emits this.
+/// `'static` is load-bearing: `Id<E: 'static>`, and `Col`/`primary` are
+/// `&'static`.
+pub trait Primary: 'static + Sized {
+    type Scalar: Copy;
+    type Col: Query<D = Id<Self>, R = Self::Scalar>;
+    fn primary() -> &'static Self::Col;
+}
+
+/// A relation's VALUE type, and how a comparison on it elides: scalars are the
+/// identity; entity ids navigate to their primary column.
+pub trait Field: Copy {
+    type Scalar: Copy;
+    type Elided<Q: Query<R = Self>>: Query<R = Self::Scalar>;
+    fn elide<Q: Query<R = Self>>(q: Q) -> Self::Elided<Q>;
+}
+impl Field for i64 {
+    type Scalar = i64;
+    type Elided<Q: Query<R = i64>> = Q;
+    #[inline(always)] fn elide<Q: Query<R = i64>>(q: Q) -> Q { q }
+}
+impl Field for f64 {
+    type Scalar = f64;
+    type Elided<Q: Query<R = f64>> = Q;
+    #[inline(always)] fn elide<Q: Query<R = f64>>(q: Q) -> Q { q }
+}
+impl Field for &'static str {
+    type Scalar = &'static str;
+    type Elided<Q: Query<R = &'static str>> = Q;
+    #[inline(always)] fn elide<Q: Query<R = &'static str>>(q: Q) -> Q { q }
+}
+// Untyped escape hatch: `usize`-valued columns (the pre-schema loaders) keep
+// `.eq` available, identity-elided.
+impl Field for usize {
+    type Scalar = usize;
+    type Elided<Q: Query<R = usize>> = Q;
+    #[inline(always)] fn elide<Q: Query<R = usize>>(q: Q) -> Q { q }
+}
+impl<E: Primary> Field for Id<E> {
+    type Scalar = E::Scalar;
+    type Elided<Q: Query<R = Id<E>>> = Compose<Q, &'static E::Col>;
+    #[inline(always)]
+    fn elide<Q: Query<R = Id<E>>>(q: Q) -> Compose<Q, &'static E::Col> {
+        Compose { a: q, b: E::primary() }
+    }
+}
+
+/// The elided value type a comparison on `T` ends up comparing.
+pub type Sc<T> = <ROf<T> as Field>::Scalar;
+/// The query a comparison on `T` filters, after primary elision.
+pub type Elided<T> = <ROf<T> as Field>::Elided<<T as IntoQuery>::Q>;
 
 pub struct VecRel<R: Copy, D: Dense = usize> {
     pub values: Vec<R>,
@@ -970,53 +1028,73 @@ pub trait QueryExt: IntoQuery + Sized {
     fn union<B: IntoQuery>(self, b: B) -> Union<Self::Q, B::Q>
     where B::Q: Query<D = DOf<Self>, R = ROf<Self>> { Union { a: self.iq(), b: b.iq() } }
 
-    // Predicate filters — all captured-closure forms of `filt`.
-    #[inline(always)] fn eq(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
-        where ROf<Self>: PartialEq { self.filt(move |x| x == v) }
-    #[inline(always)] fn ne(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
-        where ROf<Self>: PartialEq { self.filt(move |x| x != v) }
-    #[inline(always)] fn gt(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
-        where ROf<Self>: PartialOrd { self.filt(move |x| x > v) }
-    #[inline(always)] fn lt(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
-        where ROf<Self>: PartialOrd { self.filt(move |x| x < v) }
-    #[inline(always)] fn ge(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
-        where ROf<Self>: PartialOrd { self.filt(move |x| x >= v) }
-    #[inline(always)] fn le(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
-        where ROf<Self>: PartialOrd { self.filt(move |x| x <= v) }
-    #[inline(always)] fn in_v(self, vs: Vec<ROf<Self>>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
-        where ROf<Self>: PartialEq { self.filt(move |x| vs.iter().any(|&v| v == x)) }
+    // Predicate filters — all elide the primary field (scalar = identity)
+    // then compare; see the `Field`/`Primary` traits above. `filt` is the
+    // non-eliding escape hatch.
+    #[inline(always)] fn eq(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+        where ROf<Self>: Field, Sc<Self>: PartialEq {
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x == v }
+    }
+    #[inline(always)] fn ne(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+        where ROf<Self>: Field, Sc<Self>: PartialEq {
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x != v }
+    }
+    #[inline(always)] fn gt(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+        where ROf<Self>: Field, Sc<Self>: PartialOrd {
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x > v }
+    }
+    #[inline(always)] fn lt(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+        where ROf<Self>: Field, Sc<Self>: PartialOrd {
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x < v }
+    }
+    #[inline(always)] fn ge(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+        where ROf<Self>: Field, Sc<Self>: PartialOrd {
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x >= v }
+    }
+    #[inline(always)] fn le(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+        where ROf<Self>: Field, Sc<Self>: PartialOrd {
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x <= v }
+    }
+    #[inline(always)] fn in_v(self, vs: Vec<Sc<Self>>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+        where ROf<Self>: Field, Sc<Self>: PartialEq {
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| vs.iter().any(|&v| v == x) }
+    }
     /// `in_v` over any `IntoIterator` — arrays, slices, the named set fns —
     /// collected once into the captured Vec.
-    #[inline(always)] fn is_in<I: IntoIterator<Item = ROf<Self>>>(self, vs: I)
-        -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
-        where ROf<Self>: PartialEq {
-        let vs: Vec<ROf<Self>> = vs.into_iter().collect();
-        self.filt(move |x| vs.iter().any(|&v| v == x))
+    #[inline(always)] fn is_in<I: IntoIterator<Item = Sc<Self>>>(self, vs: I)
+        -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+        where ROf<Self>: Field, Sc<Self>: PartialEq {
+        let vs: Vec<Sc<Self>> = vs.into_iter().collect();
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| vs.iter().any(|&v| v == x) }
     }
     /// Restriction `a : b` — keep self's pairs whose VALUE is a `member` of
     /// `s` (any probe-able relation). Builds the dedicated `Restrict` node,
     /// node-for-node with Julia.
     #[inline(always)] fn with<S: IntoQuery>(self, s: S) -> Restrict<Self::Q, S::Q>
         where S::Q: Probe<D = ROf<Self>> { Restrict { a: self.iq(), b: s.iq() } }
-    #[inline(always)] fn rx(self, re: &str) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
-        where Self::Q: Query<R = &'static str> {
+    #[inline(always)] fn rx(self, re: &str) -> Filter<Elided<Self>, impl Fn(&'static str) -> bool>
+        where ROf<Self>: Field<Scalar = &'static str> {
         let re = Regex::new(re).unwrap();
-        self.filt(move |s| re.is_match(s))
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |s| re.is_match(s) }
     }
-    #[inline(always)] fn nrx(self, re: &str) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
-        where Self::Q: Query<R = &'static str> {
+    #[inline(always)] fn nrx(self, re: &str) -> Filter<Elided<Self>, impl Fn(&'static str) -> bool>
+        where ROf<Self>: Field<Scalar = &'static str> {
         let re = Regex::new(re).unwrap();
-        self.filt(move |s| !re.is_match(s))
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |s| !re.is_match(s) }
     }
     /// Closure-predicate filter — for things like cross-column compares.
     #[inline(always)] fn filt<F: Fn(ROf<Self>) -> bool>(self, f: F) -> Filter<Self::Q, F>
         { Filter { a: self.iq(), p: f } }
     /// Half-open range `[lo, hi)` — Julia `during(lo, hi)`.
-    #[inline(always)] fn during(self, lo: ROf<Self>, hi: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
-        where ROf<Self>: PartialOrd { self.filt(move |x| x >= lo && x < hi) }
+    #[inline(always)] fn during(self, lo: Sc<Self>, hi: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+        where ROf<Self>: Field, Sc<Self>: PartialOrd {
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x >= lo && x < hi }
+    }
     /// Closed range `[lo, hi]` — Julia `lo..hi`.
-    #[inline(always)] fn between(self, lo: ROf<Self>, hi: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
-        where ROf<Self>: PartialOrd { self.filt(move |x| x >= lo && x <= hi) }
+    #[inline(always)] fn between(self, lo: Sc<Self>, hi: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+        where ROf<Self>: Field, Sc<Self>: PartialOrd {
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x >= lo && x <= hi }
+    }
 
     /// Materialize — drive self once into the physical structure named by
     /// the target type (`FromQuery`, the relation mirror of `FromIterator`):

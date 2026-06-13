@@ -155,7 +155,7 @@ fn q13() -> String {
     use memchr::memmem;
     let f_special = memmem::Finder::new("special");
     let live_orders = orders
-        .with(Order::customer.ne(Dense::NONE)    // skip sparse orderkey gaps (hole fill NO_ID)
+        .with(Order::customer.filt(|c| c != Dense::NONE)    // skip sparse orderkey gaps (hole fill NO_ID)
          .and(Order::comment.filt(move |c: &str| {
                   match f_special.find(c.as_bytes()) {
                       Some(p) => !c[p + "special".len()..].contains("requests"),
@@ -257,7 +257,7 @@ fn q21() -> String {
         .dense_fold(orders.iq().n, (None, false), track);
     let only_late = orders.with(late_supp_state
         .filt(|(first, multi): (Option<Id<Supplier>>, bool)| first.is_some() && !multi));
-    let saudi = supplier.with(Supplier::nation.name().eq("SAUDI ARABIA"));
+    let saudi = supplier.with(Supplier::nation.eq("SAUDI ARABIA"));
     let f_ords = orders.with(Order::status.eq("F"));
     // Hoist each per-row membership probe into a dense `Bitset` over its
     // domain — the ∧ chain on `qualifying` becomes 4 bit-tests per row
@@ -322,7 +322,7 @@ fn q2() -> String {
     //                  ∧ (supplycost == (PS.part → min_per_part))
     //   target : (Su.acctbal ⊗ Su.name ⊗ Na.name ⊗ PS.part ⊗ Pa.mfgr
     //             ⊗ Su.address ⊗ Su.phone ⊗ Su.comment)
-    let eu_ps = partsupp.with(PartSupp::supplier.nation().region().name().eq("EUROPE"));
+    let eu_ps = partsupp.with(PartSupp::supplier.nation().region().eq("EUROPE"));
     let min_per_part = (&eu_ps).supplycost()
         .group_by((&eu_ps).part())
         .dense_fold(part.iq().n, f64::INFINITY, |a, c| if c < a { c } else { a });

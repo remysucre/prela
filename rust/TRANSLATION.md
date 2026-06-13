@@ -31,7 +31,7 @@ length).
 The missing-id sentinel is `Dense::NONE` (`engine::NO_ID` = `usize::MAX`
 under the wrapper): FK-valued columns over gappy key spaces fill holes with
 it, never 0 (entity 0 is live). Gap checks compare against it
-(`Order::customer.ne(Dense::NONE)` / `== Dense::NONE`); "no entity seen
+(`Order::customer.filt(|c| c != Dense::NONE)`); "no entity seen
 yet" fold states use `Option<Id<E>>` (or `NO_ID` in raw `Vec<usize>` state
 where size matters, e.g. dense per-order arrays). Probes are safe `.get()`
 lookups — `NONE` (or any out-of-universe id) fails the single bounds check
@@ -137,7 +137,7 @@ member-check `p`, probe `b` — the post-unification spelling of Julia's
 | `r ← s` (l-compose) | `s.group_by(r)`                           | drive-only `GroupBy`: drive `s`, probe `r` per row for the group key, emit (r-value, s-value). RECEIVER = DRIVEN SIDE — Julia's infix argument order is a surface artifact; in method position the flip reads naturally ("group s by r") |
 | `q ▷ (op, init)`    | `q.fold(init, op)`                        | per-key foldl into an eager cache |
 | `q ▷ f` (callable)  | `q.buf_fold(f)`                           | `BufFold` — per-key whole-multiset reduce: buffer each group, cache `f(group)`. For reducers that don't fit foldl's `(S, R) → S` shape; `▷ (vs -> length(unique(vs)))` ⇒ `.count_distinct()`, the `length ∘ unique` instance |
-| `a == v`            | `a.eq(v)`                                 | for `Type.field == v` see ELISION |
+| `a == v`            | `a.eq(v)`                                 | on an entity-valued col, auto-elides to its primary scalar field |
 | `a != v`            | `a.ne(v)`                                 |  |
 | `>, <, >=, <=`      | `.gt`, `.lt`, `.ge`, `.le`                | Works on i64 and &str (lex) |
 | `a in (v1, …)`      | `a.is_in([v1, …])`                        | any `IntoIterator` — arrays, slices, the named set fns in `super::sets` |
@@ -164,7 +164,7 @@ JOB 22a's first conjunct — Julia `info → (Info.type == "countries") ∧
 (Info.info in (…))` — is therefore
 
 ```rust
-info.select(Info::ty.text().eq("countries")
+info.select(Info::ty.eq("countries")
      .and(Info::info.is_in([…])))
 ```
 
@@ -230,30 +230,36 @@ and field names ARE the cache filenames (`Info_ty.bin`). `Person.info` →
 `bio`, `Person.aka` → `alias`; each lookup table's label column →
 `text`.)
 
-## CRITICAL — id → scalar hops are NAVIGATION methods
+## Primary-field elision — comparisons auto-navigate to the primary
 
 Julia writes `keyword == "x"` and means "the keyword id, resolved to its
-label, equals x". Rust spells the hop as the field's nav method —
-`keyword.text()` ≡ `keyword.select(Keyword::text)`, defined exactly where
-the chain's value type is the entity id `Id<E>` (same-named methods on
-other entities' traits don't apply: the receivers are disjoint).
+label, equals x". Rust elides identically: a comparison on an entity-valued
+query auto-navigates to that entity's PRIMARY (first-declared) scalar field
+before comparing. So `keyword.eq("x")` ≡ `keyword.text().eq("x")` — the
+`.text()` is implied. Driven by the `Field`/`Primary` traits in engine.rs;
+the elision is by-construction transparent (same plan as the explicit nav).
 
-| Julia                                | Rust                              |
-|--------------------------------------|-----------------------------------|
-| `keyword == "x"`                     | `keyword.text().eq("x")`        |
-| `keyword in (...)`                   | `keyword.text().is_in([...])`   |
-| `role == "x"` (cast)                 | `role.text().eq("x")`           |
-| `kind == "x"` (movie)                | `kind.text().eq("x")`           |
-| `Info.type == "x"`                   | `Info::ty.text().eq("x")`       |
-| `Company.type == "x"`                | `Company::ty.text().eq("x")`    |
-| `Data.type == "x"`                   | `Data::ty.text().eq("x")` (Data.ty points to InfoType) |
-| `MovieLink.type == "x"`              | `MovieLink::ty.text().eq("x")`  |
-| `PersonInfo.type == "x"`             | `PersonInfo::ty.text().eq("x")` |
-| `CompleteCast.status == "x"`         | `status.text().eq("x")`         |
-| `CompleteCast.subject == "x"`        | `subject.text().eq("x")`        |
+| Julia                                | Rust                       |
+|--------------------------------------|----------------------------|
+| `keyword == "x"`                     | `keyword.eq("x")`          |
+| `keyword in (...)`                   | `keyword.is_in([...])`     |
+| `role == "x"` (cast)                 | `role.eq("x")`             |
+| `kind == "x"` (movie)                | `kind.eq("x")`             |
+| `Info.type == "x"`                   | `Info::ty.eq("x")`         |
+| `Data.type == "x"`                   | `Data::ty.eq("x")`         |
+| `CompleteCast.status == "x"`         | `status.eq("x")`           |
 
-Same pattern for `~`, `≁`, `>`, `<`, `in`, etc. — the LHS root keeps its
-bare-handle (or `Entity::field`) form and every subsequent hop navigates.
+Applies to every comparator (`eq/ne/gt/lt/ge/le/in_v/is_in/rx/nrx/during/
+between`). Two caveats:
+
+- **Only the PRIMARY field elides.** A non-primary scalar still needs the
+  explicit hop: `Company.country` is `company.country()` (country is not
+  Company's first field), and any navigation used as OUTPUT keeps its nav
+  method (`cast.person().name()`).
+- **Entities without a scalar primary don't elide** (their first field is an
+  entity ref: Cast, MovieLink, CompleteCast, PartSupp, Order, Lineitem) — so
+  `.eq` on their ids won't compile. Compare ids with the non-eliding escape
+  hatch `.filt`, e.g. `Order::customer.filt(|c| c != Dense::NONE)`.
 
 ## Multi-hop traversal
 

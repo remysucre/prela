@@ -37,6 +37,6 @@ pub fn q6a_methods() -> impl Drive<R: Row> {
          .and(kw_marvel()))
         .select(kw_marvel()
          .and(title)
-         .and(cast.person().name().rx(r"Downey.*Robert")));
+         .and(cast.person().rx(r"Downey.*Robert")));
     q
 }

@@ -25,33 +25,33 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 fn q22d() -> impl Drive<R: Row> {
-    movie.with(info.select(Info::ty.text().eq("countries")
+    movie.with(info.select(Info::ty.eq("countries")
                       .and(Info::info.is_in(nordic10())))
-          .and(keyword.text().is_in(murder4()))
+          .and(keyword.is_in(murder4()))
           .and(production_year.gt(2005))
-          .and(kind.text().is_in(["movie", "episode"])))
+          .and(kind.is_in(["movie", "episode"])))
        .select(title
           .and(data.with(Data::text.lt("8.5")
-                    .and(Data::ty.text().eq("rating"))).text())
+                    .and(Data::ty.eq("rating"))).text())
           .and(company.with(country.ne("[us]")
-                       .and(Company::ty.text().eq("production companies"))).name()))
+                       .and(Company::ty.eq("production companies"))).name()))
 }
 
 fn q5b() -> impl Drive<R: Row> {
-    movie.with(company.select(Company::ty.text().eq("production companies")
+    movie.with(company.select(Company::ty.eq("production companies")
                          .and(Company::note.rx(r"\(VHS\)"))
                          .and(Company::note.rx(r"\(USA\)"))
                          .and(Company::note.rx(r"\(1994\)")))
-          .and(info.info().is_in(["USA", "America"]))
+          .and(info.is_in(["USA", "America"]))
           .and(production_year.gt(2010)))
         .title()
 }
 
 fn q5c() -> impl Drive<R: Row> {
-    movie.with(company.select(Company::ty.text().eq("production companies")
+    movie.with(company.select(Company::ty.eq("production companies")
                          .and(Company::note.nrx(r"\(TV\)"))
                          .and(Company::note.rx(r"\(USA\)")))
-          .and(info.info().is_in(nordic10()))
+          .and(info.is_in(nordic10()))
           .and(production_year.gt(1990)))
         .title()
 }
@@ -63,7 +63,7 @@ fn q15a() -> impl Drive<R: Row> {
                          .and(Company::note.rx(r"\(worldwide\)"))))
           .and(keyword)
           .and(aka))
-       .select(info.with(Info::ty.text().eq("release dates")
+       .select(info.with(Info::ty.eq("release dates")
                     .and(Info::info.rx(r"^USA:.* 200"))
                     .and(Info::note.rx(r"internet"))).info()
           .and(title))
@@ -78,7 +78,7 @@ fn q15b() -> impl Drive<R: Row> {
           .and(aka)
           .and(production_year.ge(2005))
           .and(production_year.le(2010)))
-       .select(info.with(Info::ty.text().eq("release dates")
+       .select(info.with(Info::ty.eq("release dates")
                     .and(Info::info.rx(r"^USA:.* 200"))
                     .and(Info::note.rx(r"internet"))).info()
           .and(title))
@@ -89,7 +89,7 @@ fn q15c() -> impl Drive<R: Row> {
           .and(keyword)
           .and(aka)
           .and(production_year.gt(1990)))
-       .select(info.with(Info::ty.text().eq("release dates")
+       .select(info.with(Info::ty.eq("release dates")
                     .and(Info::info.rx(r"^USA:.* 199")
                      .or(Info::info.rx(r"^USA:.* 200")))
                     .and(Info::note.rx(r"internet"))).info()
@@ -99,7 +99,7 @@ fn q15c() -> impl Drive<R: Row> {
 fn q15d() -> impl Drive<R: Row> {
     movie.with(company.country().eq("[us]")
           .and(keyword)
-          .and(info.select(Info::ty.text().eq("release dates")
+          .and(info.select(Info::ty.eq("release dates")
                       .and(Info::note.rx(r"internet"))))
           .and(production_year.gt(1990)))
        .select(aka.text()
@@ -107,48 +107,48 @@ fn q15d() -> impl Drive<R: Row> {
 }
 
 fn q11c() -> impl Drive<R: Row> {
-    movie.with(keyword.text().is_in(["sequel", "revenge", "based-on-novel"])
+    movie.with(keyword.is_in(["sequel", "revenge", "based-on-novel"])
           .and(production_year.gt(1950))
           .and(link))
        .select(company.with(country.ne("[pl]")
                        .and(Company::name.rx(r"^20th Century Fox")
                         .or(Company::name.rx(r"^Twentieth Century Fox")))
-                       .and(Company::ty.text().ne("production companies"))
+                       .and(Company::ty.ne("production companies"))
                        .and(Company::note)).select(Company::name.and(Company::note))
           .and(title))
 }
 
 fn q11d() -> impl Drive<R: Row> {
-    movie.with(keyword.text().is_in(["sequel", "revenge", "based-on-novel"])
+    movie.with(keyword.is_in(["sequel", "revenge", "based-on-novel"])
           .and(production_year.gt(1950))
           .and(link))
        .select(company.with(country.ne("[pl]")
-                       .and(Company::ty.text().ne("production companies"))
+                       .and(Company::ty.ne("production companies"))
                        .and(Company::note)).select(Company::name.and(Company::note))
           .and(title))
 }
 
 fn q13d() -> impl Drive<R: Row> {
-    movie.with(kind.text().eq("movie")
-          .and(info.ty().text().eq("release dates")))
+    movie.with(kind.eq("movie")
+          .and(info.ty().eq("release dates")))
        .select(company.with(country.eq("[us]")
-                       .and(Company::ty.text().eq("production companies"))).name()
-          .and(data.with(Data::ty.text().eq("rating")).text())
+                       .and(Company::ty.eq("production companies"))).name()
+          .and(data.with(Data::ty.eq("rating")).text())
           .and(title))
 }
 
 // q6a/c/e share the marvel-cinematic-universe keyword and q6b/d the kw8
 // list; within each pair only the year cutoff varies.
 fn q6_marvel(year: i64) -> impl Drive<R: Row> {
-    let kw = || keyword.text().eq("marvel-cinematic-universe");
-    let downey = cast.person().name().rx(r"Downey.*Robert");
+    let kw = || keyword.eq("marvel-cinematic-universe");
+    let downey = cast.person().rx(r"Downey.*Robert");
     movie.with(production_year.gt(year).and(kw()))
        .select(kw().and(title).and(downey))
 }
 
 fn q6_comic(year: i64) -> impl Drive<R: Row> {
-    let kw = || keyword.text().is_in(kw8());
-    let downey = cast.person().name().rx(r"Downey.*Robert");
+    let kw = || keyword.is_in(kw8());
+    let downey = cast.person().rx(r"Downey.*Robert");
     movie.with(production_year.gt(year).and(kw()))
        .select(kw().and(title).and(downey))
 }
@@ -160,7 +160,7 @@ fn q6d() -> impl Drive<R: Row> { q6_comic(2000) }
 fn q6e() -> impl Drive<R: Row> { q6_marvel(2000) }
 
 fn q6f() -> impl Drive<R: Row> {
-    let kw = || keyword.text().is_in(kw8());
+    let kw = || keyword.is_in(kw8());
     let cast_name = cast.person().name();
     movie.with(production_year.gt(2000).and(kw()))
        .select(kw().and(title).and(cast_name))

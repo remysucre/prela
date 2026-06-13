@@ -25,14 +25,14 @@ pub const ENTRIES: &[super::Entry] = &[
 fn q7a() -> impl Drive<R: Row> {
     movie.with(production_year.ge(1980)
           .and(production_year.le(1995))
-          .and(linked_by.ty().text().eq("features")))
+          .and(linked_by.ty().eq("features")))
        .select(cast.select(person
-                        .with(alias.text().rx(r"a")
+                        .with(alias.rx(r"a")
                          .and(name_pcode_cf.ge("A"))
                          .and(name_pcode_cf.le("F"))
                          .and(gender.eq("m")
                           .or(gender.eq("f").and(Person::name.rx(r"^B"))))
-                         .and(bio.select(PersonInfo::ty.text().eq("mini biography")
+                         .and(bio.select(PersonInfo::ty.eq("mini biography")
                                     .and(PersonInfo::note.eq("Volker Boehm")))))
                         .name())
           .and(title))
@@ -41,12 +41,12 @@ fn q7a() -> impl Drive<R: Row> {
 fn q7b() -> impl Drive<R: Row> {
     movie.with(production_year.ge(1980)
           .and(production_year.le(1984))
-          .and(linked_by.ty().text().eq("features")))
+          .and(linked_by.ty().eq("features")))
        .select(cast.select(person
-                        .with(alias.text().rx(r"a")
+                        .with(alias.rx(r"a")
                          .and(name_pcode_cf.rx(r"^D"))
                          .and(gender.eq("m"))
-                         .and(bio.select(PersonInfo::ty.text().eq("mini biography")
+                         .and(bio.select(PersonInfo::ty.eq("mini biography")
                                     .and(PersonInfo::note.eq("Volker Boehm")))))
                         .name())
           .and(title))
@@ -55,17 +55,17 @@ fn q7b() -> impl Drive<R: Row> {
 // Conjunct tree (∧ = Prod) — consumed via `member` only, so the value
 // type stays opaque (`impl Query<D = Id<PersonInfo>> + Probe`).
 fn bio_filter_7c() -> impl Query<D = Id<PersonInfo>> + Probe {
-    PersonInfo::ty.text().eq("mini biography")
+    PersonInfo::ty.eq("mini biography")
         .and(PersonInfo::note)
 }
 
 fn q7c() -> impl Drive<R: Row> {
     movie.with(production_year.ge(1980)
           .and(production_year.le(2010))
-          .and(linked_by.ty().text().is_in(
+          .and(linked_by.ty().is_in(
                   ["references", "referenced in", "features", "featured in"])))
        .select(cast.select(person
-                        .with(alias.text().rx(r"a|^A")
+                        .with(alias.rx(r"a|^A")
                          .and(name_pcode_cf.ge("A"))
                          .and(name_pcode_cf.le("F"))
                          .and(gender.eq("m")
@@ -81,7 +81,7 @@ fn q8a() -> impl Drive<R: Row> {
                          .and(Company::note.nrx(r"\(USA\)"))))
        .select(cast
              .with(Cast::note.eq("(voice: English version)")
-              .and(role.text().eq("actress"))
+              .and(role.eq("actress"))
               .and(person.with(Person::name.rx(r"Yo")
                           .and(Person::name.nrx(r"Yu")))))
              .person().alias().text()
@@ -99,7 +99,7 @@ fn q8b() -> impl Drive<R: Row> {
           .and(title.rx(r"^One Piece").or(title.rx(r"^Dragon Ball Z"))))
        .select(cast
              .with(Cast::note.eq("(voice: English version)")
-              .and(role.text().eq("actress"))
+              .and(role.eq("actress"))
               .and(person.with(Person::name.rx(r"Yo")
                           .and(Person::name.nrx(r"Yu")))))
              .person().alias().text()
@@ -109,7 +109,7 @@ fn q8b() -> impl Drive<R: Row> {
 // q8c/q8d differ only in the cast role.
 fn q8cd(role_: &'static str) -> impl Drive<R: Row> {
     movie.with(company.country().eq("[us]"))
-       .select(cast.with(role.text().eq(role_))
+       .select(cast.with(role.eq(role_))
              .person().alias().text()
           .and(title))
 }
@@ -125,7 +125,7 @@ fn q9a() -> impl Drive<R: Row> {
           .and(production_year.le(2015)))
        .select(cast
              .with(Cast::note.is_in(voice4())
-              .and(role.text().eq("actress"))
+              .and(role.eq("actress"))
               .and(person.with(gender.eq("f")
                           .and(Person::name.rx(r"Ang")))))
              .select(person.alias().text()
@@ -142,7 +142,7 @@ fn q9b() -> impl Drive<R: Row> {
           .and(production_year.le(2010)))
        .select(cast
              .with(Cast::note.eq("(voice)")
-              .and(role.text().eq("actress"))
+              .and(role.eq("actress"))
               .and(person.with(gender.eq("f")
                           .and(Person::name.rx(r"Angel")))))
              .select(person.alias().text()
@@ -155,7 +155,7 @@ fn q9c() -> impl Drive<R: Row> {
     movie.with(company.country().eq("[us]"))
        .select(cast
              .with(Cast::note.is_in(voice4())
-              .and(role.text().eq("actress"))
+              .and(role.eq("actress"))
               .and(person.with(gender.eq("f")
                           .and(Person::name.rx(r"An")))))
              .select(person.alias().text()
@@ -168,7 +168,7 @@ fn q9d() -> impl Drive<R: Row> {
     movie.with(company.country().eq("[us]"))
        .select(cast
              .with(Cast::note.is_in(voice4())
-              .and(role.text().eq("actress"))
+              .and(role.eq("actress"))
               .and(person.with(gender.eq("f"))))
              .select(person.alias().text()
                 .and(person.name())
@@ -182,7 +182,7 @@ fn q10a() -> impl Drive<R: Row> {
        .select(cast
              .with(Cast::note.rx(r"\(voice\)")
               .and(Cast::note.rx(r"\(uncredited\)"))
-              .and(role.text().eq("actor")))
+              .and(role.eq("actor")))
              .character().text()
           .and(title))
 }
@@ -192,7 +192,7 @@ fn q10b() -> impl Drive<R: Row> {
           .and(production_year.gt(2010)))
        .select(cast
              .with(Cast::note.rx(r"\(producer\)")
-              .and(role.text().eq("actor")))
+              .and(role.eq("actor")))
              .character().text()
           .and(title))
 }

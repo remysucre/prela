@@ -106,6 +106,7 @@ macro_rules! schema {
         $( $crate::schema::schema!(@uni $mod_; $Ent; [$($uni)?]; $($body)*); )*
         $( $crate::schema::schema!(@consts $mod_; $Ent; $Nav; $($body)*); )*
         $( $crate::schema::schema!(@nav $mod_; $Ent; $Nav; [] $($body)*); )*
+        $( $crate::schema::schema!(@primary $mod_; $Ent; $($body)*); )*
 
         $crate::schema::schema!(@manifest [] $( $Ent { $($body)* } )*);
     };
@@ -135,6 +136,37 @@ macro_rules! schema {
             [$($acc)* (stringify!($Ent), stringify!($f),
                        $crate::schema::schema!(@kind $t1 $(($t2))?)),]
             { $($($body)*)? } $($rest)*);
+    };
+
+    // ===== Primary: elision support for entities with a scalar first field
+    // Emits `impl Primary` (engine.rs) iff the FIRST field is str/i64/f64,
+    // reusing the existing first-field column for `primary()`. Entity-ref /
+    // Multi first fields (roots like Order, Lineitem) get no impl — so `.eq`
+    // on their ids stays unavailable. `pub` is stripped first (the `$ff:ident`
+    // matcher would otherwise eat it, same as @colstruct).
+    (@primary $mod_:ident; $Ent:ident; pub $($rest:tt)*) => {
+        $crate::schema::schema!(@primary $mod_; $Ent; $($rest)*);
+    };
+    (@primary $mod_:ident; $Ent:ident; $ff:ident : str $(, $($rest:tt)*)?) => {
+        $crate::schema::schema!(@primary_emit $mod_; $Ent; $ff; &'static str; str);
+    };
+    (@primary $mod_:ident; $Ent:ident; $ff:ident : i64 $(, $($rest:tt)*)?) => {
+        $crate::schema::schema!(@primary_emit $mod_; $Ent; $ff; i64; i64);
+    };
+    (@primary $mod_:ident; $Ent:ident; $ff:ident : f64 $(, $($rest:tt)*)?) => {
+        $crate::schema::schema!(@primary_emit $mod_; $Ent; $ff; f64; f64);
+    };
+    // first field is an entity ref or Multi<…> → no scalar primary.
+    (@primary $mod_:ident; $Ent:ident; $ff:ident : $t1:tt $(< $t2:tt >)? $(, $($rest:tt)*)?) => {};
+    (@primary_emit $mod_:ident; $Ent:ident; $ff:ident; $scalar:ty; $colkind:tt) => {
+        impl $crate::engine::Primary for $Ent {
+            type Scalar = $scalar;
+            type Col = $crate::schema::schema!(@colty (); $Ent; $colkind);
+            #[inline]
+            fn primary() -> &'static Self::Col {
+                &$mod_::STORE.get().expect("schema not initialized").$Ent.$ff
+            }
+        }
     };
 
     // ===== field type → cache kind ========================================
@@ -430,6 +462,18 @@ mod tests {
         // (`.gname()` ≡ `.select(Genre::gname)` via the generated GenreNav).
         let q = film
             .with(Film::genre.gname().eq("horror"))
+            .with(year.lt(1990))
+            .ftitle();
+        let mut got = Vec::new();
+        q.drive(|_, t| got.push(t));
+        assert_eq!(got, vec!["Alien"]);
+
+        // primary-field ELISION: `Film::genre.eq("horror")` auto-navigates to
+        // Genre's primary (gname) — identical result to the explicit
+        // `.gname().eq(..)` above. Genre is `Primary` (first field `gname:
+        // str`); the scalar `year.lt(1990)` is the identity (Field) case.
+        let q = film
+            .with(Film::genre.eq("horror"))
             .with(year.lt(1990))
             .ftitle();
         let mut got = Vec::new();

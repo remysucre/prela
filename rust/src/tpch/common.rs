@@ -222,7 +222,7 @@ fn q5() -> String {
     let s_nation = Lineitem::supplier.nation();
     let live = lineitem
         .with(order.date().during(19940101, 19950101)
-         .and((&s_nation).region().name().eq("ASIA"))
+         .and((&s_nation).region().eq("ASIA"))
          .and((&c_nation).and(&s_nation).filt(|(c, s)| c == s)));
     let groups = (&live).select((&s_nation).name());
     let scan = (&live).select(extendedprice.and(discount));
@@ -264,7 +264,7 @@ fn q7() -> String {
 fn q8() -> String {
     let live = lineitem
         .with(Lineitem::part.ty().eq("ECONOMY ANODIZED STEEL")
-         .and(order.customer().nation().region().name().eq("AMERICA"))
+         .and(order.customer().nation().region().eq("AMERICA"))
          .and(order.date().between(19950101, 19961231)));
     let year = (&live).order().date().map(|d: i64| d / 10000);
     let snat_name = (&live).supplier().nation().name();
@@ -336,7 +336,7 @@ fn q11() -> String {
     //                    ▷ ((a, (c, q)) -> a + c * q, 0.0)
     //   threshold = 0.0001 * unwrap(value_per_part ⊵ (+, 0.0))
     //   value_per_part > threshold
-    let live_ps = partsupp.with(PartSupp::supplier.nation().name().eq("GERMANY"));
+    let live_ps = partsupp.with(PartSupp::supplier.nation().eq("GERMANY"));
     let value_per_part = (&live_ps).select(supplycost.and(availqty))
         .group_by((&live_ps).part())
         .fold(0.0, |a, (c, q)| a + c * (q as f64));
@@ -381,7 +381,7 @@ fn q13() -> String {
     //                                          (live_orders → date)) ▷ ((a, _) -> a + 1, 0)
     // Then a Julia escape for the LEFT-JOIN zero-default (customer.iq().n - n_with).
     let live_orders = orders
-        .with(Order::customer.ne(Dense::NONE)    // skip sparse orderkey gaps (hole fill NO_ID)
+        .with(Order::customer.filt(|c| c != Dense::NONE)    // skip sparse orderkey gaps (hole fill NO_ID)
          .and(Order::comment.nrx("special.*requests")));
     let count_per_cust = (&live_orders).date()
         .group_by((&live_orders).customer())
@@ -522,7 +522,7 @@ fn q20() -> String {
     let qual_ps = partsupp
         .with(PartSupp::part.name().filt(|n: &str| n.starts_with("forest"))
          .and(availqty.map(|q| q as f64).and(threshold).filt(|(a, t)| a > t)));
-    let canada_supps = supplier.with(Supplier::nation.name().eq("CANADA"));
+    let canada_supps = supplier.with(Supplier::nation.eq("CANADA"));
     let qual_supps: MatSet<_> = qual_ps.supplier().collect();
     let target = canada_supps.with(qual_supps);
     let mut rows: Vec<(&str, &str)> = Vec::new();
@@ -546,7 +546,7 @@ fn q21() -> String {
     let only_late = (&late).select(Lineitem::supplier)
         .group_by((&late).select(order))
         .count_distinct().eq(1);
-    let saudi = supplier.and(Supplier::nation.name().eq("SAUDI ARABIA"));
+    let saudi = supplier.and(Supplier::nation.eq("SAUDI ARABIA"));
     let f_ords = orders.and(Order::status.eq("F"));
     let qualifying = (&late)
         .with(Lineitem::supplier.select(saudi)
@@ -601,7 +601,7 @@ fn q2() -> String {
     //                  ∧ (supplycost == (PS.part → min_per_part))
     //   target : (Su.acctbal ⊗ Su.name ⊗ Na.name ⊗ PS.part ⊗ Pa.mfgr
     //             ⊗ Su.address ⊗ Su.phone ⊗ Su.comment)
-    let eu_ps = partsupp.with(PartSupp::supplier.nation().region().name().eq("EUROPE"));
+    let eu_ps = partsupp.with(PartSupp::supplier.nation().region().eq("EUROPE"));
     let min_per_part = (&eu_ps).supplycost()
         .group_by((&eu_ps).part())
         .fold(f64::INFINITY, |a, c| if c < a { c } else { a });
