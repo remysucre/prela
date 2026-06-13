@@ -1,34 +1,23 @@
-# Prela: Purely Algebraic Relation Combinators
+# Prela: A Compositional & Controllable Query Language
 
 > "The calculus of relations has an intrinsic charm and beauty which makes it a source of intellectual
 > delight to all who become acquainted with it." —Alfred Tarski
 
-Prela is an embedded query language
- based on [Tarski's Algebra of Relations](https://www.cl.cam.ac.uk/teaching/1415/Databases/Tarski_1941.pdf).
+Prela is a query language focusing on compositionality and control. 
 Its queries are concise, clear, and fast.
-It is implemented by 
- [shallow embedding](https://decomposition.al/blog/2015/06/02/embedding-deep-and-shallow/)
- in a host programming language:
- Prela operators are regular functions in the host.
-The implementation follows [continuation-passing style](https://en.wikipedia.org/wiki/Continuation-passing_style)
- which compiles to efficient columnar execution.
+It is implemented as a library of *query combinators* (think [parser combinators](https://en.wikipedia.org/wiki/Parser_combinator)),
+ allowing the user to freely intermix Prela queries with Rust code. 
+The implementation follows [continuation-passing style](https://en.wikipedia.org/wiki/Continuation-passing_style),
+ resulting in a core engine under 1k lines of code that compiles to efficient columnar execution.
 
 > [!NOTE]
 > Prela is a research prototype in early development. 
 > Expect constant and sweeping changes to both language design and implementation.
-> The implementation is in Rust (`rust/`), where the access-mode analysis
-> falls out of trait inference and CPS monomorphizes to fused loops.
-> Prela started life in Julia with an infix surface syntax; that
-> implementation is preserved on the
-> [`julia-engine`](../../tree/julia-engine) branch, and its notation lives on
-> below as the concise way to write the algebra on paper.
-
 
 ## Example
 
 Prela queries are readable even to those new to the language. 
-Consider Join Order Benchmark [22a](https://github.com/gregrahn/join-order-benchmark/blob/master/22a.sql) —
-this is the actual code from the test suite:
+Consider Join Order Benchmark [22a](https://github.com/gregrahn/join-order-benchmark/blob/master/22a.sql):
 
 ```rust
 movie
