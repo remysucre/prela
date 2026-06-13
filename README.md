@@ -24,18 +24,18 @@ Nevertheless, the most idiomatic way to write a query already performs well in o
 Consider Join Order Benchmark [22a](https://github.com/gregrahn/join-order-benchmark/blob/master/22a.sql):
 
 ```rust
-movie.with(info.select(Info::ty.text().eq("countries")
+movie.with(info.select(Info::ty.eq("countries")
                   .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
-      .and(keyword.text().is_in(["murder", "murder-in-title", "blood", "violence"]))
+      .and(keyword.is_in(["murder", "murder-in-title", "blood", "violence"]))
       .and(production_year.gt(2008))
-      .and(kind.text().is_in(["movie", "episode"])))
+      .and(kind.is_in(["movie", "episode"])))
    .select(title
       .and(data.with(Data::text.lt("7.0")
-                .and(Data::ty.text().eq("rating"))).text())
+                .and(Data::ty.eq("rating"))).text())
       .and(company.with(Company::note.nrx(r"\(USA\)")
                    .and(Company::note.rx(r"\(200.*\)"))
                    .and(country.ne("[us]"))
-                   .and(Company::ty.text().eq("production companies"))).name()))
+                   .and(Company::ty.eq("production companies"))).name()))
 ```
 
 Intuitively, the query looks for `movies` satisfying several conditions:
@@ -152,7 +152,7 @@ When used as a conjunction in the `with` clause,
 
 ```rust
       .and(production_year.gt(2008))
-      .and(kind.text().is_in(["movie", "episode"])))
+      .and(kind.is_in(["movie", "episode"])))
 ```
 
 When used in `select`, it combines different columns in the output:
@@ -179,7 +179,7 @@ let only_late = (&late).select(Lineitem::supplier)
     .group_by((&late).select(order))
     .count_distinct().eq(1);
 
-let saudi = supplier.and(Supplier::nation.name().eq("SAUDI ARABIA"));
+let saudi = supplier.and(Supplier::nation.eq("SAUDI ARABIA"));
 let f_ords = orders.and(Order::status.eq("F"));
 let qualifying = (&late)
     .with(Lineitem::supplier.select(saudi)
