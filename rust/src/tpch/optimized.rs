@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use super::common::{f, fmt_yyyymmdd, join_lines, with_overrides};
 use crate::engine::*;
-use crate::par::{pdense_fold, pfold, punwrap_fold};
+use crate::par::{pdense_fold, pfold, psorted_fold, punwrap_fold};
 use crate::tpch_schema::*;
 
 pub fn queries() -> Vec<super::Entry> {
@@ -268,16 +268,22 @@ fn q21() -> String {
         Some(f) if f != s => (first, true),
         _ => (first, multi),
     };
-    // These two per-order state folds stay sequential dense_fold: the state is
-    // 24 bytes over the 60M order universe, so dense-parallel would need
-    // ~3GB×leaves and HashMap partials would hash all 60M lineitems. Dense-
-    // sequential keeps q21's original tuned speed; parallelism here isn't worth
-    // the memory.
-    let supp_state = Lineitem::supplier.group_by(order)
-        .dense_fold(orders.iq().n, (None, false), track);
-    let late_supp_state = (&late).select(Lineitem::supplier)
-        .group_by((&late).select(order))
-        .dense_fold(orders.iq().n, (None, false), track);
+    // Monoid merge of two partial states for the same order: `multi` (≥2
+    // distinct suppliers) holds if either side saw multi or their two
+    // representative suppliers differ; identity is (None, false).
+    let track_combine = |a: (Option<Id<Supplier>>, bool), b: (Option<Id<Supplier>>, bool)| match (a, b) {
+        ((None, _), b) => b,
+        (a, (None, _)) => a,
+        ((Some(fa), ma), (Some(fb), mb)) => (Some(fa), ma || mb || fa != fb),
+    };
+    // lineitem is stored in orderkey order, so grouping by `order` is clustered
+    // — a sorted-run fold parallelizes with O(distinct-orders) memory (a Vec,
+    // not a 60M-slot dense table or 60M HashMap inserts), then probes by binary
+    // search. This is the one dense-fold query the sorted aggregation reclaims.
+    let supp_state = psorted_fold(Lineitem::supplier.group_by(order), (None, false), track, track_combine);
+    let late_supp_state = psorted_fold(
+        (&late).select(Lineitem::supplier).group_by((&late).select(order)),
+        (None, false), track, track_combine);
     // Only the SAUDI suppliers' late lineitems can qualify, so `saudi` is the
     // selective FIRST conjunct — precompute it as a Bitset (bit-tested per
     // late lineitem; supplier.n is tiny). The order predicates (status F,

@@ -13,7 +13,7 @@
 // partial, `merge` is the associative combine. `par_min_row` (in
 // queries::helpers) and the fold builders specialize it.
 
-use crate::engine::{Dense, DenseFold, Fold, ParDrive, QueryExt};
+use crate::engine::{Dense, DenseFold, Drive, Fold, ParDrive, Probe, Query, QueryExt};
 use ahash::AHashMap as HashMap;
 use chili::{Scope, ThreadPool};
 use std::hash::Hash;
@@ -326,4 +326,64 @@ where
             a
         },
     )
+}
+
+/// A key-sorted `(D, R)` relation with binary-search `probe` — the probe-able
+/// form of `par_sorted_fold`'s output. Memory is one Vec of the *distinct*
+/// keys (vs a dense n-slot table), so it carries a parallel sorted-run
+/// aggregation into probe position (q21's per-order state) without the dense
+/// blowup. Keys are dense ids, compared by index.
+pub struct SortedRel<D: Dense, R: Copy> {
+    pub pairs: Vec<(D, R)>,
+}
+impl<D: Dense, R: Copy> Query for SortedRel<D, R> {
+    type D = D;
+    type R = R;
+}
+impl<D: Dense, R: Copy> Probe for SortedRel<D, R> {
+    #[inline(always)]
+    fn probe<K: FnMut(R)>(&self, x: D, mut k: K) {
+        if let Ok(i) = self.pairs.binary_search_by_key(&x.idx(), |(d, _)| d.idx()) {
+            k(self.pairs[i].1);
+        }
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut(R) -> bool>(&self, x: D, mut k: K) -> bool {
+        match self.pairs.binary_search_by_key(&x.idx(), |(d, _)| d.idx()) {
+            Ok(i) => k(self.pairs[i].1),
+            Err(_) => false,
+        }
+    }
+}
+impl<D: Dense, R: Copy> Drive for SortedRel<D, R> {
+    #[inline(always)]
+    fn drive<K: FnMut(D, R)>(&self, mut k: K) {
+        for &(d, r) in &self.pairs {
+            k(d, r);
+        }
+    }
+}
+
+/// Flag-dispatched sorted-run fold returning a probe-able `SortedRel`. Parallel
+/// path uses `par_sorted_fold`; sequential path streaming-reduces in one pass.
+/// Both require the scan clustered by the (dense) group key.
+pub fn psorted_fold<Q, S, OP, CB>(q: Q, init: S, op: OP, combine: CB) -> SortedRel<Q::D, S>
+where
+    Q: ParDrive + Sync,
+    Q::D: Dense + Send + Sync,
+    S: Copy + Send + Sync,
+    OP: Fn(S, Q::R) -> S + Sync,
+    CB: Fn(S, S) -> S + Sync,
+{
+    let pairs = if is_parallel() {
+        par_sorted_fold(ThreadPool::global(), &q, GRAIN, init, op, combine)
+    } else {
+        let mut run: Vec<(Q::D, S)> = Vec::new();
+        q.drive(|d, v| match run.last_mut() {
+            Some((k, s)) if *k == d => *s = op(*s, v),
+            _ => run.push((d, op(init, v))),
+        });
+        run
+    };
+    SortedRel { pairs }
 }
