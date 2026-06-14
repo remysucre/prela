@@ -18,7 +18,7 @@ use crate::tpch_schema::*;
 pub fn queries() -> Vec<super::Entry> {
     with_overrides(&[
         ("1", q1), ("2", q2), ("4", q4), ("8", q8), ("9", q9), ("12", q12),
-        ("13", q13), ("16", q16), ("17", q17), ("18", q18), ("20", q20), ("21", q21), ("22", q22),
+        ("13", q13), ("15", q15), ("16", q16), ("17", q17), ("18", q18), ("20", q20), ("21", q21), ("22", q22),
     ])
 }
 
@@ -510,4 +510,30 @@ fn q8() -> String {
     ratio.drive(|k, v| rows.push((k, v)));
     rows.sort_by_key(|r| r.0);
     join_lines(rows.iter().map(|(k, v)| format!("{}|{}", k, f(*v))))
+}
+
+// ---------- Q15 — top supplier ----------
+
+fn q15() -> String {
+    // Per-supplier revenue over the dense 100K supplier space: pradix_fold
+    // (parallel scatter + hash-free dense sum) instead of the pfold HashMap.
+    // Sub-cent reorder rounds away, so the formatted output stays exact.
+    let live = lineitem.with(shipdate.during(19960101, 19960401));
+    let (rev, seen) = pradix_fold(
+        (&live).select(extendedprice.and(discount)).group_by(Lineitem::supplier),
+        supplier.iq().n, 0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
+    let mut max_rev = 0.0_f64;
+    for i in 0..rev.len() {
+        if seen[i] && rev[i] > max_rev { max_rev = rev[i]; }
+    }
+    let mut rows: Vec<(usize, f64)> = Vec::new();
+    for i in 0..rev.len() {
+        if seen[i] && rev[i] == max_rev { rows.push((i, rev[i])); }
+    }
+    rows.sort_by_key(|r| r.0);
+    join_lines(rows.iter().map(|(i, v)| {
+        // natural suppkey = internal id + 1
+        format!("{}|{}|{}|{}|{}", i + 1, Supplier::name.iq().values[*i],
+                Supplier::address.iq().values[*i], Supplier::phone.iq().values[*i], f(*v))
+    }))
 }
