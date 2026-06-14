@@ -430,19 +430,30 @@ impl<R: Copy, D: Dense> Probe for MultiRel<R, D> {
 
 #[derive(Copy, Clone)]
 pub struct Universe<D: Dense = usize> {
+    /// Full universe size — the membership/sizing extent (`probe`, `Bitset`
+    /// width, `.iq().n`). Independent of the drive window below.
     pub n: usize,
+    /// Drive window `[lo, hi)` — the id range `drive` actually enumerates,
+    /// `0..n` by default. `window(lo, hi)` carves out a sub-range so the root
+    /// scan can be split across threads (the threading experiment) without
+    /// disturbing `n`: a worker drives its slice but membership still spans
+    /// the whole universe.
+    pub lo: usize,
+    pub hi: usize,
     pub _d: PhantomData<D>,
 }
 
 impl<D: Dense> Universe<D> {
-    pub fn new(n: usize) -> Self { Universe { n, _d: PhantomData } }
+    pub fn new(n: usize) -> Self { Universe { n, lo: 0, hi: n, _d: PhantomData } }
+    /// Same universe, but `drive` enumerates only `[lo, hi)` of the ids.
+    pub fn window(self, lo: usize, hi: usize) -> Self { Universe { lo, hi, ..self } }
 }
 
 impl<D: Dense> Query for Universe<D> { type D = D; type R = D; }
 impl<D: Dense> Drive for Universe<D> {
     #[inline(always)]
     fn drive<K: FnMut(D, D)>(&self, mut k: K) {
-        for i in 0..self.n {
+        for i in self.lo..self.hi {
             let d = D::from_idx(i);
             k(d, d);
         }

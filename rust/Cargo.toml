@@ -10,6 +10,7 @@ memchr   = "2"
 memmap2  = "0.9"
 regex    = "1.10"
 smallvec = "1"
+chili    = "0.2"                  # heartbeat-scheduled fork-join (threading experiment)
 parquet  = { version = "53", features = ["arrow"], optional = true }
 arrow    = { version = "53", optional = true }
 
@@ -26,6 +27,10 @@ path = "src/main.rs"
 name = "regen"
 path = "src/bin/regen.rs"
 required-features = ["regen"]
+
+[[bin]]
+name = "par_mvp"
+path = "src/bin/par_mvp.rs"
 
 [profile.release]
 lto = "fat"
