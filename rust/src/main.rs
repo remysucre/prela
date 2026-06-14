@@ -16,8 +16,8 @@ fn main() {
     // `prela <suite> par` runs the JOB min_row scans on chili's global pool.
     // (min_row is order-independent, so output stays byte-identical.)
     if args.iter().any(|a| a == "par") {
-        prela::queries::helpers::PARALLEL.store(true, std::sync::atomic::Ordering::Relaxed);
-        eprintln!("PARALLEL mode: min_row on {} threads",
+        prela::par::PARALLEL.store(true, std::sync::atomic::Ordering::Relaxed);
+        eprintln!("PARALLEL mode: {} threads",
                   std::thread::available_parallelism().map(|c| c.get()).unwrap_or(1));
     }
 

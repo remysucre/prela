@@ -35,16 +35,14 @@ impl<A: Row, B: Row> Row for (A, B) {
     }
 }
 
-/// When set, `min_row` runs its root scan in parallel on chili's global pool.
-/// `col_min` is commutative + associative, so the result is byte-identical to
-/// the sequential fold — only timing changes. The bench binary flips this on;
-/// the verification suite leaves it off.
-pub static PARALLEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 const PAR_GRAIN: usize = 1024;
 
-/// Drive `q`, accumulate per-column minima, render `min0 || min1 || …`.
+/// Drive `q`, accumulate per-column minima, render `min0 || min1 || …`. When
+/// the shared `par::PARALLEL` flag is set, the root scan runs on chili's global
+/// pool; `col_min` is commutative + associative, so the result is byte-
+/// identical — only timing changes.
 pub fn min_row<Q: crate::engine::ParDrive + Sync>(q: Q) -> String where Q::R: Row + Send {
-    if PARALLEL.load(std::sync::atomic::Ordering::Relaxed) {
+    if crate::par::is_parallel() {
         return par_min_row(chili::ThreadPool::global(), &q, PAR_GRAIN);
     }
     let mut m: Option<Q::R> = None;

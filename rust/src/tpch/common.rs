@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use crate::engine::*;
+use crate::par::{pfold, punwrap_fold};
 use crate::tpch_schema::*;
 
 pub type QFn = fn() -> String;
@@ -101,8 +102,8 @@ fn q6() -> String {
         .with(shipdate.during(19940101, 19950101)
          .and(discount.between(0.05, 0.07))
          .and(quantity.lt(24.0)));
-    let sum = live.select(extendedprice.and(discount))
-        .unwrap_fold(0.0, |acc, (e, dc)| acc + e * dc);
+    let sum = punwrap_fold(live.select(extendedprice.and(discount)),
+        0.0, |acc, (e, dc)| acc + e * dc, |a, b| a + b);
     f(sum)
 }
 
@@ -140,10 +141,12 @@ fn q14() -> String {
     let scan = live.select(
         extendedprice.and(discount).and(Lineitem::part.ty())
     );
-    let (promo, total) = scan.unwrap_fold((0.0, 0.0), |(p, t), ((e, dc), typ)| {
-        let dp = e * (1.0 - dc);
-        (p + if typ.starts_with("PROMO") { dp } else { 0.0 }, t + dp)
-    });
+    let (promo, total) = punwrap_fold(scan, (0.0, 0.0),
+        |(p, t), ((e, dc), typ)| {
+            let dp = e * (1.0 - dc);
+            (p + if typ.starts_with("PROMO") { dp } else { 0.0 }, t + dp)
+        },
+        |(p1, t1), (p2, t2)| (p1 + p2, t1 + t2));
     f(100.0 * promo / total)
 }
 
@@ -168,8 +171,8 @@ fn q3() -> String {
          .and(order.date().lt(19950315))
          .and(order.customer().mktsegment().eq("BUILDING")))
         .select(extendedprice.and(discount));
-    let revenue = item.group_by(order)
-        .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
+    let revenue = pfold(item.group_by(order), 0.0_f64,
+        |a, (e, dc)| a + e * (1.0 - dc), |a, b| a + b);
     let mut rows: Vec<(Id<Order>, f64)> = Vec::new();
     revenue.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|a, b| {
@@ -226,7 +229,7 @@ fn q5() -> String {
          .and((&c_nation).and(&s_nation).filt(|(c, s)| c == s)));
     let groups = (&live).select((&s_nation).name());
     let scan = (&live).select(extendedprice.and(discount));
-    let result = scan.group_by(groups).fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
+    let result = pfold(scan.group_by(groups), 0.0_f64, |a, (e, dc)| a + e * (1.0 - dc), |a, b| a + b);
     let mut rows: Vec<(&str, f64)> = Vec::new();
     result.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
@@ -248,7 +251,7 @@ fn q7() -> String {
     let year = (&live).shipdate().map(|d: i64| d / 10000);
     let groups = sname.and(cname).and(year);
     let scan = (&live).select(extendedprice.and(discount));
-    let result = scan.group_by(groups).fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
+    let result = pfold(scan.group_by(groups), 0.0_f64, |a, (e, dc)| a + e * (1.0 - dc), |a, b| a + b);
     let mut rows: Vec<(((&str, &str), i64), f64)> = Vec::new();
     result.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|a, b| (a.0).0.0.cmp(&(b.0).0.0)
@@ -269,10 +272,12 @@ fn q8() -> String {
     let year = (&live).order().date().map(|d: i64| d / 10000);
     let snat_name = (&live).supplier().nation().name();
     let scan = (&live).select(extendedprice.and(discount)).and(snat_name);
-    let pair_fold = scan.group_by(year).fold((0.0_f64, 0.0_f64), |(b, t), ((e, dc), nm)| {
-        let v = e * (1.0 - dc);
-        (b + if nm == "BRAZIL" { v } else { 0.0 }, t + v)
-    });
+    let pair_fold = pfold(scan.group_by(year), (0.0_f64, 0.0_f64),
+        |(b, t), ((e, dc), nm)| {
+            let v = e * (1.0 - dc);
+            (b + if nm == "BRAZIL" { v } else { 0.0 }, t + v)
+        },
+        |(b1, t1), (b2, t2)| (b1 + b2, t1 + t2));
     let ratio = pair_fold.map(|(b, t)| b / t);
     let mut rows: Vec<(i64, f64)> = Vec::new();
     ratio.drive(|k, v| rows.push((k, v)));
@@ -309,9 +314,8 @@ fn q10() -> String {
     let live = lineitem
         .with(returnflag.eq("R")
          .and(order.date().during(19931001, 19940101)));
-    let revenue = live.select(extendedprice.and(discount))
-        .group_by(order.customer())
-        .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
+    let revenue = pfold(live.select(extendedprice.and(discount)).group_by(order.customer()),
+        0.0_f64, |a, (e, dc)| a + e * (1.0 - dc), |a, b| a + b);
     let mut rows: Vec<(Id<Customer>, f64)> = Vec::new();
     revenue.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
@@ -337,9 +341,8 @@ fn q11() -> String {
     //   threshold = 0.0001 * unwrap(value_per_part ⊵ (+, 0.0))
     //   value_per_part > threshold
     let live_ps = partsupp.with(PartSupp::supplier.nation().eq("GERMANY"));
-    let value_per_part = (&live_ps).select(supplycost.and(availqty))
-        .group_by((&live_ps).part())
-        .fold(0.0, |a, (c, q)| a + c * (q as f64));
+    let value_per_part = pfold((&live_ps).select(supplycost.and(availqty)).group_by((&live_ps).part()),
+        0.0, |a, (c, q)| a + c * (q as f64), |a, b| a + b);
     // Scalar-subquery escape: drive the fold once into a total, derive threshold.
     let total = (&value_per_part).unwrap_fold(0.0, |a, v| a + v);
     let threshold = 0.0001 * total;
@@ -400,9 +403,8 @@ fn q13() -> String {
 
 fn q15() -> String {
     let live = lineitem.with(shipdate.during(19960101, 19960401));
-    let revenue = (&live).select(extendedprice.and(discount))
-        .group_by(Lineitem::supplier)
-        .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
+    let revenue = pfold((&live).select(extendedprice.and(discount)).group_by(Lineitem::supplier),
+        0.0_f64, |a, (e, dc)| a + e * (1.0 - dc), |a, b| a + b);
     let max_rev = (&revenue).unwrap_fold(0.0, f64::max);
     let mut rows: Vec<(Id<Supplier>, f64)> = Vec::new();
     revenue.drive(|k, v| if v == max_rev { rows.push((k, v)); });
@@ -501,8 +503,8 @@ fn q19() -> String {
         .with(shipmode.is_in(["AIR", "AIR REG"])
          .and(shipinstruct.eq("DELIVER IN PERSON"))
          .and(pred));
-    let sum = live.select(extendedprice.and(discount))
-        .unwrap_fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
+    let sum = punwrap_fold(live.select(extendedprice.and(discount)),
+        0.0_f64, |a, (e, dc)| a + e * (1.0 - dc), |a, b| a + b);
     f(sum)
 }
 
@@ -515,9 +517,9 @@ fn q20() -> String {
     //        target = (qual_ps → PS.supplier) ⩘ (supplier ∧ (Su.nation → Na.name == "CANADA"))
     //        target : (Su.name ⊗ Su.address)
     let live_li = lineitem.with(shipdate.during(19940101, 19950101));
-    let sum_qty = (&live_li).quantity()
-        .group_by((&live_li).select(Lineitem::part.and(Lineitem::supplier)))
-        .fold(0.0_f64, |a, q| a + q);
+    let sum_qty = pfold((&live_li).quantity()
+        .group_by((&live_li).select(Lineitem::part.and(Lineitem::supplier))),
+        0.0_f64, |a, q| a + q, |a, b| a + b);
     let threshold = PartSupp::part.and(PartSupp::supplier).select(&sum_qty).map(|s| 0.5 * s);
     let qual_ps = partsupp
         .with(PartSupp::part.name().filt(|n: &str| n.starts_with("forest"))

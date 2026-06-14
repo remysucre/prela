@@ -13,11 +13,23 @@
 // partial, `merge` is the associative combine. `par_min_row` (in
 // queries::helpers) and the fold builders specialize it.
 
-use crate::engine::{Dense, DenseFold, Fold, ParDrive};
+use crate::engine::{Dense, DenseFold, Fold, ParDrive, QueryExt};
 use ahash::AHashMap as HashMap;
 use chili::{Scope, ThreadPool};
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Global switch: when set, the `p*` fold dispatchers run on chili's global
+/// pool; otherwise they fall back to the sequential combinators. The bench
+/// binary flips it; the verification suite leaves it off. (JOB's `min_row`
+/// reads the same flag — see queries::helpers.)
+pub static PARALLEL: AtomicBool = AtomicBool::new(false);
+/// Leaf window for the TPC-H fold scans (lineitem-scale roots).
+const GRAIN: usize = 16_384;
+
+#[inline]
+pub fn is_parallel() -> bool { PARALLEL.load(Ordering::Relaxed) }
 
 /// Divide-and-conquer over the root window `[lo, hi)`. Leaves (≤ `grain` rows)
 /// build a partial sink with `mk`; internal nodes `join` their halves and
@@ -200,4 +212,63 @@ where
         },
     );
     DenseFold { vals, seen, _d: PhantomData }
+}
+
+// ===== flag-dispatched fold combinators (TPC-H) ========================
+// One call site, two behaviors: sequential (the tuned combinator) when the
+// PARALLEL flag is off, parallel (par_*) when on. The combiner is supplied
+// always — unused in the sequential branch, the monoid merge in the parallel
+// one. The pre-fold plan `q` is `ParDrive` (lineitem/partsupp/orders/customer
+// scan spines). Return type is identical across branches so one query body
+// compiles for both.
+
+/// Per-key fold into a HashMap-backed `Fold`. The high-cardinality choice
+/// (per-order/part/customer): partial maps scale with touched keys, not the
+/// key space — so memory stays bounded where a dense `Vec` would blow up.
+pub fn pfold<Q, S, OP, CB>(q: Q, init: S, op: OP, combine: CB) -> Fold<Q::D, S>
+where
+    Q: ParDrive + Sync,
+    Q::D: Eq + Hash + Send + Sync,
+    S: Copy + Send + Sync,
+    OP: Fn(S, Q::R) -> S + Sync,
+    CB: Fn(S, S) -> S + Sync,
+{
+    if is_parallel() {
+        par_fold(ThreadPool::global(), &q, GRAIN, init, op, combine)
+    } else {
+        q.fold(init, op)
+    }
+}
+
+/// Per-key fold into a dense `Vec`-backed `DenseFold`. Use ONLY for small key
+/// spaces (q1's 288 packed groups): the parallel build allocates an n-slot
+/// vector per leaf, so n must stay tiny.
+pub fn pdense_fold<Q, S, OP, CB>(q: Q, n: usize, init: S, op: OP, combine: CB) -> DenseFold<S, Q::D>
+where
+    Q: ParDrive + Sync,
+    Q::D: Dense,
+    S: Copy + Send + Sync,
+    OP: Fn(S, Q::R) -> S + Sync,
+    CB: Fn(S, S) -> S + Sync,
+{
+    if is_parallel() {
+        par_dense_fold(ThreadPool::global(), &q, GRAIN, n, init, op, combine)
+    } else {
+        q.dense_fold(n, init, op)
+    }
+}
+
+/// Global (no-group) fold to a single state.
+pub fn punwrap_fold<Q, S, OP, CB>(q: Q, init: S, op: OP, combine: CB) -> S
+where
+    Q: ParDrive + Sync,
+    S: Copy + Send + Sync,
+    OP: Fn(S, Q::R) -> S + Sync,
+    CB: Fn(S, S) -> S + Sync,
+{
+    if is_parallel() {
+        par_unwrap_fold(ThreadPool::global(), &q, GRAIN, init, op, combine)
+    } else {
+        q.unwrap_fold(init, op)
+    }
 }
