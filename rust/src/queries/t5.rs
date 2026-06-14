@@ -51,7 +51,7 @@ pub const ENTRIES: &[super::Entry] = &[
     ("26c", "'Agua' Man || 1.9 || 12 Rounds", || min_row(q26c())),
 ];
 
-fn q19a() -> impl Drive<R: Row> {
+fn q19a() -> impl ParDrive<R: Row + Send> {
     movie.with(company.select(country.eq("[us]")
                          .and(Company::note.rx(r"\(USA\)")
                           .or(Company::note.rx(r"\(worldwide\)"))))
@@ -71,7 +71,7 @@ fn q19a() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q19b() -> impl Drive<R: Row> {
+fn q19b() -> impl ParDrive<R: Row + Send> {
     movie.with(company.select(country.eq("[us]")
                          .and(Company::note.rx(r"\(200.*\)"))
                          .and(Company::note.rx(r"\(USA\)")
@@ -93,7 +93,7 @@ fn q19b() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q19c() -> impl Drive<R: Row> {
+fn q19c() -> impl ParDrive<R: Row + Send> {
     movie.with(company.country().eq("[us]")
           .and(info.select(Info::ty.eq("release dates")
                       .and(Info::info.rx(r"^Japan:.*200")
@@ -110,7 +110,7 @@ fn q19c() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q19d() -> impl Drive<R: Row> {
+fn q19d() -> impl ParDrive<R: Row + Send> {
     movie.with(company.country().eq("[us]")
           .and(info.ty().eq("release dates"))
           .and(production_year.gt(2000)))
@@ -124,7 +124,7 @@ fn q19d() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q20a() -> impl Drive<R: Row> {
+fn q20a() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.select(subject.eq("cast")
                                .and(status.rx(r"complete")))
           .and(keyword.is_in(kw8()))
@@ -136,7 +136,7 @@ fn q20a() -> impl Drive<R: Row> {
         .title()
 }
 
-fn q20b() -> impl Drive<R: Row> {
+fn q20b() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.select(subject.eq("cast")
                                .and(status.rx(r"complete")))
           .and(keyword.is_in(kw8()))
@@ -149,7 +149,7 @@ fn q20b() -> impl Drive<R: Row> {
         .title()
 }
 
-fn q20c() -> impl Drive<R: Row> {
+fn q20c() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.select(subject.eq("cast")
                                .and(status.rx(r"complete")))
           .and(keyword.is_in(kw10()))
@@ -161,7 +161,7 @@ fn q20c() -> impl Drive<R: Row> {
 }
 
 // q21a/b/c differ only in the country list and year range.
-fn q21(countries: Vec<&'static str>, ylo: i64, yhi: i64) -> impl Drive<R: Row> {
+fn q21(countries: Vec<&'static str>, ylo: i64, yhi: i64) -> impl ParDrive<R: Row + Send> {
     movie.with(film_or_warner_co()
           .and(keyword.eq("sequel"))
           .and(follow_link())
@@ -173,11 +173,11 @@ fn q21(countries: Vec<&'static str>, ylo: i64, yhi: i64) -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q21a() -> impl Drive<R: Row> { q21(nordic8(), 1950, 2000) }
-fn q21b() -> impl Drive<R: Row> { q21(vec!["Germany", "German"], 2000, 2010) }
-fn q21c() -> impl Drive<R: Row> { q21(nordic9(), 1950, 2010) }
+fn q21a() -> impl ParDrive<R: Row + Send> { q21(nordic8(), 1950, 2000) }
+fn q21b() -> impl ParDrive<R: Row + Send> { q21(vec!["Germany", "German"], 2000, 2010) }
+fn q21c() -> impl ParDrive<R: Row + Send> { q21(nordic9(), 1950, 2010) }
 
-fn q23a() -> impl Drive<R: Row> {
+fn q23a() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.status().eq("complete+verified")
           .and(company.country().eq("[us]"))
           .and(info.select(Info::ty.eq("release dates")
@@ -190,7 +190,7 @@ fn q23a() -> impl Drive<R: Row> {
        .select(k_23ab().and(title))
 }
 
-fn q23b() -> impl Drive<R: Row> {
+fn q23b() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.status().eq("complete+verified")
           .and(company.country().eq("[us]"))
           .and(info.select(Info::ty.eq("release dates")
@@ -202,7 +202,7 @@ fn q23b() -> impl Drive<R: Row> {
        .select(k_23ab().and(title))
 }
 
-fn q23c() -> impl Drive<R: Row> {
+fn q23c() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.status().eq("complete+verified")
           .and(company.country().eq("[us]"))
           .and(info.select(Info::ty.eq("release dates")
@@ -215,7 +215,7 @@ fn q23c() -> impl Drive<R: Row> {
        .select(k_23c().and(title))
 }
 
-fn q24a() -> impl Drive<R: Row> {
+fn q24a() -> impl ParDrive<R: Row + Send> {
     movie.with(company.country().eq("[us]")
           .and(info.select(Info::ty.eq("release dates")
                       .and(Info::info.rx(r"^Japan:.*201")
@@ -233,7 +233,7 @@ fn q24a() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q24b() -> impl Drive<R: Row> {
+fn q24b() -> impl ParDrive<R: Row + Send> {
     movie.with(company.select(country.eq("[us]")
                          .and(Company::name.eq("DreamWorks Animation")))
           .and(info.select(Info::ty.eq("release dates")
@@ -253,7 +253,7 @@ fn q24b() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q25a() -> impl Drive<R: Row> {
+fn q25a() -> impl ParDrive<R: Row + Send> {
     movie.with(info.with(gf_25ab())
           .and(keyword.is_in(["murder", "blood", "gore", "death", "female-nudity"])))
        .select(info.with(gf_25ab()).info()
@@ -263,7 +263,7 @@ fn q25a() -> impl Drive<R: Row> {
                     .and(person.with(gender.eq("m")))).person().name()))
 }
 
-fn q25b() -> impl Drive<R: Row> {
+fn q25b() -> impl ParDrive<R: Row + Send> {
     movie.with(info.with(gf_25ab())
           .and(keyword.is_in(["murder", "blood", "gore", "death", "female-nudity"]))
           .and(production_year.gt(2010))
@@ -275,7 +275,7 @@ fn q25b() -> impl Drive<R: Row> {
                     .and(person.with(gender.eq("m")))).person().name()))
 }
 
-fn q25c() -> impl Drive<R: Row> {
+fn q25c() -> impl ParDrive<R: Row + Send> {
     movie.with(info.with(gf_25c())
           .and(keyword.is_in(kw7())))
        .select(info.with(gf_25c()).info()
@@ -285,7 +285,7 @@ fn q25c() -> impl Drive<R: Row> {
                     .and(person.with(gender.eq("m")))).person().name()))
 }
 
-fn q26a() -> impl Drive<R: Row> {
+fn q26a() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.select(subject.eq("cast")
                                .and(status.rx(r"complete")))
           .and(keyword.is_in(kw10()))
@@ -299,7 +299,7 @@ fn q26a() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q26b() -> impl Drive<R: Row> {
+fn q26b() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.select(subject.eq("cast")
                                .and(status.rx(r"complete")))
           .and(keyword.is_in(["superhero", "marvel-comics", "based-on-comic", "fight"]))
@@ -312,7 +312,7 @@ fn q26b() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q26c() -> impl Drive<R: Row> {
+fn q26c() -> impl ParDrive<R: Row + Send> {
     let rd = data.with(Data::ty.eq("rating")).text();
     movie.with(complete_cast.select(subject.eq("cast")
                                .and(status.rx(r"complete")))

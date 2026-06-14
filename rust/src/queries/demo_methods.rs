@@ -29,7 +29,7 @@ pub const ENTRIES: &[super::Entry] = &[
 //   .minus   value-bearing difference (key-based member test)
 //   .with    restriction (Julia `:`) — keep rows whose value is a member
 //   .eq / .ne / .gt / .lt / .ge / .le / .is_in / .rx / .nrx  predicates
-pub fn q6a_methods() -> impl Drive<R: Row> {
+pub fn q6a_methods() -> impl ParDrive<R: Row + Send> {
     let kw_marvel = || keyword.eq("marvel-cinematic-universe");
     let q = movie
         .with(production_year.gt(2010)

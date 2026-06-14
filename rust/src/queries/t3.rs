@@ -22,7 +22,7 @@ pub const ENTRIES: &[super::Entry] = &[
     ("10c", "Himself || Evil Eyes: Behind the Scenes",                                    || min_row(q10c())),
 ];
 
-fn q7a() -> impl Drive<R: Row> {
+fn q7a() -> impl ParDrive<R: Row + Send> {
     movie.with(production_year.ge(1980)
           .and(production_year.le(1995))
           .and(linked_by.ty().eq("features")))
@@ -38,7 +38,7 @@ fn q7a() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q7b() -> impl Drive<R: Row> {
+fn q7b() -> impl ParDrive<R: Row + Send> {
     movie.with(production_year.ge(1980)
           .and(production_year.le(1984))
           .and(linked_by.ty().eq("features")))
@@ -59,7 +59,7 @@ fn bio_filter_7c() -> impl Query<D = Id<PersonInfo>> + Probe {
         .and(PersonInfo::note)
 }
 
-fn q7c() -> impl Drive<R: Row> {
+fn q7c() -> impl ParDrive<R: Row + Send> {
     movie.with(production_year.ge(1980)
           .and(production_year.le(2010))
           .and(linked_by.ty().is_in(
@@ -75,7 +75,7 @@ fn q7c() -> impl Drive<R: Row> {
                            .and(bio.with(bio_filter_7c()).info()))))
 }
 
-fn q8a() -> impl Drive<R: Row> {
+fn q8a() -> impl ParDrive<R: Row + Send> {
     movie.with(company.select(country.eq("[jp]")
                          .and(Company::note.rx(r"\(Japan\)"))
                          .and(Company::note.nrx(r"\(USA\)"))))
@@ -88,7 +88,7 @@ fn q8a() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q8b() -> impl Drive<R: Row> {
+fn q8b() -> impl ParDrive<R: Row + Send> {
     movie.with(company.select(country.eq("[jp]")
                          .and(Company::note.rx(r"\(Japan\)"))
                          .and(Company::note.nrx(r"\(USA\)"))
@@ -107,17 +107,17 @@ fn q8b() -> impl Drive<R: Row> {
 }
 
 // q8c/q8d differ only in the cast role.
-fn q8cd(role_: &'static str) -> impl Drive<R: Row> {
+fn q8cd(role_: &'static str) -> impl ParDrive<R: Row + Send> {
     movie.with(company.country().eq("[us]"))
        .select(cast.with(role.eq(role_))
              .person().alias().text()
           .and(title))
 }
 
-fn q8c() -> impl Drive<R: Row> { q8cd("writer") }
-fn q8d() -> impl Drive<R: Row> { q8cd("costume designer") }
+fn q8c() -> impl ParDrive<R: Row + Send> { q8cd("writer") }
+fn q8d() -> impl ParDrive<R: Row + Send> { q8cd("costume designer") }
 
-fn q9a() -> impl Drive<R: Row> {
+fn q9a() -> impl ParDrive<R: Row + Send> {
     movie.with(company.select(country.eq("[us]")
                          .and(Company::note.rx(r"\(USA\)")
                           .or(Company::note.rx(r"\(worldwide\)"))))
@@ -133,7 +133,7 @@ fn q9a() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q9b() -> impl Drive<R: Row> {
+fn q9b() -> impl ParDrive<R: Row + Send> {
     movie.with(company.select(country.eq("[us]")
                          .and(Company::note.rx(r"\(200.*\)"))
                          .and(Company::note.rx(r"\(USA\)")
@@ -151,7 +151,7 @@ fn q9b() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q9c() -> impl Drive<R: Row> {
+fn q9c() -> impl ParDrive<R: Row + Send> {
     movie.with(company.country().eq("[us]"))
        .select(cast
              .with(Cast::note.is_in(voice4())
@@ -164,7 +164,7 @@ fn q9c() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q9d() -> impl Drive<R: Row> {
+fn q9d() -> impl ParDrive<R: Row + Send> {
     movie.with(company.country().eq("[us]"))
        .select(cast
              .with(Cast::note.is_in(voice4())
@@ -176,7 +176,7 @@ fn q9d() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q10a() -> impl Drive<R: Row> {
+fn q10a() -> impl ParDrive<R: Row + Send> {
     movie.with(company.country().eq("[ru]")
           .and(production_year.gt(2005)))
        .select(cast
@@ -187,7 +187,7 @@ fn q10a() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q10b() -> impl Drive<R: Row> {
+fn q10b() -> impl ParDrive<R: Row + Send> {
     movie.with(company.country().eq("[ru]")
           .and(production_year.gt(2010)))
        .select(cast
@@ -197,7 +197,7 @@ fn q10b() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q10c() -> impl Drive<R: Row> {
+fn q10c() -> impl ParDrive<R: Row + Send> {
     movie.with(company.country().eq("[us]")
           .and(production_year.gt(1990)))
        .select(cast.with(Cast::note.rx(r"\(producer\)"))

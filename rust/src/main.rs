@@ -13,6 +13,14 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let suite = args.get(1).map(|s| s.as_str()).unwrap_or("job");
 
+    // `prela <suite> par` runs the JOB min_row scans on chili's global pool.
+    // (min_row is order-independent, so output stays byte-identical.)
+    if args.iter().any(|a| a == "par") {
+        prela::queries::helpers::PARALLEL.store(true, std::sync::atomic::Ordering::Relaxed);
+        eprintln!("PARALLEL mode: min_row on {} threads",
+                  std::thread::available_parallelism().map(|c| c.get()).unwrap_or(1));
+    }
+
     match suite {
         "tpch" => run_tpch(),
         _ => run_job(),

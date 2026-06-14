@@ -38,18 +38,18 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 // q2a–q2d differ only in the company country code.
-fn q2(cc: &'static str) -> impl Drive<R: Row> {
+fn q2(cc: &'static str) -> impl ParDrive<R: Row + Send> {
     movie.with(keyword.eq("character-name-in-title")
           .and(company.country().eq(cc)))
         .title()
 }
 
-fn q2a() -> impl Drive<R: Row> { q2("[de]") }
-fn q2b() -> impl Drive<R: Row> { q2("[nl]") }
-fn q2c() -> impl Drive<R: Row> { q2("[sm]") }
-fn q2d() -> impl Drive<R: Row> { q2("[us]") }
+fn q2a() -> impl ParDrive<R: Row + Send> { q2("[de]") }
+fn q2b() -> impl ParDrive<R: Row + Send> { q2("[nl]") }
+fn q2c() -> impl ParDrive<R: Row + Send> { q2("[sm]") }
+fn q2d() -> impl ParDrive<R: Row + Send> { q2("[us]") }
 
-fn q3b() -> impl Drive<R: Row> {
+fn q3b() -> impl ParDrive<R: Row + Send> {
     movie.with(keyword.rx(r"sequel")
           .and(info.eq("Bulgaria"))
           .and(production_year.gt(2010)))
@@ -57,7 +57,7 @@ fn q3b() -> impl Drive<R: Row> {
 }
 
 // q4a–q4c differ only in the year cutoff and rating threshold.
-fn q4(year: i64, rating: &'static str) -> impl Drive<R: Row> {
+fn q4(year: i64, rating: &'static str) -> impl ParDrive<R: Row + Send> {
     movie.with(keyword.rx(r"sequel")
           .and(production_year.gt(year)))
        .select(data.with(Data::ty.eq("rating")
@@ -65,11 +65,11 @@ fn q4(year: i64, rating: &'static str) -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q4a() -> impl Drive<R: Row> { q4(2005, "5.0") }
-fn q4b() -> impl Drive<R: Row> { q4(2010, "9.0") }
-fn q4c() -> impl Drive<R: Row> { q4(1990, "2.0") }
+fn q4a() -> impl ParDrive<R: Row + Send> { q4(2005, "5.0") }
+fn q4b() -> impl ParDrive<R: Row + Send> { q4(2010, "9.0") }
+fn q4c() -> impl ParDrive<R: Row + Send> { q4(1990, "2.0") }
 
-fn q13a() -> impl Drive<R: Row> {
+fn q13a() -> impl ParDrive<R: Row + Send> {
     movie.with(company.select(country.eq("[de]")
                          .and(Company::ty.eq("production companies")))
           .and(kind.eq("movie")))
@@ -78,7 +78,7 @@ fn q13a() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q11a() -> impl Drive<R: Row> {
+fn q11a() -> impl ParDrive<R: Row + Send> {
     movie.with(keyword.eq("sequel")
           .and(production_year.ge(1950))
           .and(production_year.le(2000)))
@@ -90,7 +90,7 @@ fn q11a() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q22a() -> impl Drive<R: Row> {
+fn q22a() -> impl ParDrive<R: Row + Send> {
     movie.with(info.select(Info::ty.eq("countries")
                       .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
           .and(keyword.is_in(murder4()))
@@ -105,7 +105,7 @@ fn q22a() -> impl Drive<R: Row> {
                        .and(Company::ty.eq("production companies"))).name()))
 }
 
-fn q1a() -> impl Drive<R: Row> {
+fn q1a() -> impl ParDrive<R: Row + Send> {
     movie.with(data.ty().eq("top 250 rank"))
        .select(company.with(Company::ty.eq("production companies")
                        .and(Company::note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)"))
@@ -115,7 +115,7 @@ fn q1a() -> impl Drive<R: Row> {
           .and(production_year))
 }
 
-fn q5a() -> impl Drive<R: Row> {
+fn q5a() -> impl ParDrive<R: Row + Send> {
     movie.with(company.select(Company::ty.eq("production companies")
                          .and(Company::note.rx(r"\(theatrical\)"))
                          .and(Company::note.rx(r"\(France\)")))
@@ -124,7 +124,7 @@ fn q5a() -> impl Drive<R: Row> {
         .title()
 }
 
-fn q12a() -> impl Drive<R: Row> {
+fn q12a() -> impl ParDrive<R: Row + Send> {
     movie.with(info.select(Info::ty.eq("genres")
                       .and(Info::info.is_in(["Drama", "Horror"])))
           .and(production_year.ge(2005))
@@ -136,7 +136,7 @@ fn q12a() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q14a() -> impl Drive<R: Row> {
+fn q14a() -> impl ParDrive<R: Row + Send> {
     movie.with(keyword.is_in(murder4())
           .and(kind.eq("movie"))
           .and(info.select(Info::ty.eq("countries")
@@ -147,7 +147,7 @@ fn q14a() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q1b() -> impl Drive<R: Row> {
+fn q1b() -> impl ParDrive<R: Row + Send> {
     movie.with(data.ty().eq("bottom 10 rank")
           .and(production_year.ge(2005))
           .and(production_year.le(2010)))
@@ -158,19 +158,19 @@ fn q1b() -> impl Drive<R: Row> {
 }
 
 // q3a/q3c differ only in the country list and the year cutoff.
-fn q3ac(countries: Vec<&'static str>, year: i64) -> impl Drive<R: Row> {
+fn q3ac(countries: Vec<&'static str>, year: i64) -> impl ParDrive<R: Row + Send> {
     movie.with(keyword.rx(r"sequel")
           .and(info.is_in(countries))
           .and(production_year.gt(year)))
         .title()
 }
 
-fn q3a() -> impl Drive<R: Row> { q3ac(nordic8(), 2005) }
-fn q3c() -> impl Drive<R: Row> {
+fn q3a() -> impl ParDrive<R: Row + Send> { q3ac(nordic8(), 2005) }
+fn q3c() -> impl ParDrive<R: Row + Send> {
     q3ac(vec!["Sweden","Norway","Germany","Denmark","Swedish","Denish","Norwegian","German","USA","American"], 1990)
 }
 
-fn q11b() -> impl Drive<R: Row> {
+fn q11b() -> impl ParDrive<R: Row + Send> {
     movie.with(keyword.eq("sequel")
           .and(production_year.eq(1998))
           .and(title.rx(r"Money")))
@@ -182,7 +182,7 @@ fn q11b() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q13b() -> impl Drive<R: Row> {
+fn q13b() -> impl ParDrive<R: Row + Send> {
     movie.with(kind.eq("movie")
           .and(info.ty().eq("release dates"))
           .and(title.ne(""))
@@ -193,7 +193,7 @@ fn q13b() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q1c() -> impl Drive<R: Row> {
+fn q1c() -> impl ParDrive<R: Row + Send> {
     movie.with(data.ty().eq("top 250 rank")
           .and(production_year.gt(2010)))
        .select(company.with(Company::ty.eq("production companies")
@@ -203,7 +203,7 @@ fn q1c() -> impl Drive<R: Row> {
           .and(production_year))
 }
 
-fn q1d() -> impl Drive<R: Row> {
+fn q1d() -> impl ParDrive<R: Row + Send> {
     movie.with(data.ty().eq("bottom 10 rank")
           .and(production_year.gt(2000)))
        .select(company.with(Company::ty.eq("production companies")
@@ -212,7 +212,7 @@ fn q1d() -> impl Drive<R: Row> {
           .and(production_year))
 }
 
-fn q12b() -> impl Drive<R: Row> {
+fn q12b() -> impl ParDrive<R: Row + Send> {
     movie.with(company.select(country.eq("[us]")
                          .and(Company::ty.is_in(["production companies", "distributors"])))
           .and(data.ty().eq("bottom 10 rank"))
@@ -222,7 +222,7 @@ fn q12b() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q12c() -> impl Drive<R: Row> {
+fn q12c() -> impl ParDrive<R: Row + Send> {
     movie.with(info.select(Info::ty.eq("genres")
                       .and(Info::info.is_in(["Drama", "Horror", "Western", "Family"])))
           .and(production_year.ge(2000))
@@ -234,7 +234,7 @@ fn q12c() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q13c() -> impl Drive<R: Row> {
+fn q13c() -> impl ParDrive<R: Row + Send> {
     movie.with(kind.eq("movie")
           .and(info.ty().eq("release dates"))
           .and(title.ne(""))
@@ -245,7 +245,7 @@ fn q13c() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q14b() -> impl Drive<R: Row> {
+fn q14b() -> impl ParDrive<R: Row + Send> {
     movie.with(keyword.is_in(["murder", "murder-in-title"])
           .and(kind.eq("movie"))
           .and(info.select(Info::ty.eq("countries")
@@ -257,7 +257,7 @@ fn q14b() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q14c() -> impl Drive<R: Row> {
+fn q14c() -> impl ParDrive<R: Row + Send> {
     movie.with(keyword.is_in(murder4())
           .and(kind.is_in(["movie", "episode"]))
           .and(info.select(Info::ty.eq("countries")
@@ -268,7 +268,7 @@ fn q14c() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q22b() -> impl Drive<R: Row> {
+fn q22b() -> impl ParDrive<R: Row + Send> {
     movie.with(info.select(Info::ty.eq("countries")
                       .and(Info::info.is_in(["Germany", "German", "USA", "American"])))
           .and(keyword.is_in(murder4()))
@@ -283,7 +283,7 @@ fn q22b() -> impl Drive<R: Row> {
                        .and(Company::ty.eq("production companies"))).name()))
 }
 
-fn q22c() -> impl Drive<R: Row> {
+fn q22c() -> impl ParDrive<R: Row + Send> {
     movie.with(info.select(Info::ty.eq("countries")
                       .and(Info::info.is_in(nordic10())))
           .and(keyword.is_in(murder4()))

@@ -22,7 +22,7 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 // q16a/q16d differ only in the episode_nr lower bound.
-fn q16ad(lo: i64) -> impl Drive<R: Row> {
+fn q16ad(lo: i64) -> impl ParDrive<R: Row + Send> {
     movie.with(company.country().eq("[us]")
           .and(keyword.eq("character-name-in-title"))
           .and(episode_nr.ge(lo))
@@ -31,17 +31,17 @@ fn q16ad(lo: i64) -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q16a() -> impl Drive<R: Row> { q16ad(50) }
-fn q16d() -> impl Drive<R: Row> { q16ad(5) }
+fn q16a() -> impl ParDrive<R: Row + Send> { q16ad(50) }
+fn q16d() -> impl ParDrive<R: Row + Send> { q16ad(5) }
 
-fn q16b() -> impl Drive<R: Row> {
+fn q16b() -> impl ParDrive<R: Row + Send> {
     movie.with(company.country().eq("[us]")
           .and(keyword.eq("character-name-in-title")))
        .select(cast.person().alias().text()
           .and(title))
 }
 
-fn q16c() -> impl Drive<R: Row> {
+fn q16c() -> impl ParDrive<R: Row + Send> {
     movie.with(company.country().eq("[us]")
           .and(keyword.eq("character-name-in-title"))
           .and(episode_nr.lt(100)))
@@ -49,25 +49,25 @@ fn q16c() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q17a() -> impl Drive<R: Row> {
+fn q17a() -> impl ParDrive<R: Row + Send> {
     movie.with(company.country().eq("[us]")
           .and(keyword.eq("character-name-in-title")))
        .select(cast.person().rx(r"^B"))
 }
 
 // q17b/c/d/f differ only in the person-name regex.
-fn q17_any_co(re: &str) -> impl Drive<R: Row> {
+fn q17_any_co(re: &str) -> impl ParDrive<R: Row + Send> {
     movie.with(company
           .and(keyword.eq("character-name-in-title")))
        .select(cast.person().rx(re))
 }
 
-fn q17b() -> impl Drive<R: Row> { q17_any_co(r"^Z") }
-fn q17c() -> impl Drive<R: Row> { q17_any_co(r"^X") }
-fn q17d() -> impl Drive<R: Row> { q17_any_co(r"Bert") }
-fn q17f() -> impl Drive<R: Row> { q17_any_co(r"B") }
+fn q17b() -> impl ParDrive<R: Row + Send> { q17_any_co(r"^Z") }
+fn q17c() -> impl ParDrive<R: Row + Send> { q17_any_co(r"^X") }
+fn q17d() -> impl ParDrive<R: Row + Send> { q17_any_co(r"Bert") }
+fn q17f() -> impl ParDrive<R: Row + Send> { q17_any_co(r"B") }
 
-fn q17e() -> impl Drive<R: Row> {
+fn q17e() -> impl ParDrive<R: Row + Send> {
     movie.with(company.country().eq("[us]")
           .and(keyword.eq("character-name-in-title")))
        .select(cast.person().name())
@@ -77,7 +77,7 @@ fn ib_18a() -> impl Query<R = &'static str, D = Id<Movie>> + Drive + Probe {
     info.with(Info::ty.eq("budget")).info()
 }
 
-fn q18a() -> impl Drive<R: Row> {
+fn q18a() -> impl ParDrive<R: Row + Send> {
     movie.with(ib_18a()
           .and(cast.select(Cast::note.is_in(["(producer)", "(executive producer)"])
                       .and(person.select(gender.eq("m")
@@ -95,7 +95,7 @@ fn gf_18b() -> impl Query<D = Id<Info>> + Probe {
         .minus(Info::note)
 }
 
-fn q18b() -> impl Drive<R: Row> {
+fn q18b() -> impl ParDrive<R: Row + Send> {
     movie.with(info.with(gf_18b())
           .and(production_year.ge(2008))
           .and(production_year.le(2014))
@@ -112,7 +112,7 @@ fn gf_18c() -> impl Query<D = Id<Info>> + Probe {
         .and(Info::info.is_in(genre6()))
 }
 
-fn q18c() -> impl Drive<R: Row> {
+fn q18c() -> impl ParDrive<R: Row + Send> {
     movie.with(info.with(gf_18c())
           .and(cast.select(Cast::note.is_in(writer5())
                       .and(person.select(gender.eq("m"))))))

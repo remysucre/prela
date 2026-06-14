@@ -24,7 +24,7 @@ pub const ENTRIES: &[super::Entry] = &[
     ("6f",  "based-on-comic || & Teller 2 || \"Steff\", Stefanie Oxmann Mcgaha", || min_row(q6f())),
 ];
 
-fn q22d() -> impl Drive<R: Row> {
+fn q22d() -> impl ParDrive<R: Row + Send> {
     movie.with(info.select(Info::ty.eq("countries")
                       .and(Info::info.is_in(nordic10())))
           .and(keyword.is_in(murder4()))
@@ -37,7 +37,7 @@ fn q22d() -> impl Drive<R: Row> {
                        .and(Company::ty.eq("production companies"))).name()))
 }
 
-fn q5b() -> impl Drive<R: Row> {
+fn q5b() -> impl ParDrive<R: Row + Send> {
     movie.with(company.select(Company::ty.eq("production companies")
                          .and(Company::note.rx(r"\(VHS\)"))
                          .and(Company::note.rx(r"\(USA\)"))
@@ -47,7 +47,7 @@ fn q5b() -> impl Drive<R: Row> {
         .title()
 }
 
-fn q5c() -> impl Drive<R: Row> {
+fn q5c() -> impl ParDrive<R: Row + Send> {
     movie.with(company.select(Company::ty.eq("production companies")
                          .and(Company::note.nrx(r"\(TV\)"))
                          .and(Company::note.rx(r"\(USA\)")))
@@ -56,7 +56,7 @@ fn q5c() -> impl Drive<R: Row> {
         .title()
 }
 
-fn q15a() -> impl Drive<R: Row> {
+fn q15a() -> impl ParDrive<R: Row + Send> {
     movie.with(production_year.gt(2000)
           .and(company.select(country.eq("[us]")
                          .and(Company::note.rx(r"\(200.*\)"))
@@ -69,7 +69,7 @@ fn q15a() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q15b() -> impl Drive<R: Row> {
+fn q15b() -> impl ParDrive<R: Row + Send> {
     movie.with(company.select(country.eq("[us]")
                          .and(Company::name.eq("YouTube"))
                          .and(Company::note.rx(r"\(200.*\)"))
@@ -84,7 +84,7 @@ fn q15b() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q15c() -> impl Drive<R: Row> {
+fn q15c() -> impl ParDrive<R: Row + Send> {
     movie.with(company.country().eq("[us]")
           .and(keyword)
           .and(aka)
@@ -96,7 +96,7 @@ fn q15c() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q15d() -> impl Drive<R: Row> {
+fn q15d() -> impl ParDrive<R: Row + Send> {
     movie.with(company.country().eq("[us]")
           .and(keyword)
           .and(info.select(Info::ty.eq("release dates")
@@ -106,7 +106,7 @@ fn q15d() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q11c() -> impl Drive<R: Row> {
+fn q11c() -> impl ParDrive<R: Row + Send> {
     movie.with(keyword.is_in(["sequel", "revenge", "based-on-novel"])
           .and(production_year.gt(1950))
           .and(link))
@@ -118,7 +118,7 @@ fn q11c() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q11d() -> impl Drive<R: Row> {
+fn q11d() -> impl ParDrive<R: Row + Send> {
     movie.with(keyword.is_in(["sequel", "revenge", "based-on-novel"])
           .and(production_year.gt(1950))
           .and(link))
@@ -128,7 +128,7 @@ fn q11d() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q13d() -> impl Drive<R: Row> {
+fn q13d() -> impl ParDrive<R: Row + Send> {
     movie.with(kind.eq("movie")
           .and(info.ty().eq("release dates")))
        .select(company.with(country.eq("[us]")
@@ -139,27 +139,27 @@ fn q13d() -> impl Drive<R: Row> {
 
 // q6a/c/e share the marvel-cinematic-universe keyword and q6b/d the kw8
 // list; within each pair only the year cutoff varies.
-fn q6_marvel(year: i64) -> impl Drive<R: Row> {
+fn q6_marvel(year: i64) -> impl ParDrive<R: Row + Send> {
     let kw = || keyword.eq("marvel-cinematic-universe");
     let downey = cast.person().rx(r"Downey.*Robert");
     movie.with(production_year.gt(year).and(kw()))
        .select(kw().and(title).and(downey))
 }
 
-fn q6_comic(year: i64) -> impl Drive<R: Row> {
+fn q6_comic(year: i64) -> impl ParDrive<R: Row + Send> {
     let kw = || keyword.is_in(kw8());
     let downey = cast.person().rx(r"Downey.*Robert");
     movie.with(production_year.gt(year).and(kw()))
        .select(kw().and(title).and(downey))
 }
 
-fn q6a() -> impl Drive<R: Row> { q6_marvel(2010) }
-fn q6b() -> impl Drive<R: Row> { q6_comic(2014) }
-fn q6c() -> impl Drive<R: Row> { q6_marvel(2014) }
-fn q6d() -> impl Drive<R: Row> { q6_comic(2000) }
-fn q6e() -> impl Drive<R: Row> { q6_marvel(2000) }
+fn q6a() -> impl ParDrive<R: Row + Send> { q6_marvel(2010) }
+fn q6b() -> impl ParDrive<R: Row + Send> { q6_comic(2014) }
+fn q6c() -> impl ParDrive<R: Row + Send> { q6_marvel(2014) }
+fn q6d() -> impl ParDrive<R: Row + Send> { q6_comic(2000) }
+fn q6e() -> impl ParDrive<R: Row + Send> { q6_marvel(2000) }
 
-fn q6f() -> impl Drive<R: Row> {
+fn q6f() -> impl ParDrive<R: Row + Send> {
     let kw = || keyword.is_in(kw8());
     let cast_name = cast.person().name();
     movie.with(production_year.gt(2000).and(kw()))

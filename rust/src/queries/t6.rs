@@ -86,7 +86,7 @@ pub const ENTRIES: &[super::Entry] = &[
     ("33c", "2BE || 495 Productions || 1.3 || 1.0 || A Double Shot at Love || A Double Shot at Love", || min_row(q33c())),
 ];
 
-fn q27a() -> impl Drive<R: Row> {
+fn q27a() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.select(subject.is_in(["cast", "crew"])
                                .and(status.eq("complete")))
           .and(film_or_warner_co())
@@ -100,7 +100,7 @@ fn q27a() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q27b() -> impl Drive<R: Row> {
+fn q27b() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.select(subject.is_in(["cast", "crew"])
                                .and(status.eq("complete")))
           .and(film_or_warner_co())
@@ -113,7 +113,7 @@ fn q27b() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q27c() -> impl Drive<R: Row> {
+fn q27c() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.select(subject.eq("cast")
                                .and(status.rx(r"^complete")))
           .and(film_or_warner_co())
@@ -127,7 +127,7 @@ fn q27c() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q28a() -> impl Drive<R: Row> {
+fn q28a() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.select(subject.eq("crew")
                                .and(status.ne("complete+verified")))
           .and(co_28())
@@ -142,7 +142,7 @@ fn q28a() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q28b() -> impl Drive<R: Row> {
+fn q28b() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.select(subject.eq("crew")
                                .and(status.ne("complete+verified")))
           .and(co_28())
@@ -157,7 +157,7 @@ fn q28b() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q28c() -> impl Drive<R: Row> {
+fn q28c() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.select(subject.eq("cast")
                                .and(status.eq("complete")))
           .and(co_28())
@@ -172,7 +172,7 @@ fn q28c() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q29a() -> impl Drive<R: Row> {
+fn q29a() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.select(subject.eq("cast")
                                .and(status.eq("complete+verified")))
           .and(company.country().eq("[us]"))
@@ -196,7 +196,7 @@ fn q29a() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q29b() -> impl Drive<R: Row> {
+fn q29b() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.select(subject.eq("cast")
                                .and(status.eq("complete+verified")))
           .and(company.country().eq("[us]"))
@@ -219,7 +219,7 @@ fn q29b() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q29c() -> impl Drive<R: Row> {
+fn q29c() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.select(subject.eq("cast")
                                .and(status.eq("complete+verified")))
           .and(company.country().eq("[us]"))
@@ -241,7 +241,7 @@ fn q29c() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn q30a() -> impl Drive<R: Row> {
+fn q30a() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.select(subject.is_in(["cast", "crew"])
                                .and(status.eq("complete+verified")))
           .and(info.with(gf_horror()))
@@ -254,7 +254,7 @@ fn q30a() -> impl Drive<R: Row> {
                     .and(person.with(gender.eq("m")))).person().name()))
 }
 
-fn q30b() -> impl Drive<R: Row> {
+fn q30b() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.select(subject.is_in(["cast", "crew"])
                                .and(status.eq("complete+verified")))
           .and(info.with(gf_horror()))
@@ -268,7 +268,7 @@ fn q30b() -> impl Drive<R: Row> {
                     .and(person.with(gender.eq("m")))).person().name()))
 }
 
-fn q30c() -> impl Drive<R: Row> {
+fn q30c() -> impl ParDrive<R: Row + Send> {
     movie.with(complete_cast.select(subject.eq("cast")
                                .and(status.eq("complete+verified")))
           .and(info.with(gf_genre6()))
@@ -280,7 +280,7 @@ fn q30c() -> impl Drive<R: Row> {
                     .and(person.with(gender.eq("m")))).person().name()))
 }
 
-fn q31a() -> impl Drive<R: Row> {
+fn q31a() -> impl ParDrive<R: Row + Send> {
     movie.with(company.rx(r"^Lionsgate")
           .and(info.with(gf_horror()))
           .and(keyword.is_in(kw7())))
@@ -291,7 +291,7 @@ fn q31a() -> impl Drive<R: Row> {
                     .and(person.with(gender.eq("m")))).person().name()))
 }
 
-fn q31b() -> impl Drive<R: Row> {
+fn q31b() -> impl ParDrive<R: Row + Send> {
     movie.with(company.select(Company::name.rx(r"^Lionsgate")
                          .and(Company::note.rx(r"\(Blu-ray\)")))
           .and(info.with(gf_horror()))
@@ -305,7 +305,7 @@ fn q31b() -> impl Drive<R: Row> {
                     .and(person.with(gender.eq("m")))).person().name()))
 }
 
-fn q31c() -> impl Drive<R: Row> {
+fn q31c() -> impl ParDrive<R: Row + Send> {
     movie.with(company.rx(r"^Lionsgate")
           .and(info.with(gf_genre6()))
           .and(keyword.is_in(kw7())))
@@ -316,7 +316,7 @@ fn q31c() -> impl Drive<R: Row> {
 }
 
 // q32a/q32b differ only in the keyword constant.
-fn q32(kw: &'static str) -> impl Drive<R: Row> {
+fn q32(kw: &'static str) -> impl ParDrive<R: Row + Send> {
     movie.with(keyword.eq(kw)
           .and(link))
        .select(link.ty().text()
@@ -324,10 +324,10 @@ fn q32(kw: &'static str) -> impl Drive<R: Row> {
           .and(link.target().title()))
 }
 
-fn q32a() -> impl Drive<R: Row> { q32("10,000-mile-club") }
-fn q32b() -> impl Drive<R: Row> { q32("character-name-in-title") }
+fn q32a() -> impl ParDrive<R: Row + Send> { q32("10,000-mile-club") }
+fn q32b() -> impl ParDrive<R: Row + Send> { q32("character-name-in-title") }
 
-fn q33a() -> impl Drive<R: Row> {
+fn q33a() -> impl ParDrive<R: Row + Send> {
     movie.with(kind.eq("tv series")
           .and(company.country().eq("[us]"))
           .and(qlink_33a()))
@@ -340,7 +340,7 @@ fn q33a() -> impl Drive<R: Row> {
           .and(qlink_33a().target().title()))
 }
 
-fn q33b() -> impl Drive<R: Row> {
+fn q33b() -> impl ParDrive<R: Row + Send> {
     movie.with(kind.eq("tv series")
           .and(company.country().eq("[nl]"))
           .and(qlink_33b()))
@@ -353,7 +353,7 @@ fn q33b() -> impl Drive<R: Row> {
           .and(qlink_33b().target().title()))
 }
 
-fn q33c() -> impl Drive<R: Row> {
+fn q33c() -> impl ParDrive<R: Row + Send> {
     movie.with(kind.is_in(["tv series", "episode"])
           .and(company.country().ne("[us]"))
           .and(qlink_33c()))
