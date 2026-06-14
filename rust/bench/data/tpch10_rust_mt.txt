@@ -1,8 +1,8 @@
 PARALLEL mode: 10 threads
-load: 6.04s  (li n=59986052, ord n=60000000, ps n=8000000)
+load: 4.50s  (li n=59986052, ord n=60000000, ps n=8000000)
 22 TPC-H queries registered (optimized variant)
 --- run 1 ---
-run 1: 0/22 ok  total 3.84s
+run 1: 0/22 ok  total 3.35s
 --- run 2 ---  (best-of-7 warm per query)
 1     DIFF    0.0481s
         line 1:
@@ -30,7 +30,7 @@ run 1: 0/22 ok  total 3.84s
         line 4:
           got:    "9986.40|Supplier#000082995|RUSSIA|1782994|Manufacturer#5|p3Ipd2Un6pIK2|32-510-919-3096|e packages. slyly unusual ideas use slyly. blithely ironic requests integrate furi"
           oracle: "9923.77|Supplier#000002324|GERMANY|29821|Manufacturer#4|uXcnR7tv87dG|17-779-299-1839|s sleep according to the quick requests. carefully "
-3     DIFF    0.0399s
+3     DIFF    0.0402s
         line 1:
           got:    "4791171|440715.22|1995-02-23|0"
           oracle: "2456423|406181.01|1995-03-05|0"
@@ -43,7 +43,7 @@ run 1: 0/22 ok  total 3.84s
         line 4:
           got:    "23861382|428739.14|1995-03-09|0"
           oracle: "1188320|384537.94|1995-03-09|0"
-4     DIFF    0.0795s
+4     DIFF    0.0797s
         line 1:
           got:    "1-URGENT|105214"
           oracle: "1-URGENT|10594"
@@ -56,7 +56,7 @@ run 1: 0/22 ok  total 3.84s
         line 4:
           got:    "4-NOT SPECIFIED|105422"
           oracle: "4-NOT SPECIFIED|10556"
-5     DIFF    0.0376s
+5     DIFF    0.0396s
         line 1:
           got:    "INDIA|536862588.00"
           oracle: "INDONESIA|55502041.17"
@@ -69,11 +69,11 @@ run 1: 0/22 ok  total 3.84s
         line 4:
           got:    "JAPAN|526766837.14"
           oracle: "INDIA|52035512.00"
-6     DIFF    0.0236s
+6     DIFF    0.0231s
         line 1:
           got:    "1230113636.01"
           oracle: "123141078.23"
-7     DIFF    0.0459s
+7     DIFF    0.0492s
         line 1:
           got:    "FRANCE|GERMANY|1995|521960141.70"
           oracle: "FRANCE|GERMANY|1995|54639732.73"
@@ -86,11 +86,11 @@ run 1: 0/22 ok  total 3.84s
         line 4:
           got:    "GERMANY|FRANCE|1996|533640926.26"
           oracle: "GERMANY|FRANCE|1996|52520549.02"
-8     DIFF    0.1212s
+8     DIFF    0.0246s
         line 1:
           got:    "1995|0.04"
           oracle: "1995|0.03"
-9     DIFF    0.1595s
+9     DIFF    0.1623s
         line 1:
           got:    "ALGERIA|1998|271504046.55"
           oracle: "ALGERIA|1998|27136900.18"
@@ -103,7 +103,7 @@ run 1: 0/22 ok  total 3.84s
         line 4:
           got:    "ALGERIA|1995|460972497.05"
           oracle: "ALGERIA|1995|44402273.60"
-10    DIFF    0.0664s
+10    DIFF    0.0691s
         line 1:
           got:    "1237537|Customer#001237537|884989.67|7840.17|RUSSIA|mdkU4LpZECCtt20RHa76sA6b4WC|32-367-120-4327|yly regular accounts boost. requests need to nag evenly"
           oracle: "57040|Customer#000057040|734235.25|632.87|JAPAN|nICtsILWBB|22-895-641-3466|ep. blithely regular foxes promise slyly furiously ironic depend"
@@ -116,7 +116,7 @@ run 1: 0/22 ok  total 3.84s
         line 4:
           got:    "1487503|Customer#001487503|825996.59|5398.11|IRAN|D tOJIC0rcVO|20-271-234-4401|ithely quiet deposits about the slyly final dolphins hinder carefully about the slyly ironic accounts. carefully ir"
           oracle: "101998|Customer#000101998|637029.57|3790.89|UNITED KINGDOM|0,ORojfDdyMca2E2H|33-593-865-6378|ost carefully. slyly regular packages cajole about the blithely final ideas. permanently daring deposit"
-11    DIFF    0.0185s
+11    DIFF    0.0192s
         line 1:
           got:    ""
           oracle: "129760|17538456.86"
@@ -129,14 +129,14 @@ run 1: 0/22 ok  total 3.84s
         line 4:
           got:    ""
           oracle: "161758|16101755.54"
-12    DIFF    0.0390s
+12    DIFF    0.0419s
         line 1:
           got:    "MAIL|62071|93045"
           oracle: "MAIL|6202|9324"
         line 2:
           got:    "SHIP|62426|93261"
           oracle: "SHIP|6200|9262"
-13    DIFF    0.1289s
+13    DIFF    0.1208s
         line 1:
           got:    "0|500019"
           oracle: "0|50004"
@@ -149,15 +149,15 @@ run 1: 0/22 ok  total 3.84s
         line 4:
           got:    "11|62192"
           oracle: "11|6004"
-14    DIFF    0.0213s
+14    DIFF    0.0216s
         line 1:
           got:    "16.65"
           oracle: "16.38"
-15    DIFF    0.0464s
+15    DIFF    0.0484s
         line 1:
           got:    "69998|Supplier#000069998|117W54YtKASNfzkZRS8P32856BMj0HKf895vdukw|16-386-278-9829|2194132.82"
           oracle: "8449|Supplier#000008449|5BXWsJERA2mP5OyO4|20-469-856-8873|1772627.21"
-16    DIFF    0.0544s
+16    DIFF    0.0541s
         line 1:
           got:    "Brand#44|STANDARD PLATED TIN|9|120"
           oracle: "Brand#41|MEDIUM BRUSHED TIN|3|28"
@@ -170,7 +170,7 @@ run 1: 0/22 ok  total 3.84s
         line 4:
           got:    "Brand#23|PROMO BURNISHED STEEL|14|96"
           oracle: "Brand#11|STANDARD BURNISHED BRASS|36|24"
-17    DIFF    0.0657s
+17    DIFF    0.0675s
         line 1:
           got:    "3295493.51"
           oracle: "348406.05"
@@ -187,11 +187,11 @@ run 1: 0/22 ok  total 3.84s
         line 4:
           got:    "Customer#000399481|399481|43906817|1995-04-06|549431.65|312.00"
           oracle: "Customer#000066790|66790|2199712|1996-09-30|515531.82|327.00"
-19    DIFF    0.0993s
+19    DIFF    0.0982s
         line 1:
           got:    "30104438.09"
           oracle: "3083843.06"
-20    DIFF    0.0319s
+20    DIFF    0.0325s
         line 2:
           got:    "Supplier#000000285|q TMZEDyZtv vUiFKBhT3NJlnIxpL"
           oracle: "Supplier#000000091|35WVnU7GLNbQDcc2TARavGtk6RB6ZCd46UAY"
@@ -201,7 +201,7 @@ run 1: 0/22 ok  total 3.84s
         line 4:
           got:    "Supplier#000000361|MSi62aEN53KaoRAiaH4GEo3EsKMXSwpPGU"
           oracle: "Supplier#000000285|q TMZEDyZtv vUiFKBhT3NJlnIxpL"
-21    DIFF    0.1897s
+21    DIFF    0.1863s
         line 1:
           got:    "Supplier#000062538|24"
           oracle: "Supplier#000002829|20"
@@ -214,7 +214,7 @@ run 1: 0/22 ok  total 3.84s
         line 4:
           got:    "Supplier#000089484|21"
           oracle: "Supplier#000000496|17"
-22    DIFF    0.0235s
+22    DIFF    0.0234s
         line 1:
           got:    "13|9025|67592468.28"
           oracle: "13|888|6737713.99"
@@ -227,4 +227,4 @@ run 1: 0/22 ok  total 3.84s
         line 4:
           got:    "23|8984|67607771.32"
           oracle: "23|892|6701457.95"
-run 2: 0/22 ok  warm-sum 1.51s
+run 2: 0/22 ok  warm-sum 1.42s

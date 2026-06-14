@@ -17,7 +17,7 @@ use crate::tpch_schema::*;
 
 pub fn queries() -> Vec<super::Entry> {
     with_overrides(&[
-        ("1", q1), ("2", q2), ("4", q4), ("9", q9), ("12", q12),
+        ("1", q1), ("2", q2), ("4", q4), ("8", q8), ("9", q9), ("12", q12),
         ("13", q13), ("16", q16), ("17", q17), ("18", q18), ("20", q20), ("21", q21), ("22", q22),
     ])
 }
@@ -480,4 +480,34 @@ fn q16() -> String {
         .then(a.0.0.1.cmp(&b.0.0.1))
         .then(a.0.1.cmp(&b.0.1)));
     join_lines(rows.iter().map(|(k, v)| format!("{}|{}|{}|{}", k.0.0, k.0.1, k.1, v)))
+}
+
+// ---------- Q8 — market share for BRAZIL ----------
+
+fn q8() -> String {
+    // Replace the per-lineitem part-type probe + 4-hop customer->nation->region
+    // probe with bitsets: ECONOMY-ANODIZED-STEEL parts (selective, ~1/150 — the
+    // FIRST conjunct so it cuts the scan early) and AMERICA-region customers
+    // (resolved once over ~1.5M customers). Per qualifying lineitem becomes two
+    // bit-tests plus the date range.
+    let steel_parts = pbitset(part.iq().n, part.with(Part::ty.eq("ECONOMY ANODIZED STEEL")));
+    let america_cust = pbitset(customer.iq().n, customer.with(Customer::nation.region().eq("AMERICA")));
+    let live = lineitem
+        .with(Lineitem::part.select(&steel_parts))
+        .with(order.date().between(19950101, 19961231))
+        .with(order.customer().select(&america_cust));
+    let year = (&live).order().date().map(|d: i64| d / 10000);
+    let snat_name = (&live).supplier().nation().name();
+    let scan = (&live).select(extendedprice.and(discount)).and(snat_name);
+    let pair_fold = pfold(scan.group_by(year), (0.0_f64, 0.0_f64),
+        |(b, t), ((e, dc), nm)| {
+            let v = e * (1.0 - dc);
+            (b + if nm == "BRAZIL" { v } else { 0.0 }, t + v)
+        },
+        |(b1, t1), (b2, t2)| (b1 + b2, t1 + t2));
+    let ratio = pair_fold.map(|(b, t)| b / t);
+    let mut rows: Vec<(i64, f64)> = Vec::new();
+    ratio.drive(|k, v| rows.push((k, v)));
+    rows.sort_by_key(|r| r.0);
+    join_lines(rows.iter().map(|(k, v)| format!("{}|{}", k, f(*v))))
 }
