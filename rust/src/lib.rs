@@ -11,6 +11,7 @@ pub mod cache;
 pub mod engine;
 pub mod format;
 pub mod job_schema;
+pub mod par;
 pub mod queries;
 pub mod schema;
 pub mod tpch;

@@ -987,6 +987,132 @@ impl<Q: Probe, F: Fn(Q::R) -> S, S: Copy> Probe for Map<Q, F, S> {
     }
 }
 
+// ===== ParDrive — the splittable mirror of Drive (threading) ============
+// `Drive` runs the whole root scan in one fused loop. `ParDrive` exposes the
+// SAME loop split into a window `[lo, hi)` of the root rows, so a fork-join
+// runtime can scan disjoint slices on separate threads and merge the partial
+// sinks. Only the DRIVE spine needs it: roots (`Universe`/`VecRel`/`MultiRel`)
+// carve the window; every forwarding combinator just passes the window down to
+// the leg it drives (the probe side is untouched — it's read-only shared state
+// during the scan). `rows()` reports the splittable extent. This trait is
+// runtime-agnostic (no chili here); `src/par.rs` drives it with chili's `join`.
+pub trait ParDrive: Drive {
+    /// Number of root rows the scan can be partitioned over.
+    fn rows(&self) -> usize;
+    /// Drive only the root rows in `[lo, hi)` (indices into `0..rows()`).
+    fn drive_range<K: FnMut(Self::D, Self::R)>(&self, lo: usize, hi: usize, k: K);
+}
+
+impl<T: ParDrive + ?Sized> ParDrive for &T {
+    #[inline(always)]
+    fn rows(&self) -> usize { (**self).rows() }
+    #[inline(always)]
+    fn drive_range<K: FnMut(T::D, T::R)>(&self, lo: usize, hi: usize, k: K) {
+        (**self).drive_range(lo, hi, k);
+    }
+}
+
+// --- roots: carve the window over the dense id / value / key space ---
+impl<D: Dense> ParDrive for Universe<D> {
+    #[inline(always)]
+    fn rows(&self) -> usize { self.hi - self.lo }
+    #[inline(always)]
+    fn drive_range<K: FnMut(D, D)>(&self, lo: usize, hi: usize, mut k: K) {
+        for i in self.lo + lo..self.lo + hi {
+            let d = D::from_idx(i);
+            k(d, d);
+        }
+    }
+}
+impl<R: Copy, D: Dense> ParDrive for VecRel<R, D> {
+    #[inline(always)]
+    fn rows(&self) -> usize { self.values.len() }
+    #[inline(always)]
+    fn drive_range<K: FnMut(D, R)>(&self, lo: usize, hi: usize, mut k: K) {
+        for (off, &v) in self.values[lo..hi].iter().enumerate() {
+            k(D::from_idx(lo + off), v);
+        }
+    }
+}
+impl<R: Copy, D: Dense> ParDrive for MultiRel<R, D> {
+    #[inline(always)]
+    fn rows(&self) -> usize { self.offsets.len().saturating_sub(1) }
+    #[inline(always)]
+    fn drive_range<K: FnMut(D, R)>(&self, lo: usize, hi: usize, mut k: K) {
+        for i in lo..hi {
+            for &v in &self.values[self.offsets[i] as usize..self.offsets[i + 1] as usize] {
+                k(D::from_idx(i), v);
+            }
+        }
+    }
+}
+
+// --- forwarders: pass the window down to the driven leg, verbatim ---
+impl<A: ParDrive, B: Probe<D = A::R>> ParDrive for Compose<A, B> {
+    #[inline(always)]
+    fn rows(&self) -> usize { self.a.rows() }
+    #[inline(always)]
+    fn drive_range<K: FnMut(A::D, B::R)>(&self, lo: usize, hi: usize, mut k: K) {
+        self.a.drive_range(lo, hi, |x, m| self.b.probe(m, |r| k(x, r)));
+    }
+}
+impl<A: ParDrive, F: Fn(A::R) -> bool> ParDrive for Filter<A, F> {
+    #[inline(always)]
+    fn rows(&self) -> usize { self.a.rows() }
+    #[inline(always)]
+    fn drive_range<K: FnMut(A::D, A::R)>(&self, lo: usize, hi: usize, mut k: K) {
+        self.a.drive_range(lo, hi, |x, v| if (self.p)(v) { k(x, v); });
+    }
+}
+impl<A: ParDrive, B: Probe<D = A::R>> ParDrive for Restrict<A, B> {
+    #[inline(always)]
+    fn rows(&self) -> usize { self.a.rows() }
+    #[inline(always)]
+    fn drive_range<K: FnMut(A::D, A::R)>(&self, lo: usize, hi: usize, mut k: K) {
+        self.a.drive_range(lo, hi, |x, v| if self.b.member(v) { k(x, v); });
+    }
+}
+impl<A: ParDrive, B: Probe<D = A::D>> ParDrive for Diff<A, B> {
+    #[inline(always)]
+    fn rows(&self) -> usize { self.a.rows() }
+    #[inline(always)]
+    fn drive_range<K: FnMut(A::D, A::R)>(&self, lo: usize, hi: usize, mut k: K) {
+        self.a.drive_range(lo, hi, |x, v| if !self.b.member(x) { k(x, v); });
+    }
+}
+impl<A: ParDrive, B: Probe<D = A::D>> ParDrive for Prod<A, B> {
+    #[inline(always)]
+    fn rows(&self) -> usize { self.a.rows() }
+    #[inline(always)]
+    fn drive_range<K: FnMut(A::D, (A::R, B::R))>(&self, lo: usize, hi: usize, mut k: K) {
+        self.a.drive_range(lo, hi, |x, a| self.b.probe(x, |b| k(x, (a, b))));
+    }
+}
+impl<Q: ParDrive, F: Fn(Q::R) -> S, S: Copy> ParDrive for Map<Q, F, S> {
+    #[inline(always)]
+    fn rows(&self) -> usize { self.q.rows() }
+    #[inline(always)]
+    fn drive_range<K: FnMut(Q::D, S)>(&self, lo: usize, hi: usize, mut k: K) {
+        self.q.drive_range(lo, hi, |d, v| k(d, (self.f)(v)));
+    }
+}
+impl<S: ParDrive, R: Probe<D = S::D>> ParDrive for GroupBy<S, R> where R::R: Eq + Hash {
+    #[inline(always)]
+    fn rows(&self) -> usize { self.src.rows() }
+    #[inline(always)]
+    fn drive_range<K: FnMut(R::R, S::R)>(&self, lo: usize, hi: usize, mut k: K) {
+        self.src.drive_range(lo, hi, |d, sv| self.key.probe(d, |rk| k(rk, sv)));
+    }
+}
+impl<Q: ParDrive> ParDrive for InvStream<Q> where Q::R: Eq + Hash {
+    #[inline(always)]
+    fn rows(&self) -> usize { self.q.rows() }
+    #[inline(always)]
+    fn drive_range<K: FnMut(Q::R, Q::D)>(&self, lo: usize, hi: usize, mut k: K) {
+        self.q.drive_range(lo, hi, |d, r| k(r, d));
+    }
+}
+
 // ===== operators (method-only surface) ==================================
 // Constructors are mode-agnostic (they just build the node; the node's
 // trait impls carry the mode bounds) EXCEPT the eager physical nodes, whose

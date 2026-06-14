@@ -39,6 +39,33 @@ impl<A: Row, B: Row> Row for (A, B) {
 pub fn min_row<Q: Drive>(q: Q) -> String where Q::R: Row {
     let mut m: Option<Q::R> = None;
     q.drive(|_, v| m = Some(match m { Some(acc) => acc.col_min(v), None => v }));
+    render_min(m)
+}
+
+/// `min_row` over a parallel root scan: each worker folds the per-column min of
+/// its window (`Option` monoid, `col_min`/`None`), merged up the join tree.
+/// Byte-identical to `min_row` — column-min is associative and commutative.
+pub fn par_min_row<Q>(pool: &chili::ThreadPool, q: &Q, grain: usize) -> String
+where Q: crate::engine::ParDrive + Sync, Q::R: Row + Send {
+    let m = crate::par::par_run(
+        pool,
+        q,
+        grain,
+        |q, lo, hi| {
+            let mut m: Option<Q::R> = None;
+            q.drive_range(lo, hi, |_, v| m = Some(match m { Some(a) => a.col_min(v), None => v }));
+            m
+        },
+        |a, b| match (a, b) {
+            (Some(a), Some(b)) => Some(a.col_min(b)),
+            (a, b) => a.or(b),
+        },
+    );
+    render_min(m)
+}
+
+/// Render an accumulated row as `min0 || min1 || …` (or `(empty)`).
+fn render_min<R: Row>(m: Option<R>) -> String {
     match m {
         None => "(empty)".into(),
         Some(row) => {
