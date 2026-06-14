@@ -172,12 +172,13 @@ fn q13() -> String {
     // folds into a `Vec<i64>` indexed by customer id (DenseFold) rather than
     // a HashMap keyed by id (Fold) — one array bump per order, no hashing,
     // across all ~15M live orders. Same hoist as q9/q15/q21's dense folds.
-    // High-cardinality per-customer count → HashMap partials (pfold), not a
-    // dense Vec: at SF=10 the customer space is 1.5M and the order universe
-    // 60M, so dense per-leaf vectors would blow memory.
-    let count_per_cust = pfold(
-        (&live_orders).date().group_by((&live_orders).customer()),
-        0_i64, |a, _| a + 1, |a, b| a + b);
+    // Per-customer count stays a sequential dense_fold: parallel HashMap
+    // partials would hash all ~15M live orders (slower than the array bumps),
+    // and a dense per-leaf Vec over the 60M order universe blows memory at
+    // SF=10. Dense-sequential is both fast and bounded.
+    let count_per_cust = (&live_orders).date()
+        .group_by((&live_orders).customer())
+        .dense_fold(customer.iq().n, 0_i64, |a, _| a + 1);
     let mut dist: HashMap<i64, i64> = HashMap::new();
     let mut n_with = 0i64;
     count_per_cust.drive(|_, c| { *dist.entry(c).or_insert(0) += 1; n_with += 1; });
@@ -217,9 +218,10 @@ pub(super) fn q17() -> String {
 // ---------- Q18 — large volume customer ----------
 
 fn q18() -> String {
-    // Per-order quantity sum over the 60M-key (SF=10) order universe →
-    // HashMap partials, not a 480MB-per-leaf dense Vec.
-    let sum_qty = pfold(quantity.group_by(order), 0.0_f64, |a, q| a + q, |a, b| a + b);
+    // Sequential dense_fold: a dense per-leaf Vec over the 60M order universe
+    // would be 480MB×leaves at SF=10, and HashMap partials hash all 60M
+    // lineitems — both lose to the dense array-bump scan.
+    let sum_qty = quantity.group_by(order).dense_fold(orders.iq().n, 0.0_f64, |a, q| a + q);
     let big = sum_qty.gt(300.0);
     let mut rows: Vec<(Id<Order>, f64)> = Vec::new();
     big.drive(|k, v| rows.push((k, v)));
@@ -266,19 +268,16 @@ fn q21() -> String {
         Some(f) if f != s => (first, true),
         _ => (first, multi),
     };
-    // Monoid merge of two partial states for the same order: `multi` (≥2
-    // distinct suppliers) is true if either side saw multi or their two
-    // representative suppliers differ; identity is (None, false).
-    let track_combine = |a: (Option<Id<Supplier>>, bool), b: (Option<Id<Supplier>>, bool)| match (a, b) {
-        ((None, _), b) => b,
-        (a, (None, _)) => a,
-        ((Some(fa), ma), (Some(fb), mb)) => (Some(fa), ma || mb || fa != fb),
-    };
-    // Per-order over the 60M-key (SF=10) order universe → HashMap partials.
-    let supp_state = pfold(Lineitem::supplier.group_by(order), (None, false), track, track_combine);
-    let late_supp_state = pfold(
-        (&late).select(Lineitem::supplier).group_by((&late).select(order)),
-        (None, false), track, track_combine);
+    // These two per-order state folds stay sequential dense_fold: the state is
+    // 24 bytes over the 60M order universe, so dense-parallel would need
+    // ~3GB×leaves and HashMap partials would hash all 60M lineitems. Dense-
+    // sequential keeps q21's original tuned speed; parallelism here isn't worth
+    // the memory.
+    let supp_state = Lineitem::supplier.group_by(order)
+        .dense_fold(orders.iq().n, (None, false), track);
+    let late_supp_state = (&late).select(Lineitem::supplier)
+        .group_by((&late).select(order))
+        .dense_fold(orders.iq().n, (None, false), track);
     // Only the SAUDI suppliers' late lineitems can qualify, so `saudi` is the
     // selective FIRST conjunct — precompute it as a Bitset (bit-tested per
     // late lineitem; supplier.n is tiny). The order predicates (status F,
@@ -348,10 +347,11 @@ fn q2() -> String {
     //   target : (Su.acctbal ⊗ Su.name ⊗ Na.name ⊗ PS.part ⊗ Pa.mfgr
     //             ⊗ Su.address ⊗ Su.phone ⊗ Su.comment)
     let eu_ps = partsupp.with(PartSupp::supplier.nation().region().eq("EUROPE"));
-    // Per-part min over the 2M-part / 8M-partsupp space (SF=10) → HashMap
-    // partials keyed by part id (min monoid, identity +inf).
-    let min_per_part = pfold((&eu_ps).supplycost().group_by((&eu_ps).part()),
-        f64::INFINITY, |a, c| if c < a { c } else { a }, |a, b| if a < b { a } else { b });
+    // Per-part min stays sequential dense_fold over the 2M-part space —
+    // fast array indexing, bounded memory.
+    let min_per_part = (&eu_ps).supplycost()
+        .group_by((&eu_ps).part())
+        .dense_fold(part.iq().n, f64::INFINITY, |a, c| if c < a { c } else { a });
     let target = (&eu_ps)
         .with(PartSupp::part.size().eq(15)
          .and(PartSupp::part.ty().filt(|s: &str| s.ends_with("BRASS")))
