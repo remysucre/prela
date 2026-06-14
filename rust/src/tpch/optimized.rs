@@ -18,7 +18,7 @@ use crate::tpch_schema::*;
 pub fn queries() -> Vec<super::Entry> {
     with_overrides(&[
         ("1", q1), ("2", q2), ("4", q4), ("9", q9), ("12", q12),
-        ("13", q13), ("17", q17), ("18", q18), ("20", q20), ("21", q21), ("22", q22),
+        ("13", q13), ("16", q16), ("17", q17), ("18", q18), ("20", q20), ("21", q21), ("22", q22),
     ])
 }
 
@@ -71,7 +71,10 @@ fn q4() -> String {
     let bad_li_order = lineitem
         .with(commitdate.and(receiptdate).filt(|(c, r)| c < r))
         .order();
-    let is_late = Bitset::over(orders, &bad_li_order);
+    // Parallel bitset build: the 60M-lineitem scan (reading commit/receipt to
+    // mark orders with a late line) was sequential — par_bitset ORs per-worker
+    // word arrays.
+    let is_late = pbitset(orders.iq().n, bad_li_order);
     let live = orders
         .with(date.during(19930701, 19931001))
         .with(is_late);
@@ -374,7 +377,12 @@ fn q2() -> String {
     //                  ∧ (supplycost == (PS.part → min_per_part))
     //   target : (Su.acctbal ⊗ Su.name ⊗ Na.name ⊗ PS.part ⊗ Pa.mfgr
     //             ⊗ Su.address ⊗ Su.phone ⊗ Su.comment)
-    let eu_ps = partsupp.with(PartSupp::supplier.nation().region().eq("EUROPE"));
+    // European suppliers as a bitset (supplier->nation->region resolved once
+    // over the ~100K suppliers), so the partsupp filter is one bit-test instead
+    // of a 3-hop region probe per (8M) partsupp, re-driven each use of eu_ps.
+    let eu_suppliers = pbitset(supplier.iq().n,
+        supplier.with(Supplier::nation.region().eq("EUROPE")));
+    let eu_ps = partsupp.with(PartSupp::supplier.select(&eu_suppliers));
     // Per-part min stays sequential dense_fold over the 2M-part space —
     // fast array indexing, bounded memory.
     let min_per_part = (&eu_ps).supplycost()
@@ -443,4 +451,33 @@ fn q20() -> String {
     target.select(Supplier::name.and(Supplier::address)).drive(|_, (n, a)| rows.push((n, a)));
     rows.sort_by(|a, b| a.0.cmp(b.0));
     join_lines(rows.iter().map(|(n, a)| format!("{}|{}", n, a)))
+}
+
+// ---------- Q16 — distinct supplier count ----------
+
+fn q16() -> String {
+    // Semi-join reductions: the part predicate (brand/type/size) and the
+    // supplier `nrx("Customer.*Complaints")` regex are per-PARTSUPP in the
+    // baseline — 8M evaluations, including 8M regex DFA runs over only ~100K
+    // distinct suppliers. Precompute both as bitsets (2M-part scan, 100K-
+    // supplier regex), so the 8M-row partsupp filter is two bit-tests.
+    let good_parts = pbitset(part.iq().n,
+        part.with(Part::brand.ne("Brand#45")
+            .and(Part::ty.filt(|s: &str| !s.starts_with("MEDIUM POLISHED")))
+            .and(Part::size.is_in([49, 14, 23, 45, 19, 3, 36, 9]))));
+    let good_supp = pbitset(supplier.iq().n,
+        supplier.with(Supplier::comment.nrx("Customer.*Complaints")));
+    let live_ps = partsupp
+        .with(PartSupp::part.select(&good_parts))
+        .with(PartSupp::supplier.select(&good_supp));
+    let group = (&live_ps).select(PartSupp::part.select(brand.and(ty).and(size)));
+    let supp  = (&live_ps).supplier();
+    let counts = supp.group_by(group).count_distinct();
+    let mut rows: Vec<(((&str, &str), i64), i64)> = Vec::new();
+    counts.drive(|k, v| rows.push((k, v)));
+    rows.sort_by(|a, b| b.1.cmp(&a.1)
+        .then(a.0.0.0.cmp(&b.0.0.0))
+        .then(a.0.0.1.cmp(&b.0.0.1))
+        .then(a.0.1.cmp(&b.0.1)));
+    join_lines(rows.iter().map(|(k, v)| format!("{}|{}|{}|{}", k.0.0, k.0.1, k.1, v)))
 }
