@@ -13,7 +13,7 @@
 // merge up the join tree.
 
 use prela::engine::*;
-use prela::par::{par_fold, par_unwrap_fold};
+use prela::par::{par_dense_fold, par_fold, par_unwrap_fold};
 use prela::tpch_schema::*;
 use std::num::NonZero;
 use std::path::Path;
@@ -124,24 +124,28 @@ fn main() {
         println!("    t={t:<2}  {par_t:>8.4}s   {:.2}x", seq6_t / par_t);
     }
 
-    // q1 — per-key fold (seq = dense_fold, par = HashMap par_fold)
+    // q1 — per-key fold. Sequential baseline = tuned dense_fold. Two parallel
+    // sinks: HashMap partials (par_fold) and dense partials (par_dense_fold).
+    // q1's key space is tiny (288 slots, 4 live groups) — the dense case.
     let (seq1, seq1_t) = best_of(ITERS, || render_q1(q1_grouped().dense_fold(288, INIT, q1_op)));
     println!("\nq1  per-key fold      seq {seq1_t:.4}s   ({} groups)", seq1.lines().count());
     let p1 = q1_grouped();
-    let mut float_reordered = false;
+
+    println!("  par_fold (HashMap partials):");
     for t in [2usize, 4, 8, cores] {
         let pl = pool(t);
         let (par, par_t) = best_of(ITERS, || render_q1(par_fold(&pl, &p1, grain, INIT, q1_op, q1_combine)));
-        // Grouping + COUNT (integer) must be exact; the f64 sums may differ in
-        // the last cent because partition-then-combine reorders the additions.
         assert!(keys_counts(&par) == keys_counts(&seq1), "q1 grouping/count diverged");
-        float_reordered |= par != seq1;
         println!("    t={t:<2}  {par_t:>8.4}s   {:.2}x", seq1_t / par_t);
     }
-    if float_reordered {
-        println!("    note: f64 sums differ by ≤1 cent vs sequential (non-associativity);");
-        println!("          groups + counts are exact. Byte-exact oracles need a fix.");
+    println!("  par_dense_fold (dense partials, n=288):");
+    for t in [2usize, 4, 8, cores] {
+        let pl = pool(t);
+        let (par, par_t) = best_of(ITERS, || render_q1(par_dense_fold(&pl, &p1, grain, 288, INIT, q1_op, q1_combine)));
+        assert!(keys_counts(&par) == keys_counts(&seq1), "q1 grouping/count diverged");
+        println!("    t={t:<2}  {par_t:>8.4}s   {:.2}x", seq1_t / par_t);
     }
+    println!("  (f64 sums differ ≤1 cent vs sequential — reordering; groups+counts exact)");
 }
 
 /// (returnflag, status, count) per row — the integer-exact part of q1's output.

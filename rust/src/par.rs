@@ -13,10 +13,11 @@
 // partial, `merge` is the associative combine. `par_min_row` (in
 // queries::helpers) and the fold builders specialize it.
 
-use crate::engine::{Fold, ParDrive};
+use crate::engine::{Dense, DenseFold, Fold, ParDrive};
 use ahash::AHashMap as HashMap;
 use chili::{Scope, ThreadPool};
 use std::hash::Hash;
+use std::marker::PhantomData;
 
 /// Divide-and-conquer over the root window `[lo, hi)`. Leaves (≤ `grain` rows)
 /// build a partial sink with `mk`; internal nodes `join` their halves and
@@ -144,4 +145,59 @@ where
         },
     );
     Fold { cache }
+}
+
+/// Parallel per-key fold into a DENSE `Vec<S>` cache — the `.group_by(k)
+/// .dense_fold(n, init, op)` sink. Each worker folds its window into a private
+/// `vec![init; n]` + presence map, then partials merge elementwise. Returns the
+/// same `DenseFold` the sequential path builds.
+///
+/// Trade-off vs `par_fold`: each leaf allocates an n-slot vector and each merge
+/// is O(n), so the win holds only while `n` is SMALL/dense (q1's 288, by-nation
+/// 25, …). For high-cardinality keys (per-customer/part) the per-leaf alloc and
+/// O(n·leaves) merge dominate — use `par_fold` (HashMap, scales with touched
+/// keys) there, or a coarse grain here. `init` must be `combine`'s identity.
+pub fn par_dense_fold<Q, S, OP, CB>(
+    pool: &ThreadPool,
+    q: &Q,
+    grain: usize,
+    n: usize,
+    init: S,
+    op: OP,
+    combine: CB,
+) -> DenseFold<S, Q::D>
+where
+    Q: ParDrive + Sync,
+    Q::D: Dense,
+    S: Copy + Send + Sync,
+    OP: Fn(S, Q::R) -> S + Sync,
+    CB: Fn(S, S) -> S + Sync,
+{
+    let (vals, seen) = par_run(
+        pool,
+        q,
+        grain,
+        |q, lo, hi| {
+            let mut vals = vec![init; n];
+            let mut seen = vec![false; n];
+            q.drive_range(lo, hi, |d, v| {
+                let i = d.idx();
+                if let Some(s) = vals.get_mut(i) {
+                    *s = op(*s, v);
+                    seen[i] = true;
+                }
+            });
+            (vals, seen)
+        },
+        |(mut va, mut sa), (vb, sb)| {
+            for i in 0..va.len() {
+                if sb[i] {
+                    va[i] = if sa[i] { combine(va[i], vb[i]) } else { vb[i] };
+                    sa[i] = true;
+                }
+            }
+            (va, sa)
+        },
+    );
+    DenseFold { vals, seen, _d: PhantomData }
 }
