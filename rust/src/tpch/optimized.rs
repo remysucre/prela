@@ -18,7 +18,7 @@ use crate::tpch_schema::*;
 pub fn queries() -> Vec<super::Entry> {
     with_overrides(&[
         ("1", q1), ("2", q2), ("4", q4), ("9", q9), ("12", q12),
-        ("13", q13), ("17", q17), ("18", q18), ("21", q21), ("22", q22),
+        ("13", q13), ("17", q17), ("18", q18), ("20", q20), ("21", q21), ("22", q22),
     ])
 }
 
@@ -88,7 +88,6 @@ fn q9() -> String {
     // CP1.3 / CP1.4: group on (nation_id, year) as (Id<Nation>, i64) — 16-byte
     // integer hash key, not (&str, i64) which costs a string hash + memcmp
     // per collision. Nation name is FD'd by nation_id, looked up at output.
-    let sc: HashIdx<_, _> = PartSupp::part.and(PartSupp::supplier).inv().supplycost().collect();
     // Hoist the `Part.name ~ "green"` predicate out of the 60M-row
     // lineitem scan by materializing the matching part-ids into a `Bitset`
     // (~200K Part rows scanned once). Per lineitem becomes one bit-test.
@@ -96,6 +95,17 @@ fn q9() -> String {
         part,
         &part.with(Part::name.filt(|n: &str| n.contains("green"))),
     );
+    // Semi-join reduction: only green-part lineitems are scanned, so sc only
+    // ever needs green-part (part,supplier) entries. Restrict the partsupp scan
+    // that builds the supplycost index to green parts — ~470K entries, not 8M
+    // (0.21s sequential collect -> ~0.02s). HashIdx collect stays sequential;
+    // parallelizing 8M unique keys cost MORE (high-cardinality merge).
+    let sc: HashIdx<_, _> = partsupp
+        .with(PartSupp::part.select(&green_parts))
+        .select(PartSupp::part.and(PartSupp::supplier))
+        .inv()
+        .supplycost()
+        .collect();
     let live = lineitem.with(Lineitem::part.select(&green_parts));
     let nation_id = (&live).supplier().nation();
     let year      = (&live).order().date().map(|d: i64| d / 10000);
@@ -390,4 +400,37 @@ fn q2() -> String {
     // natural partkey = internal id + 1
     join_lines(rows.iter().map(|r| format!("{}|{}|{}|{}|{}|{}|{}|{}",
         f(r.0), r.1, r.2, r.3.idx() + 1, r.4, r.5, r.6, r.7)))
+}
+
+// ---------- Q20 — potential part promotion ----------
+
+fn q20() -> String {
+    // Semi-join reduction: sum_qty is only ever probed for forest-named parts
+    // (qual_ps filters `name ~ "^forest"`), so restrict the lineitem fold to
+    // forest-part lineitems up front via a Bitset — the same hoist as q9's
+    // green_parts. The (part,supplier) key space collapses from ~5.4M pairs to
+    // ~88K, turning the dominant hash fold into a trivial one. (Missing-pair
+    // semantics are unchanged: a forest partsupp with no qualifying lineitem
+    // misses sum_qty and is excluded either way.)
+    let forest_parts = Bitset::over(
+        part,
+        &part.with(Part::name.filt(|n: &str| n.starts_with("forest"))),
+    );
+    let live_li = lineitem
+        .with(shipdate.during(19940101, 19950101))
+        .with(Lineitem::part.select(&forest_parts));
+    let sum_qty = pfold((&live_li).quantity()
+        .group_by((&live_li).select(Lineitem::part.and(Lineitem::supplier))),
+        0.0_f64, |a, q| a + q, |a, b| a + b);
+    let threshold = PartSupp::part.and(PartSupp::supplier).select(&sum_qty).map(|s| 0.5 * s);
+    let qual_ps = partsupp
+        .with(PartSupp::part.name().filt(|n: &str| n.starts_with("forest"))
+         .and(availqty.map(|q| q as f64).and(threshold).filt(|(a, t)| a > t)));
+    let canada_supps = supplier.with(Supplier::nation.eq("CANADA"));
+    let qual_supps: MatSet<_> = qual_ps.supplier().collect();
+    let target = canada_supps.with(qual_supps);
+    let mut rows: Vec<(&str, &str)> = Vec::new();
+    target.select(Supplier::name.and(Supplier::address)).drive(|_, (n, a)| rows.push((n, a)));
+    rows.sort_by(|a, b| a.0.cmp(b.0));
+    join_lines(rows.iter().map(|(n, a)| format!("{}|{}", n, a)))
 }
