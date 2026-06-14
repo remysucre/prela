@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use super::common::{f, fmt_yyyymmdd, join_lines, with_overrides};
 use crate::engine::*;
-use crate::par::{pdense_fold, pfold, psorted_fold, punwrap_fold};
+use crate::par::{pdense_fold, pfold, pradix_fold, psorted_fold, punwrap_fold};
 use crate::tpch_schema::*;
 
 pub fn queries() -> Vec<super::Entry> {
@@ -172,16 +172,18 @@ fn q13() -> String {
     // folds into a `Vec<i64>` indexed by customer id (DenseFold) rather than
     // a HashMap keyed by id (Fold) — one array bump per order, no hashing,
     // across all ~15M live orders. Same hoist as q9/q15/q21's dense folds.
-    // The cost here is the SCAN — 60M order slots + ~15M memmem comment
-    // filters — not the per-customer count. pfold parallelizes that scan
-    // (HashMap partials over the ~1.5M customer space stay memory-bounded),
-    // so the expensive memmem work splits across workers.
-    let count_per_cust = pfold(
+    // Per-customer count over the 1.5M dense customer space. pradix_fold
+    // parallelizes the expensive scan (the memmem comment filter) and then
+    // folds survivors into a single dense Vec by direct index — no per-customer
+    // hash (pfold's 0.35s cost) and no per-leaf dense Vec (the alloc blowup).
+    let (counts, seen) = pradix_fold(
         (&live_orders).date().group_by((&live_orders).customer()),
-        0_i64, |a, _| a + 1, |a, b| a + b);
+        customer.iq().n, 0_i64, |a, _| a + 1);
     let mut dist: HashMap<i64, i64> = HashMap::new();
     let mut n_with = 0i64;
-    count_per_cust.drive(|_, c| { *dist.entry(c).or_insert(0) += 1; n_with += 1; });
+    for (i, &c) in counts.iter().enumerate() {
+        if seen[i] { *dist.entry(c).or_insert(0) += 1; n_with += 1; }
+    }
     // LEFT JOIN zero-default: customers with no qualifying orders contribute to c_count=0.
     dist.insert(0, customer.iq().n as i64 - n_with);
     let mut rows: Vec<_> = dist.iter().collect();

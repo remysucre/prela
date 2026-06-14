@@ -229,6 +229,24 @@ fn main() {
     println!("  iterate 60M slots         {t_all:.4}s  ({n_all} rows)");
     println!("  + hole-skip (cust!=NONE)  {t_live:.4}s  ({n_live} live, +{:.4}s)", t_live - t_all);
     println!("  + memmem comment filter   {t_full:.4}s  ({n_full} kept,  +{:.4}s)", t_full - t_live);
+
+    // Does the comment scan itself parallelize? Count survivors via
+    // par_unwrap_fold at increasing thread counts.
+    println!("q13 comment-scan parallelism (count survivors):");
+    let f2 = memmem::Finder::new("special").into_owned();
+    let live = orders.with(
+        Order::customer.filt(|x| x != Dense::NONE).and(Order::comment.filt(move |s: &str| {
+            match f2.find(s.as_bytes()) {
+                Some(p) => !s[p + 7..].contains("requests"),
+                None => true,
+            }
+        })),
+    );
+    for t in [1usize, 2, 4, 8, cores] {
+        let pl = pool(t);
+        let (cnt, pt) = best_of(5, || par_unwrap_fold(&pl, &live, 16_384, 0_i64, |a, _| a + 1, |a, b| a + b));
+        println!("  t={t:<2}  {pt:.4}s  ({cnt} survivors, {:.2}x)", t_full / pt);
+    }
 }
 
 /// (returnflag, status, count) per row — the integer-exact part of q1's output.

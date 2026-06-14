@@ -258,6 +258,76 @@ where
     }
 }
 
+/// Radix-style aggregation over a dense `0..n` key space, for the case where
+/// per-leaf dense Vecs blow memory (large n) and HashMap partials are
+/// hash-bound (q13: hashing 15M customers costs 0.35s; the same scan without
+/// hashing is 0.04s). Two phases:
+///   1. PARALLEL scatter — scan the input, collecting per-leaf survivor
+///      `(key_idx, value)` pairs. The expensive per-row work (q13's memmem
+///      comment filter) parallelizes here; the merge only concatenates leaf
+///      buffer *handles* (cheap).
+///   2. SEQUENTIAL dense fold — index each survivor straight into an n-slot
+///      `Vec` (no hash). This is O(survivors) array bumps (~15ms), dwarfed by
+///      phase 1, so it needn't be parallel.
+/// Total memory is n + the materialized survivors, not n·leaves. Returns
+/// (dense values, seen mask).
+pub fn par_radix_fold<Q, S, OP>(pool: &ThreadPool, q: &Q, n: usize, init: S, op: OP) -> (Vec<S>, Vec<bool>)
+where
+    Q: ParDrive + Sync,
+    Q::D: Dense,
+    Q::R: Copy + Send + Sync,
+    S: Copy,
+    OP: Fn(S, Q::R) -> S,
+{
+    let leaves: Vec<Vec<(usize, Q::R)>> = par_run(
+        pool,
+        q,
+        GRAIN,
+        |q, lo, hi| {
+            let mut v = Vec::new();
+            q.drive_range(lo, hi, |d, r| v.push((d.idx(), r)));
+            vec![v]
+        },
+        |mut a, b| {
+            a.extend(b);
+            a
+        },
+    );
+    let mut vals = vec![init; n];
+    let mut seen = vec![false; n];
+    for leaf in &leaves {
+        for &(i, r) in leaf {
+            vals[i] = op(vals[i], r);
+            seen[i] = true;
+        }
+    }
+    (vals, seen)
+}
+
+/// Flag-dispatched `par_radix_fold` returning (dense values, seen mask). The
+/// sequential path folds in one pass; the parallel path scatters then folds.
+pub fn pradix_fold<Q, S, OP>(q: Q, n: usize, init: S, op: OP) -> (Vec<S>, Vec<bool>)
+where
+    Q: ParDrive + Sync,
+    Q::D: Dense,
+    Q::R: Copy + Send + Sync,
+    S: Copy,
+    OP: Fn(S, Q::R) -> S,
+{
+    if is_parallel() {
+        par_radix_fold(ThreadPool::global(), &q, n, init, op)
+    } else {
+        let mut vals = vec![init; n];
+        let mut seen = vec![false; n];
+        q.drive(|d, r| {
+            let i = d.idx();
+            vals[i] = op(vals[i], r);
+            seen[i] = true;
+        });
+        (vals, seen)
+    }
+}
+
 /// Global (no-group) fold to a single state.
 pub fn punwrap_fold<Q, S, OP, CB>(q: Q, init: S, op: OP, combine: CB) -> S
 where
