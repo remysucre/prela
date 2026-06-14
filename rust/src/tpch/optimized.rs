@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use super::common::{f, fmt_yyyymmdd, join_lines, with_overrides};
 use crate::engine::*;
-use crate::par::{pdense_fold, pfold, pradix_fold, psorted_fold, punwrap_fold};
+use crate::par::{pbitset, pdense_fold, pfold, pradix_fold, psorted_fold, punwrap_fold};
 use crate::tpch_schema::*;
 
 pub fn queries() -> Vec<super::Entry> {
@@ -288,22 +288,32 @@ fn q21() -> String {
         (a, (None, _)) => a,
         ((Some(fa), ma), (Some(fb), mb)) => (Some(fa), ma || mb || fa != fb),
     };
-    // lineitem is stored in orderkey order, so grouping by `order` is clustered
-    // — a sorted-run fold parallelizes with O(distinct-orders) memory (a Vec,
-    // not a 60M-slot dense table or 60M HashMap inserts), then probes by binary
-    // search. This is the one dense-fold query the sorted aggregation reclaims.
-    let supp_state = psorted_fold(Lineitem::supplier.group_by(order), (None, false), track, track_combine);
-    let late_supp_state = psorted_fold(
-        (&late).select(Lineitem::supplier).group_by((&late).select(order)),
-        (None, false), track, track_combine);
-    // Only the SAUDI suppliers' late lineitems can qualify, so `saudi` is the
-    // selective FIRST conjunct — precompute it as a Bitset (bit-tested per
-    // late lineitem; supplier.n is tiny). The order predicates (status F,
-    // >1 distinct supplier, exactly-one-late) ride behind it: rather than
-    // materialize each as an order-wide Bitset (three 6M-row build scans),
-    // probe the status column and the dense-fold states directly — they fire
-    // only on the handful of saudi-late survivors the `.and` short-circuits to.
+    // Only SAUDI suppliers' late lineitems can qualify, and only on status-F
+    // orders. So the per-order distinct-supplier state is only needed for the
+    // CANDIDATE orders (status F with ≥1 saudi late lineitem) — ~0.6M of 15M.
+    // Build that bitset first, then restrict both big folds to candidate-order
+    // lineitems: the 60M/38M supplier scans become ~2.4M-survivor scans (the
+    // 60M iterate itself is ~free; see q13). Semi-join reduction, like q9/q20.
     let saudi_bs   = Bitset::over(supplier, &supplier.with(Supplier::nation.eq("SAUDI ARABIA")));
+    let _t = std::time::Instant::now();
+    // Saudi first (4% of suppliers — a cheap bitset probe rules out 96% of
+    // lineitems), THEN the late check on the ~2.4M survivors, not on all 60M.
+    let candidate_orders = pbitset(orders.iq().n,
+        lineitem.with(Lineitem::supplier.select(&saudi_bs))
+            .with(commitdate.and(receiptdate).filt(|(c, r)| c < r))
+            .select(order)
+            .with(Order::status.eq("F")));
+    let cand_li   = lineitem.with(order.select(&candidate_orders));
+    let cand_late = (&late).with(order.select(&candidate_orders));
+    // lineitem is stored in orderkey order, so grouping by `order` is clustered
+    // — psorted_fold parallelizes with O(distinct-orders) memory and binary-
+    // search probes.
+    let supp_state = psorted_fold(
+        (&cand_li).select(Lineitem::supplier).group_by((&cand_li).select(order)),
+        (None, false), track, track_combine);
+    let late_supp_state = psorted_fold(
+        (&cand_late).select(Lineitem::supplier).group_by((&cand_late).select(order)),
+        (None, false), track, track_combine);
     let f_ord      = Order::status.eq("F");
     let multi_supp = supp_state.filt(|(_, m): (Option<Id<Supplier>>, bool)| m);
     let only_late  = late_supp_state.filt(|(f, m): (Option<Id<Supplier>>, bool)| f.is_some() && !m);

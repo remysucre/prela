@@ -13,7 +13,7 @@
 // partial, `merge` is the associative combine. `par_min_row` (in
 // queries::helpers) and the fold builders specialize it.
 
-use crate::engine::{Dense, DenseFold, Drive, Fold, ParDrive, Probe, Query, QueryExt};
+use crate::engine::{Bitset, Dense, DenseFold, Drive, Fold, ParDrive, Probe, Query, QueryExt};
 use ahash::AHashMap as HashMap;
 use chili::{Scope, ThreadPool};
 use std::hash::Hash;
@@ -456,4 +456,56 @@ where
         run
     };
     SortedRel { pairs }
+}
+
+/// Parallel `Bitset::over` — set a bit at each value `q` emits, in parallel.
+/// Each worker ORs into a private word-array; partials merge by bitwise OR (the
+/// set-union monoid). Coarse grain keeps the per-leaf array count ~O(cores)
+/// (each is n/64 words). Used for q21's candidate-orders bitset, whose
+/// sequential build (reading the 60M supplier column) was the query's floor.
+pub fn par_bitset<Q, D>(pool: &ThreadPool, n: usize, q: &Q) -> Bitset<D>
+where
+    Q: ParDrive<R = D> + Sync,
+    D: Dense + Send,
+{
+    let words = n.div_ceil(64);
+    let cores = std::thread::available_parallelism().map(|c| c.get()).unwrap_or(8);
+    let grain = GRAIN.max(q.rows() / (cores * 2)).max(1);
+    let bs = par_reduce(
+        &mut pool.scope(),
+        q,
+        0,
+        q.rows(),
+        grain,
+        &|q: &Q, lo, hi| {
+            let mut b = vec![0u64; words];
+            q.drive_range(lo, hi, |_, v| {
+                let i = v.idx();
+                if i < n {
+                    b[i / 64] |= 1u64 << (i % 64);
+                }
+            });
+            b
+        },
+        &|mut a: Vec<u64>, b: Vec<u64>| {
+            for (x, y) in a.iter_mut().zip(b) {
+                *x |= y;
+            }
+            a
+        },
+    );
+    Bitset { bs, n, _d: PhantomData }
+}
+
+/// Flag-dispatched parallel/sequential bitset build over universe size `n`.
+pub fn pbitset<Q, D>(n: usize, q: Q) -> Bitset<D>
+where
+    Q: ParDrive<R = D> + Sync,
+    D: Dense + Send,
+{
+    if is_parallel() {
+        par_bitset(ThreadPool::global(), n, &q)
+    } else {
+        Bitset::over(crate::engine::Universe::<D>::new(n), &q)
+    }
 }
