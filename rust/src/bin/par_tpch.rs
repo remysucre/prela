@@ -13,11 +13,40 @@
 // merge up the join tree.
 
 use prela::engine::*;
-use prela::par::{par_dense_fold, par_fold, par_unwrap_fold};
+use prela::par::{par_dense_fold, par_fold, par_sorted_fold, par_unwrap_fold};
 use prela::tpch_schema::*;
 use std::num::NonZero;
 use std::path::Path;
 use std::time::Instant;
+
+// ===== q18 — sorted-run aggregation (radix-free, data pre-sorted by key) ==
+// q18 groups lineitem by order; lineitem is stored in orderkey order, so the
+// scan emits keys non-decreasing and a streaming reduce gives a key-sorted run
+// with no hash and no 60M-slot dense Vec. Compare sequential dense_fold vs
+// par_sorted_fold for the per-order quantity sum.
+
+/// Top-100 order ids (by sum_qty>300, ordered as q18 does) — the comparable
+/// part of q18's output, from a list of (order, sum_qty) pairs.
+fn q18_top100(mut rows: Vec<(Id<Order>, f64)>) -> Vec<usize> {
+    rows.retain(|(_, s)| *s > 300.0);
+    rows.sort_by(|a, b| {
+        let (oa, ob) = (a.0.idx(), b.0.idx());
+        totalprice.iq().values[ob]
+            .partial_cmp(&totalprice.iq().values[oa])
+            .unwrap()
+            .then_with(|| date.iq().values[oa].cmp(&date.iq().values[ob]))
+    });
+    rows.truncate(100);
+    rows.iter().map(|(o, _)| o.idx()).collect()
+}
+
+/// Sequential dense_fold → (order, sum) pairs.
+fn q18_seq() -> Vec<(Id<Order>, f64)> {
+    let fold = quantity.group_by(order).dense_fold(orders.iq().n, 0.0_f64, |a, q| a + q);
+    let mut rows = Vec::new();
+    fold.drive(|k, v| rows.push((k, v)));
+    rows
+}
 
 // ===== q6 — global revenue sum ===========================================
 
@@ -146,6 +175,30 @@ fn main() {
         println!("    t={t:<2}  {par_t:>8.4}s   {:.2}x", seq1_t / par_t);
     }
     println!("  (f64 sums differ ≤1 cent vs sequential — reordering; groups+counts exact)");
+
+    // q18 — per-order sum, sorted-run aggregation. Verify the scan is clustered
+    // by the group key (lineitem in orderkey order), then compare sequential
+    // dense_fold vs par_sorted_fold (streaming reduce + monoid merge of runs).
+    let mut descents = 0usize;
+    let mut prev = 0usize;
+    quantity.group_by(order).drive(|k, _| {
+        if k.idx() < prev { descents += 1; }
+        prev = k.idx();
+    });
+    println!("\nq18 per-order sum   scan clustered by order: {} descents (0 = fully sorted)", descents);
+
+    let seq_top = q18_top100(q18_seq());
+    let (_, seq18_t) = best_of(ITERS, || q18_top100(q18_seq()));
+    println!("  seq dense_fold        {seq18_t:.4}s");
+    let pre = quantity.group_by(order);
+    for t in [2usize, 4, 8, cores] {
+        let pl = pool(t);
+        let (top, par_t) = best_of(ITERS, || {
+            q18_top100(par_sorted_fold(&pl, &pre, grain, 0.0_f64, |a, q| a + q, |a, b| a + b))
+        });
+        assert!(top == seq_top, "q18 sorted-fold top100 diverged");
+        println!("  par_sorted_fold t={t:<2} {par_t:>8.4}s   {:.2}x", seq18_t / par_t);
+    }
 }
 
 /// (returnflag, status, count) per row — the integer-exact part of q1's output.

@@ -272,3 +272,58 @@ where
         q.unwrap_fold(init, op)
     }
 }
+
+/// Parallel aggregation for input ALREADY SORTED by the group key. TPC-H
+/// lineitem is stored in orderkey order, so `group_by(order)` emits keys
+/// non-decreasing — a streaming reduce of consecutive-equal keys yields a
+/// key-sorted run with O(distinct-keys) memory, no hash and no dense Vec. Two
+/// adjacent runs merge as a monoid: the boundary group (last of left == first
+/// of right) combines, the rest concatenates. This is "sort-based aggregation"
+/// made free by pre-sorted data — the radix/streaming answer to the dense-fold
+/// memory blowup. Returns the key-sorted (key, agg) pairs.
+///
+/// CORRECTNESS depends on the drive emitting keys in non-decreasing order; if
+/// a key recurs non-adjacently the result is wrong. Use only where the scan is
+/// clustered by the group key (verify with `is_sorted_by_key`).
+pub fn par_sorted_fold<Q, S, OP, CB>(
+    pool: &ThreadPool,
+    q: &Q,
+    grain: usize,
+    init: S,
+    op: OP,
+    combine: CB,
+) -> Vec<(Q::D, S)>
+where
+    Q: ParDrive + Sync,
+    Q::D: Send + Sync,
+    S: Copy + Send + Sync,
+    OP: Fn(S, Q::R) -> S + Sync,
+    CB: Fn(S, S) -> S + Sync,
+{
+    par_run(
+        pool,
+        q,
+        grain,
+        |q, lo, hi| {
+            let mut run: Vec<(Q::D, S)> = Vec::new();
+            q.drive_range(lo, hi, |d, v| match run.last_mut() {
+                Some((k, s)) if *k == d => *s = op(*s, v),
+                _ => run.push((d, op(init, v))),
+            });
+            run
+        },
+        |mut a, b| {
+            if b.is_empty() {
+                return a;
+            }
+            let mut bi = b.into_iter();
+            let first = bi.next().unwrap();
+            match a.last_mut() {
+                Some((k, s)) if *k == first.0 => *s = combine(*s, first.1),
+                _ => a.push(first),
+            }
+            a.extend(bi);
+            a
+        },
+    )
+}
