@@ -1,121 +1,121 @@
-PARALLEL mode: min_row on 10 threads
+PARALLEL mode: 10 threads
 load: 0.14s  (movie n=2528312, person n=4167491)
 114 queries registered
 --- run 1 ---
 run 1: 114/114 ok  total 2.25s
---- run 2 ---
-2a    ok    0.0032s  'Doc'
-2d    ok    0.0030s  & Teller
-3b    ok    0.0647s  300: Rise of an Empire
-4a    ok    0.0749s  5.1 || & Teller 2
-13a   ok    0.0076s  Afghanistan:24 June 2012 || 1.0 || &Me
-11a   ok    0.0034s  Churchill Films || followed by || Batman Beyond
-22a   ok    0.0154s  (empty)
-1a    ok    0.0014s  (A Warner Bros.-First National Picture) (presents) || A Clockwork Orange || 1934
-5a    ok    0.0057s  (empty)
-12a   ok    0.0135s  10th Grade Reunion Films || 8.1 || 3:20
-14a   ok    0.0076s  1.0 || $lowdown
-1b    ok    0.0012s  (Set Decoration Rentals) (uncredited) || Disaster Movie || 2008
-2b    ok    0.0038s  'Doc'
-2c    ok    0.0036s  (empty)
-3a    ok    0.0865s  2 Days in New York
-3c    ok    0.0681s  & Teller 2
-4b    ok    0.0755s  9.1 || Batman: Arkham City
-11b   ok    0.0031s  Filmlance International AB || follows || The Money Man
-13b   ok    0.0151s  501audio || 1.8 || 5 Time Champion
-1c    ok    0.0013s  (co-production) || Intouchables || 2011
+--- run 2 ---  (best-of-7 warm per query)
+2a    ok    0.0025s  'Doc'
+2d    ok    0.0025s  & Teller
+3b    ok    0.0541s  300: Rise of an Empire
+4a    ok    0.0490s  5.1 || & Teller 2
+13a   ok    0.0055s  Afghanistan:24 June 2012 || 1.0 || &Me
+11a   ok    0.0030s  Churchill Films || followed by || Batman Beyond
+22a   ok    0.0138s  (empty)
+1a    ok    0.0011s  (A Warner Bros.-First National Picture) (presents) || A Clockwork Orange || 1934
+5a    ok    0.0045s  (empty)
+12a   ok    0.0108s  10th Grade Reunion Films || 8.1 || 3:20
+14a   ok    0.0063s  1.0 || $lowdown
+1b    ok    0.0010s  (Set Decoration Rentals) (uncredited) || Disaster Movie || 2008
+2b    ok    0.0024s  'Doc'
+2c    ok    0.0023s  (empty)
+3a    ok    0.0623s  2 Days in New York
+3c    ok    0.0613s  & Teller 2
+4b    ok    0.0609s  9.1 || Batman: Arkham City
+11b   ok    0.0025s  Filmlance International AB || follows || The Money Man
+13b   ok    0.0128s  501audio || 1.8 || 5 Time Champion
+1c    ok    0.0010s  (co-production) || Intouchables || 2011
 1d    ok    0.0011s  (Set Decoration Rentals) (uncredited) || Disaster Movie || 2004
-4c    ok    0.0882s  2.1 || & Teller 2
-12b   ok    0.0046s  $10,000 || Birdemic: Shock and Terror
-12c   ok    0.0135s  "Oh That Gus!" || 7.1 || $1.11
-13c   ok    0.0181s  DL Sites || 1.8 || Champion
-14b   ok    0.0057s  6.4 || Of Dolls and Murder
-14c   ok    0.0072s  1.0 || $lowdown
-22b   ok    0.0157s  (empty)
-22c   ok    0.0176s  (empty)
-22d   ok    0.0178s  (#1.1) || 2.0 || 13 Productions
-5b    ok    0.0056s  (empty)
-5c    ok    0.0072s  11,830,420
-15a   ok    0.0096s  USA:1 June 2007 || Battlestar Galactica: The Resistance
-15b   ok    0.0046s  USA:27 April 2007 || RoboCop vs Terminator
-15c   ok    0.0136s  USA:1 April 2003 || 24: Day Six - Debrief
-15d   ok    0.0124s  (Not So) Instant Photo || 06/05
-11c   ok    0.0049s  20th Century Fox Home Entertainment || (1997-2002) (worldwide) (all media) || 24
-11d   ok    0.0049s  13th Street || (1954) (UK) (TV) || ...denn sie wissen nicht, was sie tun
-13d   ok    0.0079s  "O" Films || 1.0 || #54 Meets #47
-6a    ok    0.0017s  marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert
-6b    ok    0.0009s  based-on-comic || The Avengers 2 || Downey Jr., Robert
+4c    ok    0.0613s  2.1 || & Teller 2
+12b   ok    0.0042s  $10,000 || Birdemic: Shock and Terror
+12c   ok    0.0116s  "Oh That Gus!" || 7.1 || $1.11
+13c   ok    0.0137s  DL Sites || 1.8 || Champion
+14b   ok    0.0050s  6.4 || Of Dolls and Murder
+14c   ok    0.0069s  1.0 || $lowdown
+22b   ok    0.0133s  (empty)
+22c   ok    0.0144s  (empty)
+22d   ok    0.0148s  (#1.1) || 2.0 || 13 Productions
+5b    ok    0.0050s  (empty)
+5c    ok    0.0067s  11,830,420
+15a   ok    0.0086s  USA:1 June 2007 || Battlestar Galactica: The Resistance
+15b   ok    0.0048s  USA:27 April 2007 || RoboCop vs Terminator
+15c   ok    0.0121s  USA:1 April 2003 || 24: Day Six - Debrief
+15d   ok    0.0093s  (Not So) Instant Photo || 06/05
+11c   ok    0.0041s  20th Century Fox Home Entertainment || (1997-2002) (worldwide) (all media) || 24
+11d   ok    0.0044s  13th Street || (1954) (UK) (TV) || ...denn sie wissen nicht, was sie tun
+13d   ok    0.0070s  "O" Films || 1.0 || #54 Meets #47
+6a    ok    0.0012s  marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert
+6b    ok    0.0008s  based-on-comic || The Avengers 2 || Downey Jr., Robert
 6c    ok    0.0008s  marvel-cinematic-universe || The Avengers 2 || Downey Jr., Robert
-6d    ok    0.0319s  based-on-comic || 2008 MTV Movie Awards || Downey Jr., Robert
-6e    ok    0.0025s  marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert
-6f    ok    0.0160s  based-on-comic || & Teller 2 || "Steff", Stefanie Oxmann Mcgaha
-7a    ok    0.0048s  Antonioni, Michelangelo || Dressed to Kill
-7b    ok    0.0022s  De Palma, Brian || Dressed to Kill
-7c    ok    0.0265s  50 Cent || "Boo" Arnold was born Earl Arnold in Hattiesburg, Mississippi in 1966. His father gave him the nickname 'Boo' early in life and it stuck through grade school, high school, and college. He is still known as "Boo" to family and friends.  Raised in central Texas, Arnold played baseball at Texas Tech University where he graduated with a BA in Advertising and Marketing. While at Texas Tech he was also a member of the Texas Epsilon chapter of Phi Delta Theta fraternity. After college he worked with Young Life, an outreach to high school students, in San Antonio, Texas.  While with Young Life Arnold began taking extension courses through Fuller Theological Seminary and ultimately went full-time to Gordon-Conwell Theological Seminary in Boston, Massachusetts. At Gordon-Conwell he completed a Master's Degree in Divinity studying Theology, Philosophy, Church History, Biblical Languages (Hebrew & Greek), and Exegetical Methods. Following seminary he was involved with reconciliation efforts in the former Yugoslavia shortly after the war ended there in1995.  Arnold started acting in his early thirties in Texas. After an encouraging visit to Los Angeles where he spent time with childhood friend George Eads (of CSI Las Vegas) he decided to move to Los Angeles in 2001 to pursue acting full-time. While in Los Angeles he has studied acting with Judith Weston at Judith Weston Studio for Actors and Directors.  Arnold's acting career has been one of steady development, booking co-star and guest-star roles in nighttime television. He guest-starred opposite of Jane Seymour on the night time television drama Justice. He played the lead, Michael Hollister, in the film The Seer, written and directed by Patrick Masset (Friday Night Lights).  He was nominated Best Actor in the168 Film Festival for the role of Phil Stevens in the short-film Useless. In Useless he played a US Marshal who must choose between mercy and justice as he confronts the man who murdered his father. Arnold's performance in Useless confirmed his ability to carry lead roles, and he continues to work toward solidifying himself as a male lead in film and television.  Arnold married fellow Texan Stacy Rudd of San Antonio in 2003 and they are now raising their three children in the Los Angeles area.
-8a    ok    0.0098s  Chambers, Linda || .hack//Quantum
-8b    ok    0.0064s  Chambers, Linda || Dragon Ball Z: Shin Budokai
-8c    ok    0.0417s  "A.J." || #1 Cheerleader Camp
-8d    ok    0.0263s  "Jenny from the Block" || #1 Cheerleader Camp
-9a    ok    0.0244s  AJ || Airport Announcer || Blue Harvest
-9b    ok    0.0193s  AJ || Airport Announcer || Bassett, Angela || Blue Harvest
-9c    ok    0.0568s  'Annette' || 2nd Balladeer || Alborg, Ana Esther || (1975-01-20)
-9d    ok    0.0543s  !!!, Toy || Aaron, Caroline || "Cockamamie's" Salesgirl || $15,000.00 Error
-10a   ok    0.0090s  Actor || 12 Rounds
-10b   ok    0.0063s  (empty)
-10c   ok    0.1361s  Himself || Evil Eyes: Behind the Scenes
-16a   ok    0.0065s  Adams, Stan || Carol Burnett vs. Anthony Perkins
-16b   ok    0.0225s  !!!, Toy || & Teller
-16c   ok    0.0085s  "Brooklyn" Tony Danza || (#1.5)
-16d   ok    0.0080s  "Brooklyn" Tony Danza || (#1.5)
-17a   ok    0.0314s  B, Khaz
-17b   ok    0.0439s  Z'Dar, Robert
-17c   ok    0.0456s  X'Volaitis, John
-17d   ok    0.0429s  Abrahamsson, Bertil
-17e   ok    0.0144s  $hort, Too
-17f   ok    0.0432s  'El Galgo PornoStar', Blanquito
-18a   ok    0.0306s  $1,000 || 10 || 40 Days and 40 Nights
-18b   ok    0.0188s  Horror || 8.1 || Agorable
-18c   ok    0.0407s  Action || 10 || #PostModem
-19a   ok    0.0431s  Angeline, Moriah || Blue Harvest
-19b   ok    0.0235s  Jolie, Angelina || Kung Fu Panda
-19c   ok    0.0488s  Alborg, Ana Esther || .hack//Akusei heni vol. 2
-19d   ok    0.0373s  Aaron, Caroline || $9.99
-20a   ok    0.0214s  Disaster Movie
-20b   ok    0.0100s  Iron Man
-20c   ok    0.0083s  Abell, Alistair || ...And Then I...
-21a   ok    0.0648s  Det Danske Filminstitut || followed by || Der Serienkiller - Klinge des Todes
-21b   ok    0.0654s  Filmlance International AB || followed by || Hämndens pris
-21c   ok    0.0650s  Churchill Films || followed by || Batman Beyond
-23a   ok    0.0039s  movie || The Analysts
-23b   ok    0.0039s  movie || The Big Mope
-23c   ok    0.0038s  movie || Dirt Merchant
-24a   ok    0.0344s  Additional Voices || Baker, Andrea || Baiohazâdo 6
-24b   ok    0.0056s  Tigress || Jolie, Angelina || Kung Fu Panda 2
-25a   ok    0.0128s  Horror || 10 || -- And Now the Screaming Starts! || Abdallah, Damon
-25b   ok    0.0094s  Horror || 138 || Vampire Boys || Campbell, Jeremiah
-25c   ok    0.0235s  Action || 10 || $ || Aakeson, Kim Fupz
-26a   ok    0.0080s  'Agua' Man || Acereda, Hermie || 7.1 || 3:10 to Yuma
-26b   ok    0.0052s  Bank Manager || 8.2 || Inception
-26c   ok    0.0083s  'Agua' Man || 1.9 || 12 Rounds
-27a   ok    0.0088s  Det Danske Filminstitut || followed by || Spår i mörker
-27b   ok    0.0096s  Filmlance International AB || followed by || Vita nätter
-27c   ok    0.0118s  Det Danske Filminstitut || followed by || Spår i mörker
-28a   ok    0.0045s  01 Distribuzione || 2.9 || (#1.1)
-28b   ok    0.0036s  20th Century Fox || 6.6 || (#1.1)
-28c   ok    0.0061s  01 Distribuzione || 1.9 || (#1.1)
-29a   ok    0.0057s  Queen || Andrews, Julie || Shrek 2
-29b   ok    0.0049s  Queen || Andrews, Julie || Shrek 2
-29c   ok    0.0059s  Lola || Andrews, Julie || Hoodwinked!
-30a   ok    0.0036s  Horror || 100356 || 16 Blocks || Abrams, J.J.
-30b   ok    0.0033s  Horror || 194782 || Freddy vs. Jason || Shannon, Damian
-30c   ok    0.0072s  Action || 100356 || $ || Abernathy, Lewis
-31a   ok    0.0520s  Horror || 1040 || 2001 Maniacs || Agnew, Jim
-31b   ok    0.0441s  Horror || 129755 || Saw || Bousman, Darren Lynn
-31c   ok    0.0424s  Action || 1008 || 11:14 || Abraham, Brad
-32a   ok    0.0027s  (empty)
-32b   ok    0.0048s  alternate language version of || 12 oz. Mouse || 'Angel': Season 2 Overview
-33a   ok    0.0013s  495 Productions || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila
-33b   ok    0.0012s  MTV Netherlands || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila
-33c   ok    0.0028s  2BE || 495 Productions || 1.3 || 1.0 || A Double Shot at Love || A Double Shot at Love
-6a/method ok    0.0016s  marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert
-run 2: 114/114 ok  total 2.29s
+6d    ok    0.0277s  based-on-comic || 2008 MTV Movie Awards || Downey Jr., Robert
+6e    ok    0.0019s  marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert
+6f    ok    0.0140s  based-on-comic || & Teller 2 || "Steff", Stefanie Oxmann Mcgaha
+7a    ok    0.0036s  Antonioni, Michelangelo || Dressed to Kill
+7b    ok    0.0018s  De Palma, Brian || Dressed to Kill
+7c    ok    0.0223s  50 Cent || "Boo" Arnold was born Earl Arnold in Hattiesburg, Mississippi in 1966. His father gave him the nickname 'Boo' early in life and it stuck through grade school, high school, and college. He is still known as "Boo" to family and friends.  Raised in central Texas, Arnold played baseball at Texas Tech University where he graduated with a BA in Advertising and Marketing. While at Texas Tech he was also a member of the Texas Epsilon chapter of Phi Delta Theta fraternity. After college he worked with Young Life, an outreach to high school students, in San Antonio, Texas.  While with Young Life Arnold began taking extension courses through Fuller Theological Seminary and ultimately went full-time to Gordon-Conwell Theological Seminary in Boston, Massachusetts. At Gordon-Conwell he completed a Master's Degree in Divinity studying Theology, Philosophy, Church History, Biblical Languages (Hebrew & Greek), and Exegetical Methods. Following seminary he was involved with reconciliation efforts in the former Yugoslavia shortly after the war ended there in1995.  Arnold started acting in his early thirties in Texas. After an encouraging visit to Los Angeles where he spent time with childhood friend George Eads (of CSI Las Vegas) he decided to move to Los Angeles in 2001 to pursue acting full-time. While in Los Angeles he has studied acting with Judith Weston at Judith Weston Studio for Actors and Directors.  Arnold's acting career has been one of steady development, booking co-star and guest-star roles in nighttime television. He guest-starred opposite of Jane Seymour on the night time television drama Justice. He played the lead, Michael Hollister, in the film The Seer, written and directed by Patrick Masset (Friday Night Lights).  He was nominated Best Actor in the168 Film Festival for the role of Phil Stevens in the short-film Useless. In Useless he played a US Marshal who must choose between mercy and justice as he confronts the man who murdered his father. Arnold's performance in Useless confirmed his ability to carry lead roles, and he continues to work toward solidifying himself as a male lead in film and television.  Arnold married fellow Texan Stacy Rudd of San Antonio in 2003 and they are now raising their three children in the Los Angeles area.
+8a    ok    0.0081s  Chambers, Linda || .hack//Quantum
+8b    ok    0.0052s  Chambers, Linda || Dragon Ball Z: Shin Budokai
+8c    ok    0.0368s  "A.J." || #1 Cheerleader Camp
+8d    ok    0.0224s  "Jenny from the Block" || #1 Cheerleader Camp
+9a    ok    0.0231s  AJ || Airport Announcer || Blue Harvest
+9b    ok    0.0179s  AJ || Airport Announcer || Bassett, Angela || Blue Harvest
+9c    ok    0.0482s  'Annette' || 2nd Balladeer || Alborg, Ana Esther || (1975-01-20)
+9d    ok    0.0472s  !!!, Toy || Aaron, Caroline || "Cockamamie's" Salesgirl || $15,000.00 Error
+10a   ok    0.0063s  Actor || 12 Rounds
+10b   ok    0.0046s  (empty)
+10c   ok    0.1108s  Himself || Evil Eyes: Behind the Scenes
+16a   ok    0.0043s  Adams, Stan || Carol Burnett vs. Anthony Perkins
+16b   ok    0.0178s  !!!, Toy || & Teller
+16c   ok    0.0058s  "Brooklyn" Tony Danza || (#1.5)
+16d   ok    0.0053s  "Brooklyn" Tony Danza || (#1.5)
+17a   ok    0.0263s  B, Khaz
+17b   ok    0.0373s  Z'Dar, Robert
+17c   ok    0.0369s  X'Volaitis, John
+17d   ok    0.0360s  Abrahamsson, Bertil
+17e   ok    0.0118s  $hort, Too
+17f   ok    0.0318s  'El Galgo PornoStar', Blanquito
+18a   ok    0.0276s  $1,000 || 10 || 40 Days and 40 Nights
+18b   ok    0.0147s  Horror || 8.1 || Agorable
+18c   ok    0.0320s  Action || 10 || #PostModem
+19a   ok    0.0376s  Angeline, Moriah || Blue Harvest
+19b   ok    0.0240s  Jolie, Angelina || Kung Fu Panda
+19c   ok    0.0436s  Alborg, Ana Esther || .hack//Akusei heni vol. 2
+19d   ok    0.0319s  Aaron, Caroline || $9.99
+20a   ok    0.0169s  Disaster Movie
+20b   ok    0.0083s  Iron Man
+20c   ok    0.0078s  Abell, Alistair || ...And Then I...
+21a   ok    0.0378s  Det Danske Filminstitut || followed by || Der Serienkiller - Klinge des Todes
+21b   ok    0.0555s  Filmlance International AB || followed by || Hämndens pris
+21c   ok    0.0527s  Churchill Films || followed by || Batman Beyond
+23a   ok    0.0032s  movie || The Analysts
+23b   ok    0.0034s  movie || The Big Mope
+23c   ok    0.0035s  movie || Dirt Merchant
+24a   ok    0.0353s  Additional Voices || Baker, Andrea || Baiohazâdo 6
+24b   ok    0.0049s  Tigress || Jolie, Angelina || Kung Fu Panda 2
+25a   ok    0.0111s  Horror || 10 || -- And Now the Screaming Starts! || Abdallah, Damon
+25b   ok    0.0080s  Horror || 138 || Vampire Boys || Campbell, Jeremiah
+25c   ok    0.0216s  Action || 10 || $ || Aakeson, Kim Fupz
+26a   ok    0.0078s  'Agua' Man || Acereda, Hermie || 7.1 || 3:10 to Yuma
+26b   ok    0.0037s  Bank Manager || 8.2 || Inception
+26c   ok    0.0073s  'Agua' Man || 1.9 || 12 Rounds
+27a   ok    0.0079s  Det Danske Filminstitut || followed by || Spår i mörker
+27b   ok    0.0073s  Filmlance International AB || followed by || Vita nätter
+27c   ok    0.0089s  Det Danske Filminstitut || followed by || Spår i mörker
+28a   ok    0.0036s  01 Distribuzione || 2.9 || (#1.1)
+28b   ok    0.0030s  20th Century Fox || 6.6 || (#1.1)
+28c   ok    0.0050s  01 Distribuzione || 1.9 || (#1.1)
+29a   ok    0.0050s  Queen || Andrews, Julie || Shrek 2
+29b   ok    0.0044s  Queen || Andrews, Julie || Shrek 2
+29c   ok    0.0058s  Lola || Andrews, Julie || Hoodwinked!
+30a   ok    0.0033s  Horror || 100356 || 16 Blocks || Abrams, J.J.
+30b   ok    0.0032s  Horror || 194782 || Freddy vs. Jason || Shannon, Damian
+30c   ok    0.0059s  Action || 100356 || $ || Abernathy, Lewis
+31a   ok    0.0345s  Horror || 1040 || 2001 Maniacs || Agnew, Jim
+31b   ok    0.0306s  Horror || 129755 || Saw || Bousman, Darren Lynn
+31c   ok    0.0298s  Action || 1008 || 11:14 || Abraham, Brad
+32a   ok    0.0020s  (empty)
+32b   ok    0.0040s  alternate language version of || 12 oz. Mouse || 'Angel': Season 2 Overview
+33a   ok    0.0009s  495 Productions || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila
+33b   ok    0.0009s  MTV Netherlands || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila
+33c   ok    0.0023s  2BE || 495 Productions || 1.3 || 1.0 || A Double Shot at Love || A Double Shot at Love
+6a/method ok    0.0011s  marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert
+run 2: 114/114 ok  warm-sum 1.86s
