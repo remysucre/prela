@@ -172,13 +172,13 @@ fn q13() -> String {
     // folds into a `Vec<i64>` indexed by customer id (DenseFold) rather than
     // a HashMap keyed by id (Fold) — one array bump per order, no hashing,
     // across all ~15M live orders. Same hoist as q9/q15/q21's dense folds.
-    // Per-customer count stays a sequential dense_fold: parallel HashMap
-    // partials would hash all ~15M live orders (slower than the array bumps),
-    // and a dense per-leaf Vec over the 60M order universe blows memory at
-    // SF=10. Dense-sequential is both fast and bounded.
-    let count_per_cust = (&live_orders).date()
-        .group_by((&live_orders).customer())
-        .dense_fold(customer.iq().n, 0_i64, |a, _| a + 1);
+    // The cost here is the SCAN — 60M order slots + ~15M memmem comment
+    // filters — not the per-customer count. pfold parallelizes that scan
+    // (HashMap partials over the ~1.5M customer space stay memory-bounded),
+    // so the expensive memmem work splits across workers.
+    let count_per_cust = pfold(
+        (&live_orders).date().group_by((&live_orders).customer()),
+        0_i64, |a, _| a + 1, |a, b| a + b);
     let mut dist: HashMap<i64, i64> = HashMap::new();
     let mut n_with = 0i64;
     count_per_cust.drive(|_, c| { *dist.entry(c).or_insert(0) += 1; n_with += 1; });
