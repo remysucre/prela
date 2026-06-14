@@ -134,7 +134,11 @@ fn pool(threads: usize) -> chili::ThreadPool {
 }
 
 fn main() {
-    tpch_init(Path::new("../cache"));
+    // Honor PRELA_CACHE (e.g. an SF=10 cache) like the main binary does.
+    let cache = std::env::var_os("PRELA_CACHE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("../cache"));
+    tpch_init(&cache);
     let cores = std::thread::available_parallelism().map(|c| c.get()).unwrap_or(1);
     eprintln!("lineitem n = {}  ({cores} cores)", lineitem.iq().n);
     const ITERS: usize = 9;
@@ -199,6 +203,33 @@ fn main() {
         assert!(top == seq_top, "q18 sorted-fold top100 diverged");
         println!("  par_sorted_fold t={t:<2} {par_t:>8.4}s   {:.2}x", seq18_t / par_t);
     }
+
+    // q13 scan-cost decomposition (sequential, warm) — where does the
+    // full-orders scan spend its time? Iterate-all (60M slots) vs +hole-skip
+    // (customer != NONE) vs +memmem comment filter.
+    use memchr::memmem;
+    let count_all = |c: &mut u64| *c += 1;
+    let (n_all, t_all) = best_of(5, || { let mut c = 0u64; orders.iq().drive(|_, _| count_all(&mut c)); c });
+    let (n_live, t_live) = best_of(5, || {
+        let mut c = 0u64;
+        orders.with(Order::customer.filt(|x| x != Dense::NONE)).drive(|_, _| count_all(&mut c));
+        c
+    });
+    let (n_full, t_full) = best_of(5, || {
+        let f = memmem::Finder::new("special");
+        let mut c = 0u64;
+        orders
+            .with(Order::customer.filt(|x| x != Dense::NONE).and(Order::comment.filt(move |s: &str| match f.find(s.as_bytes()) {
+                Some(p) => !s[p + 7..].contains("requests"),
+                None => true,
+            })))
+            .drive(|_, _| count_all(&mut c));
+        c
+    });
+    println!("\nq13 scan decomposition (warm, seq):");
+    println!("  iterate 60M slots         {t_all:.4}s  ({n_all} rows)");
+    println!("  + hole-skip (cust!=NONE)  {t_live:.4}s  ({n_live} live, +{:.4}s)", t_live - t_all);
+    println!("  + memmem comment filter   {t_full:.4}s  ({n_full} kept,  +{:.4}s)", t_full - t_live);
 }
 
 /// (returnflag, status, count) per row — the integer-exact part of q1's output.
