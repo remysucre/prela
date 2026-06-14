@@ -61,3 +61,36 @@ where
     let mut scope = pool.scope();
     par_reduce(&mut scope, q, 0, n, grain, &mk, &merge)
 }
+
+/// Parallel global reduction — the `unwrap_fold` (no group-by) sink. Each
+/// worker folds its window with `op` into a private accumulator, then the
+/// partials combine with `combine`. For an associative-commutative aggregate
+/// (sum, min, max, count) this is byte-identical to the sequential fold.
+/// `op` need not equal `combine`: `op` absorbs a ROW into the state, `combine`
+/// merges two STATES (e.g. q6 revenue: op = `acc + e*dc`, combine = `+`).
+pub fn par_unwrap_fold<Q, S, OP, CB>(
+    pool: &ThreadPool,
+    q: &Q,
+    grain: usize,
+    init: S,
+    op: OP,
+    combine: CB,
+) -> S
+where
+    Q: ParDrive + Sync,
+    S: Copy + Send + Sync,
+    OP: Fn(S, Q::R) -> S + Sync,
+    CB: Fn(S, S) -> S + Sync,
+{
+    par_run(
+        pool,
+        q,
+        grain,
+        |q, lo, hi| {
+            let mut acc = init;
+            q.drive_range(lo, hi, |_, v| acc = op(acc, v));
+            acc
+        },
+        |a, b| combine(a, b),
+    )
+}

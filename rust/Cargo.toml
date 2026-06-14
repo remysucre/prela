@@ -32,6 +32,10 @@ required-features = ["regen"]
 name = "par_mvp"
 path = "src/bin/par_mvp.rs"
 
+[[bin]]
+name = "par_tpch"
+path = "src/bin/par_tpch.rs"
+
 [profile.release]
 lto = "fat"
 codegen-units = 1
