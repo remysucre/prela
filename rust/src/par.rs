@@ -13,8 +13,10 @@
 // partial, `merge` is the associative combine. `par_min_row` (in
 // queries::helpers) and the fold builders specialize it.
 
-use crate::engine::ParDrive;
+use crate::engine::{Fold, ParDrive};
+use ahash::AHashMap as HashMap;
 use chili::{Scope, ThreadPool};
+use std::hash::Hash;
 
 /// Divide-and-conquer over the root window `[lo, hi)`. Leaves (≤ `grain` rows)
 /// build a partial sink with `mk`; internal nodes `join` their halves and
@@ -93,4 +95,53 @@ where
         },
         |a, b| combine(a, b),
     )
+}
+
+/// Parallel per-key fold — the `.group_by(k).fold(init, op)` sink. Each worker
+/// folds its window into a private `HashMap<key, state>` (entries only for the
+/// keys it touches), then the partial maps merge: shared keys `combine`, new
+/// keys insert. Returns the same eager `Fold` the sequential path builds, so
+/// downstream drive/probe/sort is unchanged.
+///
+/// `op` absorbs a row into a key's state; `combine` merges two states for the
+/// same key. As with `par_unwrap_fold`, `init` must be `combine`'s identity.
+/// HashMap partials scale with *touched keys per window*, not the key space —
+/// so fine grain (skew balancing) stays cheap at any cardinality.
+pub fn par_fold<Q, S, OP, CB>(
+    pool: &ThreadPool,
+    q: &Q,
+    grain: usize,
+    init: S,
+    op: OP,
+    combine: CB,
+) -> Fold<Q::D, S>
+where
+    Q: ParDrive + Sync,
+    Q::D: Eq + Hash + Send + Sync,
+    S: Copy + Send + Sync,
+    OP: Fn(S, Q::R) -> S + Sync,
+    CB: Fn(S, S) -> S + Sync,
+{
+    let cache = par_run(
+        pool,
+        q,
+        grain,
+        |q, lo, hi| {
+            let mut m: HashMap<Q::D, S> = HashMap::new();
+            q.drive_range(lo, hi, |d, v| {
+                let s = m.entry(d).or_insert(init);
+                *s = op(*s, v);
+            });
+            m
+        },
+        |a, b| {
+            // Merge the smaller map into the larger to bound entry churn.
+            let (mut big, small) = if a.len() >= b.len() { (a, b) } else { (b, a) };
+            for (d, sv) in small {
+                big.entry(d).and_modify(|s| *s = combine(*s, sv)).or_insert(sv);
+            }
+            big
+        },
+    );
+    Fold { cache }
 }
