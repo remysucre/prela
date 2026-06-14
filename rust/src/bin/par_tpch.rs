@@ -16,7 +16,6 @@ use prela::engine::*;
 use prela::par::{par_dense_fold, par_fold, par_sorted_fold, par_unwrap_fold};
 use prela::tpch_schema::*;
 use std::num::NonZero;
-use std::path::Path;
 use std::time::Instant;
 
 // ===== q18 — sorted-run aggregation (radix-free, data pre-sorted by key) ==
