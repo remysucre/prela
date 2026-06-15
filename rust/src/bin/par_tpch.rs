@@ -13,7 +13,7 @@
 // merge up the join tree.
 
 use prela::engine::*;
-use prela::par::{par_dense_fold, par_fold, par_sorted_fold, par_unwrap_fold};
+use prela::par::{par_bitset, par_dense_fold, par_fold, par_sorted_fold, par_unwrap_fold};
 use prela::tpch_schema::*;
 use std::num::NonZero;
 use std::time::Instant;
@@ -229,6 +229,21 @@ fn main() {
     println!("  iterate 60M slots         {t_all:.4}s  ({n_all} rows)");
     println!("  + hole-skip (cust!=NONE)  {t_live:.4}s  ({n_live} live, +{:.4}s)", t_live - t_all);
     println!("  + memmem comment filter   {t_full:.4}s  ({n_full} kept,  +{:.4}s)", t_full - t_live);
+
+    // q4 phase 1 (is_late bitset build) scaling — bandwidth wall or headroom?
+    let bad_li_order = lineitem
+        .with(commitdate.and(receiptdate).filt(|(c, r)| c < r))
+        .order();
+    println!("\nq4 phase1 is_late build scaling:");
+    let (_, t1) = best_of(5, || {
+        let pl = pool(1);
+        par_bitset(&pl, orders.iq().n, &bad_li_order)
+    });
+    for t in [1usize, 2, 4, 8, cores] {
+        let pl = pool(t);
+        let (_, pt) = best_of(5, || par_bitset(&pl, orders.iq().n, &bad_li_order));
+        println!("  t={t:<2}  {pt:.4}s  ({:.2}x, {:.1} GB/s)", t1 / pt, 1.44 / pt);
+    }
 
     // Does the comment scan itself parallelize? Count survivors via
     // par_unwrap_fold at increasing thread counts.
