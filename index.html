@@ -266,6 +266,9 @@
   type="text/javascript"></script>
 </head>
 <body>
+<header id="title-block-header">
+<h1 class="title">Prela</h1>
+</header>
 <h1 id="prela-a-compositional--controllable-query-language">Prela: A
 Compositional &amp; Controllable Query Language</h1>
 <blockquote>
@@ -541,9 +544,9 @@ TPC-H.</p>
 <p>The plots below compare Prela against DuckDB 1.5.3 (1 thread) as
 baseline, over TPC-H and the Join Order Benchmark. On JOB, Prela runs
 the 113 queries in 5.2s vs DuckDB's 15.3s (3.0× faster, winning 99 of
-113). On TPC-H SF=1, idiomatic Prela is within ~1.4× of DuckDB's
-vectorized engine (1.18s vs 0.86s), and an optimized variant beats it by
-~1.6× (0.55s).</p>
+113). On TPC-H SF=1, idiomatic Prela is within ~1.3× of DuckDB's
+vectorized engine (1.14s vs 0.86s), and an optimized variant beats it by
+~2× (0.44s).</p>
 <p>
   <img src="./rust/bench/tpch_scatter.png" width="49%" alt="TPC-H SF=1">
   <img src="./rust/bench/job_scatter.png" width="49%" alt="JOB">
