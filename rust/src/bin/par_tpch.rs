@@ -244,6 +244,12 @@ fn main() {
         let (_, pt) = best_of(5, || par_bitset(&pl, orders.iq().n, &bad_li_order));
         println!("  t={t:<2}  {pt:.4}s  ({:.2}x, {:.1} GB/s)", t1 / pt, 1.44 / pt);
     }
+    // Same scan, NO bitset write (count survivors instead), matched coarse grain
+    // — isolates the read pattern from the load-modify-store.
+    let grain = lineitem.iq().n / (cores * 2);
+    let pl = pool(cores);
+    let (_, ct) = best_of(5, || par_unwrap_fold(&pl, &bad_li_order, grain, 0_i64, |a, _| a + 1, |a, b| a + b));
+    println!("  count-only (no write) t={cores}: {ct:.4}s");
 
     // Does the comment scan itself parallelize? Count survivors via
     // par_unwrap_fold at increasing thread counts.
