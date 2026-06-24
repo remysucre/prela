@@ -901,11 +901,24 @@ impl<D: Copy + Eq + Hash, S: Copy> Probe for Fold<D, S> {
 pub struct DenseFold<S: Copy, D: Dense = usize> {
     pub vals: Vec<S>,
     pub seen: Vec<bool>,
+    /// When set, `drive`/`probe` emit the seeded `init` for keys that never
+    /// matched (left-outer-join aggregate); otherwise only `seen` keys.
+    pub emit_all: bool,
     pub _d: PhantomData<D>,
 }
 
 impl<S: Copy, D: Dense> DenseFold<S, D> {
     pub fn build<Q, OP>(q: Q, n: usize, init: S, op: OP) -> Self
+    where Q: Drive<D = D>, OP: Fn(S, Q::R) -> S { Self::build_with(q, n, init, op, false) }
+
+    /// Like `build`, but the result emits the identity `init` for keys that
+    /// never matched — the left-outer-join aggregate. Correct ONLY when
+    /// `0..n` is exactly the key universe (every slot a real key); with a
+    /// sparse/packed key space this fabricates rows for absent keys.
+    pub fn build_outer<Q, OP>(q: Q, n: usize, init: S, op: OP) -> Self
+    where Q: Drive<D = D>, OP: Fn(S, Q::R) -> S { Self::build_with(q, n, init, op, true) }
+
+    fn build_with<Q, OP>(q: Q, n: usize, init: S, op: OP, emit_all: bool) -> Self
     where Q: Drive<D = D>, OP: Fn(S, Q::R) -> S {
         let mut vals = vec![init; n];
         let mut seen = vec![false; n];
@@ -915,7 +928,7 @@ impl<S: Copy, D: Dense> DenseFold<S, D> {
                 seen[d.idx()] = true;
             }
         });
-        DenseFold { vals, seen, _d: PhantomData }
+        DenseFold { vals, seen, emit_all, _d: PhantomData }
     }
 }
 
@@ -924,7 +937,7 @@ impl<S: Copy, D: Dense> Drive for DenseFold<S, D> {
     #[inline(always)]
     fn drive<K: FnMut(D, S)>(&self, mut k: K) {
         for (i, (&v, &seen)) in self.vals.iter().zip(&self.seen).enumerate() {
-            if seen {
+            if self.emit_all || seen {
                 k(D::from_idx(i), v);
             }
         }
@@ -934,12 +947,12 @@ impl<S: Copy, D: Dense> Probe for DenseFold<S, D> {
     #[inline(always)]
     fn probe<K: FnMut(S)>(&self, x: D, mut k: K) {
         if let Some(&v) = self.vals.get(x.idx()) {
-            if self.seen[x.idx()] { k(v); }
+            if self.emit_all || self.seen[x.idx()] { k(v); }
         }
     }
     #[inline(always)]
     fn probe_any<K: FnMut(S) -> bool>(&self, x: D, mut k: K) -> bool {
-        self.vals.get(x.idx()).is_some_and(|&v| self.seen[x.idx()] && k(v))
+        self.vals.get(x.idx()).is_some_and(|&v| (self.emit_all || self.seen[x.idx()]) && k(v))
     }
 }
 
@@ -1113,6 +1126,17 @@ pub trait QueryExt: IntoQuery + Sized {
     where R::Q: Query<D = DOf<Self>>, ROf<R>: Eq + Hash
         { GroupBy { src: self.iq(), key: key.iq() } }
 
+    /// Dual of `group_by`, fusing `inv` + `select`. `group_by` drives the
+    /// payload and probes the key map; `gather` drives THIS keying relation
+    /// (via `inv`) and probes the payload. Same `(key, payload)` output
+    /// multiset, opposite Drive/Probe obligations — reach for it when the
+    /// keying relation is the cheap drive-only side and the payload is
+    /// point-probeable.
+    #[inline(always)]
+    fn gather<V: IntoQuery>(self, payload: V) -> Compose<InvStream<Self::Q>, V::Q>
+    where Self::Q: Drive, ROf<Self>: Eq + Hash, V::Q: Probe<D = DOf<Self>>
+        { Compose { a: InvStream { q: self.iq() }, b: payload.iq() } }
+
     /// `▷ (op, init)` — per-key foldl into an eager cache.
     #[inline(always)]
     fn fold<OP: Fn(S, ROf<Self>) -> S, S: Copy>(self, init: S, op: OP) -> Fold<DOf<Self>, S>
@@ -1133,6 +1157,17 @@ pub trait QueryExt: IntoQuery + Sized {
     fn dense_fold<OP: Fn(S, ROf<Self>) -> S, S: Copy>(self, n: usize, init: S, op: OP)
         -> DenseFold<S, DOf<Self>>
     where Self::Q: Drive, DOf<Self>: Dense { DenseFold::build(self.iq(), n, init, op) }
+
+    /// Left-outer-join aggregate: like `dense_fold`, but every key in `0..n`
+    /// is emitted — keys with no match carry the seeded `init` (the aggregate
+    /// identity). The dense array IS the left-key enumeration, so no extra
+    /// scan or default-probe is needed. Correct ONLY when `0..n` is exactly
+    /// the key universe (e.g. a dense `Id<E>`); a sparse/packed key space
+    /// would fabricate identity rows for absent keys.
+    #[inline(always)]
+    fn dense_fold_outer<OP: Fn(S, ROf<Self>) -> S, S: Copy>(self, n: usize, init: S, op: OP)
+        -> DenseFold<S, DOf<Self>>
+    where Self::Q: Drive, DOf<Self>: Dense { DenseFold::build_outer(self.iq(), n, init, op) }
 
     /// Count-distinct — the `length ∘ unique` instance of `.buf_fold`. The
     /// closure sorts + dedups the per-key SVec on finalization — much
