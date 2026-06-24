@@ -1,5 +1,7 @@
 # On-disk relation cache, regenerated from parquet on a cache miss (~9GB).
 cache/
+# Per-scale-factor caches (e.g. sf=1 regenerated for oracle-matching runs).
+cache-sf*/
 
 # Rust build artifacts
 rust/target/
@@ -10,6 +12,7 @@ zig/.zig-cache/
 
 # Editor / LyX backups
 *~
+*.swp
 .DS_Store
 
 *.pdf

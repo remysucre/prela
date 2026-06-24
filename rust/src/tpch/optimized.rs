@@ -84,7 +84,6 @@ fn q9() -> String {
     // CP1.3 / CP1.4: group on (nation_id, year) as (Id<Nation>, i64) — 16-byte
     // integer hash key, not (&str, i64) which costs a string hash + memcmp
     // per collision. Nation name is FD'd by nation_id, looked up at output.
-    let sc: HashIdx<_, _> = PartSupp::part.and(PartSupp::supplier).inv().supplycost().collect();
     // Hoist the `Part.name ~ "green"` predicate out of the 60M-row
     // lineitem scan by materializing the matching part-ids into a `Bitset`
     // (~200K Part rows scanned once). Per lineitem becomes one bit-test.
@@ -92,6 +91,18 @@ fn q9() -> String {
         part,
         &part.with(Part::name.filt(|n: &str| n.contains("green"))),
     );
+    // Semijoin the supplycost index against green parts as it's built: only
+    // ~5% of parts match "green", so sc shrinks ~20x and the per-lineitem
+    // probe hits a far more cache-resident table. Non-green (part, supp) pairs
+    // are never probed (live filters to green parts), so the result stands.
+    let sc: HashIdx<_, _> = partsupp
+        .with(PartSupp::part.select(&green_parts))
+        .select(PartSupp::part.and(PartSupp::supplier))
+        .inv().supplycost().collect();
+    // Keep the bitset green-filter on the scan even though `sc` (now green-only)
+    // would also drop non-green lineitems via a probe miss: the bit-test is far
+    // cheaper than a hash probe, and it culls ~95% of the 6M rows before they
+    // reach the supplycost lookup.
     let live = lineitem.with(Lineitem::part.select(&green_parts));
     let nation_id = (&live).supplier().nation();
     let year      = (&live).order().date().map(|d: i64| d / 10000);
