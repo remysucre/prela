@@ -763,9 +763,9 @@ pub struct Bitset<D: Dense = usize> {
 impl<D: Dense> Bitset<D> {
     /// `u` is anything that resolves to the universe — the `Universe` value
     /// itself or a schema-generated universe handle (`orders`).
-    pub fn empty(u: impl IntoQuery<Q = Universe<D>>) -> Self {
-        let u = u.iq();
-        Bitset { bs: vec![0u64; u.n.div_ceil(64)], n: u.n, _d: PhantomData }
+    pub fn empty<U: IntoQuery>(u: U) -> Self where U::Q: UnivSize<D> {
+        let n = u.iq().univ_n();
+        Bitset { bs: vec![0u64; n.div_ceil(64)], n, _d: PhantomData }
     }
     /// A bitset over `u`, driven from `q`: set a bit at each emitted VALUE.
     /// Identity relations send their keys through the value slot, so one
@@ -774,8 +774,8 @@ impl<D: Dense> Bitset<D> {
     /// including `NO_ID` hole fills — are dropped by the `set` guard.
     /// Both arguments resolve via `IntoQuery`: universe handles for `u`,
     /// plans (usually by reference) or leaf handles for `q`.
-    pub fn over<Q: IntoQuery>(u: impl IntoQuery<Q = Universe<D>>, q: Q) -> Self
-    where Q::Q: Drive<R = D> {
+    pub fn over<U: IntoQuery, Q: IntoQuery>(u: U, q: Q) -> Self
+    where U::Q: UnivSize<D>, Q::Q: Drive<R = D> {
         let mut b = Self::empty(u);
         q.iq().drive(|_, c| b.set(c));
         b
@@ -818,6 +818,61 @@ impl<D: Dense> Probe for Bitset<D> {
         self.bs.get(i / 64).is_some_and(|&w| (w >> (i % 64)) & 1 == 1)
     }
 }
+
+impl<D: Dense> Bitset<D> {
+    /// Validity mask for a SPARSE entity: bit set for each slot `0..fk.len()`
+    /// whose foreign key is a real target (`!= NONE`). The dense id space of a
+    /// sparse entity (e.g. `orders` over sparse orderkeys) has hole slots whose
+    /// FK columns are `NO_ID`; this enumerates the live ones. `D` is the entity
+    /// id, `T` the FK target id.
+    pub fn validity<T: Dense>(fk: &[T]) -> Self {
+        let mut b = Self::empty(Universe::<D>::new(fk.len()));
+        for (i, &v) in fk.iter().enumerate() {
+            if v != T::NONE { b.set(D::from_idx(i)); }
+        }
+        b
+    }
+}
+
+// ===== SparseUniverse — `Universe` with a validity mask =================
+// A dense id space `0..n` that carries holes (e.g. `orders` over sparse
+// orderkeys). DRIVE enumerates only live slots (word-scan the mask); PROBE /
+// MEMBER keep the plain range check and IGNORE the mask. That asymmetry is
+// sound and deliberate: a hole id never reaches a probe (probe keys come from
+// FKs — always real — or from the masked drive itself), and `NO_ID` is already
+// out of range. So sparse universes pay the mask only on drive (where it's the
+// whole point) and probe branch-for-branch identically to a dense `Universe`.
+//
+// It is a SEPARATE TYPE from `Universe` on purpose: drive dispatch is at
+// compile time, so the dense `Universe::drive` loop is untouched — no shared
+// branch to de-optimise its closure inlining.
+
+pub struct SparseUniverse<D: Dense> {
+    pub n: usize,
+    pub valid: &'static Bitset<D>,
+}
+impl<D: Dense> SparseUniverse<D> {
+    pub fn new(n: usize, valid: &'static Bitset<D>) -> Self { SparseUniverse { n, valid } }
+}
+impl<D: Dense> Query for SparseUniverse<D> { type D = D; type R = D; }
+impl<D: Dense> Drive for SparseUniverse<D> {
+    #[inline(always)]
+    fn drive<K: FnMut(D, D)>(&self, k: K) { self.valid.drive(k); }
+}
+impl<D: Dense> Probe for SparseUniverse<D> {
+    #[inline(always)]
+    fn probe<K: FnMut(D)>(&self, x: D, mut k: K) { if x.idx() < self.n { k(x); } }
+    #[inline(always)]
+    fn probe_any<K: FnMut(D) -> bool>(&self, x: D, mut k: K) -> bool { x.idx() < self.n && k(x) }
+    #[inline(always)]
+    fn member(&self, x: D) -> bool { x.idx() < self.n }
+}
+
+/// Exposes the size of a universe-like leaf so `Bitset::over` can be sized off
+/// either a dense `Universe` or a `SparseUniverse` handle.
+pub trait UnivSize<D: Dense> { fn univ_n(&self) -> usize; }
+impl<D: Dense> UnivSize<D> for Universe<D> { #[inline] fn univ_n(&self) -> usize { self.n } }
+impl<D: Dense> UnivSize<D> for SparseUniverse<D> { #[inline] fn univ_n(&self) -> usize { self.n } }
 
 // ===== GroupBy (Julia `r ← s`) — drive src, probe key per row ===========
 // For src: Drive<D, SV> and key: Probe<D, RK>, produces a drive-only

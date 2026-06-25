@@ -71,7 +71,7 @@
 macro_rules! schema {
     // ===== entry: SCHEMA_MOD / StorageStruct / init_fn : entities... =====
     ( $mod_:ident / $store:ident / $init:ident :
-      $( $Ent:ident $( ( $uni:ident ) )? / $Nav:ident { $($body:tt)* } )* ) => {
+      $( $Ent:ident $( ( $uni:ident $($sp:ident)? ) )? / $Nav:ident { $($body:tt)* } )* ) => {
 
         $(
             #[allow(dead_code)]
@@ -103,7 +103,7 @@ macro_rules! schema {
             }
         }
 
-        $( $crate::schema::schema!(@uni $mod_; $Ent; [$($uni)?]; $($body)*); )*
+        $( $crate::schema::schema!(@uni $mod_; $Ent; [$($uni $($sp)?)?]; $($body)*); )*
         $( $crate::schema::schema!(@consts $mod_; $Ent; $Nav; $($body)*); )*
         $( $crate::schema::schema!(@nav $mod_; $Ent; $Nav; [] $($body)*); )*
         $( $crate::schema::schema!(@primary $mod_; $Ent; $($body)*); )*
@@ -263,6 +263,37 @@ macro_rules! schema {
             fn iq(self) -> Self::Q {
                 $crate::engine::Universe::new(
                     $mod_::STORE.get().expect("schema not initialized").$Ent.$ff.n_keys())
+            }
+        }
+    };
+
+    // ===== SPARSE universe handle: dense id space WITH holes (e.g. orders =====
+    // ===== over sparse orderkeys). Resolves to a `SparseUniverse` whose ======
+    // ===== drive skips holes; validity mask built lazily from the FIRST ======
+    // ===== field (which must be an FK — `NO_ID` marks a hole slot). ==========
+    (@uni $mod_:ident; $Ent:ident; [$uni:ident sparse]; pub $($rest:tt)*) => {
+        $crate::schema::schema!(@uni $mod_; $Ent; [$uni sparse]; $($rest)*);
+    };
+    (@uni $mod_:ident; $Ent:ident; [$uni:ident sparse];
+      $ff:ident : $t1:tt $(< $t2:tt >)? $(, $($rest:tt)*)? ) => {
+        /// Generated SPARSE universe HANDLE — resolves to a `SparseUniverse`
+        /// whose `drive` enumerates only live slots (the orderkey-gap holes are
+        /// masked out); `probe`/`member` keep the plain range check.
+        #[allow(non_camel_case_types, dead_code)]
+        #[derive(Clone, Copy)]
+        pub struct $uni;
+        impl $crate::engine::IntoQuery for $uni {
+            type Q = $crate::engine::SparseUniverse<$crate::engine::Id<$Ent>>;
+            #[inline]
+            fn iq(self) -> Self::Q {
+                static MASK: ::std::sync::OnceLock<
+                    $crate::engine::Bitset<$crate::engine::Id<$Ent>>> = ::std::sync::OnceLock::new();
+                let store = $mod_::STORE.get().expect("schema not initialized");
+                let n = store.$Ent.$ff.n_keys();
+                let mask = MASK.get_or_init(||
+                    $crate::engine::Bitset::<$crate::engine::Id<$Ent>>::validity(
+                        &store.$Ent.$ff.values));
+                $crate::engine::SparseUniverse::new(n, mask)
             }
         }
     };
