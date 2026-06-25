@@ -360,9 +360,11 @@ fn q12() -> String {
 // ---------- Q13 — customer distribution (LEFT JOIN) ----------
 
 fn q13() -> String {
+    // `orders` is a SPARSE universe — driving it skips the orderkey-gap holes,
+    // so the group key is the bare customer FK, no per-row validity guard.
     let count_per_cust = orders
         .with(Order::comment.nrx("special.*requests"))
-        .group_by(Order::customer.select(customer))   // semijoin real customers; drops orderkey-gap holes
+        .group_by(Order::customer)
         .dense_fold_outer(customer.iq().n, 0_i64, |a, _| a + 1);
     // Histogram: invert (c_count ← customer) and count customers per c_count.
     let dist = count_per_cust.inv().fold(0_i64, |a, _| a + 1);

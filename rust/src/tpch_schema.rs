@@ -44,7 +44,7 @@ schema! { TPCH / TpchSchema / tpch_init:
         pub supplycost: f64,
         comment: str,
     }
-    Order(orders) / OrderNav {
+    Order(orders sparse) / OrderNav {
         customer: Customer,
         status: str,
         pub totalprice: f64,
