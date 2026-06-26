@@ -9,6 +9,7 @@
 
 pub mod cache;
 pub mod engine;
+pub mod entity;
 pub mod format;
 pub mod job_schema;
 pub mod queries;

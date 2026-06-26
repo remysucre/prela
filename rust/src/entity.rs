@@ -1,0 +1,192 @@
+//! PROTOTYPE — decomposing tables into `id → row` (an ENTITY TABLE) plus
+//! `row → attr` (dense columns), so entities with non-dense / non-contiguous
+//! external ids work with the same combinator surface as the dense engine.
+//!
+//! The dense engine fuses two things: a value's external IDENTITY and its
+//! STORAGE ADDRESS (`Id<E>` is both the key and the `Vec` index). That fusion
+//! is what gives O(1) column access — but it assumes ids are a dense `0..n`.
+//!
+//! Decompose them:
+//!   - `Key<E>`        — the external id (arbitrary, non-dense).
+//!   - `Id<E>`         — the dense ROW index (as today), addresses columns.
+//!   - an ENTITY TABLE — the relation `Key<E> → Id<E>` (addressing layer).
+//!   - columns         — `VecRel<_, Id<E>>` i.e. `Id<E> → attr` (storage).
+//!
+//! Navigating a foreign key `c: Key<S>` of `r` into `S`'s attribute `x`:
+//!   `r.select(c)            // Row<R> → Key<S>     (read the FK)`
+//!   ` .select(s_table)      // Key<S> → Id<S>      (the id→row hop)`
+//!   ` .select(s_x)          // Id<S>  → x          (dense column)`
+//!
+//! Two entity-table shapes carry the whole generalisation:
+//!   - `DictTable<E>` — non-dense: a `HashMap<Key, Id>` lookup.
+//!   - `Ident<E>`     — dense (`Key == Id`): the identity relation, a
+//!                      pass-through that `Compose` inlines away, so dense
+//!                      navigation pays NOTHING for the indirection.
+//!
+//! Crucially the generic combinators already accept this: `Query::D` is only
+//! `Copy + Eq + Hash` (no `Dense` bound), so `Compose`/`Probe` thread a
+//! non-dense `Key<E>` domain fine — only the dense leaves need `Dense`.
+
+use std::collections::HashMap;
+use std::marker::PhantomData;
+
+use crate::engine::*;
+
+/// External, possibly non-dense / non-contiguous id of entity `E` — distinct
+/// from `Id<E>`, which is the dense ROW index that addresses columns.
+/// Manual `Copy/Eq/Hash` (like `Id<E>`): `derive` would wrongly bound `E`.
+pub struct Key<E: 'static>(pub u64, pub PhantomData<E>);
+impl<E> Key<E> {
+    #[inline(always)]
+    pub fn new(k: u64) -> Self { Key(k, PhantomData) }
+}
+impl<E> Copy for Key<E> {}
+impl<E> Clone for Key<E> { #[inline(always)] fn clone(&self) -> Self { *self } }
+impl<E> PartialEq for Key<E> { #[inline(always)] fn eq(&self, o: &Self) -> bool { self.0 == o.0 } }
+impl<E> Eq for Key<E> {}
+impl<E> std::hash::Hash for Key<E> {
+    #[inline(always)] fn hash<H: std::hash::Hasher>(&self, h: &mut H) { self.0.hash(h) }
+}
+impl<E> std::fmt::Debug for Key<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { write!(f, "Key({})", self.0) }
+}
+
+// ===== entity tables: the `id → row` addressing layer ====================
+
+/// Entity table for a NON-DENSE entity: external `Key<E>` → dense `Id<E>` row.
+/// The one place the addressing scheme lives; columns stay dense `VecRel`.
+pub struct DictTable<E: 'static> {
+    map: HashMap<Key<E>, Id<E>>,
+}
+impl<E: 'static> DictTable<E> {
+    /// `keys[row]` = the external id assigned to dense row `row` (`0..keys.len()`).
+    pub fn new(keys: &[u64]) -> Self {
+        DictTable {
+            map: keys.iter().enumerate().map(|(r, &k)| (Key::new(k), Id::from_idx(r))).collect(),
+        }
+    }
+    pub fn len(&self) -> usize { self.map.len() }
+    pub fn is_empty(&self) -> bool { self.map.is_empty() }
+}
+impl<E: 'static> Query for DictTable<E> { type D = Key<E>; type R = Id<E>; }
+impl<E: 'static> Probe for DictTable<E> {
+    #[inline]
+    fn probe<F: FnMut(Id<E>)>(&self, x: Key<E>, mut f: F) {
+        if let Some(&r) = self.map.get(&x) { f(r); }
+    }
+    #[inline]
+    fn probe_any<F: FnMut(Id<E>) -> bool>(&self, x: Key<E>, mut f: F) -> bool {
+        self.map.get(&x).is_some_and(|&r| f(r))
+    }
+    #[inline]
+    fn member(&self, x: Key<E>) -> bool { self.map.contains_key(&x) }
+}
+
+/// Entity table for a DENSE entity — the external id IS the row, so the table
+/// is the identity relation `Id<E> → Id<E>`. `probe` is a pass-through, so
+/// `Compose<_, Ident>` inlines to its left operand: dense navigation pays
+/// nothing for the `id → row` hop. (This is the compile-time-dispatch lesson
+/// from `SparseUniverse`: the trivial case is a distinct type that vanishes.)
+pub struct Ident<E: 'static>(pub PhantomData<E>);
+impl<E> Default for Ident<E> { fn default() -> Self { Ident(PhantomData) } }
+impl<E> Ident<E> { #[inline(always)] pub fn new() -> Self { Ident(PhantomData) } }
+impl<E: 'static> Query for Ident<E> { type D = Id<E>; type R = Id<E>; }
+impl<E: 'static> Probe for Ident<E> {
+    #[inline(always)] fn probe<F: FnMut(Id<E>)>(&self, x: Id<E>, mut f: F) { f(x); }
+    #[inline(always)] fn probe_any<F: FnMut(Id<E>) -> bool>(&self, x: Id<E>, mut f: F) -> bool { f(x) }
+    #[inline(always)] fn member(&self, _x: Id<E>) -> bool { true }
+}
+
+// ===== ergonomics: `.as_(table)` reads as "this id, as an entity row" ====
+// Alias of `select` that names the entity-table crossing. The schema-generated
+// attribute navs (`.name()`, …) would bake this hop in front of the column so
+// it never surfaces for single-attribute reads; `.as_(E)` is the explicit form
+// used to SHARE the hop across several columns (`x.as_(E).select(a.and(b))`).
+
+pub trait Nav: IntoQuery + Sized {
+    #[inline(always)]
+    fn as_<T: IntoQuery>(self, table: T) -> Compose<Self::Q, T::Q>
+    where T::Q: Query<D = ROf<Self>> { self.select(table) }
+}
+impl<T: IntoQuery> Nav for T {}
+
+// ===== demonstration ======================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Tag types for two entities.
+    struct Movie;
+    struct Person;
+
+    fn col<R: Copy, D: Dense>(values: Vec<R>) -> VecRel<R, D> {
+        VecRel { values, _d: PhantomData }
+    }
+
+    fn drive_sorted<Q: Drive>(q: &Q) -> Vec<(usize, Q::R)>
+    where Q::D: Dense, Q::R: Ord {
+        let mut v = Vec::new();
+        q.drive(|d, r| v.push((d.idx(), r)));
+        v.sort();
+        v
+    }
+
+    // Person stored DECOMPOSED: external ids {100, 205, 9899} (non-dense) map
+    // to dense rows {0, 1, 2}; the name column is addressed by row.
+    //   movie 0 → director key 205 (Kubrick)
+    //   movie 1 → director key 100 (Nolan)
+    //   movie 2 → director key 9899 (Tarkovsky)
+    #[test]
+    fn navigate_into_nondense_entity() {
+        let person_table = DictTable::<Person>::new(&[100, 205, 9899]);
+        let person_name = col::<&str, Id<Person>>(vec!["Nolan", "Kubrick", "Tarkovsky"]);
+        let director = col::<Key<Person>, Id<Movie>>(
+            vec![Key::new(205), Key::new(100), Key::new(9899)]);
+        let movies = Universe::<Id<Movie>>::new(3);
+
+        // movie → director(Key) → person(row) → name — one combinator chain.
+        let q = movies
+            .select(&director)        // Row<Movie> → Key<Person>
+            .as_(&person_table)       // Key<Person> → Id<Person>  (the id→row hop)
+            .select(&person_name);    // Id<Person>  → name
+        assert_eq!(drive_sorted(&q),
+            vec![(0, "Kubrick"), (1, "Nolan"), (2, "Tarkovsky")]);
+    }
+
+    // Same query shape against a DENSE person entity (external id == row), so
+    // the entity table is `Ident` — and the result is identical to skipping
+    // the hop entirely, demonstrating `Compose<_, Ident>` is a no-op.
+    #[test]
+    fn dense_entity_table_composes_away() {
+        let person_name = col::<&str, Id<Person>>(vec!["Nolan", "Kubrick", "Tarkovsky"]);
+        // dense FK: movie → person ROW directly (id == row)
+        let director = col::<Id<Person>, Id<Movie>>(
+            vec![Id::from_idx(1), Id::from_idx(0), Id::from_idx(2)]);
+        let movies = Universe::<Id<Movie>>::new(3);
+
+        let with_hop = movies.select(&director).as_(Ident::<Person>::new()).select(&person_name);
+        let no_hop   = movies.select(&director).select(&person_name);
+        assert_eq!(drive_sorted(&with_hop), drive_sorted(&no_hop));
+        assert_eq!(drive_sorted(&with_hop),
+            vec![(0, "Kubrick"), (1, "Nolan"), (2, "Tarkovsky")]);
+    }
+
+    // The entity table is also a `Probe`, so it works in PROBE position too —
+    // e.g. a semijoin keeping movies whose director key is a real person.
+    #[test]
+    fn entity_table_as_membership() {
+        let person_table = DictTable::<Person>::new(&[100, 205, 9899]);
+        // movie 1's director (404) is a dangling key — no such person.
+        let director = col::<Key<Person>, Id<Movie>>(
+            vec![Key::new(205), Key::new(404), Key::new(9899)]);
+        let movies = Universe::<Id<Movie>>::new(3);
+
+        // keep movies whose director resolves to a real person row
+        let live = movies.with((&director).select(&person_table));
+        let mut got: Vec<usize> = Vec::new();
+        live.drive(|m, _| got.push(m.idx()));
+        got.sort();
+        assert_eq!(got, vec![0, 2]); // movie 1 (dangling 404) dropped
+    }
+}
