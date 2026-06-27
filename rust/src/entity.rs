@@ -400,3 +400,65 @@ mod tests {
         assert_eq!(got, vec![0, 2]); // movie 1 (dangling 404) dropped
     }
 }
+
+// ===== what the schema macro would EMIT ===================================
+// The end-user payoff: generated per-field handles + nav traits, so a query
+// reads `movie.director().name()` and never mentions `Fk`/`Col`/`.s`. An FK
+// nav FUSES the page-table crossing (so chaining lands you on the entity);
+// a scalar nav is a plain select. For a DENSE entity the fused table is
+// `Ident` and the nav is byte-identical to today's dense engine.
+#[cfg(test)]
+mod generated {
+    use super::*;
+
+    // entity tags
+    struct Movie;
+    struct Person;
+
+    // The schema store (what `tpch_init`/`job_init` build): dense columns +
+    // the one entity table for the non-dense entity (Person).
+    struct Store {
+        director: VecRel<Key<Person>, Id<Movie>>,  // Movie.director : FK → Person
+        p_name:   VecRel<&'static str, Id<Person>>, // Person.name    : scalar
+        p_table:  DictTable<Person>,                // Person's id→row table
+    }
+    static STORE: std::sync::OnceLock<Store> = std::sync::OnceLock::new();
+    #[inline] fn store() -> &'static Store { STORE.get().expect("schema not initialized") }
+
+    // Generated nav trait for Movie — one method per field. The FK field fuses
+    // the resolve; a scalar field would be `self.select(&store().<col>)`.
+    trait MovieNav: IntoQuery + Sized where Self::Q: Query<R = Id<Movie>> {
+        #[inline]
+        fn director(self) -> Compose<Self::Q,
+            Compose<&'static VecRel<Key<Person>, Id<Movie>>, &'static DictTable<Person>>> {
+            self.s(Fk { col: &store().director, table: &store().p_table })
+        }
+    }
+    impl<T: IntoQuery> MovieNav for T where T::Q: Query<R = Id<Movie>> {}
+
+    // Generated nav trait for Person.
+    trait PersonNav: IntoQuery + Sized where Self::Q: Query<R = Id<Person>> {
+        #[inline]
+        fn name(self) -> Compose<Self::Q, &'static VecRel<&'static str, Id<Person>>> {
+            self.select(&store().p_name)
+        }
+    }
+    impl<T: IntoQuery> PersonNav for T where T::Q: Query<R = Id<Person>> {}
+
+    #[test]
+    fn generated_navs_read_cleanly() {
+        STORE.set(Store {
+            director: VecRel { values: vec![Key::new(205), Key::new(100)], _d: PhantomData },
+            p_name:   VecRel { values: vec!["Nolan", "Kubrick"], _d: PhantomData },
+            p_table:  DictTable::new(&[100, 205]),   // person ids 100,205 → rows 0,1
+        }).ok();
+
+        // the payoff — FK auto-deref'd by `.director()`, no Fk/Col/.s in sight:
+        let q = (Universe::<Id<Movie>>::new(2)).director().name();
+        let mut got = Vec::new();
+        q.drive(|m, n| got.push((m.idx(), n)));
+        got.sort();
+        // m0 → dir 205 → person row 1 → "Kubrick";  m1 → dir 100 → row 0 → "Nolan"
+        assert_eq!(got, vec![(0, "Kubrick"), (1, "Nolan")]);
+    }
+}
