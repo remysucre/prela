@@ -97,6 +97,29 @@ impl<E: 'static> Probe for Ident<E> {
     #[inline(always)] fn member(&self, _x: Id<E>) -> bool { true }
 }
 
+// ===== scalar `Index`: `table[key]` is one address translation ===========
+// `Index` is the operator that genuinely fits (it has the table AND the key),
+// unlike `Deref`. It's the SCALAR escape — resolve ONE id — for use inside a
+// fold/drive closure or output formatting. The relational `.select`/`.as_`
+// chain is the same translation done set-at-a-time over a whole column.
+//
+//   cols[ table[ fk[row] ] ]   ≡   physical_mem[ page_table[ vaddr ] ]
+//     │      │      └ read FK:        Row<R> → Key<S>
+//     │      └─────── translate:      Key<S> → Id<S>   (the page table)
+//     └────────────── read attr:      Id<S>  → x
+
+/// `table[key]` → the row (panics on a dangling key, like `Vec`/`HashMap`).
+impl<E: 'static> std::ops::Index<Key<E>> for DictTable<E> {
+    type Output = Id<E>;
+    #[inline] fn index(&self, key: Key<E>) -> &Id<E> { &self.map[&key] }
+}
+
+/// `column[row]` → the attribute. (A dense column is just `Id → attr`.)
+impl<R: Copy, D: Dense> std::ops::Index<D> for VecRel<R, D> {
+    type Output = R;
+    #[inline] fn index(&self, d: D) -> &R { &self.values[d.idx()] }
+}
+
 // ===== ergonomics: `.as_(table)` reads as "this id, as an entity row" ====
 // Alias of `select` that names the entity-table crossing. The schema-generated
 // attribute navs (`.name()`, …) would bake this hop in front of the column so
@@ -109,6 +132,69 @@ pub trait Nav: IntoQuery + Sized {
     where T::Q: Query<D = ROf<Self>> { self.select(table) }
 }
 impl<T: IntoQuery> Nav for T {}
+
+// ===== Resolve: "deref" on a COLUMN — auto-follow FKs, like Rust's `.` =====
+//
+// Putting the deref on the column (not the value type) is what dodges the
+// `f64 ∉ Eq+Hash` wall: a scalar column's deref is the identity *function*
+// (it returns ITSELF), so no `Probe<D = f64>` is ever built. An FK column's
+// deref crosses its target entity table.
+//
+// A `Field` exposes its column two ways:
+//   raw      — the stored relation (`Id<E> → A`, or `Id<E> → Key<S>` for an FK)
+//   resolved — raw for scalars; `raw ∘ table` for FKs (`Id<E> → Id<S>`)
+// `.s(c)` selects `resolved` (auto-deref, the `.`-behaviour); `.at(c)` selects
+// `raw` (the FK's `Key`, un-followed). For a DENSE target the table is `Ident`,
+// so `resolved == raw` and `.s == .at` at zero cost (see the composes-away
+// test). The schema macro would emit one `Field` impl per declared field —
+// identity `resolved` for scalars, table-crossing `resolved` for FKs — so the
+// two impls never overlap.
+
+pub trait Field {
+    type Raw: IntoQuery;
+    type Resolved: IntoQuery;
+    fn raw(self) -> Self::Raw;
+    fn resolved(self) -> Self::Resolved;
+}
+
+/// Scalar column `Id<E> → A` — `resolved` is the identity (returns itself).
+pub struct Col<'a, A: Copy, E: 'static>(pub &'a VecRel<A, Id<E>>);
+impl<'a, A: Copy, E: 'static> Field for Col<'a, A, E> {
+    type Raw = &'a VecRel<A, Id<E>>;
+    type Resolved = &'a VecRel<A, Id<E>>;
+    #[inline] fn raw(self) -> Self::Raw { self.0 }
+    #[inline] fn resolved(self) -> Self::Resolved { self.0 }
+}
+
+/// Foreign-key column `Id<E> → Key<S>` — `resolved` crosses S's entity table,
+/// yielding `Id<E> → Id<S>`. (Table bundled here; the real schema fetches it
+/// from the global store by the FK's target type `S`.)
+pub struct Fk<'a, S: 'static, E: 'static> {
+    pub col: &'a VecRel<Key<S>, Id<E>>,
+    pub table: &'a DictTable<S>,
+}
+impl<'a, S: 'static, E: 'static> Field for Fk<'a, S, E> {
+    type Raw = &'a VecRel<Key<S>, Id<E>>;
+    type Resolved = Compose<&'a VecRel<Key<S>, Id<E>>, &'a DictTable<S>>;
+    #[inline] fn raw(self) -> Self::Raw { self.col }
+    #[inline] fn resolved(self) -> Self::Resolved { Compose { a: self.col, b: self.table } }
+}
+
+/// `.s(c)` — select a column, auto-deref'd (FKs followed into their entity).
+/// `.at(c)` — select the RAW column (an FK stays its `Key`).
+pub trait Navigate: IntoQuery + Sized {
+    #[inline]
+    fn s<F: Field>(self, c: F) -> Compose<Self::Q, <F::Resolved as IntoQuery>::Q>
+    where <F::Resolved as IntoQuery>::Q: Query<D = ROf<Self>> {
+        Compose { a: self.iq(), b: c.resolved().iq() }
+    }
+    #[inline]
+    fn at<F: Field>(self, c: F) -> Compose<Self::Q, <F::Raw as IntoQuery>::Q>
+    where <F::Raw as IntoQuery>::Q: Query<D = ROf<Self>> {
+        Compose { a: self.iq(), b: c.raw().iq() }
+    }
+}
+impl<T: IntoQuery> Navigate for T {}
 
 // ===== demonstration ======================================================
 
@@ -170,6 +256,54 @@ mod tests {
         assert_eq!(drive_sorted(&with_hop), drive_sorted(&no_hop));
         assert_eq!(drive_sorted(&with_hop),
             vec![(0, "Kubrick"), (1, "Nolan"), (2, "Tarkovsky")]);
+    }
+
+    // The SCALAR form of the same navigation: `cols[table[fk[row]]]`, reading
+    // exactly like a memory access through a page table. This is what you'd
+    // write inside a fold/output closure that has a single row in hand.
+    #[test]
+    fn indexing_is_scalar_address_translation() {
+        let person_table = DictTable::<Person>::new(&[100, 205, 9899]);
+        let person_name = col::<&str, Id<Person>>(vec!["Nolan", "Kubrick", "Tarkovsky"]);
+        let director = col::<Key<Person>, Id<Movie>>(
+            vec![Key::new(205), Key::new(100), Key::new(9899)]);
+
+        let m = Id::<Movie>::from_idx(0);
+        //          read attr ───┐   translate ──┐   read FK ┐
+        let name = person_name[person_table[director[m]]];
+        assert_eq!(name, "Kubrick");
+
+        // DENSE entity (id == row): the middle translation simply isn't there —
+        // an identity-mapped address space needs no page table.
+        let dense_director = col::<Id<Person>, Id<Movie>>(
+            vec![Id::from_idx(1), Id::from_idx(0), Id::from_idx(2)]);
+        let name2 = person_name[dense_director[m]];   // no page-table hop
+        assert_eq!(name2, "Kubrick");   // movie 0 → row 1, same as the dict form
+    }
+
+    // `.s()` auto-derefs an FK column (follows it into the entity) and reads a
+    // plain column uniformly — Rust-`.` behaviour; `.at()` gives the raw `Key`.
+    #[test]
+    fn resolve_navigation() {
+        let person_table = DictTable::<Person>::new(&[100, 205, 9899]);
+        let person_name = col::<&str, Id<Person>>(vec!["Nolan", "Kubrick", "Tarkovsky"]);
+        let director = col::<Key<Person>, Id<Movie>>(
+            vec![Key::new(205), Key::new(100), Key::new(9899)]);
+        let movies = Universe::<Id<Movie>>::new(3);
+
+        // .s(fk) follows director into Person; .s(plain) reads name — same verb.
+        let names = movies
+            .s(Fk { col: &director, table: &person_table })   // movie → Id<Person>
+            .s(Col(&person_name));                            // Id<Person> → name
+        assert_eq!(drive_sorted(&names),
+            vec![(0, "Kubrick"), (1, "Nolan"), (2, "Tarkovsky")]);
+
+        // .at(fk) gives the RAW foreign key — the Key, un-followed.
+        let keys = movies.at(Fk { col: &director, table: &person_table });
+        let mut got = Vec::new();
+        keys.drive(|m, k| got.push((m.idx(), k.0)));
+        got.sort();
+        assert_eq!(got, vec![(0, 205), (1, 100), (2, 9899)]);
     }
 
     // The entity table is also a `Probe`, so it works in PROBE position too —
