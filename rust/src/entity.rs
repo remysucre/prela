@@ -82,6 +82,36 @@ impl<E: 'static> Probe for DictTable<E> {
     fn member(&self, x: Key<E>) -> bool { self.map.contains_key(&x) }
 }
 
+/// Entity table for a non-dense entity as a SORTED key array with binary
+/// search — the cache-friendlier, order-preserving alternative to `DictTable`'s
+/// hash map (your "btree instead of vectors"). Same `Key<E> → Id<E>` interface,
+/// so navigation is identical; only the addressing data structure differs.
+pub struct SortedTable<E: 'static> {
+    sorted: Vec<(u64, Id<E>)>,   // (external key, row), sorted by key
+}
+impl<E: 'static> SortedTable<E> {
+    pub fn new(keys: &[u64]) -> Self {
+        let mut sorted: Vec<(u64, Id<E>)> =
+            keys.iter().enumerate().map(|(r, &k)| (k, Id::from_idx(r))).collect();
+        sorted.sort_by_key(|&(k, _)| k);
+        SortedTable { sorted }
+    }
+    #[inline]
+    fn lookup(&self, k: u64) -> Option<Id<E>> {
+        self.sorted.binary_search_by_key(&k, |&(k, _)| k).ok().map(|i| self.sorted[i].1)
+    }
+}
+impl<E: 'static> Query for SortedTable<E> { type D = Key<E>; type R = Id<E>; }
+impl<E: 'static> Probe for SortedTable<E> {
+    #[inline] fn probe<F: FnMut(Id<E>)>(&self, x: Key<E>, mut f: F) {
+        if let Some(r) = self.lookup(x.0) { f(r); }
+    }
+    #[inline] fn probe_any<F: FnMut(Id<E>) -> bool>(&self, x: Key<E>, mut f: F) -> bool {
+        self.lookup(x.0).is_some_and(|r| f(r))
+    }
+    #[inline] fn member(&self, x: Key<E>) -> bool { self.lookup(x.0).is_some() }
+}
+
 /// Entity table for a DENSE entity — the external id IS the row, so the table
 /// is the identity relation `Id<E> → Id<E>`. `probe` is a pass-through, so
 /// `Compose<_, Ident>` inlines to its left operand: dense navigation pays
@@ -363,6 +393,27 @@ mod tests {
         // m0→dir205→emp7→Warner; m1→dir100→emp42→A24; m2→dir9899→emp42→A24
         assert_eq!(drive_sorted(&q),
             vec![(0, "Warner"), (1, "A24"), (2, "A24")]);
+    }
+
+    // The addressing layer is PLUGGABLE: the exact same navigation runs over a
+    // hash (`DictTable`) or a sorted/binary-search (`SortedTable`) entity table
+    // — only the id→row data structure differs. (Ident is the third, for dense.)
+    #[test]
+    fn pluggable_addressing_hash_vs_sorted() {
+        let names = col::<&str, Id<Person>>(vec!["Nolan", "Kubrick", "Tarkovsky"]);
+        let director = col::<Key<Person>, Id<Movie>>(
+            vec![Key::new(205), Key::new(100), Key::new(9899)]);
+        let movies = Universe::<Id<Movie>>::new(3);
+
+        let hash_table = DictTable::<Person>::new(&[100, 205, 9899]);
+        let sorted_table = SortedTable::<Person>::new(&[100, 205, 9899]);
+        // identical chain — read FK, cross the entity table, read name — with
+        // only the table's data structure swapped under `.select(table)`.
+        let via_hash   = movies.select(&director).select(&hash_table).select(&names);
+        let via_sorted = movies.select(&director).select(&sorted_table).select(&names);
+        assert_eq!(drive_sorted(&via_hash), drive_sorted(&via_sorted));
+        assert_eq!(drive_sorted(&via_hash),
+            vec![(0, "Kubrick"), (1, "Nolan"), (2, "Tarkovsky")]);
     }
 
     // Grouping by an FK needs NO entity table: the external `Key<S>` is already
