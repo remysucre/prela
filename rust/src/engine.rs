@@ -518,6 +518,11 @@ impl<E: 'static> DictTable<E> {
     pub fn from_keys(keys: &[u64]) -> Self {
         DictTable { map: keys.iter().enumerate().map(|(r, &k)| (Key::new(k), Id::from_idx(r))).collect() }
     }
+    /// Build from the entity's i64 external-id column (`row → external id`),
+    /// the inverse `external id → row`. Used by the schema macro at load.
+    pub fn from_i64(keys: &[i64]) -> Self {
+        DictTable { map: keys.iter().enumerate().map(|(r, &k)| (Key::new(k as u64), Id::from_idx(r))).collect() }
+    }
     pub fn len(&self) -> usize { self.map.len() }
     pub fn is_empty(&self) -> bool { self.map.is_empty() }
 }
@@ -530,6 +535,19 @@ impl<E: 'static> Probe for DictTable<E> {
         self.map.get(&x).is_some_and(|&r| k(r))
     }
     #[inline] fn member(&self, x: Key<E>) -> bool { self.map.contains_key(&x) }
+}
+
+/// How an entity is ADDRESSED. A foreign key into `Self` stores `Self::Fk`,
+/// and a navigation crosses `Self::table()` (`Fk → Id<Self>`) before reading
+/// columns. The schema macro emits ONE impl per entity, so FK columns/navs
+/// just defer to `<Target as EntityKind>::Fk` / `::table()` without the macro
+/// branching per foreign key:
+///   - DENSE  (default) — `Fk = Id<Self>`, `Table = Ident` (inlines away).
+///   - NON-DENSE (`dict`)— `Fk = Key<Self>`, `Table = &'static DictTable`.
+pub trait EntityKind: Sized + 'static {
+    type Fk: Copy + Eq + Hash;
+    type Table: Probe<D = Self::Fk, R = Id<Self>>;
+    fn table() -> Self::Table;
 }
 
 // ===== Compose: a: D → M, b: M → R  ⟹  Compose: D → R ===================
