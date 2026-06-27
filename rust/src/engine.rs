@@ -481,6 +481,57 @@ impl<E: 'static> Probe for Ident<E> {
     #[inline(always)] fn member(&self, _x: Id<E>) -> bool { true }
 }
 
+// ===== non-dense entities: Key<E> + DictTable =============================
+// The general entity table, for an entity whose external ids are NOT a dense
+// `0..n`. A foreign key into such an entity stores a `Key<E>` (the external
+// id); its `DictTable` translates `Key<E> → Id<E>` (the row) so the dense
+// columns can be addressed. The dense case (`Ident`) is the special case where
+// `Key == Id` and the table is the identity — and inlines away. Crossing a
+// `DictTable` on a nav costs one hash probe (the fundamental price of a
+// non-dense key); everything downstream — columns, group_by, fold, with — is
+// unchanged, because `Query::D` is only `Copy + Eq + Hash`, no `Dense` bound.
+
+/// External, possibly non-dense / non-contiguous id of entity `E` — distinct
+/// from `Id<E>` (the dense ROW index). Manual `Copy/Eq/Hash` like `Id<E>`
+/// (`derive` would wrongly bound the phantom `E`).
+#[repr(transparent)]
+pub struct Key<E: 'static>(pub u64, pub PhantomData<E>);
+impl<E> Key<E> { #[inline(always)] pub fn new(k: u64) -> Self { Key(k, PhantomData) } }
+impl<E> Copy for Key<E> {}
+impl<E> Clone for Key<E> { #[inline(always)] fn clone(&self) -> Self { *self } }
+impl<E> PartialEq for Key<E> { #[inline(always)] fn eq(&self, o: &Self) -> bool { self.0 == o.0 } }
+impl<E> Eq for Key<E> {}
+impl<E> Hash for Key<E> {
+    #[inline(always)] fn hash<H: std::hash::Hasher>(&self, h: &mut H) { self.0.hash(h) }
+}
+impl<E> std::fmt::Debug for Key<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { write!(f, "Key({})", self.0) }
+}
+
+/// Entity table for a NON-DENSE entity: `Key<E> → Id<E>` (external id → row),
+/// a hash lookup. Built once (at load / regen) from the entity's key column.
+pub struct DictTable<E: 'static> {
+    map: HashMap<Key<E>, Id<E>>,
+}
+impl<E: 'static> DictTable<E> {
+    /// `keys[row]` = the external id assigned to dense row `row` (`0..keys.len()`).
+    pub fn from_keys(keys: &[u64]) -> Self {
+        DictTable { map: keys.iter().enumerate().map(|(r, &k)| (Key::new(k), Id::from_idx(r))).collect() }
+    }
+    pub fn len(&self) -> usize { self.map.len() }
+    pub fn is_empty(&self) -> bool { self.map.is_empty() }
+}
+impl<E: 'static> Query for DictTable<E> { type D = Key<E>; type R = Id<E>; }
+impl<E: 'static> Probe for DictTable<E> {
+    #[inline] fn probe<K: FnMut(Id<E>)>(&self, x: Key<E>, mut k: K) {
+        if let Some(&r) = self.map.get(&x) { k(r); }
+    }
+    #[inline] fn probe_any<K: FnMut(Id<E>) -> bool>(&self, x: Key<E>, mut k: K) -> bool {
+        self.map.get(&x).is_some_and(|&r| k(r))
+    }
+    #[inline] fn member(&self, x: Key<E>) -> bool { self.map.contains_key(&x) }
+}
+
 // ===== Compose: a: D → M, b: M → R  ⟹  Compose: D → R ===================
 // Mode rule: the rhs is always probed; the lhs carries the Compose's mode.
 
@@ -1540,5 +1591,98 @@ mod tests {
         assert_eq!(drive_all(&w), vec![(10, 10), (20, 20), (30, 30)]);
         assert!(w.member(10) && !w.member(11));
         assert_eq!(drive_all(&(&f).map(|v| v * 2)), vec![(0, 20), (1, 40), (2, 60)]);
+    }
+
+    // ===== non-dense entities (Key<E> + DictTable) =======================
+
+    // An FK into a NON-DENSE entity stores a `Key`; navigation crosses the
+    // entity's `DictTable` (Key→row) before reading columns. The whole chain is
+    // the stock `.select` combinator — only the entity table differs from the
+    // dense `Ident` case.
+    #[test]
+    fn nondense_entity_navigation() {
+        struct Movie;
+        struct Person;
+        // Person: non-dense external ids {100,205,9899} → rows {0,1,2}; names.
+        let person_table = DictTable::<Person>::from_keys(&[100, 205, 9899]);
+        let person_name: VecRel<&str, Id<Person>> =
+            VecRel { values: vec!["Nolan", "Kubrick", "Tarkovsky"], _d: PhantomData };
+        // Movie.director : FK storing the EXTERNAL person key.
+        let director: VecRel<Key<Person>, Id<Movie>> =
+            VecRel { values: vec![Key::new(205), Key::new(100), Key::new(9899)], _d: PhantomData };
+        let movies = Universe::<Id<Movie>>::new(3);
+
+        // movie → director(Key) → person(row) → name
+        let q = (&movies).select(&director).select(&person_table).select(&person_name);
+        let mut got = Vec::new();
+        q.drive(|m, n| got.push((m.idx(), n)));
+        got.sort();
+        assert_eq!(got, vec![(0, "Kubrick"), (1, "Nolan"), (2, "Tarkovsky")]);
+
+        // A DANGLING key (no such person) drops out via the table's probe miss;
+        // the table works in `with` (semijoin) position too.
+        let director2: VecRel<Key<Person>, Id<Movie>> =
+            VecRel { values: vec![Key::new(205), Key::new(404), Key::new(9899)], _d: PhantomData };
+        let live = (&movies).with((&director2).select(&person_table));
+        let mut kept = Vec::new();
+        live.drive(|m, _| kept.push(m.idx()));
+        kept.sort();
+        assert_eq!(kept, vec![0, 2]); // movie 1 (dangling 404) dropped
+    }
+
+    // Aggregation through a non-dense entity: filter is implicit, navigate the
+    // FK into Person, group by the navigated country, fold — all stock
+    // combinators over a `Key` domain (no `Dense` needed for `group_by`).
+    #[test]
+    fn nondense_group_by_through_table() {
+        struct Movie;
+        struct Person;
+        let person_table = DictTable::<Person>::from_keys(&[100, 205, 9899]);
+        let country: VecRel<&str, Id<Person>> =
+            VecRel { values: vec!["US", "UK", "RU"], _d: PhantomData };
+        let director: VecRel<Key<Person>, Id<Movie>> = VecRel {
+            values: vec![Key::new(205), Key::new(100), Key::new(9899), Key::new(100)],
+            _d: PhantomData,
+        };
+        let movies = Universe::<Id<Movie>>::new(4);
+
+        let dir_country = (&director).select(&person_table).select(&country);
+        let counts = (&movies).group_by(dir_country).fold(0_i64, |a, _| a + 1);
+        let mut rows: Vec<(&str, i64)> = Vec::new();
+        counts.drive(|k, v| rows.push((k, v)));
+        rows.sort();
+        // director keys 205(UK) 100(US) 9899(RU) 100(US) → US=2, UK=1, RU=1
+        assert_eq!(rows, vec![("RU", 1), ("UK", 1), ("US", 2)]);
+    }
+
+    // The entity table is pluggable: an Ident (dense, Key==Id) and a DictTable
+    // (non-dense) both drive the same navigation to the same result.
+    #[test]
+    fn dense_ident_matches_nondense_dict() {
+        struct Movie;
+        struct Person;
+        let name: VecRel<&str, Id<Person>> =
+            VecRel { values: vec!["Nolan", "Kubrick"], _d: PhantomData };
+        let movies = Universe::<Id<Movie>>::new(2);
+
+        // dense: FK stores the row Id directly; entity table is Ident.
+        let fk_dense: VecRel<Id<Person>, Id<Movie>> =
+            VecRel { values: vec![Id::from_idx(1), Id::from_idx(0)], _d: PhantomData };
+        let mut d = Vec::new();
+        (&movies).select(&fk_dense).select(Ident::<Person>::new()).select(&name)
+            .drive(|m, n| d.push((m.idx(), n)));
+        d.sort();
+
+        // non-dense: same logical mapping via external keys + a DictTable.
+        let table = DictTable::<Person>::from_keys(&[100, 205]); // row0=key100, row1=key205
+        let fk_keys: VecRel<Key<Person>, Id<Movie>> =
+            VecRel { values: vec![Key::new(205), Key::new(100)], _d: PhantomData };
+        let mut nd = Vec::new();
+        (&movies).select(&fk_keys).select(&table).select(&name)
+            .drive(|m, n| nd.push((m.idx(), n)));
+        nd.sort();
+
+        assert_eq!(d, nd);
+        assert_eq!(d, vec![(0, "Kubrick"), (1, "Nolan")]);
     }
 }
