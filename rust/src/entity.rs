@@ -150,7 +150,7 @@ impl<T: IntoQuery> Nav for T {}
 // identity `resolved` for scalars, table-crossing `resolved` for FKs — so the
 // two impls never overlap.
 
-pub trait Field {
+pub trait Column {
     type Raw: IntoQuery;
     type Resolved: IntoQuery;
     fn raw(self) -> Self::Raw;
@@ -159,7 +159,7 @@ pub trait Field {
 
 /// Scalar column `Id<E> → A` — `resolved` is the identity (returns itself).
 pub struct Col<'a, A: Copy, E: 'static>(pub &'a VecRel<A, Id<E>>);
-impl<'a, A: Copy, E: 'static> Field for Col<'a, A, E> {
+impl<'a, A: Copy, E: 'static> Column for Col<'a, A, E> {
     type Raw = &'a VecRel<A, Id<E>>;
     type Resolved = &'a VecRel<A, Id<E>>;
     #[inline] fn raw(self) -> Self::Raw { self.0 }
@@ -173,7 +173,7 @@ pub struct Fk<'a, S: 'static, E: 'static> {
     pub col: &'a VecRel<Key<S>, Id<E>>,
     pub table: &'a DictTable<S>,
 }
-impl<'a, S: 'static, E: 'static> Field for Fk<'a, S, E> {
+impl<'a, S: 'static, E: 'static> Column for Fk<'a, S, E> {
     type Raw = &'a VecRel<Key<S>, Id<E>>;
     type Resolved = Compose<&'a VecRel<Key<S>, Id<E>>, &'a DictTable<S>>;
     #[inline] fn raw(self) -> Self::Raw { self.col }
@@ -184,12 +184,12 @@ impl<'a, S: 'static, E: 'static> Field for Fk<'a, S, E> {
 /// `.at(c)` — select the RAW column (an FK stays its `Key`).
 pub trait Navigate: IntoQuery + Sized {
     #[inline]
-    fn s<F: Field>(self, c: F) -> Compose<Self::Q, <F::Resolved as IntoQuery>::Q>
+    fn s<F: Column>(self, c: F) -> Compose<Self::Q, <F::Resolved as IntoQuery>::Q>
     where <F::Resolved as IntoQuery>::Q: Query<D = ROf<Self>> {
         Compose { a: self.iq(), b: c.resolved().iq() }
     }
     #[inline]
-    fn at<F: Field>(self, c: F) -> Compose<Self::Q, <F::Raw as IntoQuery>::Q>
+    fn at<F: Column>(self, c: F) -> Compose<Self::Q, <F::Raw as IntoQuery>::Q>
     where <F::Raw as IntoQuery>::Q: Query<D = ROf<Self>> {
         Compose { a: self.iq(), b: c.raw().iq() }
     }
@@ -304,6 +304,55 @@ mod tests {
         keys.drive(|m, k| got.push((m.idx(), k.0)));
         got.sort();
         assert_eq!(got, vec![(0, 205), (1, 100), (2, 9899)]);
+    }
+
+    // A FULL query over a non-dense entity: filter + FK navigation + group_by +
+    // fold all the way through. Proves the entity-table decomposition threads
+    // the whole combinator surface, not just `select`.
+    //   "count movies released after 2000, grouped by their director's country"
+    #[test]
+    fn full_aggregation_over_nondense_entity() {
+        // Person: non-dense ids 100/205/9899 → rows 0/1/2, with a country.
+        let person_table = DictTable::<Person>::new(&[100, 205, 9899]);
+        let person_country = col::<&str, Id<Person>>(vec!["US", "UK", "RU"]);
+        // Movies: director FK (Key<Person>) + release year.
+        let director = col::<Key<Person>, Id<Movie>>(vec![
+            Key::new(205), Key::new(100), Key::new(9899), Key::new(100), Key::new(205)]);
+        let year = col::<i64, Id<Movie>>(vec![1999, 2008, 2010, 2014, 2001]);
+        let movies = Universe::<Id<Movie>>::new(5);
+
+        // group key: movie → director (FK, auto-deref'd) → country
+        let dir_country = Fk { col: &director, table: &person_table }
+            .resolved()                  // movie → Id<Person>  (crossed the table)
+            .select(&person_country);    // movie → country
+
+        let counts = movies
+            .with((&year).gt(2000))                       // filter: released after 2000
+            .group_by(dir_country)                        // by director's country
+            .fold(0_i64, |a, _| a + 1);                   // count
+
+        let mut rows: Vec<(&str, i64)> = Vec::new();
+        counts.drive(|k, v| rows.push((k, v)));
+        rows.sort();
+        // post-2000: m1(US) m2(RU) m3(US) m4(UK)  →  US=2, UK=1, RU=1
+        assert_eq!(rows, vec![("RU", 1), ("UK", 1), ("US", 2)]);
+    }
+
+    // Grouping by an FK needs NO entity table: the external `Key<S>` is already
+    // `Eq + Hash`, so it's a valid group key directly (`.at`, un-deref'd). The
+    // table is only needed to DEREF into the entity's columns. ("group_by an FK
+    // yields external ids" — the corner flagged in the design discussion.)
+    #[test]
+    fn group_by_raw_foreign_key() {
+        let director = col::<Key<Person>, Id<Movie>>(vec![
+            Key::new(205), Key::new(100), Key::new(9899), Key::new(100), Key::new(205)]);
+        let movies = Universe::<Id<Movie>>::new(5);
+
+        let counts = movies.group_by(&director).fold(0_i64, |a, _| a + 1);
+        let mut rows: Vec<(u64, i64)> = Vec::new();
+        counts.drive(|k, v| rows.push((k.0, v)));
+        rows.sort();
+        assert_eq!(rows, vec![(100, 2), (205, 2), (9899, 1)]);
     }
 
     // The entity table is also a `Probe`, so it works in PROBE position too —
