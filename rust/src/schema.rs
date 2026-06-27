@@ -321,8 +321,8 @@ macro_rules! schema {
     (@nav $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*] pub $($rest:tt)*) => {
         $crate::schema::schema!(@nav $mod_; $Ent; $Nav; [$($acc)*] $($rest)*);
     };
-    (@nav $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*]
-      $f:ident : $t1:tt $(< $t2:tt >)? $(, $($rest:tt)*)? ) => {
+    // Helper: append a PLAIN nav method (compose the column) and continue.
+    (@navplain $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*] $f:ident; $t1:tt $(($t2:tt))?; $($rest:tt)*) => {
         $crate::schema::schema!(@nav $mod_; $Ent; $Nav;
             [$($acc)*
              #[allow(dead_code)]
@@ -333,6 +333,43 @@ macro_rules! schema {
                  $crate::engine::Compose {
                      a: self.iq(),
                      b: &$mod_::STORE.get().expect("schema not initialized").$Ent.$f,
+                 }
+             }]
+            $($rest)*);
+    };
+    // Scalar / multi leaves: plain nav. (Intercepted before the FK arm so that
+    // `str`/`i64`/`f64`/`Multi<…>` don't match the bare-entity `$T:ident` arm.)
+    (@nav $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*] $f:ident : str $(, $($rest:tt)*)? ) => {
+        $crate::schema::schema!(@navplain $mod_; $Ent; $Nav; [$($acc)*] $f; str; $($($rest)*)?);
+    };
+    (@nav $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*] $f:ident : i64 $(, $($rest:tt)*)? ) => {
+        $crate::schema::schema!(@navplain $mod_; $Ent; $Nav; [$($acc)*] $f; i64; $($($rest)*)?);
+    };
+    (@nav $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*] $f:ident : f64 $(, $($rest:tt)*)? ) => {
+        $crate::schema::schema!(@navplain $mod_; $Ent; $Nav; [$($acc)*] $f; f64; $($($rest)*)?);
+    };
+    (@nav $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*] $f:ident : Multi < $t2:tt > $(, $($rest:tt)*)? ) => {
+        $crate::schema::schema!(@navplain $mod_; $Ent; $Nav; [$($acc)*] $f; Multi($t2); $($($rest)*)?);
+    };
+    // Foreign key (bare entity): the nav crosses E's entity table — `Ident` for
+    // a dense entity, so it inlines away (a non-dense entity gets a Key→Id
+    // dictionary here instead). The result is still valued `Id<$T>`.
+    (@nav $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*] $f:ident : $T:ident $(, $($rest:tt)*)? ) => {
+        $crate::schema::schema!(@nav $mod_; $Ent; $Nav;
+            [$($acc)*
+             #[allow(dead_code)]
+             #[inline]
+             fn $f(self) -> $crate::engine::Compose<
+                 $crate::engine::Compose<Self::Q,
+                     &'static $crate::engine::VecRel<$crate::engine::Id<$T>, $crate::engine::Id<$Ent>>>,
+                 $crate::engine::Ident<$T>>
+             {
+                 $crate::engine::Compose {
+                     a: $crate::engine::Compose {
+                         a: self.iq(),
+                         b: &$mod_::STORE.get().expect("schema not initialized").$Ent.$f,
+                     },
+                     b: $crate::engine::Ident::new(),
                  }
              }]
             $($($rest)*)?);

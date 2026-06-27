@@ -461,6 +461,26 @@ impl<D: Dense> Probe for Universe<D> {
     fn member(&self, x: D) -> bool { x.idx() < self.n }
 }
 
+// ===== Ident — the identity ENTITY TABLE `Id<E> → Id<E>` ================
+// The `id → row` map for a DENSE entity, where the external id IS the row.
+// A pure pass-through: `probe(x) = x`, no bounds check (a foreign key always
+// references a real row, so the range test `Universe` does would be wasted).
+// Crossing it on a navigation — `fk_col.select(Ident)` — is therefore free:
+// `Compose<_, Ident>::probe` inlines to the left operand's probe. It's the
+// trivial case of the entity-table generalisation (non-dense entities get a
+// `Key → Id` dictionary here instead); making it a distinct ZST keeps the
+// dense navigation path byte-identical, since the table compiles away.
+
+pub struct Ident<E: 'static>(pub PhantomData<E>);
+impl<E> Ident<E> { #[inline(always)] pub fn new() -> Self { Ident(PhantomData) } }
+impl<E> Default for Ident<E> { #[inline(always)] fn default() -> Self { Ident(PhantomData) } }
+impl<E: 'static> Query for Ident<E> { type D = Id<E>; type R = Id<E>; }
+impl<E: 'static> Probe for Ident<E> {
+    #[inline(always)] fn probe<K: FnMut(Id<E>)>(&self, x: Id<E>, mut k: K) { k(x); }
+    #[inline(always)] fn probe_any<K: FnMut(Id<E>) -> bool>(&self, x: Id<E>, mut k: K) -> bool { k(x) }
+    #[inline(always)] fn member(&self, _x: Id<E>) -> bool { true }
+}
+
 // ===== Compose: a: D → M, b: M → R  ⟹  Compose: D → R ===================
 // Mode rule: the rhs is always probed; the lhs carries the Compose's mode.
 
