@@ -338,6 +338,33 @@ mod tests {
         assert_eq!(rows, vec![("RU", 1), ("UK", 1), ("US", 2)]);
     }
 
+    // Multi-hop navigation across TWO non-dense entities — movie → director
+    // (Person) → employer (Company) → name. Each `.s(Fk)` crosses one page
+    // table; they nest, so the decomposition composes across entity boundaries.
+    #[test]
+    fn multi_hop_across_two_nondense_entities() {
+        struct Company;
+        // Company: non-dense ids 7/42 → rows 0/1, names.
+        let company_table = DictTable::<Company>::new(&[7, 42]);
+        let company_name = col::<&str, Id<Company>>(vec!["Warner", "A24"]);
+        // Person: non-dense ids 100/205/9899, each with an employer FK.
+        let person_table = DictTable::<Person>::new(&[100, 205, 9899]);
+        let person_employer = col::<Key<Company>, Id<Person>>(
+            vec![Key::new(42), Key::new(7), Key::new(42)]);
+        // Movie: director FK into Person.
+        let director = col::<Key<Person>, Id<Movie>>(
+            vec![Key::new(205), Key::new(100), Key::new(9899)]);
+        let movies = Universe::<Id<Movie>>::new(3);
+
+        let q = movies
+            .s(Fk { col: &director, table: &person_table })          // → Id<Person>
+            .s(Fk { col: &person_employer, table: &company_table })  // → Id<Company>
+            .s(Col(&company_name));                                  // → company name
+        // m0→dir205→emp7→Warner; m1→dir100→emp42→A24; m2→dir9899→emp42→A24
+        assert_eq!(drive_sorted(&q),
+            vec![(0, "Warner"), (1, "A24"), (2, "A24")]);
+    }
+
     // Grouping by an FK needs NO entity table: the external `Key<S>` is already
     // `Eq + Hash`, so it's a valid group key directly (`.at`, un-deref'd). The
     // table is only needed to DEREF into the entity's columns. ("group_by an FK
