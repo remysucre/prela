@@ -71,7 +71,7 @@
 macro_rules! schema {
     // ===== entry: SCHEMA_MOD / StorageStruct / init_fn : entities... =====
     ( $mod_:ident / $store:ident / $init:ident :
-      $( $Ent:ident $( ( $uni:ident $($sp:ident)? ) )? / $Nav:ident { $($body:tt)* } )* ) => {
+      $( $Ent:ident $( ( $uni:ident $($mode:ident)? ) )? / $Nav:ident { $($body:tt)* } )* ) => {
 
         $(
             #[allow(dead_code)]
@@ -103,7 +103,8 @@ macro_rules! schema {
             }
         }
 
-        $( $crate::schema::schema!(@uni $mod_; $Ent; [$($uni $($sp)?)?]; $($body)*); )*
+        $( $crate::schema::schema!(@entitykind $mod_; $Ent; [$($($mode)?)?] $($body)*); )*
+        $( $crate::schema::schema!(@uni $mod_; $Ent; [$($uni $($mode)?)?]; $($body)*); )*
         $( $crate::schema::schema!(@consts $mod_; $Ent; $Nav; $($body)*); )*
         $( $crate::schema::schema!(@nav $mod_; $Ent; $Nav; [] $($body)*); )*
         $( $crate::schema::schema!(@primary $mod_; $Ent; $($body)*); )*
@@ -214,7 +215,7 @@ macro_rules! schema {
     (@colty ($($p:ident)*); $E:ident; Multi ($T:ident)) =>
         { $crate::engine::MultiRel<$crate::engine::Id<$($p::)* $T>, $crate::engine::Id<$($p::)* $E>> };
     (@colty ($($p:ident)*); $E:ident; $T:ident) =>
-        { $crate::engine::VecRel<$crate::engine::Id<$($p::)* $T>, $crate::engine::Id<$($p::)* $E>> };
+        { $crate::engine::VecRel<<$($p::)* $T as $crate::engine::EntityKind>::Fk, $crate::engine::Id<$($p::)* $E>> };
 
     // ===== per-entity struct literal for init ============================
     (@initent $dir:ident; $mod_:ident; $Ent:ident; $($body:tt)*) => {
@@ -242,10 +243,46 @@ macro_rules! schema {
     (@load $dir:ident; $name:expr; Multi (str)) => { $crate::cache::load_multi_strs_in($dir, $name) };
     (@load $dir:ident; $name:expr; Multi (i64)) => { $crate::cache::load_multi_i64_in($dir, $name) };
     (@load $dir:ident; $name:expr; Multi ($T:ident)) => { $crate::cache::load_multi_ids_in($dir, $name) };
-    (@load $dir:ident; $name:expr; $T:ident) => { $crate::cache::load_ids_in($dir, $name) };
+    (@load $dir:ident; $name:expr; $T:ident) => { $crate::cache::load_fk_in::<$T, _>($dir, $name) };
+
+    // ===== EntityKind: how an entity is addressed (dense Ident | dict) =====
+    // DENSE (default): Fk = Id, Table = Ident — inlines away, so navs into a
+    // dense entity are byte-identical to a direct column compose.
+    (@entitykind $mod_:ident; $Ent:ident; [] $($body:tt)*) => {
+        impl $crate::engine::EntityKind for $Ent {
+            type Fk = $crate::engine::Id<$Ent>;
+            type Table = $crate::engine::Ident<$Ent>;
+            #[inline(always)] fn table() -> Self::Table { $crate::engine::Ident::new() }
+        }
+    };
+    // NON-DENSE (`dict`): Fk = Key, Table = a `DictTable` built once (lazily)
+    // from the entity's FIRST field — its `i64` external-id column.
+    (@entitykind $mod_:ident; $Ent:ident; [dict] $f0:ident : $($rest:tt)*) => {
+        impl $crate::engine::EntityKind for $Ent {
+            type Fk = $crate::engine::Key<$Ent>;
+            type Table = &'static $crate::engine::DictTable<$Ent>;
+            #[inline]
+            fn table() -> Self::Table {
+                static T: ::std::sync::OnceLock<$crate::engine::DictTable<$Ent>>
+                    = ::std::sync::OnceLock::new();
+                T.get_or_init(|| $crate::engine::DictTable::from_i64(
+                    &$mod_::STORE.get().expect("schema not initialized").$Ent.$f0.values))
+            }
+        }
+    };
+    // `sparse` is a DRIVE property (masked universe), not an addressing one —
+    // such an entity is still dense-ADDRESSED, so its EntityKind is the default.
+    (@entitykind $mod_:ident; $Ent:ident; [sparse] $($body:tt)*) => {
+        $crate::schema::schema!(@entitykind $mod_; $Ent; [] $($body)*);
+    };
 
     // ===== universe handle, sized by the FIRST declared field ============
     (@uni $mod_:ident; $Ent:ident; []; $($rest:tt)*) => {};
+    // `dict` is an ADDRESSING property; the universe (drive over `0..n`) is
+    // unaffected, so a dict entity gets the normal universe handle.
+    (@uni $mod_:ident; $Ent:ident; [$uni:ident dict]; $($rest:tt)*) => {
+        $crate::schema::schema!(@uni $mod_; $Ent; [$uni]; $($rest)*);
+    };
     (@uni $mod_:ident; $Ent:ident; [$uni:ident]; pub $($rest:tt)*) => {
         $crate::schema::schema!(@uni $mod_; $Ent; [$uni]; $($rest)*);
     };
@@ -321,8 +358,8 @@ macro_rules! schema {
     (@nav $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*] pub $($rest:tt)*) => {
         $crate::schema::schema!(@nav $mod_; $Ent; $Nav; [$($acc)*] $($rest)*);
     };
-    (@nav $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*]
-      $f:ident : $t1:tt $(< $t2:tt >)? $(, $($rest:tt)*)? ) => {
+    // Helper: append a PLAIN nav method (compose the column) and continue.
+    (@navplain $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*] $f:ident; $t1:tt $(($t2:tt))?; $($rest:tt)*) => {
         $crate::schema::schema!(@nav $mod_; $Ent; $Nav;
             [$($acc)*
              #[allow(dead_code)]
@@ -333,6 +370,43 @@ macro_rules! schema {
                  $crate::engine::Compose {
                      a: self.iq(),
                      b: &$mod_::STORE.get().expect("schema not initialized").$Ent.$f,
+                 }
+             }]
+            $($rest)*);
+    };
+    // Scalar / multi leaves: plain nav. (Intercepted before the FK arm so that
+    // `str`/`i64`/`f64`/`Multi<…>` don't match the bare-entity `$T:ident` arm.)
+    (@nav $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*] $f:ident : str $(, $($rest:tt)*)? ) => {
+        $crate::schema::schema!(@navplain $mod_; $Ent; $Nav; [$($acc)*] $f; str; $($($rest)*)?);
+    };
+    (@nav $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*] $f:ident : i64 $(, $($rest:tt)*)? ) => {
+        $crate::schema::schema!(@navplain $mod_; $Ent; $Nav; [$($acc)*] $f; i64; $($($rest)*)?);
+    };
+    (@nav $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*] $f:ident : f64 $(, $($rest:tt)*)? ) => {
+        $crate::schema::schema!(@navplain $mod_; $Ent; $Nav; [$($acc)*] $f; f64; $($($rest)*)?);
+    };
+    (@nav $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*] $f:ident : Multi < $t2:tt > $(, $($rest:tt)*)? ) => {
+        $crate::schema::schema!(@navplain $mod_; $Ent; $Nav; [$($acc)*] $f; Multi($t2); $($($rest)*)?);
+    };
+    // Foreign key (bare entity): the nav crosses E's entity table — `Ident` for
+    // a dense entity, so it inlines away (a non-dense entity gets a Key→Id
+    // dictionary here instead). The result is still valued `Id<$T>`.
+    (@nav $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*] $f:ident : $T:ident $(, $($rest:tt)*)? ) => {
+        $crate::schema::schema!(@nav $mod_; $Ent; $Nav;
+            [$($acc)*
+             #[allow(dead_code)]
+             #[inline]
+             fn $f(self) -> $crate::engine::Compose<
+                 $crate::engine::Compose<Self::Q,
+                     &'static $crate::schema::schema!(@colty (); $Ent; $T)>,
+                 <$T as $crate::engine::EntityKind>::Table>
+             {
+                 $crate::engine::Compose {
+                     a: $crate::engine::Compose {
+                         a: self.iq(),
+                         b: &$mod_::STORE.get().expect("schema not initialized").$Ent.$f,
+                     },
+                     b: <$T as $crate::engine::EntityKind>::table(),
                  }
              }]
             $($($rest)*)?);
@@ -415,13 +489,14 @@ mod tests {
         Tag / TagNav { tag: str, films: Multi<Film> }
     }
 
-    fn write_v2(dir: &PathBuf, name: &str, head: [u8; HEADER_LEN], payload: &[u8]) {
+
+    pub(super) fn write_v2(dir: &PathBuf, name: &str, head: [u8; HEADER_LEN], payload: &[u8]) {
         let mut f = File::create(dir.join(format!("{name}.bin"))).unwrap();
         f.write_all(&head).unwrap();
         f.write_all(payload).unwrap();
     }
 
-    fn dense_str(vals: &[&str]) -> ([u8; HEADER_LEN], Vec<u8>) {
+    pub(super) fn dense_str(vals: &[&str]) -> ([u8; HEADER_LEN], Vec<u8>) {
         let mut payload = Vec::new();
         let mut off = 0u32;
         payload.extend_from_slice(&off.to_le_bytes());
@@ -435,7 +510,7 @@ mod tests {
         (header(KIND_DENSE_STR, vals.len() as u64, off as u64), payload)
     }
 
-    fn dense_words(vals: &[u64]) -> ([u8; HEADER_LEN], Vec<u8>) {
+    pub(super) fn dense_words(vals: &[u64]) -> ([u8; HEADER_LEN], Vec<u8>) {
         let mut payload = Vec::new();
         for v in vals {
             payload.extend_from_slice(&v.to_le_bytes());
@@ -549,5 +624,61 @@ mod tests {
             ("Tag", "tag", KIND_DENSE_STR),
             ("Tag", "films", KIND_CSR_WORDS),
         ]);
+    }
+
+}
+
+// A schema with a NON-DENSE (`dict`) entity, in its own module (each `schema!`
+// emits a `MANIFEST`, so two can't share a module). `Studio` is addressed by an
+// external `id` (100/205/9899 — not dense rows); its first field is that id
+// column, from which the `DictTable` is built. `Movie.studio` is a FK STORING
+// those external keys, navigated through the table.
+#[cfg(test)]
+mod dict_tests {
+    use crate::engine::*;
+    use crate::format::*;
+    use super::tests::{write_v2, dense_words, dense_str};
+
+    schema! { DICTT / DictSchema / dictt_init:
+        Movie(movie) / MovieNav { studio: Studio, year: i64 }
+        Studio(studio dict) / StudioNav { id: i64, sname: str }
+    }
+
+    #[test]
+    fn dict_entity_loads_and_navigates() {
+        let dir = std::env::temp_dir()
+            .join(format!("prela_dict_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Studio: EXTERNAL ids 100/205/9899 at dense rows 0/1/2; names. The id
+        // column is what the DictTable inverts (external id → row).
+        let (h, p) = dense_words(&[100, 205, 9899]);
+        write_v2(&dir, "Studio_id", h, &p);
+        let (h, p) = dense_str(&["Warner", "A24", "Mubi"]);
+        write_v2(&dir, "Studio_sname", h, &p);
+        // Movie.studio: FK storing the external KEYS (205, 100) — NOT row ids.
+        let (h, p) = dense_words(&[205, 100]);
+        write_v2(&dir, "Movie_studio", h, &p);
+        let (h, p) = dense_words(&[2008, 1999]);
+        write_v2(&dir, "Movie_year", h, &p);
+
+        dictt_init(&dir);
+
+        // movie.studio().sname() — `.studio()` crosses Studio's DictTable (built
+        // lazily from `Studio.id`), then `.sname()` reads the column. The FK is
+        // a non-dense Key, resolved to a row by the table.
+        let q = movie.studio().sname();
+        let mut got = Vec::new();
+        q.drive(|m, n| got.push((m.idx(), n)));
+        got.sort();
+        // movie 0 → studio key 205 → row 1 → "A24"; movie 1 → key 100 → row 0 → "Warner"
+        assert_eq!(got, vec![(0, "A24"), (1, "Warner")]);
+
+        // the FK column genuinely stores a non-dense Key (not a row Id): the raw
+        // handle `Movie::studio` resolves to the Key column, un-followed.
+        let mut keys = Vec::new();
+        movie.select(Movie::studio).drive(|m, k: Key<Studio>| keys.push((m.idx(), k.0)));
+        keys.sort();
+        assert_eq!(keys, vec![(0, 205), (1, 100)]);
     }
 }

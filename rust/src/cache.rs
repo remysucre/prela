@@ -83,6 +83,14 @@ pub fn load_ids_in<T: 'static, D: Dense>(dir: &Path, name: &str) -> VecRel<Id<T>
     VecRel::new(cast_slice::<Id<T>>(bytes, HEADER_LEN, n).to_vec())
 }
 
+/// A foreign-key column into entity `T`, storing `T::Fk` — `Id<T>` for a dense
+/// entity, `Key<T>` for a non-dense one (both `repr(transparent)` 8-byte ids,
+/// so the same `KIND_DENSE_I64` bytes reinterpret to whichever `T` declares).
+pub fn load_fk_in<T: crate::engine::EntityKind, D: Dense>(dir: &Path, name: &str) -> VecRel<T::Fk, D> {
+    let (n, _, bytes) = open_in(dir, name, KIND_DENSE_I64);
+    VecRel::new(cast_slice::<T::Fk>(bytes, HEADER_LEN, n).to_vec())
+}
+
 /// Dense f64 column.
 pub fn load_f64_in<D: Dense>(dir: &Path, name: &str) -> VecRel<f64, D> {
     let (n, _, bytes) = open_in(dir, name, KIND_DENSE_F64);
