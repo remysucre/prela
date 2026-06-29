@@ -117,8 +117,7 @@ PackageOptions algorithm2e ruled
 \begin_body
 
 \begin_layout Title
-Prela:
- A Purely Algebraic Relational Query Language
+Revisiting the Algebraic Foundation of Relational Data
 \end_layout
 
 \begin_layout Section
@@ -126,529 +125,312 @@ Introduction
 \end_layout
 
 \begin_layout Standard
-Codd's Relational Algebra is the theoretical foundation underlying all modern relational databases.
- Yet,
- this formalism is not an algebra in the mathematical sense:
- operators must be annotated with context-dependent parameters like join predicates,
- projection columns,
- and group-by attributes to fully specify semantics.
- These annotations lead to verbose queries,
- and complicate system implementation.
- For example,
- query 29a from the Join Order Benchmark spans over a hundred lines when expressed in the Pandas dataframe library,
- as shown in Figure TODO in the appendix.
- The original SQL query takes up 66 lines,
- and one would need some scratch paper to figure out how the 17 input tables join with each other.
- On the other hand,
- the query engine must carefully track such annoations throughout the entire query lifecycle including parsing,
- optimization,
- compilation and execution,
- resulting in complex system design and can lead to subtle bugs TODO CITE.
- 
-\end_layout
-
-\begin_layout Standard
-In this paper,
- we introduce Prela,
- a new query language based on Tarski's Relational Algebra CITE – a purely algebraic formalism for relations predating Codd's by three decades.
- By insisting on purity,
- Prela leads to delightfully concise yet readable queries.
- Figure TODO shows the complete Prela query for JOB 29a whose intent is clear at a glance:
- we're looking for movies satisfying the conditions in lines TODO,
- then returning its title (which must be 
-\begin_inset Quotes eld
-\end_inset
-
-Shrek 2
-\begin_inset Quotes erd
-\end_inset
-
-) as well as cast members satisfying further conditions.
- For system builders,
- the purely algebraic nature of Prela admits 
-\emph on
-direct embedding
-\emph default
- in a host programming language.
- This means Prela can be implemented as a 
-\emph on
-library
-\emph default
- with regular functions and types instead of a 
-\emph on
-domain-specific language
-\emph default
- requiring bespoke infrastructure like parsers,
- type checkers,
- and runtimes.
- Direct embedding leads to simple implementation,
- and allows Prela to inherit powerful language infrastructure developed for the host language.
- Indeed,
- the query in Figure TODO is executable Julia code,
- where variables like 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-movie
-\end_layout
-
-\end_inset
-
-,
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-production_year
-\end_layout
-
-\end_inset
-
-,
- and 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-info
-\end_layout
-
-\end_inset
-
- are regular Julia variables of type 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-Relation
-\end_layout
-
-\end_inset
-
-,
- and constructs like 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.
-\end_layout
-
-\end_inset
-
-,
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-&
-\end_layout
-
-\end_inset
-
-,
- and 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-,
-\end_layout
-
-\end_inset
-
- are implemented as regular functions.
- While our Julia implementation relies on powerful language features including multiple dispatch and operator overloading,
- Prela can also be instantiated in other host languages without such features,
- at the cost of moderately more verbose queries.
- Figure TODO in the appendix shows our example query in a Rust implementation of Prela.
- Yet another benefit of the algebraic approach is that Prela gives the programmer fine-grained control over query execution,
- in contrast to the declarative nature of SQL.
- In principle,
- declarative language design is motivated by the focus on expressing high-level intent as opposed to low-level mechanics.
+Over the past 50 years,
+ the relational model has cemented its status as the foundation underlying database systems.
+ The relational algebra has therefore become the central abstraction bridging high-level semantics to low-level execution.
  However,
- the decoupling of the query and its execution poses an obstacle when the programmer needs to finetune query performance,
- as they must resort to awkward query plan hints or special operators like 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-CROSS JOIN
-\end_layout
-
-\end_inset
-
-.
- In contrast,
- a Prela query 
+ the world has changed both below and above this abstraction.
+ At the system level,
+ modern OLAP engines increasingly adopt column-oriented storage,
+ while transactional systems are built upon a key-value core.
+ On the application side,
+ researchers are pushing towards higher abstractions like the Entity/Relationship model,
+ with the goal to better support nested and graph data,
+ and to reconcile the long-standing impedance mismatch between relational schema and application code.
+ As a result,
+ both the physical layer and the semantic layer have drifted away from the original table-oriented abstraction.
+ Yet,
+ as we will show,
+ the independent evolution of the physics and the semantics of relational data have lead to the same destiny!
+ This reunion calls for new abstractions that better connect queries to their execution.
+ In this paper,
+ we revisit an old formalism of relations preceding Codd's relational algebra by over 100 years.
+ This formalism was developed by logicians from De Morgan,
+ Peirce,
+ Schröder,
+ to Tarski,
+ and is now commonly know as Tarski's Algebra of Relations (TAR).
+ To demonstrate the potential of TAR as a new foundation for modern database systems,
+ we design and implement Prela,
+ a 
 \emph on
-is
+compositional
 \emph default
- a query plan,
- as it is built up with relations and relational operators.
- The programmer can finetune all (logical) aspects of query planning including join ordering,
- materialization,
- and operator pushdown/pullup by directly rewriting the query.
- In our experiments,
- an AI agent is able to optimize all 113 JOB queries in Prela to perform competitively with DuckDB.
- On the other hand,
- the programmer may also choose to write the query in the most natural way,
- and pass it to a query optimizer that applies simple algebraic rewritings to improve performance.
- 
-\end_layout
-
-\begin_layout Standard
-In the rest of this paper,
- TODO summarize.
- 
-\end_layout
-
-\begin_layout Section
-Data Model and Related Work
-\end_layout
-
-\begin_layout Standard
-The design of a query language is closely guided by its choice of data model.
- While we defer a formal treatment of Prela's data model to Section TODO,
- this Section provides a high-level discussion in the context of several related design points.
- 
-\end_layout
-
-\begin_layout Standard
-As Prela is built upon the formal foundation of Tarski's Relational Algebra where the fundamental data type is the 
+ and 
 \emph on
-binary
+controllable
 \emph default
- relation,
- our data model can be understood as an instantiation of the Entity/Relational model.
- Consider again the query 29a,
- which can be understood as operating over 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-movie
-\end_layout
-
-\end_inset
-
- entities (of entity 
-\lang english
-type 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-Movie
-\end_layout
-
-\end_inset
-
-),
- while we use the 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.
-\end_layout
-
-\end_inset
-
- syntax to access various attributes of the entity.
- In our experience this is a helpful mental model when programming in Prela.
- This syntax also connects Prela to object-oriented and document data,
- for which SQL infamously struggles to model due to impedance mismatch.
- Users of document/nested query languages like XPath or the more recent jq may find Prela's syntax familiar.
- This is not a coincidence,
- as Tarski's Relational Algebra has also been used to analyze nested data models.
- Unlike these langauges,
- Prela is not constrained to a single nested data schema or to the nested data model.
- In our example query,
+ query language.
+ Using Prela,
+ the programmer can write concise,
+ clear,
+ and efficient queries,
+ all the while retaining fine-grained control over low-level details of query execution.
  
-\begin_inset listings
-inline true
+\end_layout
+
+\begin_layout Standard
+\begin_inset Float figure
+placement document
+alignment document
+wide false
+sideways false
 status open
 
 \begin_layout Plain Layout
-cast
+\begin_inset listings
+inline false
+status open
+
+\begin_layout Plain Layout
+movie.with(production_year.gt(2008)
+\end_layout
+
+\begin_layout Plain Layout
+      .and(kind.is_in(["movie",
+ "episode"]))
+\end_layout
+
+\begin_layout Plain Layout
+      .and(keyword.is_in(["murder",
+ "murder-in-title",
+ "blood",
+ "violence"]))
+\end_layout
+
+\begin_layout Plain Layout
+      .and(info.with(Info::ty.eq("countries")
+\end_layout
+
+\begin_layout Plain Layout
+                .and(Info::info.is_in(["Germany","German","USA","American"])))))
+\end_layout
+
+\begin_layout Plain Layout
+   .select(title
+\end_layout
+
+\begin_layout Plain Layout
+      .and(data.with(Data::text.lt("7.0")
+\end_layout
+
+\begin_layout Plain Layout
+                .and(Data::ty.eq("rating"))).text())
+\end_layout
+
+\begin_layout Plain Layout
+      .and(company.with(Company::note.nrx(r"
+\backslash
+(USA
+\backslash
+)")
+\end_layout
+
+\begin_layout Plain Layout
+                   .and(Company::note.rx(r"
+\backslash
+(200.*
+\backslash
+)"))
+\end_layout
+
+\begin_layout Plain Layout
+                   .and(country.ne("[us]"))
+\end_layout
+
+\begin_layout Plain Layout
+                   .and(Company::ty.eq("production companies"))).name()))
 \end_layout
 
 \end_inset
 
- appears to be a nested attribute under 
+
+\end_layout
+
+\begin_layout Plain Layout
+\begin_inset Caption Standard
+
+\begin_layout Plain Layout
+JOB query 22a in Prela.
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+The power of Prela is best demonstrated with an example.
+ Consider query 22a from the Join Order Benchmark,
+ whose SQL formulation spans 40 clauses,
+ 16 of which are used to specify join conditions.
+ Figure TODO shows the complete Prela source for the same query.
+ We will revisit this query in detail later,
+ but its intent is already clear at a glance:
+ it looks for movies satisfying certain conditions:
+ 
+\end_layout
+
+\begin_layout Itemize
+It is produced after 2008
+\end_layout
+
+\begin_layout Itemize
+It is either a movie,
+ or a TV episode
+\end_layout
+
+\begin_layout Itemize
+It is a thriller,
+ as evident by the keywords
+\end_layout
+
+\begin_layout Itemize
+It is either German or American
+\end_layout
+
+\begin_layout Standard
+Then,
+ for each such movie,
+ the query outputs its title,
+ its rating (if lower than 7),
+ and the name of its production company (if satisfying further conditions).
+ There are several notable differences between the Prela query and the SQL version.
+ First,
+ there is no explicit 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-movie
+FROM
+\end_layout
+
+\end_inset
+
+ clause in Prela;
+ instead,
+ relations appear as arguments to 
+\emph on
+relation combinators
+\emph default
+ like 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.with
 \end_layout
 
 \end_inset
 
 ,
- but the programmer is free to define a 
+ 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-stars_in
+.and
 \end_layout
 
 \end_inset
 
- relation over 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-Cast
-\end_layout
-
-\end_inset
-
+,
  and 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-Movie
+.select
 \end_layout
 
 \end_inset
 
- then query 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-cast.stars_in
-\end_layout
-
-\end_inset
-
-.
- This is because 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.
-\end_layout
-
-\end_inset
-
- is in fact the 
+,
+ revealing the 
 \emph on
-relational composition operator
+structure
 \emph default
- (defined in TODO) under the hood,
- and requires no syntactic extension to the host language to implement.
- Tarski's Relational Algebra has also been applied to formalize various graph query languages TODO CITE,
- where binary relation naturally model edge sets.
- While graph query languages aim to support a wide range of multi-hop,
- recursive queries over large networks,
- the current focus of Prela is non-recursive queries over tabular data.
+ of the query.
+ Similarly,
+ join conditions are not specified by explicit join clauses,
+ but by query structure.
+ Finally,
+ thanks to the algebraic nature of Prela,
+ queries can be written in a compositional way:
+ in this example,
+ each of 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+info.with(...)
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+data.with(...).text()
+\end_layout
+
+\end_inset
+
+,
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+company.with(...).name()
+\end_layout
+
+\end_inset
+
+ is a 
+\emph on
+subquery
+\emph default
+ supplied directly as input to relation combinators to build up the larger query.
  
 \end_layout
 
 \begin_layout Standard
-Last but not least,
- the original motivation of Prela was to address issues in practical instantiations of Codd's relational model.
- At SQL's 50th anniversary,
- the language co-creator Don Chamerlin questioned two design decisions:
- the need for nulls to represent missing data,
- and the allowance of duplicated data (
-\emph on
-a la
-\emph default
- bag semantics).
- In the programming languages community,
- nulls were considered a 
-\begin_inset Quotes eld
-\end_inset
-
-billion-dollar mistake
-\begin_inset Quotes erd
-\end_inset
-
- by its creator Tony Hoare,
- and many modern languages have adopted features like option types to rid of nulls.
- Yet,
- nulls prevail in every SQL database today.
- Similarly,
- bag semantics was offered as a convinience for database users and system builders,
- yet continues to frustrate both groups.
- To remove the reliance on nulls and bag semantics,
- Prela follows the approach of the Rel programming language and operate over fully normalized data:
- a wide relation over many columns is 
-\begin_inset Quotes eld
-\end_inset
-
-shredded
-\begin_inset Quotes erd
-\end_inset
-
- into multiple 
-\begin_inset Quotes eld
-\end_inset
-
-skinny
-\begin_inset Quotes erd
-\end_inset
-
- relations,
- each over two columns,
- a primary key column (think 
-\begin_inset Quotes eld
-\end_inset
-
-row number
-\begin_inset Quotes erd
-\end_inset
-
- of the original table) and data column.
- For example,
- the 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-movie
-\end_layout
-
-\end_inset
-
- table (originally named 
-\begin_inset Quotes eld
-\end_inset
-
-title
-\begin_inset Quotes erd
-\end_inset
-
-) from JOB over attributes 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-id
-\end_layout
-
-\end_inset
-
-,
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-title
-\end_layout
-
-\end_inset
-
-,
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-production_year
-\end_layout
-
-\end_inset
-
-,
- ...
- ,
- is represented with a 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-title
-\end_layout
-
-\end_inset
-
- table mapping each 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-id
-\end_layout
-
-\end_inset
-
- to the title text,
- a 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-production_year
-\end_layout
-
-\end_inset
-
- table mapping each 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-id
-\end_layout
-
-\end_inset
-
- to the production year,
- etc.,
- one per non-primary key attribute of the original table.
- In each shredded relation,
- the primary key constraint on the first column rules out the possibility of duplicates,
- and a missing value is naturally represented by the absence of an entry in the corresponding 
-\begin_inset Quotes eld
-\end_inset
-
-shred
-\begin_inset Quotes erd
-\end_inset
-
-.
- There is theoretical evidence that giving up nulls does not compromise expressiveness,
- and the normalization approach has proven to be practical by large scale deployments of Rel.
- The key distinction between Prela and Rel goes back to the algebraic foundation of Prela – while Rel is a declarative language based on Datalog,
- Prela is imperative and therefore 
+Under the hood,
+ every Prela query is also a query plan,
+ since each relational combinator is precisely an operator in TAR.
+ A common complaint in SQL is the difficulty to guide the query optimizer when it fails to find an efficient plan;
+ in contrast,
+ the Prela user has complete control over all aspect of query planning,
+ including join ordering,
+ operator pushdown,
+ materialization,
+ and selection of physical data structures.
+ This level of control is increasingly relevant in the age of AI,
+ as it puts the user—
+human or machine—
+back in the driver seat of performance.
+ Nevertheless,
+ this great power does not necessarily come as a responsibility,
+ and Prela can just as well serve as the algebraic abstraction underlying a query optimizer—
+the implementation of which we leave as future work.
+ Moreover,
+ Prela queries are surprisingly 
 \begin_inset Quotes eld
 \end_inset
 
@@ -656,9 +438,84 @@ closer to the metal
 \begin_inset Quotes erd
 \end_inset
 
-,
- while remaining readable as demonstrated by the examples.
+ than even the standard relational algebra,
+ thanks again to the foundation of TAR.
+ In our running example,
+ variables like 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+production_year
+\end_layout
+
+\end_inset
+
+ are directly backed by vectors in a column store,
+ and relation combinators compile to efficient operations over the columns.
  
+\end_layout
+
+\begin_layout Section
+Related Work
+\end_layout
+
+\begin_layout Standard
+Despite countless attempts at replacement,
+ the relational model prevails.
+ This paper does not try to supplant the relational model,
+ but rather to refine and evolve it to meet modern needs.
+ TAR—
+despite being a century older—
+can be understood as an evolution of the relational algebra towards columns stores and modern applications;
+ the Prela language can also be understood as a prototype demonstrating how SQL can be extended and made more flexible.
+ In particular,
+ TAR and Prela stand upon the two pillars of relational model —
+ physical and logical independence.
+ The relation-centric TAR assumes an abstract data model allowing for different physical implementations including dense vectors,
+ hash maps,
+ or bitsets;
+ the corresponding Prela query accepts type annotations to specify any of these data structures.
+ Queries can also be declared as views and used as inputs to other queries,
+ should the logical schema change.
+ In the future,
+ we believe ideas of TAR and Prela can be incorporated into mainstream relational databases to simplify their architecture and implementation.
+ 
+\end_layout
+
+\begin_layout Standard
+Database theorists have used TAR to analyze graph and tree query languages like regular path queries,
+ XPath,
+ and SPARQL.
+ This is thanks to how TAR's main operator,
+ the relational composition,
+ conviniently models edge concatenation and navigation.
+ Nevertheless,
+ none of these languages were built upon TAR 
+\emph on
+a priori
+\emph default
+.
+ Most of the theoretical study focusing on expressive power and complexity has also been largely overlooked by systems builders.
+ One major piece of software built from TAR is Alloy,
+ a specification language used to analyze software systems.
+ To the best of our knowledge,
+ Prela is the first query langauge designed and implemented with TAR as the core foundation.
+ The insistence on algebraic purity also results in Prela's unique compositionality and controllability not found in declarative languages like XPath and SPARQL.
+ 
+\end_layout
+
+\begin_layout Standard
+Dataframes
+\end_layout
+
+\begin_layout Standard
+SQL extensions
+\end_layout
+
+\begin_layout Standard
+Scheduling languages
 \end_layout
 
 \begin_layout Section
@@ -1946,10 +1803,6 @@ status open
 
  finds the first time a production company has collaborated with an actor.
  
-\end_layout
-
-\begin_layout Standard
-
 \end_layout
 
 \end_body
