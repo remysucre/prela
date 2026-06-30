@@ -13,6 +13,28 @@
 \SetAlCapNameFnt{\small}
 \SetAlCapHSkip{0pt}
 \IncMargin{-\parindent}
+
+\usepackage{listings}
+\lstdefinelanguage{Rust}{
+    sensitive=true,
+    morekeywords=[1]{
+        as, break, const, continue, crate, else, enum, extern,
+        false, fn, for, if, impl, in, let, loop, match, mod,
+        move, mut, pub, ref, return, self, Self, static, struct,
+        super, trait, true, type, unsafe, use, where, while,
+        async, await, dyn, abstract, become, do, final, macro,
+        override, priv, typeof, unsized, virtual, yield
+    },
+    morekeywords=[2]{
+        i8, i16, i32, i64, i128, isize,
+        u8, u16, u32, u64, u128, usize,
+        f32, f64, bool, char, str, String, Option, Result
+    },
+    morecomment=[l]{//},
+    morecomment=[s]{/*}{*/},
+    morestring=[b]",
+    morestring=[b]'
+}
 \end_preamble
 \options format=sigconf, review=false, screen=true
 \use_default_options false
@@ -120,6 +142,104 @@ PackageOptions algorithm2e ruled
 Revisiting the Algebraic Foundation of Relational Data
 \end_layout
 
+\begin_layout Author
+Yisu Remy Wang
+\end_layout
+
+\begin_layout Affiliation
+\begin_inset Flex Institution
+status collapsed
+
+\begin_layout Plain Layout
+University of California,
+ Los Angeles
+\end_layout
+
+\end_inset
+
+ 
+\begin_inset Flex Department
+status open
+
+\begin_layout Plain Layout
+Department of Computer Science
+\end_layout
+
+\end_inset
+
+ 
+\begin_inset Flex City
+status collapsed
+
+\begin_layout Plain Layout
+Los Angeles,
+ CA
+\end_layout
+
+\end_inset
+
+
+\begin_inset Flex Country
+status collapsed
+
+\begin_layout Plain Layout
+USA
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Author
+Paul Joseph Talma
+\end_layout
+
+\begin_layout Affiliation
+\begin_inset Flex Institution
+status collapsed
+
+\begin_layout Plain Layout
+University of California,
+ Los Angeles
+\end_layout
+
+\end_inset
+
+ 
+\begin_inset Flex Department
+status open
+
+\begin_layout Plain Layout
+Department of Philosophy
+\end_layout
+
+\end_inset
+
+ 
+\begin_inset Flex City
+status collapsed
+
+\begin_layout Plain Layout
+Los Angeles,
+ CA
+\end_layout
+
+\end_inset
+
+
+\begin_inset Flex Country
+status collapsed
+
+\begin_layout Plain Layout
+USA
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
 \begin_layout Section
 Introduction
 \end_layout
@@ -131,7 +251,7 @@ Over the past 50 years,
  However,
  the world has changed both below and above this abstraction.
  At the system level,
- modern OLAP engines increasingly adopt column-oriented storage,
+ OLAP engines increasingly adopt column-oriented storage,
  while transactional systems are built upon a key-value core.
  On the application side,
  researchers are pushing towards higher abstractions like the Entity/Relationship model,
@@ -183,27 +303,11 @@ inline false
 status open
 
 \begin_layout Plain Layout
-movie.with(production_year.gt(2008)
+movie.with(company.s(country).eq("[us]")
 \end_layout
 
 \begin_layout Plain Layout
-      .and(kind.is_in(["movie",
- "episode"]))
-\end_layout
-
-\begin_layout Plain Layout
-      .and(keyword.is_in(["murder",
- "murder-in-title",
- "blood",
- "violence"]))
-\end_layout
-
-\begin_layout Plain Layout
-      .and(info.with(Info::ty.eq("countries")
-\end_layout
-
-\begin_layout Plain Layout
-                .and(Info::info.is_in(["Germany","German","USA","American"])))))
+      .and(keyword.eq("character-name-in-title"))
 \end_layout
 
 \begin_layout Plain Layout
@@ -211,35 +315,7 @@ movie.with(production_year.gt(2008)
 \end_layout
 
 \begin_layout Plain Layout
-      .and(data.with(Data::text.lt("7.0")
-\end_layout
-
-\begin_layout Plain Layout
-                .and(Data::ty.eq("rating"))).text())
-\end_layout
-
-\begin_layout Plain Layout
-      .and(company.with(Company::note.nrx(r"
-\backslash
-(USA
-\backslash
-)")
-\end_layout
-
-\begin_layout Plain Layout
-                   .and(Company::note.rx(r"
-\backslash
-(200.*
-\backslash
-)"))
-\end_layout
-
-\begin_layout Plain Layout
-                   .and(country.ne("[us]"))
-\end_layout
-
-\begin_layout Plain Layout
-                   .and(Company::ty.eq("production companies"))).name()))
+      .and(cast.s(person).s(alias).s(text)))
 \end_layout
 
 \end_inset
@@ -251,7 +327,13 @@ movie.with(production_year.gt(2008)
 \begin_inset Caption Standard
 
 \begin_layout Plain Layout
-JOB query 22a in Prela.
+\begin_inset CommandInset label
+LatexCommand label
+name "fig:JOB-query-16b"
+
+\end_inset
+
+JOB query 16b in Prela.
 \end_layout
 
 \end_inset
@@ -266,40 +348,38 @@ JOB query 22a in Prela.
 
 \begin_layout Standard
 The power of Prela is best demonstrated with an example.
- Consider query 22a from the Join Order Benchmark,
- whose SQL formulation spans 40 clauses,
- 16 of which are used to specify join conditions.
- Figure TODO shows the complete Prela source for the same query.
+ Consider query 16b from the Join Order Benchmark,
+ whose SQL formulation spans 23 clauses,
+ 11 of which are used to specify join conditions.
+ Figure
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "fig:JOB-query-16b"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+tuple "list"
+
+\end_inset
+
+ shows the complete Prela source for the same query.
  We will revisit this query in detail later,
  but its intent is already clear at a glance:
- it looks for movies satisfying certain conditions:
- 
-\end_layout
+ it looks for movies made by American companies with keyword matching 
+\begin_inset Quotes eld
+\end_inset
 
-\begin_layout Itemize
-It is produced after 2008
-\end_layout
+character-name-in-title
+\begin_inset Quotes erd
+\end_inset
 
-\begin_layout Itemize
-It is either a movie,
- or a TV episode
-\end_layout
-
-\begin_layout Itemize
-It is a thriller,
- as evident by the keywords
-\end_layout
-
-\begin_layout Itemize
-It is either German or American
-\end_layout
-
-\begin_layout Standard
-Then,
- for each such movie,
- the query outputs its title,
- its rating (if lower than 7),
- and the name of its production company (if satisfying further conditions).
+,
+ then outputs the movie title along with the alias for each cast member.
  There are several notable differences between the Prela query and the SQL version.
  First,
  there is no explicit 
@@ -475,7 +555,7 @@ can be understood as an evolution of the relational algebra towards columns stor
  physical and logical independence.
  The relation-centric TAR assumes an abstract data model allowing for different physical implementations including dense vectors,
  hash maps,
- or bitsets;
+ or bit sets;
  the corresponding Prela query accepts type annotations to specify any of these data structures.
  Queries can also be declared as views and used as inputs to other queries,
  should the logical schema change.
@@ -490,7 +570,7 @@ Database theorists have used TAR to analyze graph and tree query languages like 
  and SPARQL.
  This is thanks to how TAR's main operator,
  the relational composition,
- conviniently models edge concatenation and navigation.
+ conveniently models edge concatenation and navigation.
  Nevertheless,
  none of these languages were built upon TAR 
 \emph on
@@ -501,7 +581,7 @@ a priori
  One major piece of software built from TAR is Alloy,
  a specification language used to analyze software systems.
  To the best of our knowledge,
- Prela is the first query langauge designed and implemented with TAR as the core foundation.
+ Prela is the first query language designed and implemented with TAR as the core foundation.
  The insistence on algebraic purity also results in Prela's unique compositionality and controllability not found in declarative languages like XPath and SPARQL.
  
 \end_layout
