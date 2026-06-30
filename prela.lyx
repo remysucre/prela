@@ -717,7 +717,7 @@ Database theorists have used TAR to analyze graph and tree query languages like 
 a priori
 \emph default
 .
- Most of the theoretical study focusing on expressive power and complexity has also been largely overlooked by systems builders.
+ The theoretical study focusing on expressive power and complexity has also been largely overlooked by systems builders.
  One major piece of software built from TAR is Alloy,
  a specification language used to analyze software systems.
  To the best of our knowledge,
