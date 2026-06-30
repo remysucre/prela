@@ -369,7 +369,7 @@ tuple "list"
 
  shows the complete Prela source for the same query.
  We will revisit this query in detail later,
- but its intent is already clear at a glance:
+ but the intent is already clear at a glance:
  it looks for movies made by American companies with keyword matching 
 \begin_inset Quotes eld
 \end_inset
@@ -446,14 +446,23 @@ structure
  Finally,
  thanks to the algebraic nature of Prela,
  queries can be written in a compositional way:
- in this example,
- each of 
+ in the example,
+ every subexpression,
+ including 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-info.with(...)
+company.s(country).eq(
+\begin_inset Quotes eld
+\end_inset
+
+[us]
+\begin_inset Quotes erd
+\end_inset
+
+)
 \end_layout
 
 \end_inset
@@ -465,7 +474,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-data.with(...).text()
+keyword.eq(...)
 \end_layout
 
 \end_inset
@@ -477,23 +486,129 @@ inline true
 status open
 
 \begin_layout Plain Layout
-company.with(...).name()
+cast.s(person).s(alias).s(text)
 \end_layout
 
 \end_inset
 
- is a 
-\emph on
-subquery
-\emph default
- supplied directly as input to relation combinators to build up the larger query.
+,
+ is independently a valid query,
+ and they appear directly as inputs to relation combinators to build up the larger query.
  
 \end_layout
 
 \begin_layout Standard
-Under the hood,
+The reader may be surprised to learn that the query in Figure
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "fig:JOB-query-16b"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+tuple "list"
+
+\end_inset
+
+ is in fact regular Rust code.
+ Indeed,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+company
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+country
+\end_layout
+
+\end_inset
+
+,
+ etc.,
+ are Rust variables,
+ and combinators like 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.with
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.and
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.select
+\end_layout
+
+\end_inset
+
+,
+ etc.,
+ are Rust functions.
+ In other words,
+ Prela is an 
+\emph on
+embedded query language
+\emph default
+,
+ or more simply,
+ a 
+\emph on
+library
+\emph default
+.
+ This means Prela queries seamlessly integrate with application code,
+ and the programmer can pass in regular Rust functions as UDFs.
+ Under the hood,
  every Prela query is also a query plan,
- since each relational combinator is precisely an operator in TAR.
+ since each relational combinator corresponds precisely to an operator in TAR.
  A common complaint in SQL is the difficulty to guide the query optimizer when it fails to find an efficient plan;
  in contrast,
  the Prela user has complete control over all aspect of query planning,
@@ -504,12 +619,16 @@ Under the hood,
  This level of control is increasingly relevant in the age of AI,
  as it puts the user—
 human or machine—
-back in the driver seat of performance.
+back in the driver seat of performance engineering.
  Nevertheless,
  this great power does not necessarily come as a responsibility,
- and Prela can just as well serve as the algebraic abstraction underlying a query optimizer—
+ and Prela/TAR can just as well serve as the 
+\emph on
+intermediate representation
+\emph default
+ underlying a query optimizer—
 the implementation of which we leave as future work.
- Moreover,
+ Finally,
  Prela queries are surprisingly 
 \begin_inset Quotes eld
 \end_inset
@@ -527,12 +646,25 @@ inline true
 status open
 
 \begin_layout Plain Layout
-production_year
+country
 \end_layout
 
 \end_inset
 
- are directly backed by vectors in a column store,
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+keyword
+\end_layout
+
+\end_inset
+
+ are backed 
+\lang english
+directly by vectors in a column store,
  and relation combinators compile to efficient operations over the columns.
  
 \end_layout
@@ -548,19 +680,27 @@ Despite countless attempts at replacement,
  but rather to refine and evolve it to meet modern needs.
  TAR—
 despite being a century older—
-can be understood as an evolution of the relational algebra towards columns stores and modern applications;
- the Prela language can also be understood as a prototype demonstrating how SQL can be extended and made more flexible.
+can be understood as an evolution of the relational algebra towards columns stores and Entity/Relationship;
+ the Prela language can also be considered a prototype demonstrating how SQL can be extended and made more flexible.
  In particular,
- TAR and Prela stand upon the two pillars of relational model —
- physical and logical independence.
+ we do not view Entity/Relationship as an alternative to the relational model,
+ but rather as a higher abstraction 
+\emph on
+on top of
+\emph default
+ the latter,
+ following recent work by Deshpande.
+ Crucially,
+ TAR and Prela stand upon the two pillars of physical and logical independence.
  The relation-centric TAR assumes an abstract data model allowing for different physical implementations including dense vectors,
  hash maps,
  or bit sets;
  the corresponding Prela query accepts type annotations to specify any of these data structures.
- Queries can also be declared as views and used as inputs to other queries,
- should the logical schema change.
+ Queries can be declared as views and used as inputs to other queries,
+ should the logical schema change;
+ addition and deletion of orthogonal attributes and relationships will also not break existing queries.
  In the future,
- we believe ideas of TAR and Prela can be incorporated into mainstream relational databases to simplify their architecture and implementation.
+ we believe ideas of TAR and Prela can be incorporated into mainstream relational databases to simplify their design and implementation.
  
 \end_layout
 
@@ -570,7 +710,7 @@ Database theorists have used TAR to analyze graph and tree query languages like 
  and SPARQL.
  This is thanks to how TAR's main operator,
  the relational composition,
- conveniently models edge concatenation and navigation.
+ conveniently models edge concatenation and path navigation.
  Nevertheless,
  none of these languages were built upon TAR 
 \emph on
@@ -581,7 +721,7 @@ a priori
  One major piece of software built from TAR is Alloy,
  a specification language used to analyze software systems.
  To the best of our knowledge,
- Prela is the first query language designed and implemented with TAR as the core foundation.
+ Prela is the first database query language designed and implemented with TAR as the core foundation.
  The insistence on algebraic purity also results in Prela's unique compositionality and controllability not found in declarative languages like XPath and SPARQL.
  
 \end_layout
