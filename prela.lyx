@@ -245,11 +245,30 @@ USA
 
 \begin_layout Section
 Introduction
+\begin_inset CommandInset label
+LatexCommand label
+name "sec:Introduction"
+
+\end_inset
+
+
 \end_layout
 
 \begin_layout Standard
 Over the past 50 years,
- the relational model has cemented its status as the foundation underlying database systems.
+ the relational model
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:journals/cacm/Codd70"
+literal "false"
+
+\end_inset
+
+ has cemented its status as the foundation underlying database systems.
  The relational algebra has therefore become the central abstraction bridging high-level semantics to low-level execution.
  However,
  the world has changed both below and above this abstraction.
@@ -257,7 +276,19 @@ Over the past 50 years,
  OLAP engines increasingly adopt column-oriented storage,
  while transactional systems are built upon a key-value core.
  On the application side,
- researchers are pushing towards higher abstractions like the Entity/Relationship model,
+ researchers are pushing towards higher abstractions like the Entity/Relationship model
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:conf/cidr/Deshpande25,DBLP:journals/tods/Chen76"
+literal "false"
+
+\end_inset
+
+,
  with the goal to better support nested and graph data,
  and to reconcile the long-standing impedance mismatch between relational schema and application code.
  As a result,
@@ -271,12 +302,24 @@ Over the past 50 years,
  This formalism was developed by logicians from De Morgan,
  Peirce,
  Schröder,
- to Tarski,
+ to Tarski and Givant,
  and is now commonly know as Tarski's Algebra of Relations (
 \noun on
 TAR
 \noun default
-).
+)
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:journals/jsyml/Tarski41,tarski1987formalization,Maddux1991-MADTOO"
+literal "false"
+
+\end_inset
+
+.
  To demonstrate the potential of 
 \noun on
 TAR
@@ -359,7 +402,19 @@ JOB query 16b in Prela.
 
 \begin_layout Standard
 The power of Prela is best demonstrated with an example.
- Consider query 16b from the Join Order Benchmark,
+ Consider query 16b from the Join Order Benchmark
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:journals/pvldb/LeisGMBK015"
+literal "false"
+
+\end_inset
+
+,
  whose SQL formulation spans 23 clauses,
  11 of which are used to specify join conditions.
  Figure
@@ -685,20 +740,48 @@ keyword
 
 \end_inset
 
- are backed 
-\lang english
-directly by vectors in a column store,
+ are backed directly by vectors in a column store,
  and relation combinators compile to efficient operations over the columns.
  
 \end_layout
 
 \begin_layout Section
 Related Work
+\begin_inset CommandInset label
+LatexCommand label
+name "sec:Related-Work"
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Paragraph*
+\begin_inset Quotes eld
+\end_inset
+
+What goes around comes around
+\begin_inset Quotes erd
+\end_inset
+
+
 \end_layout
 
 \begin_layout Standard
 Despite countless attempts at replacement,
- the relational model has stood the test of time.
+ the relational model has stood the test of time
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "stonebraker2005what,DBLP:journals/sigmod/StonebrakerP24"
+literal "false"
+
+\end_inset
+
+.
  This paper does not try to supplant the relational model,
  but rather to refine and evolve it to meet modern needs.
  
@@ -714,8 +797,8 @@ can be understood as an evolution of the relational algebra towards columns stor
 \noun on
 TAR
 \noun default
- and Prela stand upon the two pillars of physical and logical independence.
- The relation-centric 
+ and Prela stand upon the two pillars of physical and logical independence:
+ the relation-centric 
 \noun on
 TAR
 \noun default
@@ -725,9 +808,8 @@ TAR
  the corresponding Prela query accepts type annotations to specify any of these data structures.
  Queries can be declared as views and used as inputs to other queries,
  should the logical schema change;
- addition and deletion of orthogonal attributes and relationships also do not break existing queries.
- In the future,
- we believe ideas of 
+ addition and deletion of orthogonal attributes and relationships also will not break existing queries.
+ We believe ideas of 
 \noun on
 TAR
 \noun default
@@ -735,14 +817,96 @@ TAR
  
 \end_layout
 
+\begin_layout Paragraph*
+
+\noun on
+TAR 
+\noun default
+in theory
+\end_layout
+
 \begin_layout Standard
-Database theorists have used 
+The connection between Tarski and Codd has been noted as early as the first 
+\noun on
+PODS
+\noun default
+ conference in 1982,
+ when Imielinski and Lipski
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "10.1145/588111.588139,DBLP:journals/jcss/ImielinskiL84"
+literal "false"
+
+\end_inset
+
+ demonstrated how to emulate Codd's relational algebra with Tarski's 
+\emph on
+cylindric algebras
+\emph default
+,
+ an extension of Boolean algebras related to 
+\noun on
+TAR
+\noun default
+.
+ Gyssens,
+ Saxton and Van Gucht
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:books/mk/freytagMV91/GyssensSG91"
+literal "false"
+
+\end_inset
+
+ proposed an alternative approach to modeling relational algebra by enhancing 
+\noun on
+TAR
+\noun default
+ with certain 
+\emph on
+pairing/tagging
+\emph default
+ operations that introduce tuple values.
+ We believe our product operation 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.and
+\end_layout
+
+\end_inset
+
+ fills an equivalent role to pairing and tagging,
+ but is more natural for writing queries.
+ Database theorists have also used 
 \noun on
 TAR
 \noun default
  to analyze graph and tree query languages like Regular Path Queries,
  XPath,
- and SPARQL.
+ and SPARQL
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:conf/icdt/FletcherGLBGVW11,DBLP:journals/jacm/LibkinMV16,DBLP:journals/igpl/SurinxFGLBGVW15,DBLP:journals/jlap/HellingsWGG22,DBLP:journals/lmcs/0001CMB24"
+literal "false"
+
+\end_inset
+
+.
  This is thanks to how 
 \noun on
 TAR
@@ -760,44 +924,193 @@ TAR
 a priori
 \emph default
 .
- The theoretical study focusing on expressive power and complexity has also been largely overlooked by systems builders.
- One major piece of software built from 
-\noun on
-TAR
-\noun default
- is Alloy,
- a specification language used to analyze software systems.
- To the best of our knowledge,
- Prela is the first database query language designed and implemented with 
-\noun on
-TAR
-\noun default
- as the core foundation.
- The insistence on algebraic purity also results in Prela's unique compositionality and controllability not found in declarative languages like XPath and SPARQL.
  
 \end_layout
 
+\begin_layout Paragraph*
+
+\noun on
+TAR 
+\noun default
+in practice
+\end_layout
+
 \begin_layout Standard
-Dataframes libraries like 
+There have been sporadic efforts to bring the theory of 
+\noun on
+TAR
+\noun default
+ into practice.
+ In 1992,
+ Paredaens et al.
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:journals/sigmod/ParedaensBAGGTGSS92"
+literal "false"
+
+\end_inset
+
+ presented 
+\noun on
+GOOD
+\noun default
+,
+ a 
+\begin_inset Quotes eld
+\end_inset
+
+Graph-Oriented Object Database
+\begin_inset Quotes erd
+\end_inset
+
+,
+ and considered an implementation over a data model based on 
+\noun on
+TAR
+\noun default
+.
+ The 
+\noun on
+GOOD
+\noun default
+ system itself,
+ however,
+ was built atop a standard relational engine.
+ A follow-on technical report by Sarathy and Van Gucht
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "sarathy1993implementation"
+literal "false"
+
+\end_inset
+
+ describes an implementation of the 
+\noun on
+GOOD
+\noun default
+ model in the 
+\noun on
+IUGQL
+\noun default
+ query language.
+ More recently,
+ Libkin et al.
+ developed 
+\noun on
+TriAL
+\noun default
+
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:journals/tods/LibkinRSV18"
+literal "false"
+
+\end_inset
+
+,
+ a language for recursive queries over RDF data based on a 
+\emph on
+triple algebra
+\emph default
+ related to 
+\noun on
+TAR
+\noun default
+.
+ Compared to these languages,
+ Prela focuses on traditional non-recursive queries over relational data.
+ Prela also uses 
+\noun on
+TAR
+\noun default
+ directly both as the surface syntax and the underlying storage abstraction,
+ whereas the aforementioned systems all come with a separate,
+ declarative query syntax.
+ This indirection complicates system design,
+ obstructs performance tuning,
+ and obscures the beauty of 
+\noun on
+TAR.
+ 
+\end_layout
+
+\begin_layout Paragraph*
+Dataframes
+\end_layout
+
+\begin_layout Standard
+Libraries like 
 \noun on
 pandas
 \noun default
+
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "mckinney2010pandas,pandas"
+literal "false"
+
+\end_inset
+
 ,
  
 \noun on
 polars
 \noun default
+
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "polars"
+literal "false"
+
+\end_inset
+
 ,
  and 
 \noun on
-datafusion 
+datafusion
+\noun default
+
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "lamb2024datafusion"
+literal "false"
+
+\end_inset
+
+
+\noun on
+ 
 \noun default
 provide an interface to tabular data based on relational algebra.
  As such,
  these libraries also struggle to express multi-table joins succinctly,
  as each join operation must specify the join condition explicitly.
  Moreover,
- since they typically implement column names as attributes of each dataframe object,
+ since the libraries typically implement column names as attributes of each dataframe object,
  the user must take great care to rename columns when joining tables,
  to avoid conflicts and ambiguity.
  As a result,
@@ -831,12 +1144,28 @@ datafusion
  
 \end_layout
 
+\begin_layout Paragraph*
+SQL extensions
+\end_layout
+
 \begin_layout Standard
 The secret behind the longevity of SQL is its ability to absorb ideas proposed in new query languages.
  Recent work by Shute,
  Zheng,
- and Kudtarkar proposed SQL extensions to better support semantic data modeling and graph workloads.
- Their proposal lead to several design points strikingly similar to Prela.
+ and Kudtarkar
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:conf/cidr/ShuteZK26"
+literal "false"
+
+\end_inset
+
+ proposed SQL extensions to better support semantic data modeling and graph workloads.
+ Their proposal lead to several design points strikingly similar to those taken by Prela.
  For example,
  they also support implicit joins without specifying join conditions,
  as well as multi-hop join/access syntax similar to the last line of Figure
@@ -856,9 +1185,6 @@ tuple "list"
 \end_inset
 
 .
- However,
- they only allow joins to be implicit when the join condition can be inferred from key/foreign key constraints in the schema,
- and multi-hop traversal requires tables to be pre-joined ahead of time.
  With Prela,
  we aim to demonstrate such extensions to SQL can be grounded on the firm theoretical foundation of 
 \noun on
@@ -870,8 +1196,24 @@ TAR
  
 \end_layout
 
+\begin_layout Paragraph*
+A functional data model
+\end_layout
+
 \begin_layout Standard
-Dittrich envisioned a data model and query language oriented on a functional view of data.
+Dittrich
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:conf/edbt/Dittrich26"
+literal "false"
+
+\end_inset
+
+ envisioned a data model and query language oriented on a functional view of data.
  For example,
  a tuple is modeled as a function from each column name to the corresponding value.
  He then proposes a 
@@ -888,8 +1230,7 @@ TAR
 \noun on
 TAR
 \noun default
- is precisely a (finite,
- multi-valued) function.
+ is precisely a (multi-valued) function.
  Prela also goes beyond the syntax and semantics of the query language itself and explores the synergy between high-level abstraction and low-level execution.
  
 \end_layout
@@ -2179,6 +2520,19 @@ status open
 
  finds the first time a production company has collaborated with an actor.
  
+\end_layout
+
+\begin_layout Standard
+\begin_inset CommandInset bibtex
+LatexCommand bibtex
+btprint "btPrintCited"
+bibfiles "references"
+options "ACM-Reference-Format"
+encoding "default"
+
+\end_inset
+
+
 \end_layout
 
 \end_body
