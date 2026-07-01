@@ -35,12 +35,15 @@
     morestring=[b]",
     morestring=[b]'
 }
+
+\renewcommand{\noun}[1]{\textsf{#1}}
 \end_preamble
 \options format=sigconf, review=false, screen=true
 \use_default_options false
 \begin_modules
 InStar
 algorithm2e
+logicalmkup
 \end_modules
 \maintain_unincluded_children no
 \begin_local_layout
@@ -159,7 +162,7 @@ University of California,
 
  
 \begin_inset Flex Department
-status open
+status collapsed
 
 \begin_layout Plain Layout
 Department of Computer Science
@@ -208,7 +211,7 @@ University of California,
 
  
 \begin_inset Flex Department
-status open
+status collapsed
 
 \begin_layout Plain Layout
 Department of Philosophy
@@ -269,8 +272,16 @@ Over the past 50 years,
  Peirce,
  Schröder,
  to Tarski,
- and is now commonly know as Tarski's Algebra of Relations (TAR).
- To demonstrate the potential of TAR as a new foundation for modern database systems,
+ and is now commonly know as Tarski's Algebra of Relations (
+\noun on
+TAR
+\noun default
+).
+ To demonstrate the potential of 
+\noun on
+TAR
+\noun default
+ as a new foundation for modern database systems,
  we design and implement Prela,
  a 
 \emph on
@@ -492,7 +503,7 @@ cast.s(person).s(alias).s(text)
 \end_inset
 
 ,
- is independently a valid query,
+ is on its own a valid query,
  and they appear directly as inputs to relation combinators to build up the larger query.
  
 \end_layout
@@ -608,7 +619,11 @@ library
  and the programmer can pass in regular Rust functions as UDFs.
  Under the hood,
  every Prela query is also a query plan,
- since each relational combinator corresponds precisely to an operator in TAR.
+ since each relational combinator corresponds precisely to an operator in 
+\noun on
+TAR
+\noun default
+.
  A common complaint in SQL is the difficulty to guide the query optimizer when it fails to find an efficient plan;
  in contrast,
  the Prela user has complete control over all aspect of query planning,
@@ -622,7 +637,11 @@ human or machine—
 back in the driver seat of performance engineering.
  Nevertheless,
  this great power does not necessarily come as a responsibility,
- and Prela/TAR can just as well serve as the 
+ and Prela/
+\noun on
+TAR
+\noun default
+ can just as well serve as the 
 \emph on
 intermediate representation
 \emph default
@@ -638,7 +657,11 @@ closer to the metal
 \end_inset
 
  than even the standard relational algebra,
- thanks again to the foundation of TAR.
+ thanks again to the foundation of 
+\noun on
+TAR
+\noun default
+.
  In our running example,
  variables like 
 \begin_inset listings
@@ -675,67 +698,200 @@ Related Work
 
 \begin_layout Standard
 Despite countless attempts at replacement,
- the relational model prevails.
+ the relational model has stood the test of time.
  This paper does not try to supplant the relational model,
  but rather to refine and evolve it to meet modern needs.
- TAR—
+ 
+\noun on
+TAR
+\noun default
+—
 despite being a century older—
-can be understood as an evolution of the relational algebra towards columns stores and Entity/Relationship;
+can be understood as an evolution of the relational algebra towards columns stores and modern application code;
  the Prela language can also be considered a prototype demonstrating how SQL can be extended and made more flexible.
  In particular,
- we do not view Entity/Relationship as an alternative to the relational model,
- but rather as a higher abstraction 
-\emph on
-on top of
-\emph default
- the latter,
- following recent work by Deshpande.
- Crucially,
- TAR and Prela stand upon the two pillars of physical and logical independence.
- The relation-centric TAR assumes an abstract data model allowing for different physical implementations including dense vectors,
+ 
+\noun on
+TAR
+\noun default
+ and Prela stand upon the two pillars of physical and logical independence.
+ The relation-centric 
+\noun on
+TAR
+\noun default
+ assumes an abstract data model allowing for different physical implementations including dense vectors,
  hash maps,
  or bit sets;
  the corresponding Prela query accepts type annotations to specify any of these data structures.
  Queries can be declared as views and used as inputs to other queries,
  should the logical schema change;
- addition and deletion of orthogonal attributes and relationships will also not break existing queries.
+ addition and deletion of orthogonal attributes and relationships also do not break existing queries.
  In the future,
- we believe ideas of TAR and Prela can be incorporated into mainstream relational databases to simplify their design and implementation.
+ we believe ideas of 
+\noun on
+TAR
+\noun default
+ and Prela can be incorporated into mainstream relational databases to simplify their design and implementation.
  
 \end_layout
 
 \begin_layout Standard
-Database theorists have used TAR to analyze graph and tree query languages like regular path queries,
+Database theorists have used 
+\noun on
+TAR
+\noun default
+ to analyze graph and tree query languages like Regular Path Queries,
  XPath,
  and SPARQL.
- This is thanks to how TAR's main operator,
+ This is thanks to how 
+\noun on
+TAR
+\noun default
+'s main operator,
  the relational composition,
  conveniently models edge concatenation and path navigation.
  Nevertheless,
- none of these languages were built upon TAR 
+ none of these languages were built upon 
+\noun on
+TAR
+\noun default
+ 
 \emph on
 a priori
 \emph default
 .
  The theoretical study focusing on expressive power and complexity has also been largely overlooked by systems builders.
- One major piece of software built from TAR is Alloy,
+ One major piece of software built from 
+\noun on
+TAR
+\noun default
+ is Alloy,
  a specification language used to analyze software systems.
  To the best of our knowledge,
- Prela is the first database query language designed and implemented with TAR as the core foundation.
+ Prela is the first database query language designed and implemented with 
+\noun on
+TAR
+\noun default
+ as the core foundation.
  The insistence on algebraic purity also results in Prela's unique compositionality and controllability not found in declarative languages like XPath and SPARQL.
  
 \end_layout
 
 \begin_layout Standard
-Dataframes
+Dataframes libraries like 
+\noun on
+pandas
+\noun default
+,
+ 
+\noun on
+polars
+\noun default
+,
+ and 
+\noun on
+datafusion 
+\noun default
+provide an interface to tabular data based on relational algebra.
+ As such,
+ these libraries also struggle to express multi-table joins succinctly,
+ as each join operation must specify the join condition explicitly.
+ Moreover,
+ since they typically implement column names as attributes of each dataframe object,
+ the user must take great care to rename columns when joining tables,
+ to avoid conflicts and ambiguity.
+ As a result,
+ queries spanning multiple tables look even more complicated in dataframes code as compared to their SQL counterpart.
+ At the engine level,
+ 
+\noun on
+pandas
+\noun default
+ executes queries as-is,
+ albeit 
+\emph on
+eagerly
+\emph default
+ – every dataframe operation immediately produces a result when it is called.
+ Other more optimized engines including 
+\noun on
+polars
+\noun default
+ and 
+\noun on
+datafusion
+\noun default
+ generate and optimize query plans,
+ much like traditional OLAP databases.
+ Prela's engine can be thought of as implementing a lazy,
+ push-based execution model.
+ Operators do not materialize intermediate results unless necessary,
+ and the unoptimized queries already run fast,
+ as our experiments show.
+ 
 \end_layout
 
 \begin_layout Standard
-SQL extensions
+The secret behind the longevity of SQL is its ability to absorb ideas proposed in new query languages.
+ Recent work by Shute,
+ Zheng,
+ and Kudtarkar proposed SQL extensions to better support semantic data modeling and graph workloads.
+ Their proposal lead to several design points strikingly similar to Prela.
+ For example,
+ they also support implicit joins without specifying join conditions,
+ as well as multi-hop join/access syntax similar to the last line of Figure
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "fig:JOB-query-16b"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+tuple "list"
+
+\end_inset
+
+.
+ However,
+ they only allow joins to be implicit when the join condition can be inferred from key/foreign key constraints in the schema,
+ and multi-hop traversal requires tables to be pre-joined ahead of time.
+ With Prela,
+ we aim to demonstrate such extensions to SQL can be grounded on the firm theoretical foundation of 
+\noun on
+TAR
+\noun default
+,
+ and that they are not merely syntactic sugars,
+ but can produce tangible performance benefits when connected to the underlying execution engine.
+ 
 \end_layout
 
 \begin_layout Standard
-Scheduling languages
+Dittrich envisioned a data model and query language oriented on a functional view of data.
+ For example,
+ a tuple is modeled as a function from each column name to the corresponding value.
+ He then proposes a 
+\emph on
+function algebra
+\emph default
+ where the operators are higher-order functions consuming and producing functions.
+ Prela can be considered a realization of that vision over 
+\noun on
+TAR
+\noun default
+:
+ a relation in 
+\noun on
+TAR
+\noun default
+ is precisely a (finite,
+ multi-valued) function.
+ Prela also goes beyond the syntax and semantics of the query language itself and explores the synergy between high-level abstraction and low-level execution.
+ 
 \end_layout
 
 \begin_layout Section
@@ -761,7 +917,7 @@ Data Model.
 
 \begin_layout Standard
 The fundamental datatype of Prela is (typed) relations of no more than two columns.
- Although retricting relations to be at most binary may appear limiting at first glance,
+ Although restricting relations to be at most binary may appear limiting at first glance,
  it is simple to recover the flexibility of multi-column tables with ones over only two columns.
  We have demonstrated this in Section TODO with the 
 \begin_inset listings
