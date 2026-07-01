@@ -243,6 +243,33 @@ USA
 
 \end_layout
 
+\begin_layout Abstract
+We revisit Tarski's Algebra of Relations (
+\noun on
+TAR
+\noun default
+),
+ an old formalism of relations predating Codd's relational algebra by over 100 years,
+ as a new foundation for relational databases.
+ We argue 
+\noun on
+TAR
+\noun default
+ provides a better abstraction at both the semantic level and the physical level,
+ with the advent of column stores and modern application code.
+ To demonstrate the strengths of 
+\noun on
+TAR
+\noun default
+,
+ we design and implement Prela,
+ a compositional and controllable query language,
+ and show that queries written in Prela are concise,
+ clear,
+ and efficient.
+ 
+\end_layout
+
 \begin_layout Section
 Introduction
 \begin_inset CommandInset label
@@ -298,7 +325,7 @@ literal "false"
  the independent evolution of the physics and the semantics of relational data have lead to the same destiny!
  This reunion calls for new abstractions that better connect queries to their execution.
  In this paper,
- we revisit an old formalism of relations preceding Codd's relational algebra by over 100 years.
+ we revisit an old formalism of relations predating Codd's relational algebra by over 100 years.
  This formalism was developed by logicians from De Morgan,
  Peirce,
  Schröder,
@@ -401,7 +428,7 @@ JOB query 16b in Prela.
 \end_layout
 
 \begin_layout Standard
-The power of Prela is best demonstrated with an example.
+The power of Prela is best illustrated with an example.
  Consider query 16b from the Join Order Benchmark
 \begin_inset space \thinspace{}
 \end_inset
@@ -818,9 +845,9 @@ TAR
 \end_layout
 
 \begin_layout Paragraph*
-
+TAR
 \noun on
-TAR 
+ 
 \noun default
 in theory
 \end_layout
@@ -847,6 +874,18 @@ literal "false"
 \emph on
 cylindric algebras
 \emph default
+
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "henkin1971cylindric,henkin1985cylindric"
+literal "false"
+
+\end_inset
+
 ,
  an extension of Boolean algebras related to 
 \noun on
@@ -875,18 +914,18 @@ TAR
 pairing/tagging
 \emph default
  operations that introduce tuple values.
- We believe our product operation 
+ Prela's product operation 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-.and
+.and()
 \end_layout
 
 \end_inset
 
- fills an equivalent role to pairing and tagging,
+ fills a similar role to pairing and tagging,
  but is more natural for writing queries.
  Database theorists have also used 
 \noun on
@@ -913,7 +952,7 @@ TAR
 \noun default
 's main operator,
  the relational composition,
- conveniently models edge concatenation and path navigation.
+ conveniently models path traversal.
  Nevertheless,
  none of these languages were built upon 
 \noun on
@@ -924,6 +963,19 @@ TAR
 a priori
 \emph default
 .
+ Van den Bussche
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:conf/csl/Bussche01"
+literal "false"
+
+\end_inset
+
+ gives an introduction and survey of how Tarski's ideas have been applied to database theory.
  
 \end_layout
 
@@ -968,7 +1020,7 @@ Graph-Oriented Object Database
 \end_inset
 
 ,
- and considered an implementation over a data model based on 
+ and envisioned an implementation over a data model based on 
 \noun on
 TAR
 \noun default
@@ -1111,7 +1163,7 @@ provide an interface to tabular data based on relational algebra.
  as each join operation must specify the join condition explicitly.
  Moreover,
  since the libraries typically implement column names as attributes of each dataframe object,
- the user must take great care to rename columns when joining tables,
+ the user must take great care and rename columns when joining tables,
  to avoid conflicts and ambiguity.
  As a result,
  queries spanning multiple tables look even more complicated in dataframes code as compared to their SQL counterpart.
@@ -1139,8 +1191,7 @@ datafusion
  Prela's engine can be thought of as implementing a lazy,
  push-based execution model.
  Operators do not materialize intermediate results unless necessary,
- and the unoptimized queries already run fast,
- as our experiments show.
+ and the unoptimized queries already run fast.
  
 \end_layout
 
@@ -1197,11 +1248,24 @@ TAR
 \end_layout
 
 \begin_layout Paragraph*
-A functional data model
+Functional data models
 \end_layout
 
 \begin_layout Standard
-Dittrich
+Several functional data models have been proposed over the years
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:conf/sigmod/BunemanF79,DBLP:conf/sigmod/Shipman79,DBLP:conf/edbt/Beech88,Chan1987AdaDBMS,Gray2005FunctionalApproach,Gray2018AMOSQL,Gray2018FunctionalDataModel,Gray2018FunctionalQueryLanguage,DBLP:journals/cj/KulkarniA86"
+literal "false"
+
+\end_inset
+
+,
+ and recent work by Dittrich
 \begin_inset space \thinspace{}
 \end_inset
 
@@ -1213,9 +1277,15 @@ literal "false"
 
 \end_inset
 
- envisioned a data model and query language oriented on a functional view of data.
- For example,
- a tuple is modeled as a function from each column name to the corresponding value.
+ envisioned a data model and query language where 
+\begin_inset Quotes eld
+\end_inset
+
+everything is a function
+\begin_inset Quotes erd
+\end_inset
+
+.
  He then proposes a 
 \emph on
 function algebra
