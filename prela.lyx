@@ -38,7 +38,8 @@
 
 \renewcommand{\noun}[1]{\textsf{#1}}
 
-\let\bbbk\relax
+
+% \let\Bbbk\relax
 \usepackage{newtxmath}
 \end_preamble
 \options format=sigconf, review=false, screen=true
@@ -1313,7 +1314,7 @@ The Prela Language
 \end_layout
 
 \begin_layout Standard
-This Section defines the data model,
+This section defines the data model,
  syntax,
  and semantics of the Prela query language.
  To keep the presentation intuitive,
@@ -1324,7 +1325,23 @@ TAR
  one by one,
  guided by examples,
  instead of reciting their formal definitions.
- Table TODO provides a reference of the 
+ Table
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "tab:Relational-operators-in"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+tuple "list"
+
+\end_inset
+
+ provides a reference of the 
 \noun on
 TAR
 \noun default
@@ -2139,6 +2156,310 @@ Codd.
 \end_layout
 
 \begin_layout Standard
+\begin_inset Float table
+placement document
+alignment document
+wide false
+sideways false
+status open
+
+\begin_layout Plain Layout
+\begin_inset Tabular
+<lyxtabular version="3" rows="6" columns="3">
+<features borderColor="default" oddRowsColor="default" evenRowsColor="default" tabularvalignment="middle">
+<column alignment="left" valignment="top" color="default">
+<column alignment="left" valignment="top" color="default">
+<column alignment="left" valignment="top" color="default">
+<row color="default">
+<cell alignment="left" valignment="top" bottomline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+Name
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="left" valignment="top" bottomline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+Syntax
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="left" valignment="top" bottomline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+Semantics
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="left" valignment="top" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+Compose
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="left" valignment="top" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.select(s)
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="left" valignment="top" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset Formula $\pi_{r.1,s.2}(r\bowtie_{r.2=s.1}s)$
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="left" valignment="top" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+Product
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="left" valignment="top" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.and(s)
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="left" valignment="top" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset Formula $r\bowtie_{r.1=s.1}s$
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="left" valignment="top" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+Predicate
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="left" valignment="top" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.eq(v)
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.lt(v)
+\end_layout
+
+\end_inset
+
+,
+ ...
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="left" valignment="top" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset Formula $\sigma_{r.2=v}(r)$
+\end_inset
+
+,
+ 
+\begin_inset Formula $\sigma_{r.2<v}(r)$
+\end_inset
+
+,
+ ...
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+Filter
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.filt(p)
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset Formula $\sigma_{p(r.2)}(r)$
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="left" valignment="top" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+Restrict
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="left" valignment="top" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.with(s)
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="left" valignment="top" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset Formula $r\ltimes_{r.2=s.1}s$
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+</row>
+</lyxtabular>
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Plain Layout
+\begin_inset Caption Standard
+
+\begin_layout Plain Layout
+Relational operators in Prela
+\begin_inset CommandInset label
+LatexCommand label
+name "tab:Relational-operators-in"
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
 The most important operator in Prela is the 
 \emph on
 relational composition
@@ -2487,7 +2808,7 @@ status open
 \end_inset
 
 ,
- and 
+ and the expression 
 \begin_inset listings
 inline true
 status open
@@ -2584,7 +2905,8 @@ r.and(s)
 \end_inset
 
  which joins the relations on their first column,
- namely 
+ i.e.,
+ 
 \begin_inset Formula $r\bowtie_{r.1=s.1}s$
 \end_inset
 
@@ -2927,7 +3249,11 @@ status open
 \end_layout
 
 \begin_layout Standard
-The last operator used in our example is 
+The last operator used in our example is the 
+\emph on
+restriction
+\emph default
+ 
 \begin_inset listings
 inline true
 status open
@@ -2965,7 +3291,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-WHERE
+where
 \end_layout
 
 \end_inset
