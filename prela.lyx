@@ -1313,24 +1313,727 @@ The Prela Language
 This Section defines the data model,
  syntax,
  and semantics of the Prela query language.
- While Prela is based on a mathematical formalization of relations due to Tarski,
- we feel a rote recitation of the formalism would overwhelm the reader and detract from the simple essence of Prela.
- Instead,
- we will introduce language constructs one-by-one,
+ To keep the presentation intuitive,
+ we introduce constructs of 
+\noun on
+TAR
+\noun default
+ one by one,
  guided by examples,
- without attempting to fully cover the formal algebra.
+ instead of reciting their formal definitions.
+ Table TODO provides a reference of the 
+\noun on
+TAR
+\noun default
+ operators,
+ their meaning,
+ and their spelling in Prela.
  
 \end_layout
 
+\begin_layout Standard
+\begin_inset Float figure
+placement document
+alignment document
+wide false
+sideways false
+status open
+
+\begin_layout Plain Layout
+\begin_inset Float figure
+placement document
+alignment document
+wide false
+sideways false
+status open
+
+\begin_layout Plain Layout
+\begin_inset Tabular
+<lyxtabular version="3" rows="4" columns="4">
+<features borderColor="default" oddRowsColor="default" evenRowsColor="default" tabularvalignment="middle">
+<column alignment="center" valignment="top" color="default">
+<column alignment="center" valignment="top" color="default">
+<column alignment="center" valignment="top" color="default">
+<column alignment="center" valignment="top" color="default">
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+ID
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+title
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+year
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+keyword
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+646
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+
+\family roman
+\series medium
+\shape up
+\size normal
+\emph off
+\nospellcheck off
+\bar no
+\strikeout off
+\xout off
+\uuline off
+\uwave off
+\noun off
+\color none
+The Godfather
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+1972
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+Crime
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+478
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+
+\family roman
+\series medium
+\shape up
+\size normal
+\emph off
+\nospellcheck off
+\bar no
+\strikeout off
+\xout off
+\uuline off
+\uwave off
+\noun off
+\color none
+Seven Samurai
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+1954
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+War
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+583
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+Casablanca
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+1942
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+Romance
+\end_layout
+
+\end_inset
+</cell>
+</row>
+</lyxtabular>
+
+\end_inset
+
+
+\begin_inset Caption Standard
+
+\begin_layout Plain Layout
+Original movie table.
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Plain Layout
+\begin_inset Float figure
+placement document
+alignment document
+wide false
+sideways false
+status open
+
+\begin_layout Plain Layout
+\begin_inset Tabular
+<lyxtabular version="3" rows="4" columns="2">
+<features borderColor="default" oddRowsColor="default" evenRowsColor="default" tabularvalignment="middle">
+<column alignment="center" valignment="top" color="default">
+<column alignment="center" valignment="top" color="default">
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+ID
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+#
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+646
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+0
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+478
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+1
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+583
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+2
+\end_layout
+
+\end_inset
+</cell>
+</row>
+</lyxtabular>
+
+\end_inset
+
+ 
+\begin_inset Tabular
+<lyxtabular version="3" rows="4" columns="2">
+<features borderColor="default" oddRowsColor="default" evenRowsColor="default" tabularvalignment="middle">
+<column alignment="center" valignment="top" color="default">
+<column alignment="center" valignment="top" color="default">
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+#
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+title
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+0
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+
+\family roman
+\series medium
+\shape up
+\size normal
+\emph off
+\nospellcheck off
+\bar no
+\strikeout off
+\xout off
+\uuline off
+\uwave off
+\noun off
+\color none
+The Godfather
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+1
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+
+\family roman
+\series medium
+\shape up
+\size normal
+\emph off
+\nospellcheck off
+\bar no
+\strikeout off
+\xout off
+\uuline off
+\uwave off
+\noun off
+\color none
+Seven Samurai
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+2
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+Casablanca
+\end_layout
+
+\end_inset
+</cell>
+</row>
+</lyxtabular>
+
+\end_inset
+
+ 
+\begin_inset Tabular
+<lyxtabular version="3" rows="4" columns="2">
+<features borderColor="default" oddRowsColor="default" evenRowsColor="default" tabularvalignment="middle">
+<column alignment="center" valignment="top" color="default">
+<column alignment="center" valignment="top" color="default">
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+#
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+year
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+0
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+1972
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+1
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+1954
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+2
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+1942
+\end_layout
+
+\end_inset
+</cell>
+</row>
+</lyxtabular>
+
+\end_inset
+
+ 
+\begin_inset Tabular
+<lyxtabular version="3" rows="4" columns="2">
+<features borderColor="default" oddRowsColor="default" evenRowsColor="default" tabularvalignment="middle">
+<column alignment="center" valignment="top" color="default">
+<column alignment="center" valignment="top" color="default">
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+#
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+keyword
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+0
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+Crime
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+1
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+War
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+2
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+Romance
+\end_layout
+
+\end_inset
+</cell>
+</row>
+</lyxtabular>
+
+\end_inset
+
+
+\begin_inset Caption Standard
+
+\begin_layout Plain Layout
+Decomposed binary relations.
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+
+
+\begin_inset Caption Standard
+
+\begin_layout Plain Layout
+Decomposition of a wide table into binary relations.
+\begin_inset CommandInset label
+LatexCommand label
+name "fig:Decomposition-of-a"
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
 \begin_layout Subsection
-Data Model.
+Data Model
 \end_layout
 
 \begin_layout Standard
-The fundamental datatype of Prela is (typed) relations of no more than two columns.
- Although restricting relations to be at most binary may appear limiting at first glance,
- it is simple to recover the flexibility of multi-column tables with ones over only two columns.
- We have demonstrated this in Section TODO with the 
+The fundamental datatype of Prela is the 
+\emph on
+binary
+\emph default
+ relation.
+ Although restricting relations to be binary only may appear limiting,
+ it is simple to recover the flexibility of multi-column tables with ones over only two columns:
+ every relation with 
+\begin_inset Formula $k$
+\end_inset
+
+ columns is represented with 
+\begin_inset Formula $k$
+\end_inset
+
+ binary relations,
+ each mapping the row number to the corresponding column entry.
+ Figure
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "fig:Decomposition-of-a"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+tuple "list"
+
+\end_inset
+
+ shows an example:
+ a 
 \begin_inset listings
 inline true
 status open
@@ -1341,41 +2044,19 @@ movie
 
 \end_inset
 
- table which is 
-\begin_inset Quotes eld
-\end_inset
-
-shredded
-\begin_inset Quotes erd
-\end_inset
-
- into multiple two-column tables,
- each mapping the row to the value under the corresponding column.
- Perhaps a better starting point to understand Prela's data model is the Entity/Relationship model:
- entities of type 
+ relation with columns 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-Movie
+year
 \end_layout
 
 \end_inset
 
- can be represented as a unary relation (over the 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-id
-\end_layout
-
-\end_inset
-
-s),
- and a relation 
+,
+ 
 \begin_inset listings
 inline true
 status open
@@ -1386,104 +2067,60 @@ title
 
 \end_inset
 
- over column types 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-Movie
-\end_layout
-
-\end_inset
-
+,
  and 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-String
+keyword
 \end_layout
 
 \end_inset
 
- maps each movie to its title text.
- We will intuitively write the type of the 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-title
+ decomposes to 3 binary relations:
+ the first maps each row to its year,
+ the second each row to its title,
+ and the last each row to its keyword.
+ Primary key columns requires special treatment:
+ the key column becomes a binary relation mapping the key value to the row number.
+ 
 \end_layout
 
+\begin_layout Standard
+Decomposing a wide table into many binary tables may appear expensive:
+ while the original table had 
+\begin_inset Formula $k$
 \end_inset
 
- table as 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-Movie -> String
-\end_layout
-
+ columns,
+ the decomposed tables now span a total of 
+\begin_inset Formula $2k$
 \end_inset
 
-.
- While the 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-title
-\end_layout
-
-\end_inset
-
- relation represents an attribute of the 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-Movie
-\end_layout
-
-\end_inset
-
- entity,
- we can also model relationships between entities:
+ columns.
+ However,
+ since one column of each binary relation simply contains the row number,
+ that column need not be explicitly stored,
+ and each binary relation can be represented by a vector!
+ In other words,
  the 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-stars_in
-\end_layout
-
+\begin_inset Quotes eld
 \end_inset
 
- relation introduced in Section TODO has type 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-Cast -> Movie
-\end_layout
-
+binarization
+\begin_inset Quotes erd
 \end_inset
 
- and tells us which actor stars in which movie.
+ takes a detour to arrive at the same physical representation found in column stores.
+ This detour is nevertheless necessary,
+ as it allows us to query the columns in a compositional way.
  
 \end_layout
 
 \begin_layout Subsection
-Relational Combinators.
+Relational Combinators
 \end_layout
 
 \begin_layout Standard
@@ -1497,7 +2134,7 @@ Codd.
 \emph on
 combinators
 \emph default
- to emphasize on their purely algebraic nature.
+ to emphasize on their algebraic nature.
  The most powerful combinator is the relational composition 
 \begin_inset listings
 inline true
