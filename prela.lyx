@@ -37,6 +37,9 @@
 }
 
 \renewcommand{\noun}[1]{\textsf{#1}}
+
+\let\bbbk\relax
+\usepackage{newtxmath}
 \end_preamble
 \options format=sigconf, review=false, screen=true
 \use_default_options false
@@ -81,7 +84,7 @@ PackageOptions algorithm2e ruled
 \papersize default
 \use_geometry true
 \use_package amsmath 1
-\use_package amssymb 1
+\use_package amssymb 0
 \use_package cancel 0
 \use_package esint 0
 \use_package mathdots 0
@@ -2120,7 +2123,7 @@ binarization
 \end_layout
 
 \begin_layout Subsection
-Relational Combinators
+Relational Operators
 \end_layout
 
 \begin_layout Standard
@@ -2130,133 +2133,33 @@ Prela queries are composed of operators applied to relational arguments,
 a la 
 \emph default
 Codd.
- We will refer to Prela's operators as 
-\emph on
-combinators
-\emph default
- to emphasize on their algebraic nature.
- The most powerful combinator is the relational composition 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.
-\end_layout
-
-\end_inset
-
- which takes two binary relations,
- joins them,
- and produces a binary relation.
- Formally (writing 
-\begin_inset Formula $\circ$
-\end_inset
-
- for 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.
-\end_layout
-
-\end_inset
-
-):
+ To reduce clutter,
+ we will introduce the operators directly in Prela's surface syntax and omit their mathematical symbols.
  
-\end_layout
-
-\begin_layout Definition
-The composition 
-\begin_inset Formula $R\circ S$
-\end_inset
-
- over relations 
-\begin_inset Formula $R:X\to Y$
-\end_inset
-
- and 
-\begin_inset Formula $S:Y\to Z$
-\end_inset
-
- is the relation 
-\begin_inset Formula $\left\{ (x,z)\mid\exists y.(x,y)\in R\land(y,z)\in S\right\} $
-\end_inset
-
- of type 
-\begin_inset Formula $X\to Z$
-\end_inset
-
-.
- When one or both of the arguments are unary,
- composition is defined in the natural way TODO put in footnote?:
- 
-\end_layout
-
-\begin_layout Itemize
-If 
-\begin_inset Formula $R:Y$
-\end_inset
-
-,
- 
-\begin_inset Formula $S:Y\to Z$
-\end_inset
-
-,
- 
-\begin_inset Formula $R\circ S=\left\{ (y,z)\mid y\in R\land(y,z)\in S\right\} $
-\end_inset
-
-
-\end_layout
-
-\begin_layout Itemize
-If 
-\begin_inset Formula $R:X\to Y$
-\end_inset
-
-,
- 
-\begin_inset Formula $S:Y$
-\end_inset
-
-,
- 
-\begin_inset Formula $R\circ S=\left\{ (x,y)\mid(x,y)\in R\land y\in S\right\} $
-\end_inset
-
-
-\end_layout
-
-\begin_layout Itemize
-If 
-\begin_inset Formula $R:X$
-\end_inset
-
-,
- 
-\begin_inset Formula $S:X$
-\end_inset
-
-,
- 
-\begin_inset Formula $R\circ S=\left\{ x\mid x\in R\land x\in S\right\} $
-\end_inset
-
-
 \end_layout
 
 \begin_layout Standard
-Or in positional relational algebra:
+The most important operator in Prela is the 
+\emph on
+relational composition
+\emph default
  
-\begin_inset Formula $\pi_{(R.1,S.2)}(R\bowtie_{R.2=S.1}S)$
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.select(s)
+\end_layout
+
+\end_inset
+
+ which is equivalent to the relational algebra expression 
+\begin_inset Formula $\pi_{r.1,s.2}(r\bowtie_{r.2=s.1}s)$
 \end_inset
 
  where 
-\begin_inset Formula $R.i$
+\begin_inset Formula $r.i$
 \end_inset
 
  indicates the 
@@ -2264,51 +2167,207 @@ Or in positional relational algebra:
 \end_inset
 
 -th column of 
-\begin_inset Formula $R$
+\begin_inset Formula $r$
 \end_inset
 
 .
- The corresponding SQL query is 
+ Intuitively,
+ relational composition generalizes function composition in the same way (binary) relations generalize functions:
+ the composition 
+\begin_inset Formula $g\circ f$
+\end_inset
+
+ is sometimes written 
+\begin_inset Formula $f;g$
+\end_inset
+
+ and first applies 
+\begin_inset Formula $f$
+\end_inset
+
+,
+ then 
+\begin_inset Formula $g$
+\end_inset
+
+.
+ If the relation 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-SELECT distinct(R.x,
- S.z) FROM R,
- S WHERE R.y = S.y
+r
 \end_layout
 
 \end_inset
 
-.
+ maps each 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+x
+\end_layout
+
+\end_inset
+
+ value to some 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+y
+\end_layout
+
+\end_inset
+
+ values,
+ and if 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+s
+\end_layout
+
+\end_inset
+
+ maps each 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+y
+\end_layout
+
+\end_inset
+
+ to some 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+z
+\end_layout
+
+\end_inset
+
+s,
+ then 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.select(s)
+\end_layout
+
+\end_inset
+
+ first maps 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+x
+\end_layout
+
+\end_inset
+
+ via 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r
+\end_layout
+
+\end_inset
+
+ to get 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+y
+\end_layout
+
+\end_inset
+
+s,
+ then maps each 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+y
+\end_layout
+
+\end_inset
+
+ via 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+s
+\end_layout
+
+\end_inset
+
+ to get 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+z
+\end_layout
+
+\end_inset
+
+s.
+ Using our example in Figure
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "fig:Decomposition-of-a"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+tuple "list"
+
+\end_inset
+
+,
+ if we call the binary relations 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie
+\end_layout
+
+\end_inset
+
+,
  
-\end_layout
-
-\begin_layout Example
-Given unary relation 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-movie
-\end_layout
-
-\end_inset
-
- of type 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-Movie
-\end_layout
-
-\end_inset
-
- and binary relation 
 \begin_inset listings
 inline true
 status open
@@ -2319,65 +2378,66 @@ title
 
 \end_inset
 
- of type 
+,
+ 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-Movie -> String
+year
 \end_layout
 
 \end_inset
 
- ,
- their composition 
+,
+ and 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-movie.title
+keyword
 \end_layout
 
 \end_inset
 
- is a binary relation of type 
+ from left to right,
+ then 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-Movie -> String
+movie.select(title)
+\end_layout
+
+\end_inset
+
+ returns a binary relation mapping each movie ID to its title,
+ and similar for 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.select(year)
+\end_layout
+
+\end_inset
+
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.select(keyword)
 \end_layout
 
 \end_inset
 
 .
- Specifically,
- it is the subset of the 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-title
-\end_layout
-
-\end_inset
-
- relation such that the first attribute appears in the 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-movie
-\end_layout
-
-\end_inset
-
- relation.
  
 \end_layout
 
@@ -2386,633 +2446,69 @@ Composition is powerful because it allows us to
 \emph on
 zoom in
 \emph default
- by composing multiple relations:
- 
-\end_layout
+ by composing multiple relations.
+ This is what happened on the last line of Figure
+\begin_inset space \thinspace{}
+\end_inset
 
-\begin_layout Example
-The query 
-\begin_inset listings
-inline true
-status open
 
-\begin_layout Plain Layout
-movie.cast.person.name
-\end_layout
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "fig:JOB-query-16b"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+tuple "list"
 
 \end_inset
 
- lists,
- for each movie,
- the names of all actors starring in that movie.
- It is a 3-step composition:
- 
-\end_layout
-
-\begin_layout Enumerate
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-movie.cast
-\end_layout
-
-\end_inset
-
- has type 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-Movie -> Cast
-\end_layout
-
-\end_inset
-
- and lists the casting table for each movie;
-\end_layout
-
-\begin_layout Enumerate
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-movie.cast.person
-\end_layout
-
-\end_inset
-
- has type 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-Movie -> Person
-\end_layout
-
-\end_inset
-
- and lists all 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-Person
-\end_layout
-
-\end_inset
-
- entities in the cast;
- 
-\end_layout
-
-\begin_layout Enumerate
-Finally,
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-movie.cast.person.name
-\end_layout
-
-\end_inset
-
- composes the relation from the last step with 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-name
-\end_layout
-
-\end_inset
-
- to list the names.
- 
-\end_layout
-
-\begin_layout Standard
-Intuitively,
- relational composition can be thought of as a join and a projection,
- or,
- as the name suggests,
- a generalization of function composition.
- It can also been seen as multiplying boolean matrices.
- 
-\end_layout
-
-\begin_layout Standard
-Next,
- filtering in Prela is expressed by directly applying the predicate to a relation:
- 
-\end_layout
-
-\begin_layout Definition
-Given predicate 
-\begin_inset Formula $\phi$
-\end_inset
-
- and binary relation 
-\begin_inset Formula $R$
-\end_inset
-
-,
- the expression 
-\begin_inset Formula $\phi(R)$
-\end_inset
-
- is the relation 
-\begin_inset Formula $\left\{ (x,y)\in R\mid\phi(y)\right\} $
-\end_inset
-
-.
-\end_layout
-
-\begin_layout Standard
-Note that predicates can only be applied to the second column of a binary relation,
- because unary relations in Prela can only store opaque entity types.
-\end_layout
-
-\begin_layout Standard
-Filtered relations can be intersected and combined with the familiar boolean connectives 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-&
-\end_layout
-
-\end_inset
-
- (formally 
-\begin_inset Formula $\land$
-\end_inset
-
-) and 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-|
-\end_layout
-
-\end_inset
-
- (formally 
-\begin_inset Formula $\lor$
-\end_inset
-
-),
- as well as the set difference 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-
-\backslash
-
-\end_layout
-
-\end_inset
-
- :
-\end_layout
-
-\begin_layout Definition
-For relations 
-\begin_inset Formula $R:X\to Y,S:X\to Z$
-\end_inset
-
-,
- their 
-\emph on
-intersection
-\emph default
- 
-\begin_inset Formula $R\land S$
-\end_inset
-
- is the unary relation 
-\begin_inset Formula $\left\{ x\mid\exists y.(x,y)\in R\land\exists z.(x,z)\in S\right\} $
-\end_inset
-
-;
- their 
-\emph on
-union
-\emph default
- 
-\begin_inset Formula $R\lor S$
-\end_inset
-
- is the relation 
-\begin_inset Formula $\left\{ x\mid\exists y.(x,y)\in R\lor\exists z.(x,z)\in S\right\} $
-\end_inset
-
-;
- their difference is the relation 
-\begin_inset Formula $\left\{ x\mid\exists y.(x,y)\in R\land\exists z.(x,z)\not\in S\right\} $
-\end_inset
-
-.
- When an input relation is unary,
- the operators are extended in the natural way.
- 
-\end_layout
-
-\begin_layout Standard
-With composition,
- predicates,
- and boolean connectives,
- we can specify complex selection queries in Prela in a natural way:
- 
-\end_layout
-
-\begin_layout Example
-The query 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-movie.(production_year >= 2000 & production_year <= 2010)
-\end_layout
-
-\end_inset
-
- returns all movies made between the years of 2000 and 2010.
- 
-\end_layout
-
-\begin_layout Standard
-The next example shows why boolean connectives operate only on the first column of the input relations:
- 
-\end_layout
-
-\begin_layout Example
-The query 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-movie.(production_year >= 2000 & company.country = '[us]')
-\end_layout
-
-\end_inset
-
- returns movies produced after 2000 by US-based companies.
- 
-\end_layout
-
-\begin_layout Standard
-Because intersection focuses on the first column of the inputs,
- it allows us to combine prediactes over different data types.
- Also note that,
- in the above query,
- we can freely intermix composition,
- prediactes,
- and intersection,
- because each is simply a relational combinator under the hood.
- 
-\end_layout
-
-\begin_layout Standard
-A couple more combinators are needed to express select-project-join queries.
- First,
- the 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
 :
-\end_layout
-
-\end_inset
-
- combinator is akin to the 
+ 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-SELECT
+.s()
 \end_layout
 
 \end_inset
 
- clause in SQL:
- 
+ is simply an alias for 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.select()
 \end_layout
 
-\begin_layout Definition
-For relations 
-\begin_inset Formula $R:X$
 \end_inset
 
+,
  and 
-\begin_inset Formula $S:X\to Y$
-\end_inset
-
- ,
- the expression 
-\begin_inset Formula $R:S$
-\end_inset
-
- is the relation 
-\begin_inset Formula $\left\{ (x,y)\in S\mid x\in R\right\} $
-\end_inset
-
-.
- When the first input 
-\begin_inset Formula $R$
-\end_inset
-
- is binary,
- its second column is ignored.
- 
-\end_layout
-
-\begin_layout Standard
-We will also write 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-S where R
+cast.s(person).s(alias).s(text)
 \end_layout
 
 \end_inset
 
- as a syntactic sugar for 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-R :
- S
-\end_layout
-
-\end_inset
-
-,
- i.e.,
- the 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-where
-\end_layout
-
-\end_inset
-
- combinator is the same as 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-:
-\end_layout
-
-\end_inset
-
- but with the arugments swapped.
- 
-\end_layout
-
-\begin_layout Example
-The query 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-movie.(company.country = '[us]' :
- title)
-\end_layout
-
-\end_inset
-
- returns the titles of all movies made by American companies.
- We can also apply predicates to the 
+ which reads 
 \begin_inset Quotes eld
 \end_inset
 
-selected attributes
+cast's person's alias's text
 \begin_inset Quotes erd
 \end_inset
 
-:
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-movie.(title != 'Shrek 2' where company.country = '[us]')
-\end_layout
-
-\end_inset
-
- excercises the 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-where
-\end_layout
-
-\end_inset
-
- combinator and will be helpful for those who dislike Shrek.
- 
-\end_layout
-
-\begin_layout Standard
-As Tarski's Relational Algebra fundamentally restricts relations to be at most binary,
- a particular challenge is to return a result over multiple columns.
- One pedantic solution is to write multiple queries,
- one for each output attribute,
- returning multiple correlated binary relations at the same time that can be joined by the user.
- This is inspired by the recent idea of allowing queries to return a full database instead of a single table TODO CITE.
- However,
- in Prela we choose to implement a more pragmatic approach:
- we allow columns to store record data types.
- Another motivation is that record-typed columns leads to a natural implementation of group-by aggregation which will be covered soon.
- Nevertheless,
- we recognize that having record data betrays the purity of the formal foundation of Tarski's Relational Algebra,
- and time will tell if this design turns out to be a mistake for Prela like that of nulls and duplicates for SQL.
- We also remark that impurity in Prela is 
-\emph on
-contained
-\emph default
- within record creation and aggregations that group by records,
- both of which usually occur as the last step of a query.
- The 
-\emph on
-product
-\emph default
- operator 
-\begin_inset Quotes eld
-\end_inset
-
-
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
 ,
-\end_layout
-
-\end_inset
-
-
-\begin_inset Quotes erd
-\end_inset
-
- (formally 
-\begin_inset Formula $\times$
-\end_inset
-
-) creates a record from its arguments:
+ composes four binary relations in a chain:
  
-\end_layout
-
-\begin_layout Definition
-For 
-\begin_inset Formula $R:X\to Y$
-\end_inset
-
- and 
-\begin_inset Formula $S:X\to Z$
-\end_inset
-
-,
- their 
-\emph on
-product
-\emph default
- 
-\begin_inset Formula $R\times S$
-\end_inset
-
- is a relation of type 
-\begin_inset Formula $X\to\left\{ R:Y,S:Z\right\} $
-\end_inset
-
- where 
-\begin_inset Formula $\left\{ R:Y,S:Z\right\} $
-\end_inset
-
- denotes a record type with field 
-\begin_inset Formula $R$
-\end_inset
-
- of type 
-\begin_inset Formula $Y$
-\end_inset
-
- and field 
-\begin_inset Formula $S$
-\end_inset
-
- of type 
-\begin_inset Formula $Z$
-\end_inset
-
-.
- The content of the relation is 
-\begin_inset Formula $\left\{ (x,\left\{ R:y,S:z\right\} )\mid(x,y)\in R\land(x,z)\in S\right\} $
-\end_inset
-
-.
- 
-\end_layout
-
-\begin_layout Example
-The query 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-movie.cast.(character,
- person)
-\end_layout
-
-\end_inset
-
- returns what character each actor plays for every movie.
- In other words,
- the 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-,
-\end_layout
-
-\end_inset
-
- operator joins 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-character:
- Cast -> Character
-\end_layout
-
-\end_inset
-
- with 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-Person:
- Cast -> Person
-\end_layout
-
-\end_inset
-
- to produce a relation of type 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-Cast -> {character:
- Character,
- person:
- Person}
-\end_layout
-
-\end_inset
-
- which is composed with 
 \begin_inset listings
 inline true
 status open
@@ -3023,104 +2519,158 @@ cast
 
 \end_inset
 
+ maps each movie to its cast,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+person
+\end_layout
+
+\end_inset
+
+ maps each cast to its actors,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+alias
+\end_layout
+
+\end_inset
+
+ maps the actors to their aliases,
  and 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-movie
+text
 \end_layout
 
 \end_inset
 
- to list the roles per movie.
- 
-\end_layout
-
-\begin_layout Standard
-Record types pave the way for grouping by multiple attributes for aggregation,
- together with the 
-\emph on
-inverse
-\emph default
- operator 
+ maps the alias 
 \begin_inset Quotes eld
 \end_inset
 
-
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-~
-\end_layout
-
-\end_inset
-
-
+object/entity
 \begin_inset Quotes erd
 \end_inset
 
- (formally 
-\begin_inset Formula $R^{-1}$
-\end_inset
-
-):
- 
-\end_layout
-
-\begin_layout Definition
-The 
-\emph on
-inverse
-\emph default
- of a relation 
-\begin_inset Formula $R:X\to Y$
-\end_inset
-
- is the relation 
-\begin_inset Formula $R^{-1}:Y\to X=\left\{ (y,x)\mid(x,y)\in R\right\} $
-\end_inset
-
-.
+ to the string value.
  
 \end_layout
 
 \begin_layout Standard
-To apply an aggregation,
- we generalize the composition operator 
+The second most important operator is the 
+\emph on
+cross product
+\emph default
+ 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
+r.and(s)
+\end_layout
+
+\end_inset
+
+ which joins the relations on their first column,
+ namely 
+\begin_inset Formula $r\bowtie_{r.1=s.1}s$
+\end_inset
+
 .
+ Crucially,
+ the output is still a 
+\emph on
+binary
+\emph default
+ relation,
+ whose second column is a tuple containing one value each from the second column of 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r
 \end_layout
 
 \end_inset
 
- to accept aggregate functions:
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+s
 \end_layout
 
-\begin_layout Definition
-An aggregate function takes in a set of values and produces a single value.
- For an aggregate function 
-\begin_inset Formula $\gamma$
 \end_inset
 
- and relation 
-\begin_inset Formula $R:X\to Y$
+.
+ For example,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+title.and(year)
+\end_layout
+
+\end_inset
+
+ is the relation mapping 0 to (The Godfather,
+ 1972),
+ 1 to (Seven Samurai,
+ 1954),
+ and 2 to (Casablanca,
+ 1942).
+ Combining with 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.select()
+\end_layout
+
 \end_inset
 
 ,
- their composition 
-\begin_inset Formula $R\circ\gamma$
+ the Prela query 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.select(title.and(year).and(keyword))
+\end_layout
+
 \end_inset
 
- is the relation 
-\begin_inset Formula $\left\{ (x,\sum_{y:(x,y)\in R}y)\mid\exists z.(x,z\in R)\right\} $
+ implements the SQL query 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+SELECT ID,
+ title,
+ year,
+ keyword FROM movie
+\end_layout
+
 \end_inset
 
 .
@@ -3128,48 +2678,214 @@ An aggregate function takes in a set of values and produces a single value.
 \end_layout
 
 \begin_layout Standard
-In other words,
+We note that the cross product was not part of Tarski's original algebra,
+ but our own invention to serve a practical purpose in Prela,
+ namely the need to output multiple columns.
+ We only learned after-the-fact that there is also a theoretical justification for the product operator:
+ the original 
+\noun on
+TAR
+\noun default
+ was not expressive enough to capture all of Codd's relational algebra,
+ and one approach to bridge this gap is to introduce the so-called 
+\emph on
+pairing operators
+\emph default
+ to 
+\noun on
+TAR
+\noun default
+
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:books/mk/freytagMV91/GyssensSG91"
+literal "false"
+
+\end_inset
+
+.
+ It turns out our cross product can emulate these pairing operators,
+ thereby offering another way to extend 
+\noun on
+TAR
+\noun default
+'s expressive power.
+ 
+\end_layout
+
+\begin_layout Standard
+The next Prela operator exercised by Figure
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "fig:JOB-query-16b"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+tuple "list"
+
+\end_inset
+
+ is the 
+\emph on
+filter
+\emph default
  
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-R.f
+r.eq(v)
 \end_layout
 
 \end_inset
 
- groups by the first attribute of 
+ which returns all rows of 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-R
+r
 \end_layout
 
 \end_inset
 
- and aggregates over the second attribute per group using 
+ whose right column equals 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-f
+v
 \end_layout
 
 \end_inset
 
 .
- We are now ready to implement SQL's group-by aggregate using inversion and aggregate functions:
- 
+ Other filter operators like 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.gt()
 \end_layout
 
-\begin_layout Example
-To find when each company produced its first movie,
- we compose the inverse of the 
+\end_inset
+
+ (greater than),
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.lt()
+\end_layout
+
+\end_inset
+
+ (less than),
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.rx(regex)
+\end_layout
+
+\end_inset
+
+ (regular expression match) work the same way.
+ There is also a generic 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.filt(p)
+\end_layout
+
+\end_inset
+
+ operator that filters 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r
+\end_layout
+
+\end_inset
+
+ by any boolean function 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+p
+\end_layout
+
+\end_inset
+
+.
+ Going back to the example,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+keyword.eq("character-name-in-title")
+\end_layout
+
+\end_inset
+
+ returns rows in 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+keyword
+\end_layout
+
+\end_inset
+
+ (which maps a movie to its keywords) such that the keyword is 
+\begin_inset Quotes eld
+\end_inset
+
+character-name-in-title
+\begin_inset Quotes erd
+\end_inset
+
+;
+ the expression 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+company.s(country).eq("[us]")
+\end_layout
+
+\end_inset
+
+ first composes 
 \begin_inset listings
 inline true
 status open
@@ -3180,52 +2896,117 @@ company
 
 \end_inset
 
- relation with the 
+ (mapping a movie to its company) with 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-production_year
+country
 \end_layout
 
 \end_inset
 
- relation and apply the min-aggregate:
- 
+ (mapping a company to its country) to get a mapping from each movie to its country,
+ then keeps only those in the US.
+ Finally,
+ the 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-(~company.movie.production_year).min
+.and()
 \end_layout
 
 \end_inset
 
-.
+ operator joins the filtered relations,
+ keeping only American movies with character name in the title.
  
 \end_layout
 
 \begin_layout Standard
-To group by multiple attributes,
- we take the inverse of their product:
- 
-\end_layout
-
-\begin_layout Example
-The query 
+The last operator used in our example is 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-(~(company,cast.person).movie.production_year).min
+r.with(s)
 \end_layout
 
 \end_inset
 
- finds the first time a production company has collaborated with an actor.
+ which is exactly the left-semijoin 
+\begin_inset Formula $r\ltimes_{r.2=s.1}s$
+\end_inset
+
+,
+ and it emulates SQL's 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+WHERE
+\end_layout
+
+\end_inset
+
+ clause.
+\begin_inset Foot
+status open
+
+\begin_layout Plain Layout
+Unfortunately 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+WHERE
+\end_layout
+
+\end_inset
+
+ is a reserved keyword in Rust.
+\end_layout
+
+\end_inset
+
+ A happy accident is that 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.and()
+\end_layout
+
+\end_inset
+
+ doubles as 
+\begin_inset Quotes eld
+\end_inset
+
+logical conjunction
+\begin_inset Quotes erd
+\end_inset
+
+ inside 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.with()
+\end_layout
+
+\end_inset
+
+,
+ as the semijoin ignores the second column of its right-hand-side.
  
 \end_layout
 
