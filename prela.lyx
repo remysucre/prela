@@ -279,53 +279,6 @@ TAR
 status open
 
 \begin_layout Itemize
-Go through Figure
-\begin_inset space \thinspace{}
-\end_inset
-
-
-\begin_inset CommandInset ref
-LatexCommand ref
-reference "fig:Grouping-and-aggregation"
-plural "false"
-caps "false"
-noprefix "false"
-nolink "false"
-tuple "list"
-
-\end_inset
-
- line by line to introduce grouping & aggregation
-\end_layout
-
-\begin_layout Itemize
-Say more about how joins work in Prela:
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-r.select(fk)
-\end_layout
-
-\end_inset
-
- automatically coerces 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-fk
-\end_layout
-
-\end_inset
-
- into its entity/row ID when it's a foreign key
-\end_layout
-
-\begin_layout Itemize
 In the code 
 \begin_inset listings
 inline true
@@ -346,11 +299,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-r.group_by
-\lang english
-(s
-\lang english
-)
+r.group_by(s)
 \end_layout
 
 \end_inset
