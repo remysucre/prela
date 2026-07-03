@@ -274,6 +274,111 @@ TAR
  
 \end_layout
 
+\begin_layout Standard
+\begin_inset Note Note
+status open
+
+\begin_layout Itemize
+Go through Figure
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "fig:Grouping-and-aggregation"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+tuple "list"
+
+\end_inset
+
+ line by line to introduce grouping & aggregation
+\end_layout
+
+\begin_layout Itemize
+Say more about how joins work in Prela:
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.select(fk)
+\end_layout
+
+\end_inset
+
+ automatically coerces 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+fk
+\end_layout
+
+\end_inset
+
+ into its entity/row ID when it's a foreign key
+\end_layout
+
+\begin_layout Itemize
+In the code 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+group_by
+\end_layout
+
+\end_inset
+
+ desugars to composing with an inversion,
+ which only works because the ID happens to be the row number.
+ When that's not true,
+ we need 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.group_by
+\lang english
+(s
+\lang english
+)
+\end_layout
+
+\end_inset
+
+ to be 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+s.inv().with(r.inv())
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Itemize
+Currently the JOB comparison is unfair as we use a different schema in Prela that eliminated some linking tables.
+ Try to give the same schema to DuckDB
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
 \begin_layout Section
 Introduction
 \begin_inset CommandInset label
@@ -418,7 +523,7 @@ name "fig:JOB-query-16b"
 
 \end_inset
 
-JOB query 16b in Prela.
+JOB query 16b in Prela
 \end_layout
 
 \end_inset
@@ -1563,7 +1668,7 @@ Romance
 \begin_inset Caption Standard
 
 \begin_layout Plain Layout
-Original movie table.
+Original movie table
 \end_layout
 
 \end_inset
@@ -1976,7 +2081,7 @@ Romance
 \begin_inset Caption Standard
 
 \begin_layout Plain Layout
-Decomposed binary relations.
+Decomposed binary relations
 \end_layout
 
 \end_inset
@@ -1990,7 +2095,7 @@ Decomposed binary relations.
 \begin_inset Caption Standard
 
 \begin_layout Plain Layout
-Decomposition of a wide table into binary relations.
+Decomposition of a wide table into binary relations
 \begin_inset CommandInset label
 LatexCommand label
 name "fig:Decomposition-of-a"
@@ -2099,12 +2204,13 @@ keyword
 
 \end_inset
 
- decomposes to 3 binary relations:
- the first maps each row to its year,
- the second each row to its title,
- and the last each row to its keyword.
- Primary key columns requires special treatment:
- the key column becomes a binary relation mapping the key value to the row number.
+ decomposes to 4 binary relations:
+ the first is a little special and maps each ID to its row,
+ and the other 3 maps each row to its title,
+ year,
+ and keyword,
+ respectively.
+ The special treatment of the primary key column will make sense when we join across tables.
  
 \end_layout
 
@@ -2139,10 +2245,6 @@ binarization
  
 \end_layout
 
-\begin_layout Subsection
-Relational Operators
-\end_layout
-
 \begin_layout Standard
 Prela queries are composed of operators applied to relational arguments,
  much like the classic Relational Algebra 
@@ -2165,7 +2267,7 @@ status open
 
 \begin_layout Plain Layout
 \begin_inset Tabular
-<lyxtabular version="3" rows="6" columns="3">
+<lyxtabular version="3" rows="9" columns="3">
 <features borderColor="default" oddRowsColor="default" evenRowsColor="default" tabularvalignment="middle">
 <column alignment="left" valignment="top" color="default">
 <column alignment="left" valignment="top" color="default">
@@ -2204,7 +2306,9 @@ Semantics
 \begin_inset Text
 
 \begin_layout Plain Layout
-Compose
+
+\noun on
+compose
 \end_layout
 
 \end_inset
@@ -2218,7 +2322,18 @@ inline true
 status open
 
 \begin_layout Plain Layout
-r.select(s)
+r.select(t)
+\end_layout
+
+\end_inset
+
+ / 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.s(t)
 \end_layout
 
 \end_inset
@@ -2232,7 +2347,7 @@ r.select(s)
 \begin_inset Text
 
 \begin_layout Plain Layout
-\begin_inset Formula $\pi_{r.1,s.2}(r\bowtie_{r.2=s.1}s)$
+\begin_inset Formula $\pi_{r.1,t.2}(r\bowtie_{r.2=t.1}t)$
 \end_inset
 
 
@@ -2246,7 +2361,9 @@ r.select(s)
 \begin_inset Text
 
 \begin_layout Plain Layout
-Product
+
+\noun on
+product
 \end_layout
 
 \end_inset
@@ -2288,7 +2405,9 @@ r.and(s)
 \begin_inset Text
 
 \begin_layout Plain Layout
-Predicate
+
+\noun on
+predicate
 \end_layout
 
 \end_inset
@@ -2349,7 +2468,9 @@ r.lt(v)
 \begin_inset Text
 
 \begin_layout Plain Layout
-Filter
+
+\noun on
+filter
 \end_layout
 
 \end_inset
@@ -2391,7 +2512,9 @@ r.filt(p)
 \begin_inset Text
 
 \begin_layout Plain Layout
-Restrict
+
+\noun on
+restrict
 \end_layout
 
 \end_inset
@@ -2410,6 +2533,17 @@ r.with(s)
 
 \end_inset
 
+ / 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.w(s)
+\end_layout
+
+\end_inset
+
 
 \end_layout
 
@@ -2420,6 +2554,149 @@ r.with(s)
 
 \begin_layout Plain Layout
 \begin_inset Formula $r\ltimes_{r.2=s.1}s$
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+
+\noun on
+aggregate
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.reduce(sum)
+\end_layout
+
+\end_inset
+
+ / 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.fold(+)
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset Formula $\gamma_{r.1,\text{sum}(r.2)}(r)$
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+
+\noun on
+invert
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.inv()
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset Formula $\pi_{r.2,r.1}(r)$
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+
+\noun on
+group by
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.group_by(s)
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset Formula $\pi_{s.2,s.1}(s\ltimes_{s.1=r.2}r)$
 \end_inset
 
 
@@ -2459,11 +2736,17 @@ name "tab:Relational-operators-in"
 
 \end_layout
 
+\begin_layout Subsection
+Select,
+ Project,
+ and Join
+\end_layout
+
 \begin_layout Standard
 The most important operator in Prela is the 
-\emph on
+\noun on
 relational composition
-\emph default
+\noun default
  
 \begin_inset listings
 inline true
@@ -2479,6 +2762,7 @@ r.select(s)
 \begin_inset Formula $\pi_{r.1,s.2}(r\bowtie_{r.2=s.1}s)$
 \end_inset
 
+,
  where 
 \begin_inset Formula $r.i$
 \end_inset
@@ -2763,12 +3047,588 @@ movie.select(keyword)
 \end_layout
 
 \begin_layout Standard
-Composition is powerful because it allows us to 
-\emph on
-zoom in
-\emph default
- by composing multiple relations.
- This is what happened on the last line of Figure
+\begin_inset Float figure
+placement document
+alignment document
+wide false
+sideways false
+status open
+
+\begin_layout Plain Layout
+\begin_inset Tabular
+<lyxtabular version="3" rows="4" columns="2">
+<features borderColor="default" oddRowsColor="default" evenRowsColor="default" tabularvalignment="middle">
+<column alignment="center" valignment="top" color="default">
+<column alignment="center" valignment="top" color="default">
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+#
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+company
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+0
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+657
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+1
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+188
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+2
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+353
+\end_layout
+
+\end_inset
+</cell>
+</row>
+</lyxtabular>
+
+\end_inset
+
+
+\begin_inset space \hspace*{\fill}
+\end_inset
+
+
+\begin_inset Tabular
+<lyxtabular version="3" rows="4" columns="2">
+<features borderColor="default" oddRowsColor="default" evenRowsColor="default" tabularvalignment="middle">
+<column alignment="center" valignment="top" color="default">
+<column alignment="center" valignment="top" color="default">
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+ID
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+#
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+657
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+0
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+188
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+1
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+353
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+2
+\end_layout
+
+\end_inset
+</cell>
+</row>
+</lyxtabular>
+
+\end_inset
+
+ 
+\begin_inset Tabular
+<lyxtabular version="3" rows="4" columns="2">
+<features borderColor="default" oddRowsColor="default" evenRowsColor="default" tabularvalignment="middle">
+<column alignment="center" valignment="top" color="default">
+<column alignment="center" valignment="top" color="default">
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+#
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+name
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+0
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+Paramount
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+1
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+Toho
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+2
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+Warner Bros.
+\end_layout
+
+\end_inset
+</cell>
+</row>
+</lyxtabular>
+
+\end_inset
+
+ 
+\begin_inset Tabular
+<lyxtabular version="3" rows="4" columns="2">
+<features borderColor="default" oddRowsColor="default" evenRowsColor="default" tabularvalignment="middle">
+<column alignment="center" valignment="top" color="default">
+<column alignment="center" valignment="top" color="default">
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+#
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+country
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+0
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+USA
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+1
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+Japan
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+2
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+USA
+\end_layout
+
+\end_inset
+</cell>
+</row>
+</lyxtabular>
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Plain Layout
+\begin_inset Caption Standard
+
+\begin_layout Plain Layout
+Left:
+ decomposed 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+company
+\end_layout
+
+\end_inset
+
+ column from the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie
+\end_layout
+
+\end_inset
+
+ table;
+ right:
+ decomposed columns from the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie_company
+\end_layout
+
+\end_inset
+
+ table
+\begin_inset CommandInset label
+LatexCommand label
+name "fig:Left:-decomposed-"
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+Composition also plays the role of joins in Prela.
+ Consider a 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie_company
+\end_layout
+
+\end_inset
+
+ table with three columns:
+ the company ID,
+ name,
+ and country,
+ each of which becoming a binary relation in Prela as shown on the right of Figure
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "fig:Left:-decomposed-"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+tuple "list"
+
+\end_inset
+
+.
+ We also add a 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+company
+\end_layout
+
+\end_inset
+
+ column to the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie
+\end_layout
+
+\end_inset
+
+ table linking each movie to the ID of its production company.
+ Now,
+ we can look up the country of a movie's production company with 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.s(company).s(id2row).s(country)
+\end_layout
+
+\end_inset
+
+,
+ where 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.s()
+\end_layout
+
+\end_inset
+
+ is shorthand for 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.select()
+\end_layout
+
+\end_inset
+
+,
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+id2row
+\end_layout
+
+\end_inset
+
+ is the relation mapping company IDs to row numbers.
+ Because joining via foreign keys almost always require 
+\begin_inset Quotes eld
+\end_inset
+
+resolving
+\begin_inset Quotes erd
+\end_inset
+
+ the key to the row ID,
+ Prela automatically inserts 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.s(id2row)
+\end_layout
+
+\end_inset
+
+ to key/foreign key joins,
+ similar to how programming languages like Rust automatically dereference pointers upon a field access.
+ This allows us to simply write 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.s(company).s(country)
+\end_layout
+
+\end_inset
+
+ which is pronounced 
+\begin_inset Quotes eld
+\end_inset
+
+movie's company's country
+\begin_inset Quotes erd
+\end_inset
+
+.
+ This is also what happened on the last line of Figure
 \begin_inset space \thinspace{}
 \end_inset
 
@@ -2784,115 +3644,76 @@ tuple "list"
 
 \end_inset
 
-:
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.s()
-\end_layout
-
-\end_inset
-
- is simply an alias for 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.select()
-\end_layout
-
-\end_inset
-
-,
- and the expression 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-cast.s(person).s(alias).s(text)
-\end_layout
-
-\end_inset
-
- which reads 
-\begin_inset Quotes eld
-\end_inset
-
-cast's person's alias's text
-\begin_inset Quotes erd
-\end_inset
-
-,
- composes four binary relations in a chain:
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-cast
-\end_layout
-
-\end_inset
-
- maps each movie to its cast,
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-person
-\end_layout
-
-\end_inset
-
- maps each cast to its actors,
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-alias
-\end_layout
-
-\end_inset
-
- maps the actors to their aliases,
- and 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-text
-\end_layout
-
-\end_inset
-
- maps the alias 
-\begin_inset Quotes eld
-\end_inset
-
-object/entity
-\begin_inset Quotes erd
-\end_inset
-
- to the string value.
+.
  
 \end_layout
 
 \begin_layout Standard
-The second most important operator is the 
+Given that composition 
+\begin_inset Quotes eld
+\end_inset
+
+throws away
+\begin_inset Quotes erd
+\end_inset
+
+ the join attributes,
+ the reader may be wondering if there are certain SQL queries that Prela cannot express.
+ We answer in two folds.
+ On one hand,
+ real world queries almost always join on key/foreign keys,
+ and keys rarely serve any other purpose —
+ it does not make sense to aggregate over them.
+ So dropping the keys after the join is not a real sacrifice.
+ On the other hand,
+ it is true that 
+\noun on
+TAR
+\noun default
+ is strictly less expressive than Codd's relational algebra.
+ One approach to bridging this gap is to introduce the so-called 
 \emph on
-cross product
+pairing operators
 \emph default
+ to 
+\noun on
+TAR
+\noun default
+
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:books/mk/freytagMV91/GyssensSG91"
+literal "false"
+
+\end_inset
+
+.
+ In Prela,
+ we propose an equivalent extension —
+ the
+\emph on
+ 
+\emph default
+\noun on
+product
+\noun default
+ operator 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.and()
+\end_layout
+
+\end_inset
+
+ —
+ that is more practical for writing queries.
  
 \begin_inset listings
 inline true
@@ -2904,7 +3725,7 @@ r.and(s)
 
 \end_inset
 
- which joins the relations on their first column,
+ joins the relations on their first column,
  i.e.,
  
 \begin_inset Formula $r\bowtie_{r.1=s.1}s$
@@ -2917,26 +3738,25 @@ r.and(s)
 binary
 \emph default
  relation,
- whose second column is a tuple containing one value each from the second column of 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-r
-\end_layout
-
+ whose first column is the intersection of 
+\begin_inset Formula $r.1$
 \end_inset
 
  and 
-\begin_inset listings
-inline true
-status open
+\begin_inset Formula $s.1$
+\end_inset
 
-\begin_layout Plain Layout
-s
-\end_layout
+,
+ and the second column is the Cartesian product of 
+\begin_inset Formula $r.2$
+\end_inset
 
+ and 
+\begin_inset Formula $s.2$
+\end_inset
+
+ for each matching 
+\begin_inset Formula $r.1=s.1$
 \end_inset
 
 .
@@ -2970,7 +3790,7 @@ status open
 \end_inset
 
 ,
- the Prela query 
+ the expression 
 \begin_inset listings
 inline true
 status open
@@ -2987,55 +3807,12 @@ inline true
 status open
 
 \begin_layout Plain Layout
-SELECT ID,
- title,
- year,
- keyword FROM movie
+SELECT * FROM movie
 \end_layout
 
 \end_inset
 
 .
- 
-\end_layout
-
-\begin_layout Standard
-We note that the cross product was not part of Tarski's original algebra,
- but our own invention to serve a practical purpose in Prela,
- namely the need to output multiple columns.
- We only learned after-the-fact that there is also a theoretical justification for the product operator:
- the original 
-\noun on
-TAR
-\noun default
- was not expressive enough to capture all of Codd's relational algebra,
- and one approach to bridge this gap is to introduce the so-called 
-\emph on
-pairing operators
-\emph default
- to 
-\noun on
-TAR
-\noun default
-
-\begin_inset space \thinspace{}
-\end_inset
-
-
-\begin_inset CommandInset citation
-LatexCommand citep
-key "DBLP:books/mk/freytagMV91/GyssensSG91"
-literal "false"
-
-\end_inset
-
-.
- It turns out our cross product can emulate these pairing operators,
- thereby offering another way to extend 
-\noun on
-TAR
-\noun default
-'s expressive power.
  
 \end_layout
 
@@ -3057,9 +3834,9 @@ tuple "list"
 \end_inset
 
  is the 
-\emph on
-filter
-\emph default
+\noun on
+predicate
+\noun default
  
 \begin_inset listings
 inline true
@@ -3094,7 +3871,7 @@ v
 \end_inset
 
 .
- Other filter operators like 
+ Other predicates like 
 \begin_inset listings
 inline true
 status open
@@ -3106,18 +3883,6 @@ status open
 \end_inset
 
  (greater than),
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.lt()
-\end_layout
-
-\end_inset
-
- (less than),
  and 
 \begin_inset listings
 inline true
@@ -3152,7 +3917,7 @@ r
 
 \end_inset
 
- by any boolean function 
+ by any Boolean function 
 \begin_inset listings
 inline true
 status open
@@ -3250,9 +4015,9 @@ status open
 
 \begin_layout Standard
 The last operator used in our example is the 
-\emph on
+\noun on
 restriction
-\emph default
+\noun default
  
 \begin_inset listings
 inline true
@@ -3282,7 +4047,7 @@ WHERE
 
  clause.
 \begin_inset Foot
-status open
+status collapsed
 
 \begin_layout Plain Layout
 Unfortunately 
@@ -3332,8 +4097,777 @@ status open
 \end_inset
 
 ,
- as the semijoin ignores the second column of its right-hand-side.
+ because the semijoin ignores the second column of its right-hand-side.
  
+\begin_inset Note Note
+status collapsed
+
+\begin_layout Plain Layout
+Prela supports generalized projection with 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.map(f)
+\end_layout
+
+\end_inset
+
+ which maps the function 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+f
+\end_layout
+
+\end_inset
+
+ to each value in the second column of 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r
+\end_layout
+
+\end_inset
+
+.
+ Semantically,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.map()
+\end_layout
+
+\end_inset
+
+ is equivalent to 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.select()
+\end_layout
+
+\end_inset
+
+ if we think of 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+f
+\end_layout
+
+\end_inset
+
+ as a infinite binary relation —
+ in fact,
+ 
+\noun on
+TAR
+\noun default
+ does not require relations to be finite.
+ 
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+\begin_inset Float figure
+placement document
+alignment document
+wide false
+sideways false
+status open
+
+\begin_layout Plain Layout
+\begin_inset Box Frameless
+position "t"
+hor_pos "c"
+has_inner_box 1
+inner_pos "t"
+use_parbox 0
+use_makebox 0
+width "55col%"
+special "none"
+height "1in"
+height_special "totalheight"
+thickness "0.4pt"
+separation "3pt"
+shadowsize "4pt"
+framecolor "default"
+backgroundcolor "none"
+status open
+
+\begin_layout Plain Layout
+\begin_inset listings
+inline false
+status open
+
+\begin_layout Plain Layout
+SELECT keyword,
+ min(year)
+\end_layout
+
+\begin_layout Plain Layout
+  FROM movie
+\end_layout
+
+\begin_layout Plain Layout
+ GROUP BY keyword
+\end_layout
+
+\begin_layout Plain Layout
+HAVING min(year) > 1950
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+
+
+\begin_inset Box Frameless
+position "t"
+hor_pos "c"
+has_inner_box 1
+inner_pos "t"
+use_parbox 0
+use_makebox 0
+width "45col%"
+special "none"
+height "1in"
+height_special "totalheight"
+thickness "0.4pt"
+separation "3pt"
+shadowsize "4pt"
+framecolor "default"
+backgroundcolor "none"
+status open
+
+\begin_layout Plain Layout
+\begin_inset listings
+inline false
+status open
+
+\begin_layout Plain Layout
+movie.group_by(keyword)
+\end_layout
+
+\begin_layout Plain Layout
+       .select(year)
+\end_layout
+
+\begin_layout Plain Layout
+       .reduce(min)
+\end_layout
+
+\begin_layout Plain Layout
+           .gt(1950)
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Plain Layout
+\begin_inset Caption Standard
+
+\begin_layout Plain Layout
+Grouping and aggregation in SQL and Prela.
+\begin_inset CommandInset label
+LatexCommand label
+name "fig:Grouping-and-aggregation"
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Subsection
+Grouping and Aggregation
+\end_layout
+
+\begin_layout Standard
+Just like the original form of Codd's relational algebra,
+ the mathematical definition of 
+\noun on
+TAR
+\noun default
+ does not support aggregation.
+ It is however straightforward to add such operators:
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.reduce(g)
+\end_layout
+
+\end_inset
+
+ groups 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r
+\end_layout
+
+\end_inset
+
+ by its first column,
+ and applies 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+g
+\end_layout
+
+\end_inset
+
+ per group to aggregate over the second column.
+ It is equivalent to 
+\begin_inset Formula $\gamma_{r.1,g(r.2)}(r)$
+\end_inset
+
+.
+ But 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+reduce
+\end_layout
+
+\end_inset
+
+ alone is not very useful —
+ for example,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+year.reduce(min)
+\end_layout
+
+\end_inset
+
+ groups over the row number (a no-op) and returns the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+year
+\end_layout
+
+\end_inset
+
+ relation as-is.
+ To support nontrivial grouping,
+ we need to introduce one last operation from the original 
+\noun on
+TAR
+\noun default
+:
+ the 
+\noun on
+inverse
+\noun default
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+s.inv()
+\end_layout
+
+\end_inset
+
+ simply flips the two columns of 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+s
+\end_layout
+
+\end_inset
+
+.
+ We can now implement Prela's 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.group_by(s)
+\end_layout
+
+\end_inset
+
+ as 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+s.inv().with(r.inv())
+\end_layout
+
+\end_inset
+
+,
+ or 
+\begin_inset Formula $\pi_{s.2,s.1}(s\ltimes_{s.1=r.2}r)$
+\end_inset
+
+ in relational algebra.
+ For example,
+ the first line of the Prela query in Figure
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "fig:Grouping-and-aggregation"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+tuple "list"
+
+\end_inset
+
+ desugars to 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+keyword.inv().with(movie.inv())
+\end_layout
+
+\end_inset
+
+.
+ First,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+keyword.inv()
+\end_layout
+
+\end_inset
+
+ flips the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+keyword
+\end_layout
+
+\end_inset
+
+ relation to map each keyword to the rows it appears in;
+ restricting with 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.inv()
+\end_layout
+
+\end_inset
+
+ is a no-op,
+ but would be meaningful if 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie
+\end_layout
+
+\end_inset
+
+ were already restricted by other predicates.
+ Line 2 composes the result from line 1 with 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+year
+\end_layout
+
+\end_inset
+
+ to obtain a mapping from keyword to year.
+ Line 3 aggregates with 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+min
+\end_layout
+
+\end_inset
+
+ to find the earliest year associated with each keyword.
+ Note that in this process,
+ each of 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.group_by()
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.select()
+\end_layout
+
+\end_inset
+
+,
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.reduce()
+\end_layout
+
+\end_inset
+
+ produces a valid binary relation,
+ whereas in SQL,
+ a 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+GROUP BY
+\end_layout
+
+\end_inset
+
+ clause must be accompanied by aggregation in the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+SELECT
+\end_layout
+
+\end_inset
+
+ clause.
+ Finally,
+ the last line of the Prela query in Figure
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "fig:Grouping-and-aggregation"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+tuple "list"
+
+\end_inset
+
+ implements the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+HAVING
+\end_layout
+
+\end_inset
+
+ clause in the SQL query,
+ simply by filtering with the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.gt()
+\end_layout
+
+\end_inset
+
+ predicate.
+ 
+\end_layout
+
+\begin_layout Standard
+Grouping by multiple columns can be achieved with the help of 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.and()
+\end_layout
+
+\end_inset
+
+,
+ for example 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.group_by(keyword.and(year))
+\end_layout
+
+\end_inset
+
+.
+ To aggregate over multiple columns,
+ we can pass in a function that reduces a group of tuples at once.
+ Prela also provides another form 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.fold(o)
+\end_layout
+
+\end_inset
+
+ where 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+o
+\end_layout
+
+\end_inset
+
+ is a binary 
+\begin_inset Quotes eld
+\end_inset
+
+combine
+\begin_inset Quotes erd
+\end_inset
+
+ function.
+ This allows more ergonomic multi-column aggregates like:
+\end_layout
+
+\begin_layout Standard
+\begin_inset listings
+inline false
+status open
+
+\begin_layout Plain Layout
+r.fold(|(x,y),
+ (dx,dy)| (x+dx,
+ min(y,dy)))
+\end_layout
+
+\end_inset
+
+Aggregation without grouping is supported with the 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.reduce_all()
+\end_layout
+
+\end_inset
+
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.fold_all()
+\end_layout
+
+\end_inset
+
+ operators.
+ 
+\begin_inset Note Note
+status open
+
+\begin_layout Plain Layout
+What about aggregation without grouping?
+ We can group by the 
+\emph on
+abstract relation
+\emph default
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+unit
+\end_layout
+
+\end_inset
+
+ which is a constant function returning 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+()
+\end_layout
+
+\end_inset
+
+:
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.group_by(unit)
+\end_layout
+
+\end_inset
+
+ returns a relation mapping 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+()
+\end_layout
+
+\end_inset
+
+ to all rows in the movie table,
+ then 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.group_by(unit).select(year).reduce(min)
+\end_layout
+
+\end_inset
+
+ finds the earliest year for all movies.
+ However,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+unit.inv()
+\end_layout
+
+\end_inset
+
+ is an infinite relation!
+ For this reason,
+ Prela provides a 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.reduce_all()
+\end_layout
+
+\end_inset
+
+ operator that simply aggregates without grouping.
+ 
+\end_layout
+
+\end_inset
+
+
 \end_layout
 
 \begin_layout Standard
