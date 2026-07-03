@@ -260,7 +260,7 @@ TAR
 TAR
 \noun default
  provides a better abstraction at both the semantic level and the physical level,
- with the advent of column stores and modern application code.
+ in the context of modern application code and system architecture.
  To demonstrate the strengths of 
 \noun on
 TAR
@@ -841,7 +841,7 @@ name "sec:Related-Work"
 
 \end_layout
 
-\begin_layout Paragraph*
+\begin_layout Subsubsection*
 \begin_inset Quotes eld
 \end_inset
 
@@ -902,7 +902,7 @@ TAR
  
 \end_layout
 
-\begin_layout Paragraph*
+\begin_layout Subsubsection*
 TAR
 \noun on
  
@@ -1037,7 +1037,7 @@ literal "false"
  
 \end_layout
 
-\begin_layout Paragraph*
+\begin_layout Subsubsection*
 
 \noun on
 TAR 
@@ -1156,7 +1156,7 @@ TAR.
  
 \end_layout
 
-\begin_layout Paragraph*
+\begin_layout Subsubsection*
 Dataframes
 \end_layout
 
@@ -1217,14 +1217,14 @@ literal "false"
 \noun default
 provide an interface to tabular data based on relational algebra.
  As such,
- these libraries also struggle to express multi-table joins succinctly,
+ these libraries also struggle to express multi-table queries succinctly,
  as each join operation must specify the join condition explicitly.
  Moreover,
  since the libraries typically implement column names as attributes of each dataframe object,
  the user must take great care and rename columns when joining tables,
  to avoid conflicts and ambiguity.
  As a result,
- queries spanning multiple tables look even more complicated in dataframes code as compared to their SQL counterpart.
+ queries spanning multiple tables look even more complicated in dataframes code as compared to their SQL counterparts.
  At the engine level,
  
 \noun on
@@ -1253,7 +1253,7 @@ datafusion
  
 \end_layout
 
-\begin_layout Paragraph*
+\begin_layout Subsubsection*
 SQL extensions
 \end_layout
 
@@ -1305,7 +1305,7 @@ TAR
  
 \end_layout
 
-\begin_layout Paragraph*
+\begin_layout Subsubsection*
 Functional data models
 \end_layout
 
@@ -1323,7 +1323,7 @@ literal "false"
 \end_inset
 
 ,
- and recent work by Dittrich
+ and a recent position paper by Dittrich
 \begin_inset space \thinspace{}
 \end_inset
 
@@ -1335,7 +1335,7 @@ literal "false"
 
 \end_inset
 
- envisioned a data model and query language where 
+ envisions a data model and query language where 
 \begin_inset Quotes eld
 \end_inset
 
@@ -2078,7 +2078,7 @@ The fundamental datatype of Prela is the
 binary
 \emph default
  relation.
- Although restricting relations to be binary only may appear limiting,
+ Although restricting relations to be binary may appear limiting,
  it is simple to recover the flexibility of multi-column tables with ones over only two columns:
  every relation with 
 \begin_inset Formula $k$
@@ -2124,7 +2124,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-year
+title
 \end_layout
 
 \end_inset
@@ -2136,7 +2136,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-title
+year
 \end_layout
 
 \end_inset
@@ -2154,12 +2154,12 @@ keyword
 \end_inset
 
  decomposes to 4 binary relations:
- the first is a little special and maps each ID to its row,
- and the other 3 maps each row to its title,
+ the first maps each ID to its row,
+ and the other 3 map each row to its title,
  year,
  and keyword,
  respectively.
- The special treatment of the primary key column will make sense when we join across tables.
+ The special treatment of the ID column will make sense when we join across tables.
  
 \end_layout
 
@@ -2179,6 +2179,31 @@ Decomposing a wide table into many binary tables may appear expensive:
  since one column of each binary relation simply contains the row number,
  that column need not be explicitly stored,
  and each binary relation can be represented by a vector!
+ In Section
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "sec:Implementation"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+tuple "list"
+
+\end_inset
+
+ we will also show how Prela's implementation eliminates the additional joins needed to 
+\begin_inset Quotes eld
+\end_inset
+
+re-assemble
+\begin_inset Quotes erd
+\end_inset
+
+ a wide table from its columns.
  In other words,
  the 
 \begin_inset Quotes eld
@@ -3543,7 +3568,7 @@ resolving
 \begin_inset Quotes erd
 \end_inset
 
- the key to the row ID,
+ the key to its row,
  Prela automatically inserts 
 \begin_inset listings
 inline true
@@ -3838,7 +3863,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.rx(regex)
+.rx()
 \end_layout
 
 \end_inset
@@ -4817,6 +4842,21 @@ status open
 \end_inset
 
 
+\end_layout
+
+\begin_layout Section
+Implementation
+\begin_inset CommandInset label
+LatexCommand label
+name "sec:Implementation"
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Section
+Experiments
 \end_layout
 
 \begin_layout Standard
