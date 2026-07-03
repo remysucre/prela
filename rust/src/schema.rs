@@ -68,6 +68,7 @@
 // regen produces that the schema doesn't declare (or vice versa, or with
 // the wrong physical kind) fails the regen run loudly.
 
+#[macro_export]
 macro_rules! schema {
     // ===== entry: SCHEMA_MOD / StorageStruct / init_fn : entities... =====
     ( $mod_:ident / $store:ident / $init:ident :
@@ -469,7 +470,7 @@ macro_rules! schema {
     };
 }
 
-pub(crate) use schema;
+pub use schema;
 
 // ===== tests — a tiny schema over a generated v2 cache dir ===============
 
