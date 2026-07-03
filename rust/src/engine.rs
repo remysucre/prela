@@ -105,7 +105,9 @@ pub trait IntoQuery {
 impl<Q: Query> IntoQuery for Q {
     type Q = Q;
     #[inline(always)]
-    fn iq(self) -> Q { self }
+    fn iq(self) -> Q {
+        self
+    }
 }
 
 /// The domain type of what `T` resolves to (`<T::Q as Query>::D`).
@@ -114,20 +116,29 @@ pub type DOf<T> = <<T as IntoQuery>::Q as Query>::D;
 pub type ROf<T> = <<T as IntoQuery>::Q as Query>::R;
 
 // blanket: &T inherits T's modes.
-impl<T: Query + ?Sized> Query for &T { type D = T::D; type R = T::R; }
+impl<T: Query + ?Sized> Query for &T {
+    type D = T::D;
+    type R = T::R;
+}
 impl<T: Drive + ?Sized> Drive for &T {
     #[inline(always)]
-    fn drive<K: FnMut(T::D, T::R)>(&self, k: K) { (**self).drive(k); }
+    fn drive<K: FnMut(T::D, T::R)>(&self, k: K) {
+        (**self).drive(k);
+    }
 }
 impl<T: Probe + ?Sized> Probe for &T {
     #[inline(always)]
-    fn probe<K: FnMut(T::R)>(&self, x: T::D, k: K) { (**self).probe(x, k); }
+    fn probe<K: FnMut(T::R)>(&self, x: T::D, k: K) {
+        (**self).probe(x, k);
+    }
     #[inline(always)]
     fn probe_any<K: FnMut(T::R) -> bool>(&self, x: T::D, k: K) -> bool {
         (**self).probe_any(x, k)
     }
     #[inline(always)]
-    fn member(&self, x: T::D) -> bool { (**self).member(x) }
+    fn member(&self, x: T::D) -> bool {
+        (**self).member(x)
+    }
 }
 
 // ===== leaf storage =====================================================
@@ -173,9 +184,13 @@ pub trait Dense: Copy + Eq + Hash + 'static {
 impl Dense for usize {
     const NONE: usize = NO_ID;
     #[inline(always)]
-    fn idx(self) -> usize { self }
+    fn idx(self) -> usize {
+        self
+    }
     #[inline(always)]
-    fn from_idx(i: usize) -> usize { i }
+    fn from_idx(i: usize) -> usize {
+        i
+    }
 }
 
 /// Phantom-typed entity id (the Julia engine's `ID{E}`). `repr(transparent)`
@@ -186,32 +201,44 @@ pub struct Id<E: 'static>(pub usize, pub PhantomData<E>);
 
 impl<E> Id<E> {
     #[inline(always)]
-    pub fn new(i: usize) -> Self { Id(i, PhantomData) }
+    pub fn new(i: usize) -> Self {
+        Id(i, PhantomData)
+    }
 }
 // Manual impls: `derive` would wrongly require bounds on the phantom `E`.
 impl<E> Copy for Id<E> {}
 impl<E> Clone for Id<E> {
     #[inline(always)]
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 impl<E> PartialEq for Id<E> {
     #[inline(always)]
-    fn eq(&self, o: &Self) -> bool { self.0 == o.0 }
+    fn eq(&self, o: &Self) -> bool {
+        self.0 == o.0
+    }
 }
 impl<E> Eq for Id<E> {}
 impl<E> Hash for Id<E> {
     #[inline(always)]
-    fn hash<H: std::hash::Hasher>(&self, h: &mut H) { self.0.hash(h) }
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.0.hash(h)
+    }
 }
 // Ids are dense indexes; index order is the (arbitrary but total) order
 // used by sinks like `count_distinct`'s sort+dedup.
 impl<E> PartialOrd for Id<E> {
     #[inline(always)]
-    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> { Some(self.cmp(o)) }
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
 }
 impl<E> Ord for Id<E> {
     #[inline(always)]
-    fn cmp(&self, o: &Self) -> std::cmp::Ordering { self.0.cmp(&o.0) }
+    fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+        self.0.cmp(&o.0)
+    }
 }
 impl<E> std::fmt::Debug for Id<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -221,9 +248,13 @@ impl<E> std::fmt::Debug for Id<E> {
 impl<E: 'static> Dense for Id<E> {
     const NONE: Self = Id(NO_ID, PhantomData);
     #[inline(always)]
-    fn idx(self) -> usize { self.0 }
+    fn idx(self) -> usize {
+        self.0
+    }
     #[inline(always)]
-    fn from_idx(i: usize) -> Self { Id::new(i) }
+    fn from_idx(i: usize) -> Self {
+        Id::new(i)
+    }
 }
 
 // Entity → scalar hops are spelled by the `schema!`-generated NAVIGATION
@@ -261,31 +292,46 @@ pub trait Field: Copy {
 impl Field for i64 {
     type Scalar = i64;
     type Elided<Q: Query<R = i64>> = Q;
-    #[inline(always)] fn elide<Q: Query<R = i64>>(q: Q) -> Q { q }
+    #[inline(always)]
+    fn elide<Q: Query<R = i64>>(q: Q) -> Q {
+        q
+    }
 }
 impl Field for f64 {
     type Scalar = f64;
     type Elided<Q: Query<R = f64>> = Q;
-    #[inline(always)] fn elide<Q: Query<R = f64>>(q: Q) -> Q { q }
+    #[inline(always)]
+    fn elide<Q: Query<R = f64>>(q: Q) -> Q {
+        q
+    }
 }
 impl Field for &'static str {
     type Scalar = &'static str;
     type Elided<Q: Query<R = &'static str>> = Q;
-    #[inline(always)] fn elide<Q: Query<R = &'static str>>(q: Q) -> Q { q }
+    #[inline(always)]
+    fn elide<Q: Query<R = &'static str>>(q: Q) -> Q {
+        q
+    }
 }
 // Untyped escape hatch: `usize`-valued columns (the pre-schema loaders) keep
 // `.eq` available, identity-elided.
 impl Field for usize {
     type Scalar = usize;
     type Elided<Q: Query<R = usize>> = Q;
-    #[inline(always)] fn elide<Q: Query<R = usize>>(q: Q) -> Q { q }
+    #[inline(always)]
+    fn elide<Q: Query<R = usize>>(q: Q) -> Q {
+        q
+    }
 }
 impl<E: Primary> Field for Id<E> {
     type Scalar = E::Scalar;
     type Elided<Q: Query<R = Id<E>>> = Compose<Q, &'static E::Col>;
     #[inline(always)]
     fn elide<Q: Query<R = Id<E>>>(q: Q) -> Compose<Q, &'static E::Col> {
-        Compose { a: q, b: E::primary() }
+        Compose {
+            a: q,
+            b: E::primary(),
+        }
     }
 }
 
@@ -300,9 +346,16 @@ pub struct VecRel<R: Copy, D: Dense = usize> {
 }
 
 impl<R: Copy, D: Dense> VecRel<R, D> {
-    pub fn new(values: Vec<R>) -> Self { VecRel { values, _d: PhantomData } }
+    pub fn new(values: Vec<R>) -> Self {
+        VecRel {
+            values,
+            _d: PhantomData,
+        }
+    }
     /// Size of the dense key space — the universe size of the owning entity.
-    pub fn n_keys(&self) -> usize { self.values.len() }
+    pub fn n_keys(&self) -> usize {
+        self.values.len()
+    }
 }
 
 pub struct MultiRel<R: Copy + 'static, D: Dense = usize> {
@@ -333,7 +386,11 @@ impl<R: Copy + 'static, D: Dense> MultiRel<R, D> {
     pub fn from_csr(offsets: &'static [u32], values: &'static [R]) -> Self {
         assert!(!offsets.is_empty(), "CSR offsets must have length n+1");
         assert_eq!(*offsets.last().unwrap() as usize, values.len());
-        MultiRel { offsets, values, _d: PhantomData }
+        MultiRel {
+            offsets,
+            values,
+            _d: PhantomData,
+        }
     }
 
     /// Size of the dense key space — the universe size of the owning entity.
@@ -341,7 +398,9 @@ impl<R: Copy + 'static, D: Dense> MultiRel<R, D> {
     /// is `Multi`; no current schema declares one, so bin builds don't call
     /// it — tests do.)
     #[allow(dead_code)]
-    pub fn n_keys(&self) -> usize { self.offsets.len() - 1 }
+    pub fn n_keys(&self) -> usize {
+        self.offsets.len() - 1
+    }
 
     /// Build CSR from a pair stream — small-data constructor for unit
     /// tests (the backing Vecs are leaked). Pairs with `k >= n` are
@@ -361,7 +420,11 @@ impl<R: Copy + 'static, D: Dense> MultiRel<R, D> {
             values.extend_from_slice(b);
             offsets.push(values.len() as u32);
         }
-        MultiRel { offsets: Vec::leak(offsets), values: Vec::leak(values), _d: PhantomData }
+        MultiRel {
+            offsets: Vec::leak(offsets),
+            values: Vec::leak(values),
+            _d: PhantomData,
+        }
     }
 
     /// Row slice for key `x` — empty for missing/out-of-universe keys
@@ -384,7 +447,10 @@ impl<R: Copy + 'static, D: Dense> MultiRel<R, D> {
 // check — a missing-key sentinel (`NO_ID` = usize::MAX) or any
 // out-of-universe id fails it, so "missing key emits nothing" and bounds
 // safety are the same one check. No `unsafe` needed.
-impl<R: Copy, D: Dense> Query for VecRel<R, D> { type D = D; type R = R; }
+impl<R: Copy, D: Dense> Query for VecRel<R, D> {
+    type D = D;
+    type R = R;
+}
 impl<R: Copy, D: Dense> Drive for VecRel<R, D> {
     #[inline(always)]
     fn drive<K: FnMut(D, R)>(&self, mut k: K) {
@@ -406,19 +472,26 @@ impl<R: Copy, D: Dense> Probe for VecRel<R, D> {
     }
 }
 
-impl<R: Copy, D: Dense> Query for MultiRel<R, D> { type D = D; type R = R; }
+impl<R: Copy, D: Dense> Query for MultiRel<R, D> {
+    type D = D;
+    type R = R;
+}
 impl<R: Copy, D: Dense> Drive for MultiRel<R, D> {
     #[inline(always)]
     fn drive<K: FnMut(D, R)>(&self, mut k: K) {
         for (i, w) in self.offsets.windows(2).enumerate() {
-            for &v in &self.values[w[0] as usize..w[1] as usize] { k(D::from_idx(i), v); }
+            for &v in &self.values[w[0] as usize..w[1] as usize] {
+                k(D::from_idx(i), v);
+            }
         }
     }
 }
 impl<R: Copy, D: Dense> Probe for MultiRel<R, D> {
     #[inline(always)]
     fn probe<K: FnMut(R)>(&self, x: D, mut k: K) {
-        for &v in self.row(x.idx()) { k(v); }
+        for &v in self.row(x.idx()) {
+            k(v);
+        }
     }
     #[inline(always)]
     fn probe_any<K: FnMut(R) -> bool>(&self, x: D, mut k: K) -> bool {
@@ -435,10 +508,15 @@ pub struct Universe<D: Dense = usize> {
 }
 
 impl<D: Dense> Universe<D> {
-    pub fn new(n: usize) -> Self { Universe { n, _d: PhantomData } }
+    pub fn new(n: usize) -> Self {
+        Universe { n, _d: PhantomData }
+    }
 }
 
-impl<D: Dense> Query for Universe<D> { type D = D; type R = D; }
+impl<D: Dense> Query for Universe<D> {
+    type D = D;
+    type R = D;
+}
 impl<D: Dense> Drive for Universe<D> {
     #[inline(always)]
     fn drive<K: FnMut(D, D)>(&self, mut k: K) {
@@ -451,14 +529,18 @@ impl<D: Dense> Drive for Universe<D> {
 impl<D: Dense> Probe for Universe<D> {
     #[inline(always)]
     fn probe<K: FnMut(D)>(&self, x: D, mut k: K) {
-        if x.idx() < self.n { k(x); }
+        if x.idx() < self.n {
+            k(x);
+        }
     }
     #[inline(always)]
     fn probe_any<K: FnMut(D) -> bool>(&self, x: D, mut k: K) -> bool {
         x.idx() < self.n && k(x)
     }
     #[inline(always)]
-    fn member(&self, x: D) -> bool { x.idx() < self.n }
+    fn member(&self, x: D) -> bool {
+        x.idx() < self.n
+    }
 }
 
 // ===== Ident — the identity ENTITY TABLE `Id<E> → Id<E>` ================
@@ -472,13 +554,35 @@ impl<D: Dense> Probe for Universe<D> {
 // dense navigation path byte-identical, since the table compiles away.
 
 pub struct Ident<E: 'static>(pub PhantomData<E>);
-impl<E> Ident<E> { #[inline(always)] pub fn new() -> Self { Ident(PhantomData) } }
-impl<E> Default for Ident<E> { #[inline(always)] fn default() -> Self { Ident(PhantomData) } }
-impl<E: 'static> Query for Ident<E> { type D = Id<E>; type R = Id<E>; }
+impl<E> Ident<E> {
+    #[inline(always)]
+    pub fn new() -> Self {
+        Ident(PhantomData)
+    }
+}
+impl<E> Default for Ident<E> {
+    #[inline(always)]
+    fn default() -> Self {
+        Ident(PhantomData)
+    }
+}
+impl<E: 'static> Query for Ident<E> {
+    type D = Id<E>;
+    type R = Id<E>;
+}
 impl<E: 'static> Probe for Ident<E> {
-    #[inline(always)] fn probe<K: FnMut(Id<E>)>(&self, x: Id<E>, mut k: K) { k(x); }
-    #[inline(always)] fn probe_any<K: FnMut(Id<E>) -> bool>(&self, x: Id<E>, mut k: K) -> bool { k(x) }
-    #[inline(always)] fn member(&self, _x: Id<E>) -> bool { true }
+    #[inline(always)]
+    fn probe<K: FnMut(Id<E>)>(&self, x: Id<E>, mut k: K) {
+        k(x);
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut(Id<E>) -> bool>(&self, x: Id<E>, mut k: K) -> bool {
+        k(x)
+    }
+    #[inline(always)]
+    fn member(&self, _x: Id<E>) -> bool {
+        true
+    }
 }
 
 // ===== non-dense entities: Key<E> + DictTable =============================
@@ -496,16 +600,36 @@ impl<E: 'static> Probe for Ident<E> {
 /// (`derive` would wrongly bound the phantom `E`).
 #[repr(transparent)]
 pub struct Key<E: 'static>(pub u64, pub PhantomData<E>);
-impl<E> Key<E> { #[inline(always)] pub fn new(k: u64) -> Self { Key(k, PhantomData) } }
+impl<E> Key<E> {
+    #[inline(always)]
+    pub fn new(k: u64) -> Self {
+        Key(k, PhantomData)
+    }
+}
 impl<E> Copy for Key<E> {}
-impl<E> Clone for Key<E> { #[inline(always)] fn clone(&self) -> Self { *self } }
-impl<E> PartialEq for Key<E> { #[inline(always)] fn eq(&self, o: &Self) -> bool { self.0 == o.0 } }
+impl<E> Clone for Key<E> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<E> PartialEq for Key<E> {
+    #[inline(always)]
+    fn eq(&self, o: &Self) -> bool {
+        self.0 == o.0
+    }
+}
 impl<E> Eq for Key<E> {}
 impl<E> Hash for Key<E> {
-    #[inline(always)] fn hash<H: std::hash::Hasher>(&self, h: &mut H) { self.0.hash(h) }
+    #[inline(always)]
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.0.hash(h)
+    }
 }
 impl<E> std::fmt::Debug for Key<E> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { write!(f, "Key({})", self.0) }
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Key({})", self.0)
+    }
 }
 
 /// Entity table for a NON-DENSE entity: `Key<E> → Id<E>` (external id → row),
@@ -516,25 +640,51 @@ pub struct DictTable<E: 'static> {
 impl<E: 'static> DictTable<E> {
     /// `keys[row]` = the external id assigned to dense row `row` (`0..keys.len()`).
     pub fn from_keys(keys: &[u64]) -> Self {
-        DictTable { map: keys.iter().enumerate().map(|(r, &k)| (Key::new(k), Id::from_idx(r))).collect() }
+        DictTable {
+            map: keys
+                .iter()
+                .enumerate()
+                .map(|(r, &k)| (Key::new(k), Id::from_idx(r)))
+                .collect(),
+        }
     }
     /// Build from the entity's i64 external-id column (`row → external id`),
     /// the inverse `external id → row`. Used by the schema macro at load.
     pub fn from_i64(keys: &[i64]) -> Self {
-        DictTable { map: keys.iter().enumerate().map(|(r, &k)| (Key::new(k as u64), Id::from_idx(r))).collect() }
+        DictTable {
+            map: keys
+                .iter()
+                .enumerate()
+                .map(|(r, &k)| (Key::new(k as u64), Id::from_idx(r)))
+                .collect(),
+        }
     }
-    pub fn len(&self) -> usize { self.map.len() }
-    pub fn is_empty(&self) -> bool { self.map.is_empty() }
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
 }
-impl<E: 'static> Query for DictTable<E> { type D = Key<E>; type R = Id<E>; }
+impl<E: 'static> Query for DictTable<E> {
+    type D = Key<E>;
+    type R = Id<E>;
+}
 impl<E: 'static> Probe for DictTable<E> {
-    #[inline] fn probe<K: FnMut(Id<E>)>(&self, x: Key<E>, mut k: K) {
-        if let Some(&r) = self.map.get(&x) { k(r); }
+    #[inline]
+    fn probe<K: FnMut(Id<E>)>(&self, x: Key<E>, mut k: K) {
+        if let Some(&r) = self.map.get(&x) {
+            k(r);
+        }
     }
-    #[inline] fn probe_any<K: FnMut(Id<E>) -> bool>(&self, x: Key<E>, mut k: K) -> bool {
+    #[inline]
+    fn probe_any<K: FnMut(Id<E>) -> bool>(&self, x: Key<E>, mut k: K) -> bool {
         self.map.get(&x).is_some_and(|&r| k(r))
     }
-    #[inline] fn member(&self, x: Key<E>) -> bool { self.map.contains_key(&x) }
+    #[inline]
+    fn member(&self, x: Key<E>) -> bool {
+        self.map.contains_key(&x)
+    }
 }
 
 /// How an entity is ADDRESSED. A foreign key into `Self` stores `Self::Fk`,
@@ -553,7 +703,10 @@ pub trait EntityKind: Sized + 'static {
 // ===== Compose: a: D → M, b: M → R  ⟹  Compose: D → R ===================
 // Mode rule: the rhs is always probed; the lhs carries the Compose's mode.
 
-pub struct Compose<A, B> { pub a: A, pub b: B }
+pub struct Compose<A, B> {
+    pub a: A,
+    pub b: B,
+}
 
 impl<A: Query, B: Query<D = A::R>> Query for Compose<A, B> {
     type D = A::D;
@@ -582,7 +735,10 @@ impl<A: Probe, B: Probe<D = A::R>> Probe for Compose<A, B> {
 // comparison combinator below (`.eq`, `.gt`, `.rx`, …) is a captured-closure
 // form of `.filt`.
 
-pub struct Filter<A, F> { pub a: A, pub p: F }
+pub struct Filter<A, F> {
+    pub a: A,
+    pub p: F,
+}
 
 impl<A: Query, F> Query for Filter<A, F> {
     type D = A::D;
@@ -591,13 +747,21 @@ impl<A: Query, F> Query for Filter<A, F> {
 impl<A: Drive, F: Fn(A::R) -> bool> Drive for Filter<A, F> {
     #[inline(always)]
     fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
-        self.a.drive(|x, v| if (self.p)(v) { k(x, v); });
+        self.a.drive(|x, v| {
+            if (self.p)(v) {
+                k(x, v);
+            }
+        });
     }
 }
 impl<A: Probe, F: Fn(A::R) -> bool> Probe for Filter<A, F> {
     #[inline(always)]
     fn probe<K: FnMut(A::R)>(&self, x: A::D, mut k: K) {
-        self.a.probe(x, |v| if (self.p)(v) { k(v); });
+        self.a.probe(x, |v| {
+            if (self.p)(v) {
+                k(v);
+            }
+        });
     }
     #[inline(always)]
     fn probe_any<K: FnMut(A::R) -> bool>(&self, x: A::D, mut k: K) -> bool {
@@ -613,7 +777,10 @@ impl<A: Probe, F: Fn(A::R) -> bool> Probe for Filter<A, F> {
 // `probe_any(x, |_| true)` already reduces to
 // `a.probe_any(x, |v| b.member(v))`, which is the optimal form.
 
-pub struct Restrict<A, B> { pub a: A, pub b: B }
+pub struct Restrict<A, B> {
+    pub a: A,
+    pub b: B,
+}
 
 impl<A: Query, B: Query<D = A::R>> Query for Restrict<A, B> {
     type D = A::D;
@@ -622,13 +789,21 @@ impl<A: Query, B: Query<D = A::R>> Query for Restrict<A, B> {
 impl<A: Drive, B: Probe<D = A::R>> Drive for Restrict<A, B> {
     #[inline(always)]
     fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
-        self.a.drive(|x, v| if self.b.member(v) { k(x, v); });
+        self.a.drive(|x, v| {
+            if self.b.member(v) {
+                k(x, v);
+            }
+        });
     }
 }
 impl<A: Probe, B: Probe<D = A::R>> Probe for Restrict<A, B> {
     #[inline(always)]
     fn probe<K: FnMut(A::R)>(&self, x: A::D, mut k: K) {
-        self.a.probe(x, |v| if self.b.member(v) { k(v); });
+        self.a.probe(x, |v| {
+            if self.b.member(v) {
+                k(v);
+            }
+        });
     }
     #[inline(always)]
     fn probe_any<K: FnMut(A::R) -> bool>(&self, x: A::D, mut k: K) -> bool {
@@ -648,25 +823,39 @@ impl<A: Probe, B: Probe<D = A::R>> Probe for Restrict<A, B> {
 /// are members of `b` (julia-engine interp.jl `drive(n::Diff, k) =
 /// drive(n.a, (x, y) -> member(n.b, x) || k(x, y))`). For an identity `a`
 /// this degenerates to the plain set difference (emits `(x, x)`).
-pub struct Diff<A, B> { pub a: A, pub b: B }
-impl<A: Query, B: Query<D = A::D>> Query for Diff<A, B> { type D = A::D; type R = A::R; }
+pub struct Diff<A, B> {
+    pub a: A,
+    pub b: B,
+}
+impl<A: Query, B: Query<D = A::D>> Query for Diff<A, B> {
+    type D = A::D;
+    type R = A::R;
+}
 impl<A: Drive, B: Probe<D = A::D>> Drive for Diff<A, B> {
     #[inline(always)]
     fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
-        self.a.drive(|x, v| if !self.b.member(x) { k(x, v); });
+        self.a.drive(|x, v| {
+            if !self.b.member(x) {
+                k(x, v);
+            }
+        });
     }
 }
 impl<A: Probe, B: Probe<D = A::D>> Probe for Diff<A, B> {
     #[inline(always)]
     fn probe<K: FnMut(A::R)>(&self, x: A::D, k: K) {
-        if !self.b.member(x) { self.a.probe(x, k); }
+        if !self.b.member(x) {
+            self.a.probe(x, k);
+        }
     }
     #[inline(always)]
     fn probe_any<K: FnMut(A::R) -> bool>(&self, x: A::D, k: K) -> bool {
         !self.b.member(x) && self.a.probe_any(x, k)
     }
     #[inline(always)]
-    fn member(&self, x: A::D) -> bool { self.a.member(x) && !self.b.member(x) }
+    fn member(&self, x: A::D) -> bool {
+        self.a.member(x) && !self.b.member(x)
+    }
 }
 
 /// `∨` — PROBE-ONLY membership union (julia-engine interp.jl: "driving a union
@@ -675,19 +864,29 @@ impl<A: Probe, B: Probe<D = A::D>> Probe for Diff<A, B> {
 /// `Drive` impl — driving a `Disj` is a compile error. Enumerate a union
 /// with `Union` (bag-concat) instead, materializing first if the sink does
 /// not dedup.
-pub struct Disj<A, B> { pub a: A, pub b: B }
-impl<A: Query, B: Query<D = A::D>> Query for Disj<A, B> { type D = A::D; type R = A::D; }
+pub struct Disj<A, B> {
+    pub a: A,
+    pub b: B,
+}
+impl<A: Query, B: Query<D = A::D>> Query for Disj<A, B> {
+    type D = A::D;
+    type R = A::D;
+}
 impl<A: Probe, B: Probe<D = A::D>> Probe for Disj<A, B> {
     #[inline(always)]
     fn probe<K: FnMut(A::D)>(&self, x: A::D, mut k: K) {
-        if self.member(x) { k(x); }
+        if self.member(x) {
+            k(x);
+        }
     }
     #[inline(always)]
     fn probe_any<K: FnMut(A::D) -> bool>(&self, x: A::D, mut k: K) -> bool {
         self.member(x) && k(x)
     }
     #[inline(always)]
-    fn member(&self, x: A::D) -> bool { self.a.member(x) || self.b.member(x) }
+    fn member(&self, x: A::D) -> bool {
+        self.a.member(x) || self.b.member(x)
+    }
 }
 
 /// Enumerable BAG union: drive `a` fully, then `b` fully — NO dedup and no
@@ -698,8 +897,14 @@ impl<A: Probe, B: Probe<D = A::D>> Probe for Disj<A, B> {
 /// duplicates would change results.
 /// Julia leaves this node as a design note next to `drive(::Disj)`; Rust
 /// implements it. Built with `.union(b)`.
-pub struct Union<A, B> { pub a: A, pub b: B }
-impl<A: Query, B: Query<D = A::D, R = A::R>> Query for Union<A, B> { type D = A::D; type R = A::R; }
+pub struct Union<A, B> {
+    pub a: A,
+    pub b: B,
+}
+impl<A: Query, B: Query<D = A::D, R = A::R>> Query for Union<A, B> {
+    type D = A::D;
+    type R = A::R;
+}
 impl<A: Drive, B: Drive<D = A::D, R = A::R>> Drive for Union<A, B> {
     #[inline(always)]
     fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
@@ -714,7 +919,10 @@ impl<A: Drive, B: Drive<D = A::D, R = A::R>> Drive for Union<A, B> {
 // consumed in member position via the flat short-circuit `member` override
 // below, which never builds the pair value (Julia's `_prod_member`).
 
-pub struct Prod<A, B> { pub a: A, pub b: B }
+pub struct Prod<A, B> {
+    pub a: A,
+    pub b: B,
+}
 
 impl<A: Query, B: Query<D = A::D>> Query for Prod<A, B> {
     type D = A::D;
@@ -739,18 +947,28 @@ impl<A: Probe, B: Probe<D = A::D>> Probe for Prod<A, B> {
     /// fast path (Julia `_prod_member`). Unlike the default (which threads
     /// the pair through `probe_any`), no pair value is ever built.
     #[inline(always)]
-    fn member(&self, x: A::D) -> bool { self.a.member(x) && self.b.member(x) }
+    fn member(&self, x: A::D) -> bool {
+        self.a.member(x) && self.b.member(x)
+    }
 }
 
 // ===== InvStream — `q'` in drive position: flip pairs, no state =========
 
-pub struct InvStream<Q> { pub q: Q }
+pub struct InvStream<Q> {
+    pub q: Q,
+}
 
-impl<Q: Query> Query for InvStream<Q> where Q::R: Eq + Hash {
+impl<Q: Query> Query for InvStream<Q>
+where
+    Q::R: Eq + Hash,
+{
     type D = Q::R;
     type R = Q::D;
 }
-impl<Q: Drive> Drive for InvStream<Q> where Q::R: Eq + Hash {
+impl<Q: Drive> Drive for InvStream<Q>
+where
+    Q::R: Eq + Hash,
+{
     #[inline(always)]
     fn drive<K: FnMut(Q::R, Q::D)>(&self, mut k: K) {
         self.q.drive(|d, r| k(r, d));
@@ -787,12 +1005,17 @@ impl<Q: Drive> FromQuery<Q> for HashIdx<Q::D, Q::R> {
     }
 }
 
-impl<K: Copy + Eq + Hash, V: Copy> Query for HashIdx<K, V> { type D = K; type R = V; }
+impl<K: Copy + Eq + Hash, V: Copy> Query for HashIdx<K, V> {
+    type D = K;
+    type R = V;
+}
 impl<K: Copy + Eq + Hash, V: Copy> Probe for HashIdx<K, V> {
     #[inline(always)]
     fn probe<F: FnMut(V)>(&self, x: K, mut k: F) {
         if let Some(vs) = self.idx.get(&x) {
-            for &v in vs { k(v); }
+            for &v in vs {
+                k(v);
+            }
         }
     }
     #[inline(always)]
@@ -806,30 +1029,43 @@ impl<K: Copy + Eq + Hash, V: Copy> Probe for HashIdx<K, V> {
 
 // ===== MatSet — materialized membership set (probe-only identity) ====
 
-pub struct MatSet<D: Copy + Eq + Hash> { pub set: HashSet<D> }
+pub struct MatSet<D: Copy + Eq + Hash> {
+    pub set: HashSet<D>,
+}
 /// Drive the input and collect the VALUE slot. Identity relations send
 /// their keys through the value slot, so one impl materializes a set's
 /// keys and a value-bearing query's values alike.
 impl<Q: Drive> FromQuery<Q> for MatSet<Q::R>
-where Q::R: Eq + Hash {
+where
+    Q::R: Eq + Hash,
+{
     fn from_rel(q: Q) -> Self {
         let mut set = HashSet::new();
-        q.drive(|_, v| { set.insert(v); });
+        q.drive(|_, v| {
+            set.insert(v);
+        });
         MatSet { set }
     }
 }
-impl<D: Copy + Eq + Hash> Query for MatSet<D> { type D = D; type R = D; }
+impl<D: Copy + Eq + Hash> Query for MatSet<D> {
+    type D = D;
+    type R = D;
+}
 impl<D: Copy + Eq + Hash> Probe for MatSet<D> {
     #[inline(always)]
     fn probe<K: FnMut(D)>(&self, x: D, mut k: K) {
-        if self.set.contains(&x) { k(x); }
+        if self.set.contains(&x) {
+            k(x);
+        }
     }
     #[inline(always)]
     fn probe_any<K: FnMut(D) -> bool>(&self, x: D, mut k: K) -> bool {
         self.set.contains(&x) && k(x)
     }
     #[inline(always)]
-    fn member(&self, x: D) -> bool { self.set.contains(&x) }
+    fn member(&self, x: D) -> bool {
+        self.set.contains(&x)
+    }
 }
 
 // ===== Bitset — `Vec<u64>`-backed dense identity relation ===============
@@ -852,9 +1088,16 @@ pub struct Bitset<D: Dense = usize> {
 impl<D: Dense> Bitset<D> {
     /// `u` is anything that resolves to the universe — the `Universe` value
     /// itself or a schema-generated universe handle (`orders`).
-    pub fn empty<U: IntoQuery>(u: U) -> Self where U::Q: UnivSize<D> {
+    pub fn empty<U: IntoQuery>(u: U) -> Self
+    where
+        U::Q: UnivSize<D>,
+    {
         let n = u.iq().univ_n();
-        Bitset { bs: vec![0u64; n.div_ceil(64)], n, _d: PhantomData }
+        Bitset {
+            bs: vec![0u64; n.div_ceil(64)],
+            n,
+            _d: PhantomData,
+        }
     }
     /// A bitset over `u`, driven from `q`: set a bit at each emitted VALUE.
     /// Identity relations send their keys through the value slot, so one
@@ -864,12 +1107,16 @@ impl<D: Dense> Bitset<D> {
     /// Both arguments resolve via `IntoQuery`: universe handles for `u`,
     /// plans (usually by reference) or leaf handles for `q`.
     pub fn over<U: IntoQuery, Q: IntoQuery>(u: U, q: Q) -> Self
-    where U::Q: UnivSize<D>, Q::Q: Drive<R = D> {
+    where
+        U::Q: UnivSize<D>,
+        Q::Q: Drive<R = D>,
+    {
         let mut b = Self::empty(u);
         q.iq().drive(|_, c| b.set(c));
         b
     }
-    #[inline] pub fn set(&mut self, x: D) {
+    #[inline]
+    pub fn set(&mut self, x: D) {
         let i = x.idx();
         if i < self.n {
             self.bs[i / 64] |= 1u64 << (i % 64);
@@ -877,7 +1124,10 @@ impl<D: Dense> Bitset<D> {
     }
 }
 
-impl<D: Dense> Query for Bitset<D> { type D = D; type R = D; }
+impl<D: Dense> Query for Bitset<D> {
+    type D = D;
+    type R = D;
+}
 impl<D: Dense> Drive for Bitset<D> {
     #[inline]
     fn drive<K: FnMut(D, D)>(&self, mut k: K) {
@@ -895,7 +1145,9 @@ impl<D: Dense> Drive for Bitset<D> {
 impl<D: Dense> Probe for Bitset<D> {
     #[inline]
     fn probe<K: FnMut(D)>(&self, x: D, mut k: K) {
-        if self.member(x) { k(x); }
+        if self.member(x) {
+            k(x);
+        }
     }
     #[inline]
     fn probe_any<K: FnMut(D) -> bool>(&self, x: D, mut k: K) -> bool {
@@ -904,7 +1156,9 @@ impl<D: Dense> Probe for Bitset<D> {
     #[inline]
     fn member(&self, x: D) -> bool {
         let i = x.idx();
-        self.bs.get(i / 64).is_some_and(|&w| (w >> (i % 64)) & 1 == 1)
+        self.bs
+            .get(i / 64)
+            .is_some_and(|&w| (w >> (i % 64)) & 1 == 1)
     }
 }
 
@@ -917,7 +1171,9 @@ impl<D: Dense> Bitset<D> {
     pub fn validity<T: Dense>(fk: &[T]) -> Self {
         let mut b = Self::empty(Universe::<D>::new(fk.len()));
         for (i, &v) in fk.iter().enumerate() {
-            if v != T::NONE { b.set(D::from_idx(i)); }
+            if v != T::NONE {
+                b.set(D::from_idx(i));
+            }
         }
         b
     }
@@ -941,27 +1197,54 @@ pub struct SparseUniverse<D: Dense> {
     pub valid: &'static Bitset<D>,
 }
 impl<D: Dense> SparseUniverse<D> {
-    pub fn new(n: usize, valid: &'static Bitset<D>) -> Self { SparseUniverse { n, valid } }
+    pub fn new(n: usize, valid: &'static Bitset<D>) -> Self {
+        SparseUniverse { n, valid }
+    }
 }
-impl<D: Dense> Query for SparseUniverse<D> { type D = D; type R = D; }
+impl<D: Dense> Query for SparseUniverse<D> {
+    type D = D;
+    type R = D;
+}
 impl<D: Dense> Drive for SparseUniverse<D> {
     #[inline(always)]
-    fn drive<K: FnMut(D, D)>(&self, k: K) { self.valid.drive(k); }
+    fn drive<K: FnMut(D, D)>(&self, k: K) {
+        self.valid.drive(k);
+    }
 }
 impl<D: Dense> Probe for SparseUniverse<D> {
     #[inline(always)]
-    fn probe<K: FnMut(D)>(&self, x: D, mut k: K) { if x.idx() < self.n { k(x); } }
+    fn probe<K: FnMut(D)>(&self, x: D, mut k: K) {
+        if x.idx() < self.n {
+            k(x);
+        }
+    }
     #[inline(always)]
-    fn probe_any<K: FnMut(D) -> bool>(&self, x: D, mut k: K) -> bool { x.idx() < self.n && k(x) }
+    fn probe_any<K: FnMut(D) -> bool>(&self, x: D, mut k: K) -> bool {
+        x.idx() < self.n && k(x)
+    }
     #[inline(always)]
-    fn member(&self, x: D) -> bool { x.idx() < self.n }
+    fn member(&self, x: D) -> bool {
+        x.idx() < self.n
+    }
 }
 
 /// Exposes the size of a universe-like leaf so `Bitset::over` can be sized off
 /// either a dense `Universe` or a `SparseUniverse` handle.
-pub trait UnivSize<D: Dense> { fn univ_n(&self) -> usize; }
-impl<D: Dense> UnivSize<D> for Universe<D> { #[inline] fn univ_n(&self) -> usize { self.n } }
-impl<D: Dense> UnivSize<D> for SparseUniverse<D> { #[inline] fn univ_n(&self) -> usize { self.n } }
+pub trait UnivSize<D: Dense> {
+    fn univ_n(&self) -> usize;
+}
+impl<D: Dense> UnivSize<D> for Universe<D> {
+    #[inline]
+    fn univ_n(&self) -> usize {
+        self.n
+    }
+}
+impl<D: Dense> UnivSize<D> for SparseUniverse<D> {
+    #[inline]
+    fn univ_n(&self) -> usize {
+        self.n
+    }
+}
 
 // ===== GroupBy (Julia `r ← s`) — drive src, probe key per row ===========
 // For src: Drive<D, SV> and key: Probe<D, RK>, produces a drive-only
@@ -969,13 +1252,22 @@ impl<D: Dense> UnivSize<D> for SparseUniverse<D> { #[inline] fn univ_n(&self) ->
 // Method spelling is receiver-first on the DRIVEN side: `s.group_by(r)` —
 // Julia's `←` argument order is an infix-surface artifact.
 
-pub struct GroupBy<S, R> { pub src: S, pub key: R }
+pub struct GroupBy<S, R> {
+    pub src: S,
+    pub key: R,
+}
 
-impl<S: Query, R: Query<D = S::D>> Query for GroupBy<S, R> where R::R: Eq + Hash {
+impl<S: Query, R: Query<D = S::D>> Query for GroupBy<S, R>
+where
+    R::R: Eq + Hash,
+{
     type D = R::R;
     type R = S::R;
 }
-impl<S: Drive, R: Probe<D = S::D>> Drive for GroupBy<S, R> where R::R: Eq + Hash {
+impl<S: Drive, R: Probe<D = S::D>> Drive for GroupBy<S, R>
+where
+    R::R: Eq + Hash,
+{
     #[inline(always)]
     fn drive<K: FnMut(R::R, S::R)>(&self, mut k: K) {
         self.src.drive(|d, sv| self.key.probe(d, |rk| k(rk, sv)));
@@ -994,7 +1286,10 @@ pub struct Fold<D: Copy + Eq + Hash, S: Copy> {
 impl<D: Copy + Eq + Hash, S: Copy> Fold<D, S> {
     /// Per-key foldl: cache[d] = op(op(init, v1), v2)…
     pub fn build<Q, OP>(q: Q, init: S, op: OP) -> Self
-    where Q: Drive<D = D>, OP: Fn(S, Q::R) -> S {
+    where
+        Q: Drive<D = D>,
+        OP: Fn(S, Q::R) -> S,
+    {
         let mut m: HashMap<D, S> = HashMap::new();
         q.drive(|d, v| {
             let s = m.entry(d).or_insert(init);
@@ -1009,28 +1304,45 @@ impl<D: Copy + Eq + Hash, S: Copy> Fold<D, S> {
     /// don't fit foldl's `(S, R) -> S` shape — count-distinct, median, … —
     /// where `build` is the per-key foldl.
     pub fn build_buf<Q, F>(q: Q, f: F) -> Self
-    where Q: Drive<D = D>, F: Fn(SVec<Q::R>) -> S {
+    where
+        Q: Drive<D = D>,
+        F: Fn(SVec<Q::R>) -> S,
+    {
         let mut buf: HashMap<D, SVec<Q::R>> = HashMap::new();
         q.drive(|d, v| buf.entry(d).or_default().push(v));
-        Fold { cache: buf.into_iter().map(|(d, vs)| (d, f(vs))).collect() }
+        Fold {
+            cache: buf.into_iter().map(|(d, vs)| (d, f(vs))).collect(),
+        }
     }
 }
 
-impl<D: Copy + Eq + Hash, S: Copy> Query for Fold<D, S> { type D = D; type R = S; }
+impl<D: Copy + Eq + Hash, S: Copy> Query for Fold<D, S> {
+    type D = D;
+    type R = S;
+}
+
 impl<D: Copy + Eq + Hash, S: Copy> Drive for Fold<D, S> {
     #[inline(always)]
     fn drive<K: FnMut(D, S)>(&self, mut k: K) {
-        for (&d, &s) in &self.cache { k(d, s); }
+        for (&d, &s) in &self.cache {
+            k(d, s);
+        }
     }
 }
+
 impl<D: Copy + Eq + Hash, S: Copy> Probe for Fold<D, S> {
     #[inline(always)]
     fn probe<K: FnMut(S)>(&self, x: D, mut k: K) {
-        if let Some(&s) = self.cache.get(&x) { k(s); }
+        if let Some(&s) = self.cache.get(&x) {
+            k(s);
+        }
     }
     #[inline(always)]
     fn probe_any<K: FnMut(S) -> bool>(&self, x: D, mut k: K) -> bool {
-        match self.cache.get(&x) { Some(&s) => k(s), None => false }
+        match self.cache.get(&x) {
+            Some(&s) => k(s),
+            None => false,
+        }
     }
 }
 
@@ -1053,17 +1365,30 @@ pub struct DenseFold<S: Copy, D: Dense = usize> {
 
 impl<S: Copy, D: Dense> DenseFold<S, D> {
     pub fn build<Q, OP>(q: Q, n: usize, init: S, op: OP) -> Self
-    where Q: Drive<D = D>, OP: Fn(S, Q::R) -> S { Self::build_with(q, n, init, op, false) }
+    where
+        Q: Drive<D = D>,
+        OP: Fn(S, Q::R) -> S,
+    {
+        Self::build_with(q, n, init, op, false)
+    }
 
     /// Like `build`, but the result emits the identity `init` for keys that
     /// never matched — the left-outer-join aggregate. Correct ONLY when
     /// `0..n` is exactly the key universe (every slot a real key); with a
     /// sparse/packed key space this fabricates rows for absent keys.
     pub fn build_outer<Q, OP>(q: Q, n: usize, init: S, op: OP) -> Self
-    where Q: Drive<D = D>, OP: Fn(S, Q::R) -> S { Self::build_with(q, n, init, op, true) }
+    where
+        Q: Drive<D = D>,
+        OP: Fn(S, Q::R) -> S,
+    {
+        Self::build_with(q, n, init, op, true)
+    }
 
     fn build_with<Q, OP>(q: Q, n: usize, init: S, op: OP, emit_all: bool) -> Self
-    where Q: Drive<D = D>, OP: Fn(S, Q::R) -> S {
+    where
+        Q: Drive<D = D>,
+        OP: Fn(S, Q::R) -> S,
+    {
         let mut vals = vec![init; n];
         let mut seen = vec![false; n];
         q.drive(|d, v| {
@@ -1072,11 +1397,19 @@ impl<S: Copy, D: Dense> DenseFold<S, D> {
                 seen[d.idx()] = true;
             }
         });
-        DenseFold { vals, seen, emit_all, _d: PhantomData }
+        DenseFold {
+            vals,
+            seen,
+            emit_all,
+            _d: PhantomData,
+        }
     }
 }
 
-impl<S: Copy, D: Dense> Query for DenseFold<S, D> { type D = D; type R = S; }
+impl<S: Copy, D: Dense> Query for DenseFold<S, D> {
+    type D = D;
+    type R = S;
+}
 impl<S: Copy, D: Dense> Drive for DenseFold<S, D> {
     #[inline(always)]
     fn drive<K: FnMut(D, S)>(&self, mut k: K) {
@@ -1091,12 +1424,16 @@ impl<S: Copy, D: Dense> Probe for DenseFold<S, D> {
     #[inline(always)]
     fn probe<K: FnMut(S)>(&self, x: D, mut k: K) {
         if let Some(&v) = self.vals.get(x.idx()) {
-            if self.emit_all || self.seen[x.idx()] { k(v); }
+            if self.emit_all || self.seen[x.idx()] {
+                k(v);
+            }
         }
     }
     #[inline(always)]
     fn probe_any<K: FnMut(S) -> bool>(&self, x: D, mut k: K) -> bool {
-        self.vals.get(x.idx()).is_some_and(|&v| (self.emit_all || self.seen[x.idx()]) && k(v))
+        self.vals
+            .get(x.idx())
+            .is_some_and(|&v| (self.emit_all || self.seen[x.idx()]) && k(v))
     }
 }
 
@@ -1109,7 +1446,13 @@ pub struct Map<Q, F, S: Copy> {
 }
 
 impl<Q: Query, F: Fn(Q::R) -> S, S: Copy> Map<Q, F, S> {
-    pub fn new(q: Q, f: F) -> Self { Map { q, f, _phantom: std::marker::PhantomData } }
+    pub fn new(q: Q, f: F) -> Self {
+        Map {
+            q,
+            f,
+            _phantom: std::marker::PhantomData,
+        }
+    }
 }
 
 impl<Q: Query, F: Fn(Q::R) -> S, S: Copy> Query for Map<Q, F, S> {
@@ -1149,11 +1492,23 @@ pub trait QueryExt: IntoQuery + Sized {
     /// navigationally: "select `b` at each of self's values".
     #[inline(always)]
     fn select<B: IntoQuery>(self, b: B) -> Compose<Self::Q, B::Q>
-    where B::Q: Query<D = ROf<Self>> { Compose { a: self.iq(), b: b.iq() } }
+    where
+        B::Q: Query<D = ROf<Self>>,
+    {
+        Compose {
+            a: self.iq(),
+            b: b.iq(),
+        }
+    }
 
     /// Postfix adjoint in drive position — streams flipped pairs, no state.
     #[inline(always)]
-    fn inv(self) -> InvStream<Self::Q> where ROf<Self>: Eq + Hash { InvStream { q: self.iq() } }
+    fn inv(self) -> InvStream<Self::Q>
+    where
+        ROf<Self>: Eq + Hash,
+    {
+        InvStream { q: self.iq() }
+    }
 
     /// `∧` / `×` / `⊗` — the product, in both of its uses (one node, one
     /// name; Julia: `∧(a, b) = ⊗(a, b)`). In member position (a conjunct
@@ -1163,94 +1518,230 @@ pub trait QueryExt: IntoQuery + Sized {
     /// restrict-then-project is `a.with(p).select(b)`.
     #[inline(always)]
     fn and<B: IntoQuery>(self, b: B) -> Prod<Self::Q, B::Q>
-    where B::Q: Query<D = DOf<Self>> { Prod { a: self.iq(), b: b.iq() } }
+    where
+        B::Q: Query<D = DOf<Self>>,
+    {
+        Prod {
+            a: self.iq(),
+            b: b.iq(),
+        }
+    }
 
     /// `∨` — probe-only membership union (`member` = a OR b). Driving it is
     /// a compile error; enumerate with `.union(b)` instead.
     #[inline(always)]
     fn or<B: IntoQuery>(self, b: B) -> Disj<Self::Q, B::Q>
-    where B::Q: Query<D = DOf<Self>> { Disj { a: self.iq(), b: b.iq() } }
+    where
+        B::Q: Query<D = DOf<Self>>,
+    {
+        Disj {
+            a: self.iq(),
+            b: b.iq(),
+        }
+    }
 
     /// `-` — value-bearing difference: self's pairs whose KEY is not a
     /// member of `b` (identity self ⟹ plain set difference).
     #[inline(always)]
     fn minus<B: IntoQuery>(self, b: B) -> Diff<Self::Q, B::Q>
-    where B::Q: Query<D = DOf<Self>> { Diff { a: self.iq(), b: b.iq() } }
+    where
+        B::Q: Query<D = DOf<Self>>,
+    {
+        Diff {
+            a: self.iq(),
+            b: b.iq(),
+        }
+    }
 
     /// Enumerable bag union — drive self fully, then `b` fully, NO dedup
     /// (the drive-position complement of the probe-only `.or`). Feed it to
     /// deduping sinks, or collect it into a `MatSet` when duplicates would matter.
-    #[allow(dead_code)] // no suite query drives a union today (every `∨` is member-position); kept as the sanctioned enumerable form, exercised by unit tests
+    #[allow(dead_code)]
+    // no suite query drives a union today (every `∨` is member-position); kept as the sanctioned enumerable form, exercised by unit tests
     #[inline(always)]
     fn union<B: IntoQuery>(self, b: B) -> Union<Self::Q, B::Q>
-    where B::Q: Query<D = DOf<Self>, R = ROf<Self>> { Union { a: self.iq(), b: b.iq() } }
+    where
+        B::Q: Query<D = DOf<Self>, R = ROf<Self>>,
+    {
+        Union {
+            a: self.iq(),
+            b: b.iq(),
+        }
+    }
 
     // Predicate filters — all elide the primary field (scalar = identity)
     // then compare; see the `Field`/`Primary` traits above. `filt` is the
     // non-eliding escape hatch.
-    #[inline(always)] fn eq(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
-        where ROf<Self>: Field, Sc<Self>: PartialEq {
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x == v }
+    #[inline(always)]
+    fn eq(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    where
+        ROf<Self>: Field,
+        Sc<Self>: PartialEq,
+    {
+        Filter {
+            a: <ROf<Self> as Field>::elide(self.iq()),
+            p: move |x| x == v,
+        }
     }
-    #[inline(always)] fn ne(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
-        where ROf<Self>: Field, Sc<Self>: PartialEq {
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x != v }
+
+    #[inline(always)]
+    fn ne(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    where
+        ROf<Self>: Field,
+        Sc<Self>: PartialEq,
+    {
+        Filter {
+            a: <ROf<Self> as Field>::elide(self.iq()),
+            p: move |x| x != v,
+        }
     }
-    #[inline(always)] fn gt(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
-        where ROf<Self>: Field, Sc<Self>: PartialOrd {
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x > v }
+
+    #[inline(always)]
+    fn gt(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    where
+        ROf<Self>: Field,
+        Sc<Self>: PartialOrd,
+    {
+        Filter {
+            a: <ROf<Self> as Field>::elide(self.iq()),
+            p: move |x| x > v,
+        }
     }
-    #[inline(always)] fn lt(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
-        where ROf<Self>: Field, Sc<Self>: PartialOrd {
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x < v }
+
+    #[inline(always)]
+    fn lt(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    where
+        ROf<Self>: Field,
+        Sc<Self>: PartialOrd,
+    {
+        Filter {
+            a: <ROf<Self> as Field>::elide(self.iq()),
+            p: move |x| x < v,
+        }
     }
-    #[inline(always)] fn ge(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
-        where ROf<Self>: Field, Sc<Self>: PartialOrd {
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x >= v }
+
+    #[inline(always)]
+    fn ge(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    where
+        ROf<Self>: Field,
+        Sc<Self>: PartialOrd,
+    {
+        Filter {
+            a: <ROf<Self> as Field>::elide(self.iq()),
+            p: move |x| x >= v,
+        }
     }
-    #[inline(always)] fn le(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
-        where ROf<Self>: Field, Sc<Self>: PartialOrd {
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x <= v }
+
+    #[inline(always)]
+    fn le(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    where
+        ROf<Self>: Field,
+        Sc<Self>: PartialOrd,
+    {
+        Filter {
+            a: <ROf<Self> as Field>::elide(self.iq()),
+            p: move |x| x <= v,
+        }
     }
-    #[inline(always)] fn in_v(self, vs: Vec<Sc<Self>>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
-        where ROf<Self>: Field, Sc<Self>: PartialEq {
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| vs.iter().any(|&v| v == x) }
+
+    #[inline(always)]
+    fn in_v(self, vs: Vec<Sc<Self>>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    where
+        ROf<Self>: Field,
+        Sc<Self>: PartialEq,
+    {
+        Filter {
+            a: <ROf<Self> as Field>::elide(self.iq()),
+            p: move |x| vs.iter().any(|&v| v == x),
+        }
     }
+
     /// `in_v` over any `IntoIterator` — arrays, slices, the named set fns —
     /// collected once into the captured Vec.
-    #[inline(always)] fn is_in<I: IntoIterator<Item = Sc<Self>>>(self, vs: I)
-        -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
-        where ROf<Self>: Field, Sc<Self>: PartialEq {
+    #[inline(always)]
+    fn is_in<I: IntoIterator<Item = Sc<Self>>>(
+        self,
+        vs: I,
+    ) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    where
+        ROf<Self>: Field,
+        Sc<Self>: PartialEq,
+    {
         let vs: Vec<Sc<Self>> = vs.into_iter().collect();
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| vs.iter().any(|&v| v == x) }
+        Filter {
+            a: <ROf<Self> as Field>::elide(self.iq()),
+            p: move |x| vs.iter().any(|&v| v == x),
+        }
     }
+
     /// Restriction `a : b` — keep self's pairs whose VALUE is a `member` of
     /// `s` (any probe-able relation). Builds the dedicated `Restrict` node,
     /// node-for-node with Julia.
-    #[inline(always)] fn with<S: IntoQuery>(self, s: S) -> Restrict<Self::Q, S::Q>
-        where S::Q: Probe<D = ROf<Self>> { Restrict { a: self.iq(), b: s.iq() } }
-    #[inline(always)] fn rx(self, re: &str) -> Filter<Elided<Self>, impl Fn(&'static str) -> bool>
-        where ROf<Self>: Field<Scalar = &'static str> {
-        let re = Regex::new(re).unwrap();
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |s| re.is_match(s) }
+    #[inline(always)]
+    fn with<S: IntoQuery>(self, s: S) -> Restrict<Self::Q, S::Q>
+    where
+        S::Q: Probe<D = ROf<Self>>,
+    {
+        Restrict {
+            a: self.iq(),
+            b: s.iq(),
+        }
     }
-    #[inline(always)] fn nrx(self, re: &str) -> Filter<Elided<Self>, impl Fn(&'static str) -> bool>
-        where ROf<Self>: Field<Scalar = &'static str> {
+
+    #[inline(always)]
+    fn rx(self, re: &str) -> Filter<Elided<Self>, impl Fn(&'static str) -> bool>
+    where
+        ROf<Self>: Field<Scalar = &'static str>,
+    {
         let re = Regex::new(re).unwrap();
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |s| !re.is_match(s) }
+        Filter {
+            a: <ROf<Self> as Field>::elide(self.iq()),
+            p: move |s| re.is_match(s),
+        }
     }
+
+    #[inline(always)]
+    fn nrx(self, re: &str) -> Filter<Elided<Self>, impl Fn(&'static str) -> bool>
+    where
+        ROf<Self>: Field<Scalar = &'static str>,
+    {
+        let re = Regex::new(re).unwrap();
+        Filter {
+            a: <ROf<Self> as Field>::elide(self.iq()),
+            p: move |s| !re.is_match(s),
+        }
+    }
+
     /// Closure-predicate filter — for things like cross-column compares.
-    #[inline(always)] fn filt<F: Fn(ROf<Self>) -> bool>(self, f: F) -> Filter<Self::Q, F>
-        { Filter { a: self.iq(), p: f } }
-    /// Half-open range `[lo, hi)` — Julia `during(lo, hi)`.
-    #[inline(always)] fn during(self, lo: Sc<Self>, hi: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
-        where ROf<Self>: Field, Sc<Self>: PartialOrd {
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x >= lo && x < hi }
+    #[inline(always)]
+    fn filt<F: Fn(ROf<Self>) -> bool>(self, f: F) -> Filter<Self::Q, F> {
+        Filter { a: self.iq(), p: f }
     }
+
+    /// Half-open range `[lo, hi)` — Julia `during(lo, hi)`.
+    #[inline(always)]
+    fn during(self, lo: Sc<Self>, hi: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    where
+        ROf<Self>: Field,
+        Sc<Self>: PartialOrd,
+    {
+        Filter {
+            a: <ROf<Self> as Field>::elide(self.iq()),
+            p: move |x| x >= lo && x < hi,
+        }
+    }
+
     /// Closed range `[lo, hi]` — Julia `lo..hi`.
-    #[inline(always)] fn between(self, lo: Sc<Self>, hi: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
-        where ROf<Self>: Field, Sc<Self>: PartialOrd {
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x >= lo && x <= hi }
+    #[inline(always)]
+    fn between(self, lo: Sc<Self>, hi: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    where
+        ROf<Self>: Field,
+        Sc<Self>: PartialOrd,
+    {
+        Filter {
+            a: <ROf<Self> as Field>::elide(self.iq()),
+            p: move |x| x >= lo && x <= hi,
+        }
     }
 
     /// Materialize — drive self once into the physical structure named by
@@ -1259,7 +1750,12 @@ pub trait QueryExt: IntoQuery + Sized {
     /// MatSet<_>>()` for a membership set (Julia: `prepare` probing a
     /// `Materialized`). The type annotation IS the visible physical choice.
     #[inline(always)]
-    fn collect<T: FromQuery<Self::Q>>(self) -> T where Self::Q: Drive { T::from_rel(self.iq()) }
+    fn collect<T: FromQuery<Self::Q>>(self) -> T
+    where
+        Self::Q: Drive,
+    {
+        T::from_rel(self.iq())
+    }
 
     /// Julia's `r ← s` in drive position — drives self, probes `key` per
     /// row, emits (key-value, self-value). (With sets now identity
@@ -1267,8 +1763,15 @@ pub trait QueryExt: IntoQuery + Sized {
     /// key flows through the value slot.)
     #[inline(always)]
     fn group_by<R: IntoQuery>(self, key: R) -> GroupBy<Self::Q, R::Q>
-    where R::Q: Query<D = DOf<Self>>, ROf<R>: Eq + Hash
-        { GroupBy { src: self.iq(), key: key.iq() } }
+    where
+        R::Q: Query<D = DOf<Self>>,
+        ROf<R>: Eq + Hash,
+    {
+        GroupBy {
+            src: self.iq(),
+            key: key.iq(),
+        }
+    }
 
     /// Dual of `group_by`, fusing `inv` + `select`. `group_by` drives the
     /// payload and probes the key map; `gather` drives THIS keying relation
@@ -1278,13 +1781,25 @@ pub trait QueryExt: IntoQuery + Sized {
     /// point-probeable.
     #[inline(always)]
     fn gather<V: IntoQuery>(self, payload: V) -> Compose<InvStream<Self::Q>, V::Q>
-    where Self::Q: Drive, ROf<Self>: Eq + Hash, V::Q: Probe<D = DOf<Self>>
-        { Compose { a: InvStream { q: self.iq() }, b: payload.iq() } }
+    where
+        Self::Q: Drive,
+        ROf<Self>: Eq + Hash,
+        V::Q: Probe<D = DOf<Self>>,
+    {
+        Compose {
+            a: InvStream { q: self.iq() },
+            b: payload.iq(),
+        }
+    }
 
     /// `▷ (op, init)` — per-key foldl into an eager cache.
     #[inline(always)]
     fn fold<OP: Fn(S, ROf<Self>) -> S, S: Copy>(self, init: S, op: OP) -> Fold<DOf<Self>, S>
-    where Self::Q: Drive { Fold::build(self.iq(), init, op) }
+    where
+        Self::Q: Drive,
+    {
+        Fold::build(self.iq(), init, op)
+    }
 
     /// `▷ f` with a callable — per-key whole-multiset reduce (Julia's
     /// BufFold): buffer each group, then cache `f(group)`. For reducers
@@ -1292,15 +1807,28 @@ pub trait QueryExt: IntoQuery + Sized {
     /// foldl's streaming `(S, R) -> S` shape.
     #[inline(always)]
     fn buf_fold<F: Fn(SVec<ROf<Self>>) -> S, S: Copy>(self, f: F) -> Fold<DOf<Self>, S>
-    where Self::Q: Drive { Fold::build_buf(self.iq(), f) }
+    where
+        Self::Q: Drive,
+    {
+        Fold::build_buf(self.iq(), f)
+    }
 
     /// `▷ (op, init)` with a dense id-keyed `Vec<S>` cache. Use when the
     /// key range is known to be `0..n` (`n` slots) and small/dense enough
     /// that a `Vec<S>` of size `n` beats the HashMap path of `fold`.
     #[inline(always)]
-    fn dense_fold<OP: Fn(S, ROf<Self>) -> S, S: Copy>(self, n: usize, init: S, op: OP)
-        -> DenseFold<S, DOf<Self>>
-    where Self::Q: Drive, DOf<Self>: Dense { DenseFold::build(self.iq(), n, init, op) }
+    fn dense_fold<OP: Fn(S, ROf<Self>) -> S, S: Copy>(
+        self,
+        n: usize,
+        init: S,
+        op: OP,
+    ) -> DenseFold<S, DOf<Self>>
+    where
+        Self::Q: Drive,
+        DOf<Self>: Dense,
+    {
+        DenseFold::build(self.iq(), n, init, op)
+    }
 
     /// Left-outer-join aggregate: like `dense_fold`, but every key in `0..n`
     /// is emitted — keys with no match carry the seeded `init` (the aggregate
@@ -1309,17 +1837,33 @@ pub trait QueryExt: IntoQuery + Sized {
     /// the key universe (e.g. a dense `Id<E>`); a sparse/packed key space
     /// would fabricate identity rows for absent keys.
     #[inline(always)]
-    fn dense_fold_outer<OP: Fn(S, ROf<Self>) -> S, S: Copy>(self, n: usize, init: S, op: OP)
-        -> DenseFold<S, DOf<Self>>
-    where Self::Q: Drive, DOf<Self>: Dense { DenseFold::build_outer(self.iq(), n, init, op) }
+    fn dense_fold_outer<OP: Fn(S, ROf<Self>) -> S, S: Copy>(
+        self,
+        n: usize,
+        init: S,
+        op: OP,
+    ) -> DenseFold<S, DOf<Self>>
+    where
+        Self::Q: Drive,
+        DOf<Self>: Dense,
+    {
+        DenseFold::build_outer(self.iq(), n, init, op)
+    }
 
     /// Count-distinct — the `length ∘ unique` instance of `.buf_fold`. The
     /// closure sorts + dedups the per-key SVec on finalization — much
     /// faster than a HashSet per group for the typical small-group case.
     #[inline(always)]
     fn count_distinct(self) -> Fold<DOf<Self>, i64>
-    where Self::Q: Drive, ROf<Self>: Ord {
-        self.buf_fold(|mut vs| { vs.sort_unstable(); vs.dedup(); vs.len() as i64 })
+    where
+        Self::Q: Drive,
+        ROf<Self>: Ord,
+    {
+        self.buf_fold(|mut vs| {
+            vs.sort_unstable();
+            vs.dedup();
+            vs.len() as i64
+        })
     }
 
     /// `↦ f` — per-row map.
@@ -1333,7 +1877,9 @@ pub trait QueryExt: IntoQuery + Sized {
     /// plan you still need through a reference (`(&q).unwrap_fold(…)`).
     #[inline(always)]
     fn unwrap_fold<OP: Fn(S, ROf<Self>) -> S, S: Copy>(self, init: S, op: OP) -> S
-    where Self::Q: Drive {
+    where
+        Self::Q: Drive,
+    {
         let mut acc = init;
         self.iq().drive(|_, v| acc = op(acc, v));
         acc
@@ -1349,11 +1895,18 @@ mod tests {
 
     // films: 0 → 10, 1 → 20, 2 → 30 (VecRel); cast: 0 → {7, 8}, 2 → {7} (MultiRel)
     // Values are id-typed (usize) so they can feed compose/restrict domains.
-    fn films() -> VecRel<usize> { VecRel::from_pairs(3, [(0, 10), (1, 20), (2, 30)]) }
-    fn cast() -> MultiRel<usize> { MultiRel::from_pairs(3, [(0, 7), (0, 8), (2, 7)]) }
+    fn films() -> VecRel<usize> {
+        VecRel::from_pairs(3, [(0, 10), (1, 20), (2, 30)])
+    }
+    fn cast() -> MultiRel<usize> {
+        MultiRel::from_pairs(3, [(0, 7), (0, 8), (2, 7)])
+    }
 
     fn drive_all<Q: Drive>(q: &Q) -> Vec<(Q::D, Q::R)>
-    where Q::D: Ord, Q::R: Ord {
+    where
+        Q::D: Ord,
+        Q::R: Ord,
+    {
         let mut v = Vec::new();
         q.drive(|d, r| v.push((d, r)));
         v.sort();
@@ -1381,7 +1934,10 @@ mod tests {
         assert_eq!(drive_all(&(&f).filt(|v| v > 15)), vec![(1, 20), (2, 30)]);
         let u = Universe::new(2);
         assert_eq!(drive_all(&u.select(&f)), vec![(0, 10), (1, 20)]);
-        assert_eq!(drive_all(&(&f).and(&f)), vec![(0, (10, 10)), (1, (20, 20)), (2, (30, 30))]);
+        assert_eq!(
+            drive_all(&(&f).and(&f)),
+            vec![(0, (10, 10)), (1, (20, 20)), (2, (30, 30))]
+        );
     }
 
     #[test]
@@ -1431,7 +1987,10 @@ mod tests {
         assert_eq!(drive_all(&med), vec![(7, 30), (8, 10)]);
         // count_distinct = buf_fold's `length ∘ unique` instance; the
         // duplicate (7, 10) row collapses
-        let cd = (&f).group_by(&c).union((&f).group_by(&c).filt(|v| v == 10)).count_distinct();
+        let cd = (&f)
+            .group_by(&c)
+            .union((&f).group_by(&c).filt(|v| v == 10))
+            .count_distinct();
         assert_eq!(drive_all(&cd), vec![(7, 2), (8, 1)]);
         // scalar
         assert_eq!((&f).unwrap_fold(0usize, |a, v| a + v), 60);
@@ -1512,8 +2071,8 @@ mod tests {
         let b = MultiRel::from_pairs(31, [(10, 99usize), (20, 88)]);
         let r = (&f).with(&b);
         assert!(r.member(0) && r.member(1));
-        assert!(!r.member(2));     // 30 fails the membership test
-        assert!(!r.member(3));     // outside a's domain entirely
+        assert!(!r.member(2)); // 30 fails the membership test
+        assert!(!r.member(3)); // outside a's domain entirely
         // multi-valued a: film 0 has cast {7, 8}; restrict by value-set {8}
         let c = cast();
         let only8 = MultiRel::from_pairs(9, [(8, 0usize)]);
@@ -1527,16 +2086,18 @@ mod tests {
         let c = cast();
         // ∧ = ⊗: member is the flat AND of the per-leg members
         let conj = (&f).filt(|v| v > 15).and(&c);
-        assert!(conj.member(2));   // film 2: 30 > 15, has cast
-        assert!(!conj.member(1));  // film 1: no cast row
-        assert!(!conj.member(0));  // film 0: 10 fails the filter
+        assert!(conj.member(2)); // film 2: 30 > 15, has cast
+        assert!(!conj.member(1)); // film 1: no cast row
+        assert!(!conj.member(0)); // film 0: 10 fails the filter
         // short-circuit: a false first leg never consults the second
         let never = (&f).filt(|_| false);
         let trap = (&f).filt(|_| -> bool { panic!("second leg must not be probed") });
         assert!(!(&never).and(&trap).member(1));
         // in drive position ∧ IS the product: pair values, lhs multiplicity
-        assert_eq!(drive_all(&(&c).and(&f)),
-                   vec![(0, (7, 10)), (0, (8, 10)), (2, (7, 30))]);
+        assert_eq!(
+            drive_all(&(&c).and(&f)),
+            vec![(0, (7, 10)), (0, (8, 10)), (2, (7, 30))]
+        );
     }
 
     #[test]
@@ -1559,8 +2120,10 @@ mod tests {
         let c = cast();
         let u2 = Universe::new(2);
         // duplicates are preserved: each leg emits all its rows
-        assert_eq!(drive_all(&(&c).union(&c)),
-                   vec![(0, 7), (0, 7), (0, 8), (0, 8), (2, 7), (2, 7)]);
+        assert_eq!(
+            drive_all(&(&c).union(&c)),
+            vec![(0, 7), (0, 7), (0, 8), (0, 8), (2, 7), (2, 7)]
+        );
         // identity legs: the overlap is emitted twice; a deduping sink
         // (Bitset / MatSet collect) collapses the bag back to a set
         let both = u2.union(Universe::new(1));
@@ -1574,17 +2137,18 @@ mod tests {
         struct M;
         struct K;
         // typed fixture columns: movie → kind id, kind → name
-        let mk: VecRel<Id<K>, Id<M>> =
-            VecRel::new(vec![Id::new(1), Id::new(0), Id::new(1)]);
-        let kname: VecRel<&'static str, Id<K>> =
-            VecRel::new(vec!["alpha", "beta"]);
+        let mk: VecRel<Id<K>, Id<M>> = VecRel::new(vec![Id::new(1), Id::new(0), Id::new(1)]);
+        let kname: VecRel<&'static str, Id<K>> = VecRel::new(vec!["alpha", "beta"]);
         // compose through the typed bridge (Id<K> = Id<K>) — the shape the
         // schema!-generated nav methods build (`q.kname()` ≡ `q.select(kname)`)
         let mut got = Vec::new();
         (&mk).select(&kname).drive(|m, n| got.push((m.0, n)));
         assert_eq!(got, vec![(0, "beta"), (1, "alpha"), (2, "beta")]);
         let mut got = Vec::new();
-        (&mk).select(&kname).eq("beta").drive(|m, n| got.push((m.0, n)));
+        (&mk)
+            .select(&kname)
+            .eq("beta")
+            .drive(|m, n| got.push((m.0, n)));
         assert_eq!(got, vec![(0, "beta"), (2, "beta")]);
         // member position through a typed universe restriction
         let u: Universe<Id<M>> = Universe::new(3);
@@ -1608,7 +2172,10 @@ mod tests {
         let w = u.with((&f).collect::<MatSet<_>>());
         assert_eq!(drive_all(&w), vec![(10, 10), (20, 20), (30, 30)]);
         assert!(w.member(10) && !w.member(11));
-        assert_eq!(drive_all(&(&f).map(|v| v * 2)), vec![(0, 20), (1, 40), (2, 60)]);
+        assert_eq!(
+            drive_all(&(&f).map(|v| v * 2)),
+            vec![(0, 20), (1, 40), (2, 60)]
+        );
     }
 
     // ===== non-dense entities (Key<E> + DictTable) =======================
@@ -1623,15 +2190,22 @@ mod tests {
         struct Person;
         // Person: non-dense external ids {100,205,9899} → rows {0,1,2}; names.
         let person_table = DictTable::<Person>::from_keys(&[100, 205, 9899]);
-        let person_name: VecRel<&str, Id<Person>> =
-            VecRel { values: vec!["Nolan", "Kubrick", "Tarkovsky"], _d: PhantomData };
+        let person_name: VecRel<&str, Id<Person>> = VecRel {
+            values: vec!["Nolan", "Kubrick", "Tarkovsky"],
+            _d: PhantomData,
+        };
         // Movie.director : FK storing the EXTERNAL person key.
-        let director: VecRel<Key<Person>, Id<Movie>> =
-            VecRel { values: vec![Key::new(205), Key::new(100), Key::new(9899)], _d: PhantomData };
+        let director: VecRel<Key<Person>, Id<Movie>> = VecRel {
+            values: vec![Key::new(205), Key::new(100), Key::new(9899)],
+            _d: PhantomData,
+        };
         let movies = Universe::<Id<Movie>>::new(3);
 
         // movie → director(Key) → person(row) → name
-        let q = (&movies).select(&director).select(&person_table).select(&person_name);
+        let q = (&movies)
+            .select(&director)
+            .select(&person_table)
+            .select(&person_name);
         let mut got = Vec::new();
         q.drive(|m, n| got.push((m.idx(), n)));
         got.sort();
@@ -1639,8 +2213,10 @@ mod tests {
 
         // A DANGLING key (no such person) drops out via the table's probe miss;
         // the table works in `with` (semijoin) position too.
-        let director2: VecRel<Key<Person>, Id<Movie>> =
-            VecRel { values: vec![Key::new(205), Key::new(404), Key::new(9899)], _d: PhantomData };
+        let director2: VecRel<Key<Person>, Id<Movie>> = VecRel {
+            values: vec![Key::new(205), Key::new(404), Key::new(9899)],
+            _d: PhantomData,
+        };
         let live = (&movies).with((&director2).select(&person_table));
         let mut kept = Vec::new();
         live.drive(|m, _| kept.push(m.idx()));
@@ -1656,8 +2232,10 @@ mod tests {
         struct Movie;
         struct Person;
         let person_table = DictTable::<Person>::from_keys(&[100, 205, 9899]);
-        let country: VecRel<&str, Id<Person>> =
-            VecRel { values: vec!["US", "UK", "RU"], _d: PhantomData };
+        let country: VecRel<&str, Id<Person>> = VecRel {
+            values: vec!["US", "UK", "RU"],
+            _d: PhantomData,
+        };
         let director: VecRel<Key<Person>, Id<Movie>> = VecRel {
             values: vec![Key::new(205), Key::new(100), Key::new(9899), Key::new(100)],
             _d: PhantomData,
@@ -1679,24 +2257,36 @@ mod tests {
     fn dense_ident_matches_nondense_dict() {
         struct Movie;
         struct Person;
-        let name: VecRel<&str, Id<Person>> =
-            VecRel { values: vec!["Nolan", "Kubrick"], _d: PhantomData };
+        let name: VecRel<&str, Id<Person>> = VecRel {
+            values: vec!["Nolan", "Kubrick"],
+            _d: PhantomData,
+        };
         let movies = Universe::<Id<Movie>>::new(2);
 
         // dense: FK stores the row Id directly; entity table is Ident.
-        let fk_dense: VecRel<Id<Person>, Id<Movie>> =
-            VecRel { values: vec![Id::from_idx(1), Id::from_idx(0)], _d: PhantomData };
+        let fk_dense: VecRel<Id<Person>, Id<Movie>> = VecRel {
+            values: vec![Id::from_idx(1), Id::from_idx(0)],
+            _d: PhantomData,
+        };
         let mut d = Vec::new();
-        (&movies).select(&fk_dense).select(Ident::<Person>::new()).select(&name)
+        (&movies)
+            .select(&fk_dense)
+            .select(Ident::<Person>::new())
+            .select(&name)
             .drive(|m, n| d.push((m.idx(), n)));
         d.sort();
 
         // non-dense: same logical mapping via external keys + a DictTable.
         let table = DictTable::<Person>::from_keys(&[100, 205]); // row0=key100, row1=key205
-        let fk_keys: VecRel<Key<Person>, Id<Movie>> =
-            VecRel { values: vec![Key::new(205), Key::new(100)], _d: PhantomData };
+        let fk_keys: VecRel<Key<Person>, Id<Movie>> = VecRel {
+            values: vec![Key::new(205), Key::new(100)],
+            _d: PhantomData,
+        };
         let mut nd = Vec::new();
-        (&movies).select(&fk_keys).select(&table).select(&name)
+        (&movies)
+            .select(&fk_keys)
+            .select(&table)
+            .select(&name)
             .drive(|m, n| nd.push((m.idx(), n)));
         nd.sort();
 
