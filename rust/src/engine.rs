@@ -32,7 +32,7 @@
 //   .inv()                     → InvStream  (drive-only: flips pairs, no state)
 //   .collect::<HashIdx<_,_>>() → HashIdx    (probe-only: eager HashMap<D, SVec<R>>)
 //   .collect::<MatSet<_>>()    → MatSet     (probe-only membership set)
-//   s.group_by(key)            → GroupBy    (drive-only)
+//   set.group_by(key)          → GroupBy    (drive-only)
 //   .fold(...)                 → Fold       (cache; both modes)
 //
 // NO HIDDEN MATERIALIZATION: a drive-only node in probe position is a compile
@@ -963,22 +963,28 @@ pub trait UnivSize<D: Dense> { fn univ_n(&self) -> usize; }
 impl<D: Dense> UnivSize<D> for Universe<D> { #[inline] fn univ_n(&self) -> usize { self.n } }
 impl<D: Dense> UnivSize<D> for SparseUniverse<D> { #[inline] fn univ_n(&self) -> usize { self.n } }
 
-// ===== GroupBy (Julia `r ← s`) — drive src, probe key per row ===========
-// For src: Drive<D, SV> and key: Probe<D, RK>, produces a drive-only
-// RK → SV: each src pair is re-keyed by `key`'s value at the same d.
-// Method spelling is receiver-first on the DRIVEN side: `s.group_by(r)` —
-// Julia's `←` argument order is an infix-surface artifact.
+// ===== GroupBy — drive the receiver set, probe key per row ==============
+// `r.group_by(s)` = `s.inv().with(r.inv())`: the receiver `r` is ROW-VALUED
+// (an entity set or a restriction of one — in general the pk map Key → row),
+// the key `s` maps row → group key. Drive `r`, probe `s` at each row, emit
+// (key-value, row). The result stays in row space, so column values are
+// navigated AFTER grouping: `set.group_by(key).select(col)`. (Both `inv`s
+// in the denotation are emit-order swaps — nothing is materialized.) This
+// generalizes the old column-receiver form, which assumed the entity table
+// is the identity (pk id = row): over the full table,
+// `entity.group_by(key).select(col)` ≡ the old `col.group_by(key)`.
+// (Julia's `r ← s` keeps the old column-receiver semantics.)
 
-pub struct GroupBy<S, R> { pub src: S, pub key: R }
+pub struct GroupBy<S, R> { pub set: S, pub key: R }
 
-impl<S: Query, R: Query<D = S::D>> Query for GroupBy<S, R> where R::R: Eq + Hash {
+impl<S: Query, R: Query<D = S::R>> Query for GroupBy<S, R> where R::R: Eq + Hash {
     type D = R::R;
     type R = S::R;
 }
-impl<S: Drive, R: Probe<D = S::D>> Drive for GroupBy<S, R> where R::R: Eq + Hash {
+impl<S: Drive, R: Probe<D = S::R>> Drive for GroupBy<S, R> where R::R: Eq + Hash {
     #[inline(always)]
     fn drive<K: FnMut(R::R, S::R)>(&self, mut k: K) {
-        self.src.drive(|d, sv| self.key.probe(d, |rk| k(rk, sv)));
+        self.set.drive(|_, x| self.key.probe(x, |rk| k(rk, x)));
     }
 }
 
@@ -1261,25 +1267,15 @@ pub trait QueryExt: IntoQuery + Sized {
     #[inline(always)]
     fn collect<T: FromQuery<Self::Q>>(self) -> T where Self::Q: Drive { T::from_rel(self.iq()) }
 
-    /// Julia's `r ← s` in drive position — drives self, probes `key` per
-    /// row, emits (key-value, self-value). (With sets now identity
-    /// relations, grouping by a set is just this general form: the set's
-    /// key flows through the value slot.)
+    /// `r.group_by(s)` — group the rows of a ROW-VALUED receiver (an entity
+    /// set or a restriction of one) by the key relation `s`, emitting
+    /// (key-value, row): semantically `s.inv().with(r.inv())`. The result
+    /// stays in row space — navigate columns after grouping
+    /// (`set.group_by(key).select(col)`), then aggregate.
     #[inline(always)]
     fn group_by<R: IntoQuery>(self, key: R) -> GroupBy<Self::Q, R::Q>
-    where R::Q: Query<D = DOf<Self>>, ROf<R>: Eq + Hash
-        { GroupBy { src: self.iq(), key: key.iq() } }
-
-    /// Dual of `group_by`, fusing `inv` + `select`. `group_by` drives the
-    /// payload and probes the key map; `gather` drives THIS keying relation
-    /// (via `inv`) and probes the payload. Same `(key, payload)` output
-    /// multiset, opposite Drive/Probe obligations — reach for it when the
-    /// keying relation is the cheap drive-only side and the payload is
-    /// point-probeable.
-    #[inline(always)]
-    fn gather<V: IntoQuery>(self, payload: V) -> Compose<InvStream<Self::Q>, V::Q>
-    where Self::Q: Drive, ROf<Self>: Eq + Hash, V::Q: Probe<D = DOf<Self>>
-        { Compose { a: InvStream { q: self.iq() }, b: payload.iq() } }
+    where R::Q: Query<D = ROf<Self>>, ROf<R>: Eq + Hash
+        { GroupBy { set: self.iq(), key: key.iq() } }
 
     /// `▷ (op, init)` — per-key foldl into an eager cache.
     #[inline(always)]
@@ -1404,34 +1400,36 @@ mod tests {
     fn group_by_and_folds() {
         let f = films();
         let c = cast();
-        // group film-values by cast-person (Julia `cast ← films`): films
-        // driven, cast probed for the key — for film d, value f(d), key =
-        // each cast member of d.
-        let grouped = (&f).group_by(&c);
+        let fs = Universe::new(3); // the film entity set (receiver is row-valued)
+        // group films by cast-person (`c.inv().with(fs.inv())`): the film
+        // SET is driven, cast probed for the key — emits (person, film-row);
+        // film values come by navigation after the grouping.
+        let grouped = fs.group_by(&c).select(&f);
         assert_eq!(drive_all(&grouped), vec![(7, 10), (7, 30), (8, 10)]);
-        // fold: count films per person
-        let counts = (&f).group_by(&c).fold(0i64, |a, _| a + 1);
+        // fold straight off the grouped set: count films per person
+        let counts = fs.group_by(&c).fold(0i64, |a, _| a + 1);
         assert_eq!(drive_all(&counts), vec![(7, 2), (8, 1)]);
         // dense fold over person ids 0..9
-        let dcounts = (&f).group_by(&c).dense_fold(9, 0i64, |a, _| a + 1);
+        let dcounts = fs.group_by(&c).dense_fold(9, 0i64, |a, _| a + 1);
         assert_eq!(drive_all(&dcounts), vec![(7, 2), (8, 1)]);
         // buf_fold: whole-group reduce the foldl shape can't express —
         // person 7 saw film values {10, 30} (range 20), person 8 {10}
-        let range = (&f).group_by(&c).buf_fold(|vs| {
+        let range = fs.group_by(&c).select(&f).buf_fold(|vs| {
             let mn = *vs.iter().min().unwrap();
             let mx = *vs.iter().max().unwrap();
             (mx - mn) as i64
         });
         assert_eq!(drive_all(&range), vec![(7, 20), (8, 0)]);
         // median via buf_fold (an order-statistic — needs the whole group)
-        let med = (&f).group_by(&c).buf_fold(|mut vs| {
+        let med = fs.group_by(&c).select(&f).buf_fold(|mut vs| {
             vs.sort_unstable();
             vs[vs.len() / 2]
         });
         assert_eq!(drive_all(&med), vec![(7, 30), (8, 10)]);
         // count_distinct = buf_fold's `length ∘ unique` instance; the
         // duplicate (7, 10) row collapses
-        let cd = (&f).group_by(&c).union((&f).group_by(&c).filt(|v| v == 10)).count_distinct();
+        let cd = fs.group_by(&c).select(&f)
+            .union(fs.group_by(&c).select(&f).filt(|v| v == 10)).count_distinct();
         assert_eq!(drive_all(&cd), vec![(7, 2), (8, 1)]);
         // scalar
         assert_eq!((&f).unwrap_fold(0usize, |a, v| a + v), 60);

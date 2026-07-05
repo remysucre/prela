@@ -92,7 +92,9 @@ Here, `title` and `production_year` are both attributes of
  mapping every movie (ID) to its title and production year, respectively.
 `movie` is also a binary relation, albeit a little special:
  it corresponds to the primary-key ID column of the original table,
- and is the *identity* relation over the IDs;
+ mapping each ID to its row number.
+When the IDs are dense (exactly `0..n`, as in the data here),
+ the two coincide and `movie` is the *identity* relation;
  in other words, `movie` contains `(i, i)` for every ID `i` in the table.
 Overall, each "column table" can be thought of as a map from the primary
  key to its corresponding value.
@@ -173,11 +175,11 @@ Consider TPCH [q21](https://github.com/dragansah/tpch-dbgen/blob/master/tpch-que
 let late = lineitem.with(commitdate.and(receiptdate).filt(|(c, r)| c < r));
 
 // EXISTS another supplier on the order (across all lineitems)
-let multi_supp = Lineitem::supplier.group_by(order).count_distinct().gt(1);
+let multi_supp = lineitem.group_by(order)
+    .select(Lineitem::supplier).count_distinct().gt(1);
 // NOT EXISTS another LATE supplier (only L1 is late)
-let only_late = (&late).select(Lineitem::supplier)
-    .group_by((&late).select(order))
-    .count_distinct().eq(1);
+let only_late = (&late).group_by(order)
+    .select(Lineitem::supplier).count_distinct().eq(1);
 
 let saudi = supplier.and(Supplier::nation.eq("SAUDI ARABIA"));
 let f_ords = orders.and(Order::status.eq("F"));
@@ -195,7 +197,8 @@ Where SQL needs a UDF, Prela passes an ordinary closure,
  and the accumulator `|a, _| a + 1` passed to `fold`. 
 
 The next new Prela construct excercised by this query is group-by aggregation.
-Let's focus on the expression `Lineitem::supplier.group_by(order).count_distinct().gt(1)`.
+Let's focus on the expression
+ `lineitem.group_by(order).select(Lineitem::supplier).count_distinct().gt(1)`.
 You can probably guess it corresponds to the SQL query:
 
 ```SQL
@@ -216,14 +219,22 @@ To understand how things work, we shall first introduce one more combinator,
  the inverse `.inv()`: it just flips the columns of `R`, so if `R: X -> Y`,
  then `R': Y -> X`, like how you invert a function. 
 
-Now, back to the query: `s.group_by(r)` is
- short hand for "compose with inverse": `Lineitem::supplier.group_by(order)`
- means `order.inv().select(Lineitem::supplier)`.
-Here, the `order` relation has type `Li -> Order`, so its inverse
- has type `Order -> Li` and maps each order to the lineitem.
-Then, `Lineitem::supplier` has type `Li -> Supplier`,
- so the composition has type `Order -> Supplier`,
- mapping each order to its supplier.
+Now, back to the query: `r.group_by(s)` groups the *rows* of `r`
+ (a set of rows like `lineitem`, or a filtered subset like `late`)
+ by the value of the key relation `s`; formally it is "restrict the
+ inverted key": `r.group_by(s)` means `s.inv().with(r.inv())`.
+Here, the key `order` has type `Li -> Order`, so its inverse
+ has type `Order -> Li`, mapping each order to its lineitems;
+ restricting it with the receiver keeps the lineitems belonging to `r`
+ (for the full `lineitem` table this keeps everything,
+ and for `late` it keeps only the late lineitems).
+So `lineitem.group_by(order)` has type `Order -> Li`,
+ mapping each order to its lineitems.
+Because the result is still row-valued, the columns we care about are
+ obtained by plain navigation *after* grouping:
+ `.select(Lineitem::supplier)` composes with the supplier column
+ to give an `Order -> Supplier` relation,
+ mapping each order to the suppliers of its lineitems.
 Next, each aggregation operator, `.fold()`, `.buf_fold()`, `.count_distinct()`,
  groups its receiver by the first column,
  and computes the aggregate over the second column using the supplied function. 

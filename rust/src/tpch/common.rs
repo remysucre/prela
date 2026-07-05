@@ -66,8 +66,8 @@ pub const Q1: &str = "A|F|37734107.00|56586554400.73|53758257134.87|55909065222.
 fn q1() -> String {
     let grouped = lineitem
             .with(shipdate.le(19980902))
-          .select(quantity.and(extendedprice).and(discount).and(tax))
         .group_by(returnflag.and(Lineitem::status))
+          .select(quantity.and(extendedprice).and(discount).and(tax))
             .fold((0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0_i64),
                   |(qty, ext, di, dp, chg, n), (((q, e), dc), tx)| {
                       let dp_inc = e * (1.0 - dc);
@@ -159,8 +159,8 @@ fn q3() -> String {
         .with(shipdate.gt(19950315)
          .and(order.date().lt(19950315))
          .and(order.customer().mktsegment().eq("BUILDING")))
-        .select(extendedprice.and(discount))
         .group_by(order.and(order.date()).and(order.shippriority()))
+        .select(extendedprice.and(discount))
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
     let mut rows: Vec<(((Id<Order>, i64), i64), f64)> = Vec::new();
     revenue.drive(|k, v| rows.push((k, v)));
@@ -207,21 +207,20 @@ const Q5: &str = "INDONESIA|55502041.17\n\
                   JAPAN|45410175.70";
 
 fn q5() -> String {
-    // The grouping relation carries the bulk of the work: lineitem ↦ its
-    // supplier-nation name, with every Q5 predicate pushed in — order date
-    // in window, supplier region = ASIA (the inner `.with`), and customer
-    // nation = supplier nation (the `.filt`, then `.map` keeps the shared
-    // nation). `gather` (the dual of `group_by`) drives this relation
-    // nation → lineitem and probes the payload, pinning the driven side to
-    // the filtered relation rather than the raw lineitem scan.
+    // The group key carries the bulk of the work: lineitem ↦ its
+    // supplier-nation name, with every Q5 predicate pushed in — supplier
+    // region = ASIA (the inner `.with`), and customer nation = supplier
+    // nation (the `.filt`, then `.map` keeps the shared nation). A row
+    // whose key probe yields nothing drops out, so the key doubles as a
+    // filter; only the order-date window rides on the receiver set.
     let result = lineitem
         .with(order.date().during(19940101, 19950101))
-        .select(Lineitem::supplier.nation().with(Nation::region.eq("ASIA"))
-            .and(order.customer().nation()))
-        .filt(|(s, c)| s == c)
-        .map(|(s, _)| s)
-        .name()
-        .gather(extendedprice.and(discount))
+        .group_by(Lineitem::supplier.nation().with(Nation::region.eq("ASIA"))
+            .and(order.customer().nation())
+            .filt(|(s, c)| s == c)
+            .map(|(s, _)| s)
+            .name())
+        .select(extendedprice.and(discount))
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
     let mut rows: Vec<(&str, f64)> = Vec::new();
     result.drive(|k, v| rows.push((k, v)));
@@ -233,13 +232,13 @@ fn q5() -> String {
 
 fn q7() -> String {
     let result = lineitem
-        .select(shipdate.between(19950101, 19961231).map(|d: i64| d / 10000)
+        .group_by(shipdate.between(19950101, 19961231).map(|d: i64| d / 10000)
             .and(Lineitem::supplier.nation().name()
                 .and(order.customer().nation().name())
                 .filt(|(s, c)| {
                     (s == "FRANCE" && c == "GERMANY") || (s == "GERMANY" && c == "FRANCE")
                 })))
-        .gather(extendedprice.and(discount))
+        .select(extendedprice.and(discount))
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
     let mut rows: Vec<((i64, (&str, &str)), f64)> = Vec::new();
     result.drive(|k, v| rows.push((k, v)));
@@ -254,15 +253,16 @@ fn q8() -> String {
     // SQL: per o_year, sum(volume WHERE supplier-nation = BRAZIL) / sum(volume)
     //      over ECONOMY ANODIZED STEEL parts whose customer is in region
     //      AMERICA, ordered 1995–96.  volume = extendedprice * (1 - discount).
-    // The key relation lineitem ↦ year navigates the order ONCE — restricting
+    // The group key lineitem ↦ year navigates the order ONCE — restricting
     // it (customer region AMERICA, date window) and taking its year in one
-    // hop. `gather` drives that and probes the volume/supplier-nation payload;
+    // hop; rows failing those predicates yield no key and drop out. The
+    // volume/supplier-nation payload is navigated after the grouping;
     // fold BRAZIL-volume and total-volume together, then divide.
     let result = lineitem
         .with(Lineitem::part.ty().eq("ECONOMY ANODIZED STEEL"))
-        .select(order.with(Order::customer.nation().region().eq("AMERICA"))
+        .group_by(order.with(Order::customer.nation().region().eq("AMERICA"))
             .select(date.between(19950101, 19961231)).map(|d: i64| d / 10000))
-        .gather(extendedprice.and(discount).and(Lineitem::supplier.nation().name()))
+        .select(extendedprice.and(discount).and(Lineitem::supplier.nation().name()))
         .fold((0.0_f64, 0.0_f64), |(b, t), ((e, dc), nm)| {
             let v = e * (1.0 - dc);
             (b + if nm == "BRAZIL" { v } else { 0.0 }, t + v)
@@ -277,15 +277,20 @@ fn q8() -> String {
 // ---------- Q9 — product type profit measure ----------
 
 fn q9() -> String {
-    let sc: HashIdx<_, _> = supplycost
+    let sc: HashIdx<_, _> = partsupp
         .group_by(PartSupp::part.with(Part::name.filt(|n: &str| n.contains("green")))
                   .and(PartSupp::supplier))
+        .select(supplycost)
         .collect();
     let cost_per_li = Lineitem::part.and(Lineitem::supplier).select(&sc);
+    // The `sc` probe misses on non-green parts, so restricting the receiver
+    // by it culls ~95% of the scan before the group key's nation/year
+    // navigation; the payload re-probes it for the cost value.
     let result = lineitem
-        .select(cost_per_li.and(extendedprice).and(discount).and(quantity))
+        .with(&cost_per_li)
         .group_by(Lineitem::supplier.nation().name()
             .and(order.date().map(|d: i64| d / 10000)))
+        .select((&cost_per_li).and(extendedprice).and(discount).and(quantity))
         .fold(0.0_f64, |a, (((cost, e), dc), q)| a + e * (1.0 - dc) - cost * q);
     let mut rows: Vec<((&str, i64), f64)> = Vec::new();
     result.drive(|k, v| rows.push((k, v)));
@@ -299,8 +304,8 @@ fn q10() -> String {
     let revenue = lineitem
         .with(returnflag.eq("R")
          .and(order.date().during(19931001, 19940101)))
-        .select(extendedprice.and(discount))
         .group_by(order.customer())
+        .select(extendedprice.and(discount))
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc))
         .and(Customer::name
             .and(Customer::acctbal)
@@ -324,8 +329,8 @@ fn q10() -> String {
 fn q11() -> String {
     let value_per_part = partsupp
         .with(PartSupp::supplier.nation().eq("GERMANY"))
-        .select(supplycost.and(availqty))
         .group_by(PartSupp::part)
+        .select(supplycost.and(availqty))
         .fold(0.0, |a, (c, q)| a + c * (q as f64));
     let threshold = 0.0001 * (&value_per_part).unwrap_fold(0.0, |a, v| a + v);
     let mut rows: Vec<(Id<Part>, f64)> = Vec::new();
@@ -345,8 +350,8 @@ fn q12() -> String {
         .with(shipmode.is_in(["MAIL", "SHIP"])
          .and(shipdate.and(commitdate).and(receiptdate).filt(|((s, c), r)| s < c && c < r))
          .and(receiptdate.during(19940101, 19950101)))
-        .select(order.priority())
         .group_by(shipmode)
+        .select(order.priority())
         .fold((0_i64, 0_i64), |(h, l), pr| {
             let is_high = pr == "1-URGENT" || pr == "2-HIGH";
             if is_high { (h + 1, l) } else { (h, l + 1) }
@@ -379,8 +384,8 @@ fn q13() -> String {
 fn q15() -> String {
     let revenue = lineitem
         .with(shipdate.during(19960101, 19960401))
-        .select(extendedprice.and(discount))
         .group_by(Lineitem::supplier)
+        .select(extendedprice.and(discount))
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
     let max_rev = (&revenue).unwrap_fold(0.0, f64::max);
     let result = revenue.eq(max_rev)
@@ -402,8 +407,8 @@ fn q16() -> String {
                              .and(ty.filt(|s: &str| !s.starts_with("MEDIUM POLISHED")))
                              .and(size.is_in([49, 14, 23, 45, 19, 3, 36, 9])))
          .and(PartSupp::supplier.comment().nrx("Customer.*Complaints")))
-        .supplier()
         .group_by(PartSupp::part.select(brand.and(ty).and(size)))
+        .supplier()
         .count_distinct();
     let mut rows: Vec<(((&str, &str), i64), i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
@@ -419,7 +424,7 @@ fn q17() -> String {
     //      whose quantity < 0.2 * avg(quantity) for that part.
     // Per-part 0.2*avg threshold (one fused (sum, count) fold), materialized so
     // the cross-column compare is a probe rather than a re-fold per row.
-    let tpp: HashIdx<_, _> = quantity.group_by(Lineitem::part)
+    let tpp: HashIdx<_, _> = lineitem.group_by(Lineitem::part).quantity()
         .fold((0.0_f64, 0_i64), |(s, n), q| (s + q, n + 1))
         .map(|(s, n)| 0.2 * s / n as f64)
         .collect();
@@ -438,7 +443,7 @@ fn q18() -> String {
     //      key/date/totalprice and the sum.  ORDER BY o_totalprice DESC,
     //      o_orderdate, LIMIT 100.  All output columns are FD'd by the order,
     //      so attach them (order info, then customer info) after the fold.
-    let result = quantity.group_by(order)
+    let result = lineitem.group_by(order).quantity()
         .fold(0.0_f64, |a, q| a + q)
         .gt(300.0)
         .and(totalprice.and(date)
@@ -492,8 +497,8 @@ fn q20() -> String {
     // Correlated aggregate: per (part, supplier), the 1994 shipped quantity.
     let sum_qty = lineitem
         .with(shipdate.during(19940101, 19950101))
-        .quantity()
         .group_by(Lineitem::part.and(Lineitem::supplier))
+        .quantity()
         .fold(0.0_f64, |a, q| a + q);
     let threshold = PartSupp::part.and(PartSupp::supplier).select(&sum_qty).map(|s| 0.5 * s);
     // Suppliers with a qualifying forest part (availqty over threshold), as a
@@ -524,10 +529,11 @@ fn q21() -> String {
     //      s_name, LIMIT 100.
     let late = lineitem.with(commitdate.and(receiptdate).filt(|(c, r)| c < r));
     // multi_supp: order has >1 distinct supplier across all its lines.
-    let multi_supp = Lineitem::supplier.group_by(order).count_distinct().gt(1);
+    let multi_supp = lineitem.group_by(order)
+        .select(Lineitem::supplier).count_distinct().gt(1);
     // only_late: among the order's LATE lines, exactly one distinct supplier.
-    let only_late = (&late).select(Lineitem::supplier)
-        .group_by(order).count_distinct().eq(1);
+    let only_late = (&late).group_by(order)
+        .select(Lineitem::supplier).count_distinct().eq(1);
     let counts = (&late)
         .with(Lineitem::supplier.nation().eq("SAUDI ARABIA")
          .and(order.with(Order::status.eq("F").and(multi_supp).and(only_late))))
@@ -559,8 +565,8 @@ fn q22() -> String {
     let custs_with_orders: MatSet<_> = Order::customer.collect();
     let counts = (&prefix_ok).with(Customer::acctbal.gt(avg))
         .minus(custs_with_orders)
-        .select(Customer::acctbal)
         .group_by(&prefix)
+        .select(Customer::acctbal)
         .fold((0_i64, 0.0_f64), |(cnt, sm), ab| (cnt + 1, sm + ab));
     let mut rows: Vec<(&str, (i64, f64))> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
@@ -576,8 +582,9 @@ fn q2() -> String {
     //      ORDER BY s_acctbal DESC, n_name, s_name, p_partkey, LIMIT 100.
     let eu_ps = partsupp.with(PartSupp::supplier.nation().region().eq("EUROPE"));
     // Correlated min: cheapest EUROPE supplycost per part.
-    let min_per_part = (&eu_ps).supplycost()
+    let min_per_part = (&eu_ps)
         .group_by(PartSupp::part)
+        .supplycost()
         .fold(f64::INFINITY, |a, c| if c < a { c } else { a });
     // Project per PS row → (acct, sname, nname, pkey, mfgr, addr, phone, comm)
     // by navigation; flatten the tuple as it's collected.

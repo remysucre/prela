@@ -364,10 +364,12 @@ attributes of the same table in the original schema, but in Prela, each
 of them becomes a binary relation, mapping every movie (ID) to its title
 and production year, respectively. <code>movie</code> is also a binary
 relation, albeit a little special: it corresponds to the primary-key ID
-column of the original table, and is the <em>identity</em> relation over
-the IDs; in other words, <code>movie</code> contains <code>(i, i)</code>
-for every ID <code>i</code> in the table. Overall, each "column table"
-can be thought of as a map from the primary key to its corresponding
+column of the original table, mapping each ID to its row number. When
+the IDs are dense (exactly <code>0..n</code>, as in the data here), the
+two coincide and <code>movie</code> is the <em>identity</em> relation;
+in other words, <code>movie</code> contains <code>(i, i)</code> for
+every ID <code>i</code> in the table. Overall, each "column table" can
+be thought of as a map from the primary key to its corresponding
 value.</p>
 <p>Comparisons like <code>.gt()</code> and <code>.is_in()</code> are
 regular Rust methods on relations. For example,
@@ -443,11 +445,11 @@ href="https://github.com/dragansah/tpch-dbgen/blob/master/tpch-queries/21.sql">q
 class="sourceCode rust"><code class="sourceCode rust"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> late <span class="op">=</span> lineitem<span class="op">.</span>with(commitdate<span class="op">.</span>and(receiptdate)<span class="op">.</span>filt(<span class="op">|</span>(c<span class="op">,</span> r)<span class="op">|</span> c <span class="op">&lt;</span> r))<span class="op">;</span></span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="co">// EXISTS another supplier on the order (across all lineitems)</span></span>
-<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> multi_supp <span class="op">=</span> <span class="pp">Lineitem::</span>supplier<span class="op">.</span>group_by(order)<span class="op">.</span>count_distinct()<span class="op">.</span>gt(<span class="dv">1</span>)<span class="op">;</span></span>
-<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="co">// NOT EXISTS another LATE supplier (only L1 is late)</span></span>
-<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> only_late <span class="op">=</span> (<span class="op">&amp;</span>late)<span class="op">.</span>select(<span class="pp">Lineitem::</span>supplier)</span>
-<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>group_by((<span class="op">&amp;</span>late)<span class="op">.</span>select(order))</span>
-<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>count_distinct()<span class="op">.</span>eq(<span class="dv">1</span>)<span class="op">;</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> multi_supp <span class="op">=</span> lineitem<span class="op">.</span>group_by(order)</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>select(<span class="pp">Lineitem::</span>supplier)<span class="op">.</span>count_distinct()<span class="op">.</span>gt(<span class="dv">1</span>)<span class="op">;</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="co">// NOT EXISTS another LATE supplier (only L1 is late)</span></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> only_late <span class="op">=</span> (<span class="op">&amp;</span>late)<span class="op">.</span>group_by(order)</span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>select(<span class="pp">Lineitem::</span>supplier)<span class="op">.</span>count_distinct()<span class="op">.</span>eq(<span class="dv">1</span>)<span class="op">;</span></span>
 <span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> saudi <span class="op">=</span> supplier<span class="op">.</span>and(<span class="pp">Supplier::</span>nation<span class="op">.</span>eq(<span class="st">&quot;SAUDI ARABIA&quot;</span>))<span class="op">;</span></span>
 <span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> f_ords <span class="op">=</span> orders<span class="op">.</span>and(<span class="pp">Order::</span>status<span class="op">.</span>eq(<span class="st">&quot;F&quot;</span>))<span class="op">;</span></span>
@@ -463,7 +465,7 @@ e.g., the predicate in <code>.filt(|(c, r)| c &lt; r)</code> and the
 accumulator <code>|a, _| a + 1</code> passed to <code>fold</code>.</p>
 <p>The next new Prela construct excercised by this query is group-by
 aggregation. Let's focus on the expression
-<code>Lineitem::supplier.group_by(order).count_distinct().gt(1)</code>.
+<code>lineitem.group_by(order).select(Lineitem::supplier).count_distinct().gt(1)</code>.
 You can probably guess it corresponds to the SQL query:</p>
 <div class="sourceCode" id="cb5"><pre
 class="sourceCode SQL"><code class="sourceCode sql"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>  <span class="kw">SELECT</span> <span class="kw">order</span>, supplier</span>
@@ -480,26 +482,36 @@ We don't.</p>
 combinator, the inverse <code>.inv()</code>: it just flips the columns
 of <code>R</code>, so if <code>R: X -&gt; Y</code>, then
 <code>R': Y -&gt; X</code>, like how you invert a function.</p>
-<p>Now, back to the query: <code>s.group_by(r)</code> is short hand for
-"compose with inverse": <code>Lineitem::supplier.group_by(order)</code>
-means <code>order.inv().select(Lineitem::supplier)</code>. Here, the
-<code>order</code> relation has type <code>Li -&gt; Order</code>, so its
-inverse has type <code>Order -&gt; Li</code> and maps each order to the
-lineitem. Then, <code>Lineitem::supplier</code> has type
-<code>Li -&gt; Supplier</code>, so the composition has type
-<code>Order -&gt; Supplier</code>, mapping each order to its supplier.
-Next, each aggregation operator, <code>.fold()</code>,
-<code>.buf_fold()</code>, <code>.count_distinct()</code>, groups its
-receiver by the first column, and computes the aggregate over the second
-column using the supplied function. In our case, we group the suppliers
-by order, then count the number of distinct suppliers per group.
-Finally, <code>.gt(1)</code> works as before and filters the relation to
-keep the orders that are supplied by more than 1 distinct suppliers,
-which corresponds to the <code>HAVING</code> clause in SQL but requires
-no special treatment in Prela. Grouping may appear limiting as it "can
-only group by one attribute", but that is not true - grouping by
-multiple attributes can be achieved by grouping by a product! I'll leave
-that as an excercise for the reader.</p>
+<p>Now, back to the query: <code>r.group_by(s)</code> groups the
+<em>rows</em> of <code>r</code> (a set of rows like
+<code>lineitem</code>, or a filtered subset like <code>late</code>) by
+the value of the key relation <code>s</code>; formally it is "restrict
+the inverted key": <code>r.group_by(s)</code> means
+<code>s.inv().with(r.inv())</code>. Here, the key <code>order</code> has
+type <code>Li -&gt; Order</code>, so its inverse has type
+<code>Order -&gt; Li</code>, mapping each order to its lineitems;
+restricting it with the receiver keeps the lineitems belonging to
+<code>r</code> (for the full <code>lineitem</code> table this keeps
+everything, and for <code>late</code> it keeps only the late lineitems).
+So <code>lineitem.group_by(order)</code> has type
+<code>Order -&gt; Li</code>, mapping each order to its lineitems.
+Because the result is still row-valued, the columns we care about are
+obtained by plain navigation <em>after</em> grouping:
+<code>.select(Lineitem::supplier)</code> composes with the supplier
+column to give an <code>Order -&gt; Supplier</code> relation, mapping
+each order to the suppliers of its lineitems. Next, each aggregation
+operator, <code>.fold()</code>, <code>.buf_fold()</code>,
+<code>.count_distinct()</code>, groups its receiver by the first column,
+and computes the aggregate over the second column using the supplied
+function. In our case, we group the suppliers by order, then count the
+number of distinct suppliers per group. Finally, <code>.gt(1)</code>
+works as before and filters the relation to keep the orders that are
+supplied by more than 1 distinct suppliers, which corresponds to the
+<code>HAVING</code> clause in SQL but requires no special treatment in
+Prela. Grouping may appear limiting as it "can only group by one
+attribute", but that is not true - grouping by multiple attributes can
+be achieved by grouping by a product! I'll leave that as an excercise
+for the reader.</p>
 <h2 id="implementation">Implementation</h2>
 <p>If implemented naively, Prela would be pretty slow. Indeed, the first
 prototype was around 100x slower than DuckDB! The naive implementation
