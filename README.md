@@ -267,7 +267,7 @@ movie.gather(keyword.text())
  that maps every movie to the list of its keywords
  (a movie with no keywords maps to the empty list).
 Gathered relations compose like any other —
- `.filt(|ks| ks.len() > 5)` keeps the heavily-tagged movies —
+ `.filt_ref(|ks| ks.len() > 5)` keeps the heavily-tagged movies —
  and gathers nest, so one query can return a full document shape
  (each movie carrying its cast, each cast member carrying their names)
  in a single pass, with no duplication.

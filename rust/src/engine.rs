@@ -597,7 +597,7 @@ impl<A: Clustered, B> Clustered for Compose<A, B> {}
 // `Clustered`. Where `group_by` groups by a probed (foreign) key and pays
 // a hash fold, `gather` groups along the navigation already being done and
 // pays nothing. A key whose probes all miss still emits its (empty) group
-// — the left-outer flavor nested output wants; `.filt(|vs| !vs.is_empty())`
+// — the left-outer flavor nested output wants; `.filt_ref(|vs| !vs.is_empty())`
 // restores inner semantics.
 //
 // The unit view (why `collect` is not this operator): with `unit: X → ()`
@@ -671,10 +671,13 @@ impl<A: Probe, B: Probe<D = A::R>> Probe for Compose<A, B> {
 }
 
 // ===== Filter (relation × scalar predicate) =============================
-// The predicate is a plain closure `Fn(A::R) -> bool`, held directly — no
-// predicate trait layer (Julia: `Filter(a, pred)` with any callable). Every
-// comparison combinator below (`.eq`, `.gt`, `.rx`, …) is a captured-closure
-// form of `.filt`.
+// The predicate is a plain closure held directly — no predicate trait
+// layer (Julia: `Filter(a, pred)` with any callable). The NODE's predicate
+// borrows (`Fn(&A::R) -> bool`) so heavy values — gathered groups — are
+// tested without a clone; the ergonomic by-value surface for `Copy`
+// scalars is `.filt`'s deref wrapper (zero cost), and every comparison
+// combinator below (`.eq`, `.gt`, `.rx`, …) is a captured-closure form of
+// the same.
 
 pub struct Filter<A, F> { pub a: A, pub p: F }
 
@@ -682,21 +685,21 @@ impl<A: Query, F> Query for Filter<A, F> {
     type D = A::D;
     type R = A::R;
 }
-impl<A: Drive, F: Fn(A::R) -> bool> Drive for Filter<A, F> {
+impl<A: Drive, F: Fn(&A::R) -> bool> Drive for Filter<A, F> {
     #[inline(always)]
     fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
-        self.a.drive(|x, v| if (self.p)(v.clone()) { k(x, v); });
+        self.a.drive(|x, v| if (self.p)(&v) { k(x, v); });
     }
 }
 impl<A: Clustered, F> Clustered for Filter<A, F> {}
-impl<A: Probe, F: Fn(A::R) -> bool> Probe for Filter<A, F> {
+impl<A: Probe, F: Fn(&A::R) -> bool> Probe for Filter<A, F> {
     #[inline(always)]
     fn probe<K: FnMut(A::R)>(&self, x: A::D, mut k: K) {
-        self.a.probe(x, |v| if (self.p)(v.clone()) { k(v); });
+        self.a.probe(x, |v| if (self.p)(&v) { k(v); });
     }
     #[inline(always)]
     fn probe_any<K: FnMut(A::R) -> bool>(&self, x: A::D, mut k: K) -> bool {
-        self.a.probe_any(x, |v| (self.p)(v.clone()) && k(v))
+        self.a.probe_any(x, |v| (self.p)(&v) && k(v))
     }
 }
 
@@ -1269,7 +1272,8 @@ pub trait QueryExt: IntoQuery + Sized {
     /// and gathers nest (`SVec<SVec<…>>`) for document-shaped results.
     /// Grouping is by run detection on the driven key (no hashing), so
     /// driving requires `Clustered`; keys whose probes miss emit `[]`
-    /// (left-outer). See the `Gather` node for the algebra, including why
+    /// (left-outer; `.filt_ref` borrows the group to test without a
+    /// clone). See the `Gather` node for the algebra, including why
     /// `q.collect::<T>()` is this operator at the unit key.
     #[inline(always)]
     fn gather<B: IntoQuery>(self, b: B) -> Gather<Self::Q, B::Q>
@@ -1312,69 +1316,78 @@ pub trait QueryExt: IntoQuery + Sized {
     // Predicate filters — all elide the primary field (scalar = identity)
     // then compare; see the `Field`/`Primary` traits above. `filt` is the
     // non-eliding escape hatch.
-    #[inline(always)] fn eq(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    #[inline(always)] fn eq(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(&Sc<Self>) -> bool>
         where ROf<Self>: Field, Sc<Self>: PartialEq {
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x == v }
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x: &Sc<Self>| *x == v }
     }
-    #[inline(always)] fn ne(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    #[inline(always)] fn ne(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(&Sc<Self>) -> bool>
         where ROf<Self>: Field, Sc<Self>: PartialEq {
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x != v }
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x: &Sc<Self>| *x != v }
     }
-    #[inline(always)] fn gt(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    #[inline(always)] fn gt(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(&Sc<Self>) -> bool>
         where ROf<Self>: Field, Sc<Self>: PartialOrd {
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x > v }
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x: &Sc<Self>| *x > v }
     }
-    #[inline(always)] fn lt(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    #[inline(always)] fn lt(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(&Sc<Self>) -> bool>
         where ROf<Self>: Field, Sc<Self>: PartialOrd {
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x < v }
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x: &Sc<Self>| *x < v }
     }
-    #[inline(always)] fn ge(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    #[inline(always)] fn ge(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(&Sc<Self>) -> bool>
         where ROf<Self>: Field, Sc<Self>: PartialOrd {
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x >= v }
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x: &Sc<Self>| *x >= v }
     }
-    #[inline(always)] fn le(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    #[inline(always)] fn le(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(&Sc<Self>) -> bool>
         where ROf<Self>: Field, Sc<Self>: PartialOrd {
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x <= v }
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x: &Sc<Self>| *x <= v }
     }
-    #[inline(always)] fn in_v(self, vs: Vec<Sc<Self>>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    #[inline(always)] fn in_v(self, vs: Vec<Sc<Self>>) -> Filter<Elided<Self>, impl Fn(&Sc<Self>) -> bool>
         where ROf<Self>: Field, Sc<Self>: PartialEq {
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| vs.iter().any(|&v| v == x) }
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x: &Sc<Self>| vs.iter().any(|&v| v == *x) }
     }
     /// `in_v` over any `IntoIterator` — arrays, slices, the named set fns —
     /// collected once into the captured Vec.
     #[inline(always)] fn is_in<I: IntoIterator<Item = Sc<Self>>>(self, vs: I)
-        -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+        -> Filter<Elided<Self>, impl Fn(&Sc<Self>) -> bool>
         where ROf<Self>: Field, Sc<Self>: PartialEq {
         let vs: Vec<Sc<Self>> = vs.into_iter().collect();
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| vs.iter().any(|&v| v == x) }
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x: &Sc<Self>| vs.iter().any(|&v| v == *x) }
     }
     /// Restriction `a : b` — keep self's pairs whose VALUE is a `member` of
     /// `s` (any probe-able relation). Builds the dedicated `Restrict` node,
     /// node-for-node with Julia.
     #[inline(always)] fn with<S: IntoQuery>(self, s: S) -> Restrict<Self::Q, S::Q>
         where S::Q: Probe<D = ROf<Self>> { Restrict { a: self.iq(), b: s.iq() } }
-    #[inline(always)] fn rx(self, re: &str) -> Filter<Elided<Self>, impl Fn(&'static str) -> bool>
+    #[inline(always)] fn rx(self, re: &str) -> Filter<Elided<Self>, impl Fn(&&'static str) -> bool>
         where ROf<Self>: Field<Scalar = &'static str> {
         let re = Regex::new(re).unwrap();
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |s| re.is_match(s) }
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |s: &&'static str| re.is_match(s) }
     }
-    #[inline(always)] fn nrx(self, re: &str) -> Filter<Elided<Self>, impl Fn(&'static str) -> bool>
+    #[inline(always)] fn nrx(self, re: &str) -> Filter<Elided<Self>, impl Fn(&&'static str) -> bool>
         where ROf<Self>: Field<Scalar = &'static str> {
         let re = Regex::new(re).unwrap();
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |s| !re.is_match(s) }
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |s: &&'static str| !re.is_match(s) }
     }
     /// Closure-predicate filter — for things like cross-column compares.
-    #[inline(always)] fn filt<F: Fn(ROf<Self>) -> bool>(self, f: F) -> Filter<Self::Q, F>
+    /// By value, for `Copy` scalars (a zero-cost deref wrapper over the
+    /// node's by-ref predicate); heavy values use `.filt_ref`.
+    #[inline(always)] fn filt<F: Fn(ROf<Self>) -> bool>(self, f: F)
+        -> Filter<Self::Q, impl Fn(&ROf<Self>) -> bool>
+        where ROf<Self>: Copy
+        { Filter { a: self.iq(), p: move |v: &ROf<Self>| f(*v) } }
+    /// `.filt` by reference — the predicate borrows, so group-valued
+    /// relations are tested WITHOUT cloning the group:
+    /// `movie.gather(year).filt_ref(|ys| !ys.is_empty())`.
+    #[inline(always)] fn filt_ref<F: Fn(&ROf<Self>) -> bool>(self, f: F) -> Filter<Self::Q, F>
         { Filter { a: self.iq(), p: f } }
     /// Half-open range `[lo, hi)` — Julia `during(lo, hi)`.
-    #[inline(always)] fn during(self, lo: Sc<Self>, hi: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    #[inline(always)] fn during(self, lo: Sc<Self>, hi: Sc<Self>) -> Filter<Elided<Self>, impl Fn(&Sc<Self>) -> bool>
         where ROf<Self>: Field, Sc<Self>: PartialOrd {
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x >= lo && x < hi }
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x: &Sc<Self>| *x >= lo && *x < hi }
     }
     /// Closed range `[lo, hi]` — Julia `lo..hi`.
-    #[inline(always)] fn between(self, lo: Sc<Self>, hi: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    #[inline(always)] fn between(self, lo: Sc<Self>, hi: Sc<Self>) -> Filter<Elided<Self>, impl Fn(&Sc<Self>) -> bool>
         where ROf<Self>: Field, Sc<Self>: PartialOrd {
-        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| x >= lo && x <= hi }
+        Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x: &Sc<Self>| *x >= lo && *x <= hi }
     }
 
     /// Materialize — drive self once into the physical structure named by
@@ -1564,9 +1577,11 @@ mod tests {
         // no cast and emits the EMPTY group (left-outer flavor).
         assert_eq!(drive_all(&u3.gather(&c)),
                    vec![(0, sv(&[7, 8])), (1, sv(&[])), (2, sv(&[7]))]);
-        // .filt restores inner semantics; .map gives per-key aggregation
+        // .filt_ref restores inner semantics, borrowing the group — no
+        // clone (`.filt` is the by-value spelling for Copy scalars and
+        // refuses groups at compile time); .map gives per-key aggregation
         // with NO hashing — the driven runs are the groups.
-        assert_eq!(drive_all(&u3.gather(&c).filt(|vs| !vs.is_empty())),
+        assert_eq!(drive_all(&u3.gather(&c).filt_ref(|vs| !vs.is_empty())),
                    vec![(0, sv(&[7, 8])), (2, sv(&[7]))]);
         assert_eq!(drive_all(&u3.gather(&c).map(|vs| vs.len() as i64)),
                    vec![(0, 2), (1, 0), (2, 1)]);

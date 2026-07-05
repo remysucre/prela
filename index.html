@@ -529,10 +529,10 @@ stream, it collects them into an array under each movie, producing a
 relation of type <code>Movie -&gt; [String]</code> that maps every movie
 to the list of its keywords (a movie with no keywords maps to the empty
 list). Gathered relations compose like any other —
-<code>.filt(|ks| ks.len() &gt; 5)</code> keeps the heavily-tagged movies
-— and gathers nest, so one query can return a full document shape (each
-movie carrying its cast, each cast member carrying their names) in a
-single pass, with no duplication.</p>
+<code>.filt_ref(|ks| ks.len() &gt; 5)</code> keeps the heavily-tagged
+movies — and gathers nest, so one query can return a full document shape
+(each movie carrying its cast, each cast member carrying their names) in
+a single pass, with no duplication.</p>
 <p>Two things make this essentially free. First, there is no hashing or
 sorting: <code>.select()</code> and <code>.gather()</code> compile to
 the <em>same</em> loop nest, and the groups are exactly the runs of the
