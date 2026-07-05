@@ -4844,6 +4844,171 @@ status open
 
 \end_layout
 
+\begin_layout Subsection
+Discussion
+\end_layout
+
+\begin_layout Standard
+Looking back at the example in Figure
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "fig:JOB-query-16b"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+tuple "list"
+
+\end_inset
+
+,
+ we see another,
+ more intuitive way to understand the query:
+ pretend that there are 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie
+\end_layout
+
+\end_inset
+
+ objects with field 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+company
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+keyword
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+title
+\end_layout
+
+\end_inset
+
+,
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+cast
+\end_layout
+
+\end_inset
+
+,
+ where 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+company
+\end_layout
+
+\end_inset
+
+ is its own object with field 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+country
+\end_layout
+
+\end_inset
+
+,
+ and similar for 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+cast
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+person
+\end_layout
+
+\end_inset
+
+,
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+alias
+\end_layout
+
+\end_inset
+
+.
+ Then the Prela query appears to access fields and apply predicates to them.
+ This is not accidental.
+ Central to the design of both 
+\noun on
+TAR
+\noun default
+ and Prela is the focus on binary relations,
+ which closely models both attributes and relationships 
+\emph on
+a la
+\emph default
+ Entity/Relationship.
+ Modern business logic usually start life as an E/R diagram,
+ and the application code —
+ commonly written in some object-oriented language —
+ naturally mirrors the E/R model.
+ Built with a set of compositional operators,
+ Prela queries blend into the surrounding application,
+ obviating the need for ORMs.
+ The binary relation foundation also paves the way to support emerging workloads over nested documents and graph data.
+ 
+\end_layout
+
 \begin_layout Section
 Implementation
 \begin_inset CommandInset label
