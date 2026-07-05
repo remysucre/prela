@@ -512,6 +512,38 @@ Prela. Grouping may appear limiting as it "can only group by one
 attribute", but that is not true - grouping by multiple attributes can
 be achieved by grouping by a product! I'll leave that as an excercise
 for the reader.</p>
+<h2 id="nested-results">Nested Results</h2>
+<p>Flat tables force flat results, and flattening duplicates: ask SQL
+for each movie together with its keywords, and the join repeats the
+movie once per keyword; ask for cast <em>and</em> keywords, and you get
+their cross product per movie — 5 actors and 3 keywords come back as 15
+rows. SQL works around this with <code>ARRAY_AGG</code> and correlated
+subqueries, ORMs fire N+1 queries, and GraphQL servers build entire
+planners for it. In Prela, nested results take one more combinator,
+<code>.gather()</code>:</p>
+<div class="sourceCode" id="cb6"><pre
+class="sourceCode rust"><code class="sourceCode rust"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>movie<span class="op">.</span>gather(keyword<span class="op">.</span>text())</span></code></pre></div>
+<p><code>.gather()</code> is <code>.select()</code> that <em>keeps the
+shape</em>: instead of flattening the matching keywords into the output
+stream, it collects them into an array under each movie, producing a
+relation of type <code>Movie -&gt; [String]</code> that maps every movie
+to the list of its keywords (a movie with no keywords maps to the empty
+list). Gathered relations compose like any other —
+<code>.filt(|ks| ks.len() &gt; 5)</code> keeps the heavily-tagged movies
+— and gathers nest, so one query can return a full document shape (each
+movie carrying its cast, each cast member carrying their names) in a
+single pass, with no duplication.</p>
+<p>Two things make this essentially free. First, there is no hashing or
+sorting: <code>.select()</code> and <code>.gather()</code> compile to
+the <em>same</em> loop nest, and the groups are exactly the runs of the
+driven side — <code>.gather()</code> simply doesn't flatten them.
+(Contrast with <code>.group_by()</code>, which groups by a probed key
+and pays for a hash table; <code>.gather()</code> groups along the
+navigation you were already doing.) Second, it explains a combinator we
+already had: materializing with <code>.collect::&lt;T&gt;()</code> is
+just gathering the <em>whole</em> result under the unit key — one group,
+holding everything — which is why an index like <code>HashIdx</code> is
+best understood as the nested form of a binary relation.</p>
 <h2 id="implementation">Implementation</h2>
 <p>If implemented naively, Prela would be pretty slow. Indeed, the first
 prototype was around 100x slower than DuckDB! The naive implementation

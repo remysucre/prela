@@ -33,6 +33,7 @@
 //   .collect::<HashIdx<_,_>>() → HashIdx    (probe-only: eager HashMap<D, SVec<R>>)
 //   .collect::<MatSet<_>>()    → MatSet     (probe-only membership set)
 //   set.group_by(key)          → GroupBy    (drive-only)
+//   a.gather(b)                → Gather     (nested groups; drive needs Clustered)
 //   .fold(...)                 → Fold       (cache; both modes)
 //
 // NO HIDDEN MATERIALIZATION: a drive-only node in probe position is a compile
@@ -55,17 +56,30 @@ use smallvec::SmallVec;
 use std::hash::Hash;
 use std::marker::PhantomData;
 
-/// Default inline capacity for the probe-index buckets. Most TPC-H
-/// foreign-key relations are 1:1 or 1:few (e.g. lineitems-per-order ≈ 4),
-/// so this size keeps the common case inline + heap-free.
-type SVec<T> = SmallVec<[T; 4]>;
+/// Default inline capacity for the probe-index buckets and the `Gather`
+/// groups. Most TPC-H foreign-key relations are 1:1 or 1:few (e.g.
+/// lineitems-per-order ≈ 4), so this size keeps the common case inline +
+/// heap-free. Public because it is the value type of gathered groups.
+pub type SVec<T> = SmallVec<[T; 4]>;
 
 // ===== the mode traits ==================================================
 
 pub trait Query {
     type D: Copy + Eq + Hash;
-    type R: Copy;
+    // `Clone`, not `Copy`: every scalar value is still `Copy` (and cloning
+    // a `Copy` type compiles to the same memcpy), but `Gather` emits
+    // `SVec` groups as values. Keys stay `Copy` — an array can never
+    // accidentally become a join/group key.
+    type R: Clone;
 }
+
+/// Marker: `drive` emits each key's pairs in ONE contiguous run (keys need
+/// not be globally sorted; unique-key nodes are trivially clustered). Every
+/// leaf and every key-preserving combinator has it; nodes that scramble
+/// keys (`InvStream`, `GroupBy`, `Union`) deliberately do NOT. `Gather`
+/// bounds its `Drive` impl on this, so its run-based (hash-free) grouping
+/// over a scrambled stream is a COMPILE error, per the mode-rule style.
+pub trait Clustered {}
 
 pub trait Drive: Query {
     fn drive<K: FnMut(Self::D, Self::R)>(&self, k: K);
@@ -115,6 +129,7 @@ pub type ROf<T> = <<T as IntoQuery>::Q as Query>::R;
 
 // blanket: &T inherits T's modes.
 impl<T: Query + ?Sized> Query for &T { type D = T::D; type R = T::R; }
+impl<T: Clustered + ?Sized> Clustered for &T {}
 impl<T: Drive + ?Sized> Drive for &T {
     #[inline(always)]
     fn drive<K: FnMut(T::D, T::R)>(&self, k: K) { (**self).drive(k); }
@@ -385,6 +400,7 @@ impl<R: Copy + 'static, D: Dense> MultiRel<R, D> {
 // out-of-universe id fails it, so "missing key emits nothing" and bounds
 // safety are the same one check. No `unsafe` needed.
 impl<R: Copy, D: Dense> Query for VecRel<R, D> { type D = D; type R = R; }
+impl<R: Copy, D: Dense> Clustered for VecRel<R, D> {}
 impl<R: Copy, D: Dense> Drive for VecRel<R, D> {
     #[inline(always)]
     fn drive<K: FnMut(D, R)>(&self, mut k: K) {
@@ -407,6 +423,7 @@ impl<R: Copy, D: Dense> Probe for VecRel<R, D> {
 }
 
 impl<R: Copy, D: Dense> Query for MultiRel<R, D> { type D = D; type R = R; }
+impl<R: Copy, D: Dense> Clustered for MultiRel<R, D> {}
 impl<R: Copy, D: Dense> Drive for MultiRel<R, D> {
     #[inline(always)]
     fn drive<K: FnMut(D, R)>(&self, mut k: K) {
@@ -439,6 +456,7 @@ impl<D: Dense> Universe<D> {
 }
 
 impl<D: Dense> Query for Universe<D> { type D = D; type R = D; }
+impl<D: Dense> Clustered for Universe<D> {}
 impl<D: Dense> Drive for Universe<D> {
     #[inline(always)]
     fn drive<K: FnMut(D, D)>(&self, mut k: K) {
@@ -565,6 +583,82 @@ impl<A: Drive, B: Probe<D = A::R>> Drive for Compose<A, B> {
         self.a.drive(|x, m| self.b.probe(m, |r| k(x, r)));
     }
 }
+impl<A: Clustered, B> Clustered for Compose<A, B> {}
+
+// ===== Gather — `a.gather(b)`: the select that KEEPS the nesting ========
+// Same loop nest as Compose, but the inner probe's matches are COLLECTED
+// into an `SVec` per driven key instead of flattened into the stream:
+// `movie.gather(year)` is `Movie → [year]`. `select` is thus
+// "gather ∘ flatten" fused; the nested form is what the CPS loop structure
+// had all along.
+//
+// Grouping is per KEY of the driven side, by run detection — one `Eq`
+// compare per pair, no hashing, no sort — which is why `Drive` requires
+// `Clustered`. Where `group_by` groups by a probed (foreign) key and pays
+// a hash fold, `gather` groups along the navigation already being done and
+// pays nothing. A key whose probes all miss still emits its (empty) group
+// — the left-outer flavor nested output wants; `.filt(|vs| !vs.is_empty())`
+// restores inner semantics.
+//
+// The unit view (why `collect` is not this operator): with `unit: X → ()`
+// and `univ = unit.inv()`, `univ.gather(q)` denotes nesting ALL of q under
+// the one unit key — which is exactly `q.collect::<T>()`, key elided the
+// way `unwrap_fold` elides it for `fold`. The fused execution of that case
+// drives `q` straight into the container (probing per universe row would
+// be both slower and stricter — it needs `q: Probe`), so the unit case
+// keeps its own spelling: `collect` stays the physical materializer, in
+// the `Iterator::collect` idiom.
+
+pub struct Gather<A, B> { pub a: A, pub b: B }
+
+impl<A: Query, B: Query<D = A::R>> Query for Gather<A, B> {
+    type D = A::D;
+    type R = SVec<B::R>;
+}
+impl<A: Drive + Clustered, B: Probe<D = A::R>> Drive for Gather<A, B> {
+    #[inline(always)]
+    fn drive<K: FnMut(A::D, SVec<B::R>)>(&self, mut k: K) {
+        let mut cur: Option<(A::D, SVec<B::R>)> = None;
+        self.a.drive(|x, y| match &mut cur {
+            Some((kx, buf)) if *kx == x => self.b.probe(y, |z| buf.push(z)),
+            _ => {
+                if let Some((kx, buf)) = cur.take() { k(kx, buf); }
+                let mut buf = SVec::new();
+                self.b.probe(y, |z| buf.push(z));
+                cur = Some((x, buf));
+            }
+        });
+        if let Some((kx, buf)) = cur.take() { k(kx, buf); }
+    }
+}
+impl<A: Clustered, B> Clustered for Gather<A, B> {}  // runs are unique keys
+impl<A: Probe, B: Probe<D = A::R>> Probe for Gather<A, B> {
+    // One group per probed key, merging across all of a's values at x
+    // (mirrors the drive side's per-key runs); emits only if x is in a's
+    // domain — a movie with no cast probes to `[]`, a non-movie to nothing.
+    #[inline(always)]
+    fn probe<K: FnMut(SVec<B::R>)>(&self, x: A::D, mut k: K) {
+        let mut buf = SVec::new();
+        let mut hit = false;
+        self.a.probe(x, |y| {
+            hit = true;
+            self.b.probe(y, |z| buf.push(z));
+        });
+        if hit { k(buf); }
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut(SVec<B::R>) -> bool>(&self, x: A::D, mut k: K) -> bool {
+        let mut buf = SVec::new();
+        let mut hit = false;
+        self.a.probe(x, |y| {
+            hit = true;
+            self.b.probe(y, |z| buf.push(z));
+        });
+        hit && k(buf)
+    }
+    #[inline(always)]
+    fn member(&self, x: A::D) -> bool { self.a.member(x) }
+}
 impl<A: Probe, B: Probe<D = A::R>> Probe for Compose<A, B> {
     #[inline(always)]
     fn probe<K: FnMut(B::R)>(&self, x: A::D, mut k: K) {
@@ -591,17 +685,18 @@ impl<A: Query, F> Query for Filter<A, F> {
 impl<A: Drive, F: Fn(A::R) -> bool> Drive for Filter<A, F> {
     #[inline(always)]
     fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
-        self.a.drive(|x, v| if (self.p)(v) { k(x, v); });
+        self.a.drive(|x, v| if (self.p)(v.clone()) { k(x, v); });
     }
 }
+impl<A: Clustered, F> Clustered for Filter<A, F> {}
 impl<A: Probe, F: Fn(A::R) -> bool> Probe for Filter<A, F> {
     #[inline(always)]
     fn probe<K: FnMut(A::R)>(&self, x: A::D, mut k: K) {
-        self.a.probe(x, |v| if (self.p)(v) { k(v); });
+        self.a.probe(x, |v| if (self.p)(v.clone()) { k(v); });
     }
     #[inline(always)]
     fn probe_any<K: FnMut(A::R) -> bool>(&self, x: A::D, mut k: K) -> bool {
-        self.a.probe_any(x, |v| (self.p)(v) && k(v))
+        self.a.probe_any(x, |v| (self.p)(v.clone()) && k(v))
     }
 }
 
@@ -622,17 +717,18 @@ impl<A: Query, B: Query<D = A::R>> Query for Restrict<A, B> {
 impl<A: Drive, B: Probe<D = A::R>> Drive for Restrict<A, B> {
     #[inline(always)]
     fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
-        self.a.drive(|x, v| if self.b.member(v) { k(x, v); });
+        self.a.drive(|x, v| if self.b.member(v.clone()) { k(x, v); });
     }
 }
+impl<A: Clustered, B> Clustered for Restrict<A, B> {}
 impl<A: Probe, B: Probe<D = A::R>> Probe for Restrict<A, B> {
     #[inline(always)]
     fn probe<K: FnMut(A::R)>(&self, x: A::D, mut k: K) {
-        self.a.probe(x, |v| if self.b.member(v) { k(v); });
+        self.a.probe(x, |v| if self.b.member(v.clone()) { k(v); });
     }
     #[inline(always)]
     fn probe_any<K: FnMut(A::R) -> bool>(&self, x: A::D, mut k: K) -> bool {
-        self.a.probe_any(x, |v| self.b.member(v) && k(v))
+        self.a.probe_any(x, |v| self.b.member(v.clone()) && k(v))
     }
 }
 
@@ -650,6 +746,7 @@ impl<A: Probe, B: Probe<D = A::R>> Probe for Restrict<A, B> {
 /// this degenerates to the plain set difference (emits `(x, x)`).
 pub struct Diff<A, B> { pub a: A, pub b: B }
 impl<A: Query, B: Query<D = A::D>> Query for Diff<A, B> { type D = A::D; type R = A::R; }
+impl<A: Clustered, B> Clustered for Diff<A, B> {}
 impl<A: Drive, B: Probe<D = A::D>> Drive for Diff<A, B> {
     #[inline(always)]
     fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
@@ -723,17 +820,18 @@ impl<A: Query, B: Query<D = A::D>> Query for Prod<A, B> {
 impl<A: Drive, B: Probe<D = A::D>> Drive for Prod<A, B> {
     #[inline(always)]
     fn drive<K: FnMut(A::D, (A::R, B::R))>(&self, mut k: K) {
-        self.a.drive(|x, a| self.b.probe(x, |b| k(x, (a, b))));
+        self.a.drive(|x, a| self.b.probe(x, |b| k(x, (a.clone(), b))));
     }
 }
+impl<A: Clustered, B> Clustered for Prod<A, B> {}
 impl<A: Probe, B: Probe<D = A::D>> Probe for Prod<A, B> {
     #[inline(always)]
     fn probe<K: FnMut((A::R, B::R))>(&self, x: A::D, mut k: K) {
-        self.a.probe(x, |a| self.b.probe(x, |b| k((a, b))));
+        self.a.probe(x, |a| self.b.probe(x, |b| k((a.clone(), b))));
     }
     #[inline(always)]
     fn probe_any<K: FnMut((A::R, B::R)) -> bool>(&self, x: A::D, mut k: K) -> bool {
-        self.a.probe_any(x, |a| self.b.probe_any(x, |b| k((a, b))))
+        self.a.probe_any(x, |a| self.b.probe_any(x, |b| k((a.clone(), b))))
     }
     /// Flat short-circuit AND of the per-leg `member`s — the conj-position
     /// fast path (Julia `_prod_member`). Unlike the default (which threads
@@ -746,11 +844,11 @@ impl<A: Probe, B: Probe<D = A::D>> Probe for Prod<A, B> {
 
 pub struct InvStream<Q> { pub q: Q }
 
-impl<Q: Query> Query for InvStream<Q> where Q::R: Eq + Hash {
+impl<Q: Query> Query for InvStream<Q> where Q::R: Copy + Eq + Hash {
     type D = Q::R;
     type R = Q::D;
 }
-impl<Q: Drive> Drive for InvStream<Q> where Q::R: Eq + Hash {
+impl<Q: Drive> Drive for InvStream<Q> where Q::R: Copy + Eq + Hash {
     #[inline(always)]
     fn drive<K: FnMut(Q::R, Q::D)>(&self, mut k: K) {
         self.q.drive(|d, r| k(r, d));
@@ -762,6 +860,9 @@ impl<Q: Drive> Drive for InvStream<Q> where Q::R: Eq + Hash {
 // drives `q` once into the physical structure named by the target type
 // (turbofish or `let` annotation). This is the ONLY way a stream becomes
 // probe-side state, so every materialization is visible in the query text.
+// Semantically it is `Gather` at the unit key — nest the whole result under
+// `unit.inv()`, one group, key elided — fused to a straight drive; see the
+// `Gather` header for the correspondence (tested in collect_is_gather_at_unit).
 // `Bitset` deliberately does not implement `FromQuery`: it needs the universe
 // size `n` — part of the physical choice — so it keeps the explicit
 // `Bitset::over(universe, q)` constructor.
@@ -774,7 +875,7 @@ pub trait FromQuery<Q: Drive>: Sized {
 // An eager `HashMap<K, SVec<V>>` with probe access — the probed form of a
 // materialized forward index (`.collect::<HashIdx<_, _>>()`).
 
-pub struct HashIdx<K: Copy + Eq + Hash, V: Copy> {
+pub struct HashIdx<K: Copy + Eq + Hash, V: Clone> {
     pub idx: HashMap<K, SVec<V>>,
 }
 
@@ -787,18 +888,18 @@ impl<Q: Drive> FromQuery<Q> for HashIdx<Q::D, Q::R> {
     }
 }
 
-impl<K: Copy + Eq + Hash, V: Copy> Query for HashIdx<K, V> { type D = K; type R = V; }
-impl<K: Copy + Eq + Hash, V: Copy> Probe for HashIdx<K, V> {
+impl<K: Copy + Eq + Hash, V: Clone> Query for HashIdx<K, V> { type D = K; type R = V; }
+impl<K: Copy + Eq + Hash, V: Clone> Probe for HashIdx<K, V> {
     #[inline(always)]
     fn probe<F: FnMut(V)>(&self, x: K, mut k: F) {
         if let Some(vs) = self.idx.get(&x) {
-            for &v in vs { k(v); }
+            for v in vs { k(v.clone()); }
         }
     }
     #[inline(always)]
     fn probe_any<F: FnMut(V) -> bool>(&self, x: K, mut k: F) -> bool {
         match self.idx.get(&x) {
-            Some(vs) => vs.iter().any(|&v| k(v)),
+            Some(vs) => vs.iter().any(|v| k(v.clone())),
             None => false,
         }
     }
@@ -811,7 +912,7 @@ pub struct MatSet<D: Copy + Eq + Hash> { pub set: HashSet<D> }
 /// their keys through the value slot, so one impl materializes a set's
 /// keys and a value-bearing query's values alike.
 impl<Q: Drive> FromQuery<Q> for MatSet<Q::R>
-where Q::R: Eq + Hash {
+where Q::R: Copy + Eq + Hash {
     fn from_rel(q: Q) -> Self {
         let mut set = HashSet::new();
         q.drive(|_, v| { set.insert(v); });
@@ -878,6 +979,7 @@ impl<D: Dense> Bitset<D> {
 }
 
 impl<D: Dense> Query for Bitset<D> { type D = D; type R = D; }
+impl<D: Dense> Clustered for Bitset<D> {}
 impl<D: Dense> Drive for Bitset<D> {
     #[inline]
     fn drive<K: FnMut(D, D)>(&self, mut k: K) {
@@ -944,6 +1046,7 @@ impl<D: Dense> SparseUniverse<D> {
     pub fn new(n: usize, valid: &'static Bitset<D>) -> Self { SparseUniverse { n, valid } }
 }
 impl<D: Dense> Query for SparseUniverse<D> { type D = D; type R = D; }
+impl<D: Dense> Clustered for SparseUniverse<D> {}
 impl<D: Dense> Drive for SparseUniverse<D> {
     #[inline(always)]
     fn drive<K: FnMut(D, D)>(&self, k: K) { self.valid.drive(k); }
@@ -977,14 +1080,14 @@ impl<D: Dense> UnivSize<D> for SparseUniverse<D> { #[inline] fn univ_n(&self) ->
 
 pub struct GroupBy<S, R> { pub set: S, pub key: R }
 
-impl<S: Query, R: Query<D = S::R>> Query for GroupBy<S, R> where R::R: Eq + Hash {
+impl<S: Query, R: Query<D = S::R>> Query for GroupBy<S, R> where R::R: Copy + Eq + Hash {
     type D = R::R;
     type R = S::R;
 }
-impl<S: Drive, R: Probe<D = S::R>> Drive for GroupBy<S, R> where R::R: Eq + Hash {
+impl<S: Drive, R: Probe<D = S::R>> Drive for GroupBy<S, R> where R::R: Copy + Eq + Hash {
     #[inline(always)]
     fn drive<K: FnMut(R::R, S::R)>(&self, mut k: K) {
-        self.set.drive(|_, x| self.key.probe(x, |rk| k(rk, x)));
+        self.set.drive(|_, x| self.key.probe(x.clone(), |rk| k(rk, x.clone())));
     }
 }
 
@@ -1023,6 +1126,7 @@ impl<D: Copy + Eq + Hash, S: Copy> Fold<D, S> {
 }
 
 impl<D: Copy + Eq + Hash, S: Copy> Query for Fold<D, S> { type D = D; type R = S; }
+impl<D: Copy + Eq + Hash, S: Copy> Clustered for Fold<D, S> {}  // unique keys
 impl<D: Copy + Eq + Hash, S: Copy> Drive for Fold<D, S> {
     #[inline(always)]
     fn drive<K: FnMut(D, S)>(&self, mut k: K) {
@@ -1083,6 +1187,7 @@ impl<S: Copy, D: Dense> DenseFold<S, D> {
 }
 
 impl<S: Copy, D: Dense> Query for DenseFold<S, D> { type D = D; type R = S; }
+impl<S: Copy, D: Dense> Clustered for DenseFold<S, D> {}  // unique keys
 impl<S: Copy, D: Dense> Drive for DenseFold<S, D> {
     #[inline(always)]
     fn drive<K: FnMut(D, S)>(&self, mut k: K) {
@@ -1108,27 +1213,28 @@ impl<S: Copy, D: Dense> Probe for DenseFold<S, D> {
 
 // ===== Map (`↦ f`) — per-row lambda =====================================
 
-pub struct Map<Q, F, S: Copy> {
+pub struct Map<Q, F, S: Clone> {
     pub q: Q,
     pub f: F,
     _phantom: std::marker::PhantomData<S>,
 }
 
-impl<Q: Query, F: Fn(Q::R) -> S, S: Copy> Map<Q, F, S> {
+impl<Q: Query, F: Fn(Q::R) -> S, S: Clone> Map<Q, F, S> {
     pub fn new(q: Q, f: F) -> Self { Map { q, f, _phantom: std::marker::PhantomData } }
 }
 
-impl<Q: Query, F: Fn(Q::R) -> S, S: Copy> Query for Map<Q, F, S> {
+impl<Q: Query, F: Fn(Q::R) -> S, S: Clone> Query for Map<Q, F, S> {
     type D = Q::D;
     type R = S;
 }
-impl<Q: Drive, F: Fn(Q::R) -> S, S: Copy> Drive for Map<Q, F, S> {
+impl<Q: Drive, F: Fn(Q::R) -> S, S: Clone> Drive for Map<Q, F, S> {
     #[inline(always)]
     fn drive<K: FnMut(Q::D, S)>(&self, mut k: K) {
         self.q.drive(|d, v| k(d, (self.f)(v)));
     }
 }
-impl<Q: Probe, F: Fn(Q::R) -> S, S: Copy> Probe for Map<Q, F, S> {
+impl<Q: Clustered, F, S: Clone> Clustered for Map<Q, F, S> {}
+impl<Q: Probe, F: Fn(Q::R) -> S, S: Clone> Probe for Map<Q, F, S> {
     #[inline(always)]
     fn probe<K: FnMut(S)>(&self, x: Q::D, mut k: K) {
         self.q.probe(x, |v| k((self.f)(v)));
@@ -1157,9 +1263,21 @@ pub trait QueryExt: IntoQuery + Sized {
     fn select<B: IntoQuery>(self, b: B) -> Compose<Self::Q, B::Q>
     where B::Q: Query<D = ROf<Self>> { Compose { a: self.iq(), b: b.iq() } }
 
+    /// `select` that keeps the nesting: navigate `b` at each of self's
+    /// values, but collect the matches into an `SVec` group per driven key
+    /// instead of flattening — `movie.gather(year)` is `Movie → [year]`,
+    /// and gathers nest (`SVec<SVec<…>>`) for document-shaped results.
+    /// Grouping is by run detection on the driven key (no hashing), so
+    /// driving requires `Clustered`; keys whose probes miss emit `[]`
+    /// (left-outer). See the `Gather` node for the algebra, including why
+    /// `q.collect::<T>()` is this operator at the unit key.
+    #[inline(always)]
+    fn gather<B: IntoQuery>(self, b: B) -> Gather<Self::Q, B::Q>
+    where B::Q: Query<D = ROf<Self>> { Gather { a: self.iq(), b: b.iq() } }
+
     /// Postfix adjoint in drive position — streams flipped pairs, no state.
     #[inline(always)]
-    fn inv(self) -> InvStream<Self::Q> where ROf<Self>: Eq + Hash { InvStream { q: self.iq() } }
+    fn inv(self) -> InvStream<Self::Q> where ROf<Self>: Copy + Eq + Hash { InvStream { q: self.iq() } }
 
     /// `∧` / `×` / `⊗` — the product, in both of its uses (one node, one
     /// name; Julia: `∧(a, b) = ⊗(a, b)`). In member position (a conjunct
@@ -1433,6 +1551,81 @@ mod tests {
         assert_eq!(drive_all(&cd), vec![(7, 2), (8, 1)]);
         // scalar
         assert_eq!((&f).unwrap_fold(0usize, |a, v| a + v), 60);
+    }
+
+    #[test]
+    fn gather_nests_and_composes() {
+        let f = films(); // 0 → 10, 1 → 20, 2 → 30
+        let c = cast(); // 0 → {7, 8}, 2 → {7}
+        let u3 = Universe::new(3);
+        let sv = |xs: &[usize]| -> SVec<usize> { SVec::from_slice(xs) };
+
+        // `select` that keeps the nesting: per-film cast groups. Film 1 has
+        // no cast and emits the EMPTY group (left-outer flavor).
+        assert_eq!(drive_all(&u3.gather(&c)),
+                   vec![(0, sv(&[7, 8])), (1, sv(&[])), (2, sv(&[7]))]);
+        // .filt restores inner semantics; .map gives per-key aggregation
+        // with NO hashing — the driven runs are the groups.
+        assert_eq!(drive_all(&u3.gather(&c).filt(|vs| !vs.is_empty())),
+                   vec![(0, sv(&[7, 8])), (2, sv(&[7]))]);
+        assert_eq!(drive_all(&u3.gather(&c).map(|vs| vs.len() as i64)),
+                   vec![(0, 2), (1, 0), (2, 1)]);
+
+        // per-KEY grouping merges across a clustered run: drive the cast
+        // EDGE (film 0's run has two persons) and gather each person's
+        // films — the two persons' groups merge under film 0.
+        let pf = MultiRel::from_pairs(9, [(7, 0), (7, 2), (8, 0)]); // person → films
+        assert_eq!(drive_all(&(&c).gather(&pf)),
+                   vec![(0, sv(&[0, 2, 0])), (2, sv(&[0, 2]))]);
+
+        // gathers nest: film → [(person, [their films])] — document-shaped
+        // output in one pass, no flat-join duplication.
+        let u9 = Universe::new(9);
+        let per_person = u9.and(u9.gather(&pf)); // person → (person, [films])
+        let two_level = drive_all(&u3.gather((&c).select(per_person)));
+        let svp = |xs: &[(usize, SVec<usize>)]| -> SVec<(usize, SVec<usize>)> {
+            xs.iter().cloned().collect()
+        };
+        assert_eq!(two_level, vec![
+            (0, svp(&[(7, sv(&[0, 2])), (8, sv(&[0]))])),
+            (1, svp(&[])),
+            (2, svp(&[(7, sv(&[0, 2]))])),
+        ]);
+
+        // probe position: one merged group per in-domain key; out-of-domain
+        // keys emit nothing (probe miss), empty-cast keys emit [].
+        let g = u3.gather(&c);
+        let mut got = None;
+        g.probe(1, |vs| got = Some(vs));
+        assert_eq!(got, Some(sv(&[])));
+        let mut got = None;
+        g.probe(5, |vs| got = Some(vs));
+        assert_eq!(got, None);
+    }
+
+    // `collect` IS gather at the unit key: with `unit: X → ()` constant and
+    // `univ = unit.inv()`, `univ.gather(q)` nests the WHOLE query under the
+    // single key `()` — one group, key elided the way `unwrap_fold` elides
+    // it for `fold`. `q.collect::<T>()` is the fused spelling (drives `q`
+    // straight into the container instead of probing per universe row).
+    #[test]
+    fn collect_is_gather_at_unit() {
+        struct UnitInv(usize); // unit.inv() over 0..n, made enumerable
+        impl Query for UnitInv { type D = (); type R = usize; }
+        impl Clustered for UnitInv {}
+        impl Drive for UnitInv {
+            fn drive<K: FnMut((), usize)>(&self, mut k: K) {
+                for i in 0..self.0 { k((), i); }
+            }
+        }
+        let f = films();
+        // constant key () ⟹ run detection yields exactly ONE group
+        let whole = drive_all(&UnitInv(3).gather(&f));
+        assert_eq!(whole, vec![((), SVec::from_slice(&[10usize, 20, 30]))]);
+        // …whose content is what `collect` materializes (as a value-set)
+        let ms: MatSet<usize> = (&f).collect();
+        assert!(whole[0].1.iter().all(|&v| ms.member(v)));
+        assert_eq!(whole[0].1.len(), 3);
     }
 
     #[test]

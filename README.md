@@ -246,6 +246,46 @@ Grouping may appear limiting as it "can only group by one attribute", but that i
  grouping by multiple attributes can be achieved by grouping by a product!
  I'll leave that as an excercise for the reader.
 
+## Nested Results
+
+Flat tables force flat results, and flattening duplicates:
+ ask SQL for each movie together with its keywords,
+ and the join repeats the movie once per keyword;
+ ask for cast *and* keywords, and you get their cross product per movie —
+ 5 actors and 3 keywords come back as 15 rows.
+SQL works around this with `ARRAY_AGG` and correlated subqueries,
+ ORMs fire N+1 queries, and GraphQL servers build entire planners for it.
+In Prela, nested results take one more combinator, `.gather()`:
+
+```rust
+movie.gather(keyword.text())
+```
+
+`.gather()` is `.select()` that *keeps the shape*: instead of flattening the
+ matching keywords into the output stream, it collects them into an array
+ under each movie, producing a relation of type `Movie -> [String]`
+ that maps every movie to the list of its keywords
+ (a movie with no keywords maps to the empty list).
+Gathered relations compose like any other —
+ `.filt(|ks| ks.len() > 5)` keeps the heavily-tagged movies —
+ and gathers nest, so one query can return a full document shape
+ (each movie carrying its cast, each cast member carrying their names)
+ in a single pass, with no duplication.
+
+Two things make this essentially free.
+First, there is no hashing or sorting:
+ `.select()` and `.gather()` compile to the *same* loop nest,
+ and the groups are exactly the runs of the driven side —
+ `.gather()` simply doesn't flatten them.
+(Contrast with `.group_by()`, which groups by a probed key
+ and pays for a hash table; `.gather()` groups along the navigation
+ you were already doing.)
+Second, it explains a combinator we already had:
+ materializing with `.collect::<T>()` is just gathering the *whole* result
+ under the unit key — one group, holding everything —
+ which is why an index like `HashIdx` is best understood as
+ the nested form of a binary relation.
+
 ## Implementation
 
 If implemented naively, Prela would be pretty slow. 

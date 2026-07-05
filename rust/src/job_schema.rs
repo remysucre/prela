@@ -82,10 +82,24 @@ mod tests {
     // struct named `kind` turns that binding pattern into a (mismatched)
     // const match. Bare handles capture ANY same-named binding pattern in
     // scope, so test modules import handles selectively/qualified.
-    use super::{job_init, movie, persons, Data, KindNav, Movie};
+    use super::{job_init, movie, persons, Data, KeywordNav, KindNav, Movie};
     use crate::cache::{load_ids, load_multi_ids, load_strs};
     use crate::engine::{Drive, IntoQuery, Probe, QueryExt};
     use std::path::Path;
+
+    /// `job_init` panics on double-init, and cache-backed tests share one
+    /// process — so they all init through here. Returns false (⇒ skip)
+    /// when the cache isn't present (CI without regen output).
+    fn ensure_init() -> bool {
+        let dir = Path::new("../cache");
+        if !dir.join("Movie_title.bin").exists() {
+            eprintln!("skipping: ../cache not present (run `regen job`)");
+            return false;
+        }
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| job_init(dir));
+        true
+    }
 
     /// Full typed init against the real cache, cross-checked column-by-
     /// column against the untyped v2 readers (lengths AND a value spot
@@ -93,12 +107,7 @@ mod tests {
     /// the cache isn't present (CI without regen output).
     #[test]
     fn typed_schema_matches_untyped_loaders() {
-        let dir = Path::new("../cache");
-        if !dir.join("Movie_title.bin").exists() {
-            eprintln!("skipping: ../cache not present (run `regen job`)");
-            return;
-        }
-        job_init(dir);
+        if !ensure_init() { return; }
 
         // universe sizes = first-column key counts (handles resolve via iq)
         assert_eq!(movie.iq().n, load_strs("Movie_title").n_keys());
@@ -131,5 +140,25 @@ mod tests {
             .with((&mk).select(&kk).eq("movie"))
             .drive(|_, _| n_untyped += 1);
         assert_eq!(n_typed, n_untyped);
+    }
+
+    /// Nested results on the real cache — the README's `.gather()` example.
+    /// `movie.gather(keyword.text())` emits one group per movie (including
+    /// empty ones: left-outer), and the groups partition the flat edge
+    /// drive — nesting rearranges, never duplicates or drops.
+    #[test]
+    fn gather_nests_on_cache() {
+        if !ensure_init() { return; }
+
+        let mut groups = 0usize;
+        let mut total = 0usize;
+        movie.gather(super::keyword.text()).drive(|_, ks: crate::engine::SVec<&str>| {
+            groups += 1;
+            total += ks.len();
+        });
+        assert_eq!(groups, movie.iq().n); // every movie appears exactly once
+        let mut flat = 0usize;
+        Movie::keyword.iq().drive(|_, _| flat += 1);
+        assert_eq!(total, flat); // groups partition the flat stream
     }
 }
