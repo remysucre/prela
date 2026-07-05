@@ -146,3 +146,44 @@ not inlined as string constants). It runs each canonical TPCH SQL against
 `cache/tpch/*.parquet` with `PRAGMA threads=1` (so Float64 sums are
 deterministic and the Q15 self-equality holds) and formats every decimal
 field to `%.2f` to match the engine's float formatting.
+
+## Schema fairness: DuckDB on Prela's schema
+
+Prela's cache is not byte-identical to the canonical schemas, so we
+checked whether the comparison leans on that.
+
+**TPC-H** needs no counterpart run: the DuckDB baseline is timed against
+native dbgen tables, and Prela's cache is schema-isomorphic to them —
+identical key values (shifted −1), dates packed to i64 (DuckDB's `DATE`
+is an int32 internally, the same class of comparison), no
+denormalization. Prela's hole-filled dense arrays are engine-side
+physical layout, not schema.
+
+**JOB** has exactly one schema-level denormalization: Prela's `Company`
+entity is `movie_companies ⋈ company_name`, with `name`/`country_code`
+inlined at regen (everything else is 1:1 with the canonical tables; the
+`Multi` reverse edges are CSR join indexes over existing FKs — physical,
+and nothing a relational engine can consume). `run_job_prela_schema.sh`
+gives DuckDB that same schema: it builds canonical and merged-schema
+databases from the same parquet, rewrites the 71 affected queries
+(`rewrite_job_prela_schema.py` — every company join in the suite is a
+clean 1:1 `cn↔mc` pairing), verifies all 113 results are byte-identical
+across the two, and times both single-threaded. (Both sides also get a
+semantics-neutral `at` → `att` alias rename in 15a-d: `AT` is a reserved
+word in duckdb 1.5.3, and an error times as 0 s — the parity gate
+hard-fails on any query error for exactly this reason.)
+
+Result (2026-07-04, DuckDB 1.5.3, same machine as the baselines;
+per-query timings in `data/job_prela_schema.txt`): canonical **15.44 s**
+warm total (reproducing the checked-in `job_duck.txt` baseline), Prela
+schema **15.97 s** — the denormalized schema is a net *loss* for DuckDB.
+79/113 queries move less than ±10 ms; the q17 family gets ~0.13–0.16 s
+faster (the eliminated join is pure win there — the plan is dominated by
+`cast_info` either way), while 8a/8b/9b/19b get ~0.15–0.20 s slower
+(evaluating a company predicate on the 235 K-row `company_name` table
+and hash-semijoining beats re-evaluating it over the same strings
+duplicated across the 2.6 M-row merged table). So
+Prela's JOB advantage comes from the execution model (FK-as-array-index
+navigation over load-time CSR adjacency), not from the schema shape; the
+honest caveat is that Prela front-loads its join topology into the ~7 s
+cache build, amortized across all queries.
