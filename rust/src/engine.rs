@@ -919,22 +919,22 @@ impl<A: Drive, B: Drive<D = A::D, R = A::R>> Drive for Union<A, B> {
 // consumed in member position via the flat short-circuit `member` override
 // below, which never builds the pair value (Julia's `_prod_member`).
 
-pub struct Prod<A, B> {
+pub struct Product<A, B> {
     pub a: A,
     pub b: B,
 }
 
-impl<A: Query, B: Query<D = A::D>> Query for Prod<A, B> {
+impl<A: Query, B: Query<D = A::D>> Query for Product<A, B> {
     type D = A::D;
     type R = (A::R, B::R);
 }
-impl<A: Drive, B: Probe<D = A::D>> Drive for Prod<A, B> {
+impl<A: Drive, B: Probe<D = A::D>> Drive for Product<A, B> {
     #[inline(always)]
     fn drive<K: FnMut(A::D, (A::R, B::R))>(&self, mut k: K) {
         self.a.drive(|x, a| self.b.probe(x, |b| k(x, (a, b))));
     }
 }
-impl<A: Probe, B: Probe<D = A::D>> Probe for Prod<A, B> {
+impl<A: Probe, B: Probe<D = A::D>> Probe for Product<A, B> {
     #[inline(always)]
     fn probe<K: FnMut((A::R, B::R))>(&self, x: A::D, mut k: K) {
         self.a.probe(x, |a| self.b.probe(x, |b| k((a, b))));
@@ -1517,11 +1517,11 @@ pub trait QueryExt: IntoQuery + Sized {
     /// drive/probe position it emits nested-pair values (output tuples) —
     /// restrict-then-project is `a.with(p).select(b)`.
     #[inline(always)]
-    fn and<B: IntoQuery>(self, b: B) -> Prod<Self::Q, B::Q>
+    fn and<B: IntoQuery>(self, b: B) -> Product<Self::Q, B::Q>
     where
         B::Q: Query<D = DOf<Self>>,
     {
-        Prod {
+        Product {
             a: self.iq(),
             b: b.iq(),
         }
