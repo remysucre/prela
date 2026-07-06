@@ -41,22 +41,30 @@ fn run_suite(
                 on_diff(name, dt, &got, oracle);
             }
         }
-        eprintln!("run {round}: {}/{} ok  total {:.2}s",
-                  ok, qs.len(), t.elapsed().as_secs_f32());
+        eprintln!(
+            "run {round}: {}/{} ok  total {:.2}s",
+            ok,
+            qs.len(),
+            t.elapsed().as_secs_f32()
+        );
     }
 }
 
 fn run_job() {
     let t = std::time::Instant::now();
     job_schema::job_init(&cache_dir());
-    eprintln!("load: {:.2}s  (movie n={}, person n={})",
-              t.elapsed().as_secs_f32(),
-              job_schema::movie.iq().n, job_schema::persons.iq().n);
+    eprintln!(
+        "load: {:.2}s  (movie n={}, person n={})",
+        t.elapsed().as_secs_f32(),
+        job_schema::movie.iq().n,
+        job_schema::persons.iq().n
+    );
 
     let qs = queries::all_queries();
     eprintln!("{} queries registered", qs.len());
 
-    run_suite(&qs,
+    run_suite(
+        &qs,
         |round, name, dt, got| {
             if round == 2 || dt > 0.5 {
                 println!("{:<5} ok  {:>8.4}s  {}", name, dt, got);
@@ -65,27 +73,37 @@ fn run_job() {
         |name, dt, got, oracle| {
             println!("{:<5} DIFF {:>8.4}s  {}", name, dt, got);
             println!("        oracle: {oracle}");
-        });
+        },
+    );
 }
 
 fn run_tpch() {
     let t = std::time::Instant::now();
     tpch_schema::tpch_init(&cache_dir());
-    eprintln!("load: {:.2}s  (li n={}, ord n={}, ps n={})",
-              t.elapsed().as_secs_f32(),
-              tpch_schema::lineitem.iq().n, tpch_schema::orders.iq().n,
-              tpch_schema::partsupp.iq().n);
+    eprintln!(
+        "load: {:.2}s  (li n={}, ord n={}, ps n={})",
+        t.elapsed().as_secs_f32(),
+        tpch_schema::lineitem.iq().n,
+        tpch_schema::orders.iq().n,
+        tpch_schema::partsupp.iq().n
+    );
 
-    // QS=idiomatic|optimized (default optimized)
-    let variant = std::env::var("QS").unwrap_or_else(|_| "optimized".to_string());
+    // QS=idiomatic|optimized|optimized_idiomatic (default optimized_idiomatic)
+    let variant = std::env::var("QS").unwrap_or_else(|_| "optimized_idiomatic".to_string());
     let qs = match variant.as_str() {
         "idiomatic" => tpch::idiomatic::queries(),
         "optimized" => tpch::optimized::queries(),
+        "optimized_idiomatic" => tpch::optimized_idiomatic::queries(),
         other => panic!("unknown QS variant: {other:?} (use idiomatic|optimized)"),
     };
-    eprintln!("{} TPC-H queries registered ({} variant)", qs.len(), variant);
+    eprintln!(
+        "{} TPC-H queries registered ({} variant)",
+        qs.len(),
+        variant
+    );
 
-    run_suite(&qs,
+    run_suite(
+        &qs,
         |_, name, dt, _| println!("{:<5} ok    {:>8.4}s", name, dt),
         |name, dt, got, oracle| {
             println!("{:<5} DIFF  {:>8.4}s", name, dt);
@@ -101,8 +119,11 @@ fn run_tpch() {
                     println!("        line {}:", i + 1);
                     println!("          got:    {g:?}");
                     println!("          oracle: {o:?}");
-                    if i >= 3 { break; }
+                    if i >= 3 {
+                        break;
+                    }
                 }
             }
-        });
+        },
+    );
 }
