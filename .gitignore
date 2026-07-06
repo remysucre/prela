@@ -16,3 +16,4 @@ zig/.zig-cache/
 .DS_Store
 
 *.pdf
+sandbox/
