@@ -823,15 +823,15 @@ impl<A: Probe, B: Probe<D = A::R>> Probe for Restrict<A, B> {
 /// are members of `b` (julia-engine interp.jl `drive(n::Diff, k) =
 /// drive(n.a, (x, y) -> member(n.b, x) || k(x, y))`). For an identity `a`
 /// this degenerates to the plain set difference (emits `(x, x)`).
-pub struct Diff<A, B> {
+pub struct Difference<A, B> {
     pub a: A,
     pub b: B,
 }
-impl<A: Query, B: Query<D = A::D>> Query for Diff<A, B> {
+impl<A: Query, B: Query<D = A::D>> Query for Difference<A, B> {
     type D = A::D;
     type R = A::R;
 }
-impl<A: Drive, B: Probe<D = A::D>> Drive for Diff<A, B> {
+impl<A: Drive, B: Probe<D = A::D>> Drive for Difference<A, B> {
     #[inline(always)]
     fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
         self.a.drive(|x, v| {
@@ -841,7 +841,7 @@ impl<A: Drive, B: Probe<D = A::D>> Drive for Diff<A, B> {
         });
     }
 }
-impl<A: Probe, B: Probe<D = A::D>> Probe for Diff<A, B> {
+impl<A: Probe, B: Probe<D = A::D>> Probe for Difference<A, B> {
     #[inline(always)]
     fn probe<K: FnMut(A::R)>(&self, x: A::D, k: K) {
         if !self.b.member(x) {
@@ -1543,11 +1543,11 @@ pub trait QueryExt: IntoQuery + Sized {
     /// `-` — value-bearing difference: self's pairs whose KEY is not a
     /// member of `b` (identity self ⟹ plain set difference).
     #[inline(always)]
-    fn minus<B: IntoQuery>(self, b: B) -> Diff<Self::Q, B::Q>
+    fn minus<B: IntoQuery>(self, b: B) -> Difference<Self::Q, B::Q>
     where
         B::Q: Query<D = DOf<Self>>,
     {
-        Diff {
+        Difference {
             a: self.iq(),
             b: b.iq(),
         }
