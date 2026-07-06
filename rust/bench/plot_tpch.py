@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
-# TPC-H SF=1 single-threaded — scatter overlay of "idiomatic" and
-# "optimized" Rust prela vs DuckDB-ST. Idiomatic is the honest baseline
-# (no per-query rewriting; just the algebra ports); optimized hand-encodes
-# the plans a stats-driven optimizer would pick. Diagonal y=x marks parity.
+# TPC-H SF=1 single-threaded — scatter overlay of "idiomatic", "optimized"
+# and "optimized_idiomatic" Rust prela vs DuckDB-ST. Idiomatic is the honest
+# baseline (no per-query rewriting; just the algebra ports); optimized
+# hand-encodes the plans a stats-driven optimizer would pick;
+# optimized_idiomatic is a from-scratch idiomatic rewrite of the queries
+# optimized touches, kept separate so it can be compared against both.
+# Diagonal y=x marks parity.
 #
-# Reads warm run-2 timings from data/{idiomatic,optimized}.txt
-# and DuckDB `.timer on` output from data/duckdb_st.txt.
-# Writes tpch_scatter.png next to this script.
+# Reads warm run-2 timings from data/{idiomatic,optimized,optimized_idiomatic}_<suffix>.txt
+# (generated via `REPS=N STAT=min|median QS=<variant> ./target/release/prela tpch`,
+# where REPS/STAT are baked into the harness itself — see src/main.rs) and DuckDB
+# `.timer on` output from data/duckdb_st.txt.
+#
+# Usage: plot_tpch.py [suffix ...]   (default: min10 median10)
+# Writes tpch_scatter_<suffix>.png next to this script for each suffix given.
 
 import re
 import sys
@@ -39,20 +46,20 @@ def parse_duck(path):
     return out
 
 
-
-
-def main():
-    ido   = parse_rust(DATA / "idiomatic.txt")
-    opt   = parse_rust(DATA / "optimized.txt")
+def plot_one(suffix):
+    ido   = parse_rust(DATA / f"idiomatic_{suffix}.txt")
+    opt   = parse_rust(DATA / f"optimized_{suffix}.txt")
+    opti  = parse_rust(DATA / f"optimized_idiomatic_{suffix}.txt")
     duck  = parse_duck(DATA / "duckdb_st.txt")
 
     qs = list(range(1, 23))
     xs  = [duck[q]  for q in qs]
     yr  = [ido[q]   for q in qs]
     yo  = [opt[q]   for q in qs]
+    yoi = [opti[q]  for q in qs]
 
-    lo = min(min(xs), min(yr), min(yo)) * 0.5
-    hi = max(max(xs), max(yr), max(yo)) * 2.0
+    lo = min(min(xs), min(yr), min(yo), min(yoi)) * 0.5
+    hi = max(max(xs), max(yr), max(yo), max(yoi)) * 2.0
 
     fig, ax = plt.subplots(figsize=(8, 8))
     ax.plot([lo, hi], [lo, hi], color="#888", linestyle="--", linewidth=1,
@@ -63,6 +70,9 @@ def main():
     ax.scatter(xs, yo, s=40, color="#E07B1C", edgecolor="black",
                linewidth=0.4, alpha=0.85, label="prela (optimized)",
                zorder=5, marker="D")
+    ax.scatter(xs, yoi, s=40, color="#1C6FE0", edgecolor="black",
+               linewidth=0.4, alpha=0.85, label="prela (optimized idiomatic)",
+               zorder=6, marker="^")
 
     ax.set_xscale("log"); ax.set_yscale("log")
     ax.set_xlim(lo, hi);  ax.set_ylim(lo, hi)
@@ -72,18 +82,26 @@ def main():
     ax.set_ylabel("prela time (s, log)")
 
     tx  = sum(xs)
-    tr  = sum(yr);  to  = sum(yo)
+    tr  = sum(yr);  to  = sum(yo);  toi = sum(yoi)
     ax.set_title(
-        f"TPC-H SF=1 — prela vs DuckDB single-threaded\n"
+        f"TPC-H SF=1 — prela vs DuckDB single-threaded ({suffix})\n"
         f"DuckDB {tx:>5.2f}s   idiomatic {tr:>5.2f}s ({tr/tx:.2f}×)   "
-        f"optimized {to:>5.2f}s ({to/tx:.2f}×)"
+        f"optimized {to:>5.2f}s ({to/tx:.2f}×)\n"
+        f"optimized_idiomatic {toi:>5.2f}s ({toi/tx:.2f}×)"
     )
     ax.legend(loc="upper left", fontsize=9)
 
     plt.tight_layout()
-    out_path = Path(__file__).resolve().parent / "tpch_scatter.png"
+    out_path = Path(__file__).resolve().parent / f"tpch_scatter_{suffix}.png"
     plt.savefig(out_path, dpi=130)
+    plt.close(fig)
     print(f"saved {out_path}")
+
+
+def main():
+    suffixes = sys.argv[1:] or ["min10", "median10"]
+    for suffix in suffixes:
+        plot_one(suffix)
 
 
 if __name__ == "__main__":

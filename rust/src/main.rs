@@ -9,6 +9,51 @@ fn cache_dir() -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from("../cache"))
 }
 
+/// How to aggregate repeated timing samples for a query — set via `STAT`.
+#[derive(Clone, Copy)]
+enum Stat {
+    Min,
+    Median,
+}
+
+impl Stat {
+    fn from_env() -> Self {
+        match std::env::var("STAT").as_deref() {
+            Ok("median") => Stat::Median,
+            Ok("min") | Err(_) => Stat::Min,
+            Ok(other) => panic!("unknown STAT {other:?} (use min|median)"),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Stat::Min => "min",
+            Stat::Median => "median",
+        }
+    }
+
+    /// `times` need not be sorted; sorted in place.
+    fn reduce(self, times: &mut [f64]) -> f64 {
+        times.sort_by(f64::total_cmp);
+        match self {
+            Stat::Min => times[0],
+            Stat::Median => times[times.len() / 2],
+        }
+    }
+}
+
+/// Repetitions per query for the timed (round-2) pass — set via `REPS`
+/// (default 1, i.e. the old single-shot behavior). Values above 1 rerun
+/// each query `REPS` times and reduce with `STAT` (min|median) instead of
+/// reporting a single noisy wall-clock sample.
+fn reps_from_env() -> usize {
+    std::env::var("REPS")
+        .ok()
+        .map(|s| s.parse().unwrap_or_else(|_| panic!("REPS must be a positive integer, got {s:?}")))
+        .unwrap_or(1)
+        .max(1)
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let suite = args.get(1).map(|s| s.as_str()).unwrap_or("job");
@@ -21,8 +66,14 @@ fn main() {
 
 /// Two timed rounds over a query suite: run every query, diff against its
 /// oracle, report ok-counts. Per-query reporting is suite-specific.
+///
+/// Round 1 is a single warm-up pass (untimed for aggregation purposes).
+/// Round 2 times each query `reps` times and reduces the samples with
+/// `stat` — `reps == 1` recovers the old single-shot-per-round behavior.
 fn run_suite(
     qs: &[Entry],
+    reps: usize,
+    stat: Stat,
     on_pass: impl Fn(usize, &str, f64, &str),
     on_diff: impl Fn(&str, f64, &str, &str),
 ) {
@@ -31,9 +82,15 @@ fn run_suite(
         let mut ok = 0usize;
         let t = std::time::Instant::now();
         for (name, oracle, f) in qs {
-            let q_t = std::time::Instant::now();
-            let got = f();
-            let dt = q_t.elapsed().as_secs_f64();
+            let query_reps = if round == 1 { 1 } else { reps };
+            let mut times = Vec::with_capacity(query_reps);
+            let mut got = String::new();
+            for _ in 0..query_reps {
+                let q_t = std::time::Instant::now();
+                got = f();
+                times.push(q_t.elapsed().as_secs_f64());
+            }
+            let dt = stat.reduce(&mut times);
             if got == *oracle {
                 ok += 1;
                 on_pass(round, name, dt, &got);
@@ -42,10 +99,12 @@ fn run_suite(
             }
         }
         eprintln!(
-            "run {round}: {}/{} ok  total {:.2}s",
+            "run {round}: {}/{} ok  total {:.2}s ({} reps, {})",
             ok,
             qs.len(),
-            t.elapsed().as_secs_f32()
+            t.elapsed().as_secs_f32(),
+            if round == 1 { 1 } else { reps },
+            stat.label()
         );
     }
 }
@@ -65,6 +124,8 @@ fn run_job() {
 
     run_suite(
         &qs,
+        reps_from_env(),
+        Stat::from_env(),
         |round, name, dt, got| {
             if round == 2 || dt > 0.5 {
                 println!("{:<5} ok  {:>8.4}s  {}", name, dt, got);
@@ -96,14 +157,19 @@ fn run_tpch() {
         "optimized_idiomatic" => tpch::optimized_idiomatic::queries(),
         other => panic!("unknown QS variant: {other:?} (use idiomatic|optimized)"),
     };
+    let reps = reps_from_env();
+    let stat = Stat::from_env();
     eprintln!(
-        "{} TPC-H queries registered ({} variant)",
+        "{} TPC-H queries registered ({} variant, REPS={reps}, STAT={})",
         qs.len(),
-        variant
+        variant,
+        stat.label()
     );
 
     run_suite(
         &qs,
+        reps,
+        stat,
         |_, name, dt, _| println!("{:<5} ok    {:>8.4}s", name, dt),
         |name, dt, got, oracle| {
             println!("{:<5} DIFF  {:>8.4}s", name, dt);
