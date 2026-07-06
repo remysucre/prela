@@ -954,18 +954,19 @@ impl<A: Probe, B: Probe<D = A::D>> Probe for Product<A, B> {
 
 // ===== InvStream — `q'` in drive position: flip pairs, no state =========
 
-pub struct InvStream<Q> {
+pub struct Inverse<Q> {
     pub q: Q,
 }
 
-impl<Q: Query> Query for InvStream<Q>
+impl<Q: Query> Query for Inverse<Q>
 where
     Q::R: Eq + Hash,
 {
     type D = Q::R;
     type R = Q::D;
 }
-impl<Q: Drive> Drive for InvStream<Q>
+
+impl<Q: Drive> Drive for Inverse<Q>
 where
     Q::R: Eq + Hash,
 {
@@ -1503,11 +1504,11 @@ pub trait QueryExt: IntoQuery + Sized {
 
     /// Postfix adjoint in drive position — streams flipped pairs, no state.
     #[inline(always)]
-    fn inv(self) -> InvStream<Self::Q>
+    fn inv(self) -> Inverse<Self::Q>
     where
         ROf<Self>: Eq + Hash,
     {
-        InvStream { q: self.iq() }
+        Inverse { q: self.iq() }
     }
 
     /// `∧` / `×` / `⊗` — the product, in both of its uses (one node, one
@@ -1780,14 +1781,14 @@ pub trait QueryExt: IntoQuery + Sized {
     /// keying relation is the cheap drive-only side and the payload is
     /// point-probeable.
     #[inline(always)]
-    fn gather<V: IntoQuery>(self, payload: V) -> Compose<InvStream<Self::Q>, V::Q>
+    fn gather<V: IntoQuery>(self, payload: V) -> Compose<Inverse<Self::Q>, V::Q>
     where
         Self::Q: Drive,
         ROf<Self>: Eq + Hash,
         V::Q: Probe<D = DOf<Self>>,
     {
         Compose {
-            a: InvStream { q: self.iq() },
+            a: Inverse { q: self.iq() },
             b: payload.iq(),
         }
     }
