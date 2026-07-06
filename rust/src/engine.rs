@@ -864,15 +864,15 @@ impl<A: Probe, B: Probe<D = A::D>> Probe for Difference<A, B> {
 /// `Drive` impl — driving a `Disj` is a compile error. Enumerate a union
 /// with `Union` (bag-concat) instead, materializing first if the sink does
 /// not dedup.
-pub struct Disj<A, B> {
+pub struct Disjunction<A, B> {
     pub a: A,
     pub b: B,
 }
-impl<A: Query, B: Query<D = A::D>> Query for Disj<A, B> {
+impl<A: Query, B: Query<D = A::D>> Query for Disjunction<A, B> {
     type D = A::D;
     type R = A::D;
 }
-impl<A: Probe, B: Probe<D = A::D>> Probe for Disj<A, B> {
+impl<A: Probe, B: Probe<D = A::D>> Probe for Disjunction<A, B> {
     #[inline(always)]
     fn probe<K: FnMut(A::D)>(&self, x: A::D, mut k: K) {
         if self.member(x) {
@@ -1530,11 +1530,11 @@ pub trait QueryExt: IntoQuery + Sized {
     /// `∨` — probe-only membership union (`member` = a OR b). Driving it is
     /// a compile error; enumerate with `.union(b)` instead.
     #[inline(always)]
-    fn or<B: IntoQuery>(self, b: B) -> Disj<Self::Q, B::Q>
+    fn or<B: IntoQuery>(self, b: B) -> Disjunction<Self::Q, B::Q>
     where
         B::Q: Query<D = DOf<Self>>,
     {
-        Disj {
+        Disjunction {
             a: self.iq(),
             b: b.iq(),
         }
