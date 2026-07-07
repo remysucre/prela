@@ -149,12 +149,12 @@ fn run_tpch() {
         tpch_schema::partsupp.iq().n
     );
 
-    // QS=idiomatic|optimized|optimized_idiomatic (default optimized_idiomatic)
-    let variant = std::env::var("QS").unwrap_or_else(|_| "optimized_idiomatic".to_string());
+    // QS=idiomatic|optimized|idiomatic_optimized (default idiomatic_optimized)
+    let variant = std::env::var("QS").unwrap_or_else(|_| "idiomatic_optimized".to_string());
     let qs = match variant.as_str() {
         "idiomatic" => tpch::idiomatic::queries(),
         "optimized" => tpch::optimized::queries(),
-        "optimized_idiomatic" => tpch::optimized_idiomatic::queries(),
+        "idiomatic_optimized" => tpch::idiomatic_optimized::queries(),
         other => panic!("unknown QS variant: {other:?} (use idiomatic|optimized)"),
     };
     let reps = reps_from_env();
