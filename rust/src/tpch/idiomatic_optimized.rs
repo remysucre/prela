@@ -17,8 +17,16 @@ pub fn queries() -> Vec<super::Entry> {
         ("22", q22),
     ])
 }
+
+// Optimizations:
+// Instesd of grouping by a `(returnflag: str, status: str)` tuple, we encode the tuples into a `usize`
+// before grouping, thus reducing the required allocations.
+// In addition, since the maximal value of this `usize` is 281, we can treat the `group_by` index as
+// a dense key over a universe of size 282 and use a `dense_fold` instead of a `fold`.
 fn q1() -> String {
-    let grouped = lineitem
+    let mut rows: Vec<(usize, (f64, f64, f64, f64, f64, i64))> = Vec::new();
+
+    lineitem
         .with(shipdate.le(19980902))
         .select(quantity.and(extendedprice).and(discount).and(tax))
         .group_by(
@@ -37,10 +45,9 @@ fn q1() -> String {
                 let chg_inc = dp_inc * (1.0 + tx);
                 (qty + q, ext + e, di + dc, dp + dp_inc, chg + chg_inc, n + 1)
             },
-        );
+        )
+        .drive(|k, v| rows.push((k, v)));
 
-    let mut rows: Vec<(usize, (f64, f64, f64, f64, f64, i64))> = Vec::new();
-    grouped.drive(|k, v| rows.push((k, v)));
     rows.sort_by_key(|r| r.0);
     join_lines(rows.iter().map(|(k, (qty, ext, di, dp, chg, n))| {
         let rf = (((*k >> 4) as u8).wrapping_add(b'A')) as char;
@@ -62,6 +69,8 @@ fn q1() -> String {
     }))
 }
 
+// Optimizations:
+// We replace the `fold` over the `part -> cost` relation with a `dense_fold`.
 fn q2() -> String {
     let mut rows: Vec<(f64, &str, &str, Id<Part>, &str, &str, &str, &str)> = Vec::new();
 
@@ -124,6 +133,8 @@ fn q2() -> String {
     }))
 }
 
+// Optimizations:
+// Use `Bitset` instead of `MatSet` to materialize late orders.
 fn q4() -> String {
     let mut rows: Vec<(&str, i64)> = Vec::new();
     orders
@@ -141,8 +152,12 @@ fn q4() -> String {
     rows.sort_by(|a, b| a.0.cmp(b.0));
     join_lines(rows.iter().map(|(k, v)| format!("{}|{}", k, v)))
 }
+
+// Optimizations:
+// Materialize green parts into a `Bitset` instead of a `HashIdx`.
+// Materialize nation names after the `fold`.
 fn q9() -> String {
-    let mut rows: Vec<((Id<Nation>, i64), f64)> = Vec::new();
+    let mut rows: Vec<((&str, i64), f64)> = Vec::new();
 
     let green_parts = Bitset::over(
         part,
@@ -153,7 +168,7 @@ fn q9() -> String {
         .group_by(PartSupp::part.select(&green_parts).and(PartSupp::supplier))
         .collect();
 
-    let result = lineitem
+    lineitem
         .with(Lineitem::part.select(&green_parts))
         .select(
             extendedprice
@@ -168,19 +183,18 @@ fn q9() -> String {
         )
         .fold(0.0_f64, |a, (((e, dc), q), cost)| {
             a + e * (1.0 - dc) - cost * q
-        });
+        })
+        .drive(|(id, d), v| rows.push(((Nation::name.iq().values[id.idx()], d), v)));
 
-    result.drive(|k, v| rows.push((k, v)));
-    rows.sort_by(|a, b| {
-        let na = Nation::name.iq().values[a.0.0.idx()];
-        let nb = Nation::name.iq().values[b.0.0.idx()];
-        na.cmp(nb).then_with(|| b.0.1.cmp(&a.0.1))
-    });
+    rows.sort_by(|((n1, y1), _), ((n2, y2), _)| n1.cmp(n2).then(y2.cmp(y1)));
     join_lines(
         rows.iter()
-            .map(|(k, v)| format!("{}|{}|{}", Nation::name.iq().values[k.0.idx()], k.1, f(*v))),
+            .map(|((n, y), v)| format!("{}|{}|{}", n, y, f(*v))),
     )
 }
+
+// Optimizations
+// Order conjuncts by selectivity.
 fn q12() -> String {
     let result = lineitem
         .with(
@@ -203,6 +217,10 @@ fn q12() -> String {
     join_lines(rows.iter().map(|(k, (h, l))| format!("{}|{}|{}", k, h, l)))
 }
 
+// Optimizations:
+// Use `memchr` instead of default regex engine.
+// Skip `NONE` customers, so use `dense_fold` instead of `dense_fold_outer`. Recover bin
+// 0 as the difference between total number of customers and customers with special orders.
 fn q13() -> String {
     use memchr::memmem;
     let f_special = memmem::Finder::new("special");
@@ -210,7 +228,6 @@ fn q13() -> String {
     let mut n_with = 0i64;
 
     orders
-        // restrict to non-NONE customers with non-special requests
         .with(
             Order::customer
                 .filt(|c| c != Dense::NONE)
@@ -221,16 +238,12 @@ fn q13() -> String {
                     }),
                 ),
         )
-        // count orders per customer
         .group_by(Order::customer)
         .dense_fold(customer.iq().n, 0_i64, |a, _| a + 1)
-        // build histogram
         .drive(|_, c| {
             *dist.entry(c).or_insert(0) += 1;
-            n_with += 1; // count nonzero bins
+            n_with += 1;
         });
-
-    // add bin 0
     dist.insert(0, customer.iq().n as i64 - n_with);
 
     let mut rows: Vec<_> = dist.iter().collect();
@@ -238,6 +251,13 @@ fn q13() -> String {
     join_lines(rows.iter().map(|(k, v)| format!("{}|{}", k, v)))
 }
 
+// Optimizations:
+// Restrict by qualifying parts before materializing the threshold `HashIdx`.
+// Use `Bitset` over qualifying parts to represent qualifying line items.
+// NOTE: materializing the `Bitset` once into `qual_parts` is somehow slower than materializing
+// twice as needed.
+// NOTE: materializing the `Bitset` is somehow faster than composing/restricting to the right
+// attributes, as the original idiomatic query does.
 fn q17() -> String {
     let tpp: HashIdx<_, _> = quantity
         .group_by(
@@ -270,42 +290,49 @@ fn q17() -> String {
     f(sum / 7.0)
 }
 
+// Optimizations:
+// Use `dense_fold` instead of `fold` on the dense order keys.
 fn q18() -> String {
-    let mut rows: Vec<(Id<Order>, f64)> = Vec::new();
+    let mut rows: Vec<(Id<Order>, (f64, ((f64, i64), (&str, Id<Customer>))))> = Vec::new();
+
     quantity
         .group_by(order)
         .dense_fold(orders.iq().n, 0.0_f64, |a, q| a + q)
         .gt(300.0)
+        .and(
+            totalprice
+                .and(date)
+                .and(Order::customer.name().and(Order::customer)),
+        )
         .drive(|k, v| rows.push((k, v)));
 
-    rows.sort_by(|a, b| {
-        let (oa, ob) = (a.0.idx(), b.0.idx());
-        totalprice.iq().values[ob]
-            .partial_cmp(&totalprice.iq().values[oa])
-            .unwrap()
-            .then_with(|| date.iq().values[oa].cmp(&date.iq().values[ob]))
+    rows.sort_by(|(_, (_, ((tp1, dt1), _))), (_, (_, ((tp2, dt2), _)))| {
+        tp2.partial_cmp(tp1).unwrap().then(dt1.cmp(dt2))
     });
     rows.truncate(100);
-
-    join_lines(rows.iter().map(|(o, sum_q)| {
-        let oi = o.idx();
-        let cu = Order::customer.iq().values[oi];
-        let cui = cu.idx();
+    join_lines(rows.iter().map(|(o, (sum_q, ((tp, dt), (name, cust))))| {
         // natural custkey / orderkey = internal id + 1
         format!(
             "{}|{}|{}|{}|{}|{}",
-            Customer::name.iq().values[cui],
-            cui + 1,
-            oi + 1,
-            fmt_yyyymmdd(date.iq().values[oi]),
-            f(totalprice.iq().values[oi]),
+            name,
+            cust.idx() + 1,
+            o.idx() + 1,
+            fmt_yyyymmdd(*dt),
+            f(*tp),
             f(*sum_q)
         )
     }))
 }
+
+// Optimizations:
+// Cheap `dense_fold` over state tracking whether 0, 1, or more suppliers seen per order instead
+// of expensive `group_by` + `count`.
+// Single pass over data to capture both (i) orders with > 1 suppliers and (ii) orders with exactly 1 late supplier.
+// `select` into `Bitset` instead of `with` to restrict to SA suppliers.
 fn q21() -> String {
     let mut rows: Vec<(&str, i64)> = Vec::new();
 
+    // track overall suppliers and late suppliers
     let track = |((first, multi), (first_late, multi_late)): (
         (Option<Id<Supplier>>, bool),
         (Option<Id<Supplier>>, bool),
@@ -316,6 +343,7 @@ fn q21() -> String {
             Some(f) if f != s => (first, true),
             _ => (first, multi),
         };
+        // if order is late, update late suppliers state
         let t2 = if c < r {
             match first_late {
                 None => (Some(s), multi_late),
@@ -343,19 +371,25 @@ fn q21() -> String {
                     &supplier.with(Supplier::nation.eq("SAUDI ARABIA")),
                 ))
                 .and(order.select(Order::status.eq("F").and(
-                    state.filt(|((_, m), (f_late, m_late))| m && (f_late.is_some() && !m_late)),
+                    // order has > 1 supp <-> `m_late`
+                    state.filt(|((_, m), (f_late, m_late))| m 
+                    && 
+                    // order has 1 late supp <-> `f_late.is_some() && !m_late`
+                    (f_late.is_some() && !m_late)),
                 ))),
         )
         .group_by(Lineitem::supplier)
         .fold(0_i64, |a, _| a + 1)
-        .drive(|k, v| rows.push((Supplier::name.iq().values[k.idx()], v)));
-    // TODO: may be able to get names more efficiently here?
+        .and(Supplier::name)
+        .drive(|_, (c, n)| rows.push((n, c)));
 
     rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
     rows.truncate(100);
     join_lines(rows.iter().map(|(n, c)| format!("{}|{}", n, c)))
 }
 
+// Optimizations:
+// `Bitset` instead of `MatSet` to materialize customers with orders.
 fn q22() -> String {
     let prefix = Customer::phone.map(|p: &str| &p[..2]);
     let codes = ["13", "31", "23", "29", "30", "18", "17"];
@@ -373,12 +407,13 @@ fn q22() -> String {
         .with((&prefix).is_in(codes))
         .with(Customer::acctbal.gt(avg))
         .minus(Bitset::over(customer, Order::customer))
+        .select(Customer::acctbal)
         .group_by(&prefix)
-        .fold((0_i64, 0.0_f64), |(cnt, sm), c| {
-            let ab = Customer::acctbal.iq().values[c.idx()];
+        .fold((0_i64, 0.0_f64), |(cnt, sm), ab| {
             (cnt + 1, sm + ab)
         })
         .drive(|k, v| rows.push((k, v)));
+
     rows.sort_by_key(|r| r.0);
     join_lines(
         rows.iter()

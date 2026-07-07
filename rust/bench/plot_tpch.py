@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 # TPC-H SF=1 single-threaded — scatter overlay of "idiomatic", "optimized"
-# and "optimized_idiomatic" Rust prela vs DuckDB-ST. Idiomatic is the honest
+# and "idiomatic_optimized" Rust prela vs DuckDB-ST. Idiomatic is the honest
 # baseline (no per-query rewriting; just the algebra ports); optimized
 # hand-encodes the plans a stats-driven optimizer would pick;
-# optimized_idiomatic is a from-scratch idiomatic rewrite of the queries
+# idiomatic_optimized is a from-scratch idiomatic rewrite of the queries
 # optimized touches, kept separate so it can be compared against both.
 # Diagonal y=x marks parity.
 #
-# Reads warm run-2 timings from data/{idiomatic,optimized,optimized_idiomatic}_<suffix>.txt
-# (generated via `REPS=N STAT=min|median QS=<variant> ./target/release/prela tpch`,
-# where REPS/STAT are baked into the harness itself — see src/main.rs) and DuckDB
-# `.timer on` output from data/duckdb_st.txt.
+# Reads warm run-2 timings from data/{idiomatic,optimized,idiomatic_optimized}_<suffix>.txt
+# (generated via `REPS=N STAT=min|median QS=all ./target/release/prela tpch`, which
+# runs all three variants interleaved in a single process to avoid cross-process
+# timing noise — see run_tpch_all in src/main.rs) and DuckDB `.timer on` output
+# from data/duckdb_st.txt.
 #
 # Usage: plot_tpch.py [suffix ...]   (default: min10 median10)
 # Writes tpch_scatter_<suffix>.png next to this script for each suffix given.
@@ -49,7 +50,7 @@ def parse_duck(path):
 def plot_one(suffix):
     ido   = parse_rust(DATA / f"idiomatic_{suffix}.txt")
     opt   = parse_rust(DATA / f"optimized_{suffix}.txt")
-    opti  = parse_rust(DATA / f"optimized_idiomatic_{suffix}.txt")
+    opti  = parse_rust(DATA / f"idiomatic_optimized_{suffix}.txt")
     duck  = parse_duck(DATA / "duckdb_st.txt")
 
     qs = list(range(1, 23))
@@ -71,7 +72,7 @@ def plot_one(suffix):
                linewidth=0.4, alpha=0.85, label="prela (optimized)",
                zorder=5, marker="D")
     ax.scatter(xs, yoi, s=40, color="#1C6FE0", edgecolor="black",
-               linewidth=0.4, alpha=0.85, label="prela (optimized idiomatic)",
+               linewidth=0.4, alpha=0.85, label="prela (idiomatic optimized)",
                zorder=6, marker="^")
 
     ax.set_xscale("log"); ax.set_yscale("log")
@@ -87,7 +88,7 @@ def plot_one(suffix):
         f"TPC-H SF=1 — prela vs DuckDB single-threaded ({suffix})\n"
         f"DuckDB {tx:>5.2f}s   idiomatic {tr:>5.2f}s ({tr/tx:.2f}×)   "
         f"optimized {to:>5.2f}s ({to/tx:.2f}×)\n"
-        f"optimized_idiomatic {toi:>5.2f}s ({toi/tx:.2f}×)"
+        f"idiomatic_optimized {toi:>5.2f}s ({toi/tx:.2f}×)"
     )
     ax.legend(loc="upper left", fontsize=9)
 
