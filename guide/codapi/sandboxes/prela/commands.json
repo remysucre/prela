@@ -1,0 +1,16 @@
+{
+    "run": {
+        "engine": "docker",
+        "entry": "main.rs",
+        "steps": [
+            {
+                "box": "prela",
+                "command": [
+                    "sh",
+                    "-c",
+                    "cp main.rs /opt/playground/src/main.rs && cd /opt/playground && cargo run --offline --quiet"
+                ]
+            }
+        ]
+    }
+}

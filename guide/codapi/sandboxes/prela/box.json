@@ -1,0 +1,4 @@
+{
+    "image": "codapi/prela",
+    "tmpfs": ["/tmp:rw,exec,nosuid,size=64m"]
+}
