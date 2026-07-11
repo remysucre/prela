@@ -868,8 +868,18 @@ dependencies = [
  "memchr",
  "memmap2",
  "parquet",
+ "prela-schema-proc",
  "regex",
  "smallvec",
+]
+
+[[package]]
+name = "prela-schema-proc"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

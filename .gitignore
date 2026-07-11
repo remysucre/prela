@@ -5,6 +5,7 @@ cache-sf*/
 
 # Rust build artifacts
 rust/target/
+rust/*/target/
 
 # Zig build artifacts
 zig/zig-out/
