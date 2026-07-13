@@ -1797,6 +1797,20 @@ pub trait QueryExt: IntoQuery + Sized {
     /// Restriction `a : b` — keep self's pairs whose VALUE is a `member` of
     /// `s` (any probe-able relation). Builds the dedicated `Restrict` node,
     /// node-for-node with Julia.
+
+    /// # with
+    ///
+    /// Retains receiver pairs `(x, y)` where `y` is a `member` of `s`.
+    ///
+    /// ## SQL
+    ///
+    /// `a.with(b)` is analogous to `SELECT * FROM a WHERE b`.
+    ///
+    /// ## Examples
+    ///
+    /// ```
+    /// let late_orders = orders.with(commitdate.and(receiptdate).filt(|(c, r)| c < r));
+    /// ```
     #[inline(always)]
     fn with<S: IntoQuery>(self, s: S) -> Restrict<Self::Q, S::Q>
     where
