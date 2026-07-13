@@ -1822,6 +1822,15 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// # rx
+    ///
+    /// Retains receiver pairs `(x, y)` where the regex `s` matches `y`.
+    ///
+    /// ## Examples
+    ///
+    /// ```
+    /// let lordly_movies = movies.select(title).rx("Lord of ");
+    /// ```
     #[inline(always)]
     fn rx(self, re: &str) -> Filter<Elided<Self>, impl Fn(&'static str) -> bool>
     where
