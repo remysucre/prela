@@ -1956,10 +1956,21 @@ pub trait QueryExt: IntoQuery + Sized {
         T::from_rel(self.iq())
     }
 
-    /// Julia's `r ← s` in drive position — drives self, probes `key` per
-    /// row, emits (key-value, self-value). (With sets now identity
-    /// relations, grouping by a set is just this general form: the set's
-    /// key flows through the value slot.)
+    /// # group_by
+    ///
+    /// `a.group_by(b)` is the set of pairs `(bv, av)` where there is some `k` such that
+    /// `a(k, av)` and `b(k, bv)`.
+    ///
+    /// ## SQL
+    ///
+    /// `a.group_by(b)` is not directly equivalent to an SQL `GROUP BY` query, since the
+    /// latter always need to be aggregated.
+    /// However, `a.group_by(b).fold(0_i64, |a, _| a + 1)` is equivalent to `SELECT COUNT(*)
+    /// FROM a GROUP BY b`.
+    ///
+    /// ## Notes
+    ///
+    /// `GroupBy` implements `Drive` but not `Probe`.
     #[inline(always)]
     fn group_by<R: IntoQuery>(self, key: R) -> GroupBy<Self::Q, R::Q>
     where
