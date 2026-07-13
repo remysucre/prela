@@ -1865,6 +1865,18 @@ pub trait QueryExt: IntoQuery + Sized {
     }
 
     /// Closure-predicate filter — for things like cross-column compares.
+    /// # filt
+    ///
+    /// Retains receiver pairs `(x, y)` where `f(y)` is true.
+    ///
+    /// ## SQL
+    ///
+    /// `a.filt(f)` is equivalent to `SELECT * FROM a WHERE f`.
+    ///
+    /// ## Examples
+    /// ```
+    /// let late_orders = orders.with(commitdate.and(receiptdate).filt(|(c, r)| c < r));
+    /// ```
     #[inline(always)]
     fn filt<F: Fn(ROf<Self>) -> bool>(self, f: F) -> Filter<Self::Q, F> {
         Filter { a: self.iq(), p: f }
