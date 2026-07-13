@@ -1489,8 +1489,26 @@ impl<Q: Probe, F: Fn(Q::R) -> S, S: Copy> Probe for Map<Q, F, S> {
 // `Self::Q`/`B::Q` — the resolved plan types — so the plans are identical
 // to ones built from `&'static` leaves directly.
 pub trait QueryExt: IntoQuery + Sized {
-    /// `→` — compose two queries (bridge type = self's value type); reads
-    /// navigationally: "select `b` at each of self's values".
+    /// # select
+    ///
+    /// Compose `Self` with `b`.
+    ///
+    /// ## Arguments
+    ///
+    /// * `b: B`: query to compose `Self` with. Domain must be of the same type as
+    /// `Self`'s range.
+    ///
+    /// ## Returns
+    ///
+    /// * Compose<Self, B>: a relation $R$ where $R(x, z)$ iff there is a $y$ such that $Self(x, y)$ and
+    /// $B(y, z)$.
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// movies.select(title).drive(|id, t| println!("id: {id}; title:{t}"));
+    /// ```
+    /// This example prints (id, title) pairs.
     #[inline(always)]
     fn select<B: IntoQuery>(self, b: B) -> Compose<Self::Q, B::Q>
     where
