@@ -1583,8 +1583,15 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    /// `-` — value-bearing difference: self's pairs whose KEY is not a
-    /// member of `b` (identity self ⟹ plain set difference).
+    /// # minus
+    ///
+    /// Retains (key, value) pairs in `Self` whose `key`s are not `member`s of `b`.
+    ///
+    /// ## Examples
+    ///
+    /// ```
+    /// let post_1997_titles = movies.minus(year.gt(1997)).select(title);
+    /// ```
     #[inline(always)]
     fn minus<B: IntoQuery>(self, b: B) -> Difference<Self::Q, B::Q>
     where
