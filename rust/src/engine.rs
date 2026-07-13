@@ -1619,9 +1619,18 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    // Predicate filters — all elide the primary field (scalar = identity)
-    // then compare; see the `Field`/`Primary` traits above. `filt` is the
-    // non-eliding escape hatch.
+    // PREDICATE FILTERS
+    // These predicates `elide` the `Primary` `Field`.
+    // See `Field` and `Primary` traits for details.
+
+    /// # eq
+    ///
+    /// Retains receiver pairs `(x, y)` if `y == v`.
+    ///
+    /// ## Examples
+    /// ```
+    /// let produced_by_a24 = movies.select(production).eq("A24");
+    /// ```
     #[inline(always)]
     fn eq(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
     where
