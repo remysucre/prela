@@ -1654,6 +1654,14 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// # gt
+    ///
+    /// Retains receiver pairs `(x, y)` if `v < y`.
+    ///
+    /// ## Examples
+    /// ```
+    /// let longer_than_two_hours = movies.select(duration).gt(7200);
+    /// ```
     #[inline(always)]
     fn gt(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
     where
