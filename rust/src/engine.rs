@@ -1882,7 +1882,17 @@ pub trait QueryExt: IntoQuery + Sized {
         Filter { a: self.iq(), p: f }
     }
 
-    /// Half-open range `[lo, hi)` — Julia `during(lo, hi)`.
+    /// # during
+    ///
+    /// Retains receiver pairs `(x, y)` where `lo <= y < hi`.
+    ///
+    /// ## SQL
+    ///
+    /// ## Examples
+    ///
+    /// ```
+    /// let orders_1997 = orders.with(shipdate.during(19970101, 19980101));;
+    /// ```
     #[inline(always)]
     fn during(self, lo: Sc<Self>, hi: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
     where
@@ -1891,7 +1901,7 @@ pub trait QueryExt: IntoQuery + Sized {
     {
         Filter {
             a: <ROf<Self> as Field>::elide(self.iq()),
-            p: move |x| x >= lo && x < hi,
+            p: move |x| lo <= x && x < hi,
         }
     }
 
