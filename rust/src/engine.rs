@@ -1723,6 +1723,14 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// # le
+    ///
+    /// Retains receiver pairs `(x, y)` if `y <= v`.
+    ///
+    /// ## Examples
+    /// ```
+    /// let at_most_two_hours = movies.select(duration).le(7200);
+    /// ```
     #[inline(always)]
     fn le(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
     where
