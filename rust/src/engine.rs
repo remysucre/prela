@@ -102,6 +102,7 @@ pub trait IntoQuery {
     type Q: Query;
     fn iq(self) -> Self::Q;
 }
+
 impl<Q: Query> IntoQuery for Q {
     type Q = Q;
     #[inline(always)]
@@ -141,30 +142,7 @@ impl<T: Probe + ?Sized> Probe for &T {
     }
 }
 
-// ===== leaf storage =====================================================
-// Entity ids are 0-based `usize`: a universe of size n has ids 0..n-1,
-// indexing its dense columns directly. (The cache stores these final
-// physical layouts — 0-based, `NO_ID` holes baked in; see src/format.rs.)
-// Ids are opaque dense indexes, so the id domain type is `usize`;
-// scalar value columns (years, sizes, counts, …) stay `i64`/`f64`.
-//
-// `NO_ID` is the missing-id sentinel (FK hole fill, "none seen yet" fold
-// states): it fails every `i < len` / `.get` bounds check, so a hole probes
-// to nothing for free.
-//
-// `VecRel<R>` — total 1:1 relation; entity-id → R (one value per id).
-// INVARIANT: an FK-valued column over a gappy key space (holes that a query
-// can drive or probe, e.g. TPC-H ord_customer over the sparse orderkey
-// domain) holds `NO_ID` in the holes — a default-0 hole would alias entity
-// 0, which is a live id. (regen bakes the fill in; non-FK holes are
-// `Default`: 0 / 0.0 / "".)
-// `MultiRel<R>` — multi-valued / partial; CSR over the dense key space:
-// row i = `values[offsets[i]..offsets[i+1]]`, empty range for missing
-// keys. The slices are `&'static` — in production they point into the
-// leaked cache mmap (zero-copy); `from_pairs` (unit tests) leaks two small
-// Vecs to the same effect.
-
-pub const NO_ID: usize = usize::MAX;
+// ===== Tags ==============================================================
 
 // ===== Dense domains: untyped `usize` or phantom-typed `Id<E>` ==========
 // `Dense` abstracts "an id indexing a dense 0..n universe". The dense nodes
@@ -340,6 +318,82 @@ pub type Sc<T> = <ROf<T> as Field>::Scalar;
 /// The query a comparison on `T` filters, after primary elision.
 pub type Elided<T> = <ROf<T> as Field>::Elided<<T as IntoQuery>::Q>;
 
+// ===== non-dense entities: Key<E> + DictTable =============================
+// The general entity table, for an entity whose external ids are NOT a dense
+// `0..n`. A foreign key into such an entity stores a `Key<E>` (the external
+// id); its `DictTable` translates `Key<E> → Id<E>` (the row) so the dense
+// columns can be addressed. The dense case (`Ident`) is the special case where
+// `Key == Id` and the table is the identity — and inlines away. Crossing a
+// `DictTable` on a nav costs one hash probe (the fundamental price of a
+// non-dense key); everything downstream — columns, group_by, fold, with — is
+// unchanged, because `Query::D` is only `Copy + Eq + Hash`, no `Dense` bound.
+
+/// External, possibly non-dense / non-contiguous id of entity `E` — distinct
+/// from `Id<E>` (the dense ROW index). Manual `Copy/Eq/Hash` like `Id<E>`
+/// (`derive` would wrongly bound the phantom `E`).
+#[repr(transparent)]
+pub struct Key<E: 'static>(pub u64, pub PhantomData<E>);
+impl<E> Key<E> {
+    #[inline(always)]
+    pub fn new(k: u64) -> Self {
+        Key(k, PhantomData)
+    }
+}
+impl<E> Copy for Key<E> {}
+impl<E> Clone for Key<E> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<E> PartialEq for Key<E> {
+    #[inline(always)]
+    fn eq(&self, o: &Self) -> bool {
+        self.0 == o.0
+    }
+}
+impl<E> Eq for Key<E> {}
+impl<E> Hash for Key<E> {
+    #[inline(always)]
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.0.hash(h)
+    }
+}
+impl<E> std::fmt::Debug for Key<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Key({})", self.0)
+    }
+}
+
+// ===== Leaf nodes =========================================================
+
+// ----- source rels -----
+
+// ===== leaf storage =====================================================
+// Entity ids are 0-based `usize`: a universe of size n has ids 0..n-1,
+// indexing its dense columns directly. (The cache stores these final
+// physical layouts — 0-based, `NO_ID` holes baked in; see src/format.rs.)
+// Ids are opaque dense indexes, so the id domain type is `usize`;
+// scalar value columns (years, sizes, counts, …) stay `i64`/`f64`.
+//
+// `NO_ID` is the missing-id sentinel (FK hole fill, "none seen yet" fold
+// states): it fails every `i < len` / `.get` bounds check, so a hole probes
+// to nothing for free.
+//
+// `VecRel<R>` — total 1:1 relation; entity-id → R (one value per id).
+// INVARIANT: an FK-valued column over a gappy key space (holes that a query
+// can drive or probe, e.g. TPC-H ord_customer over the sparse orderkey
+// domain) holds `NO_ID` in the holes — a default-0 hole would alias entity
+// 0, which is a live id. (regen bakes the fill in; non-FK holes are
+// `Default`: 0 / 0.0 / "".)
+// `MultiRel<R>` — multi-valued / partial; CSR over the dense key space:
+// row i = `values[offsets[i]..offsets[i+1]]`, empty range for missing
+// keys. The slices are `&'static` — in production they point into the
+// leaked cache mmap (zero-copy); `from_pairs` (unit tests) leaks two small
+// Vecs to the same effect.
+
+pub const NO_ID: usize = usize::MAX;
+
 pub struct VecRel<R: Copy, D: Dense = usize> {
     pub values: Vec<R>,
     pub _d: PhantomData<D>,
@@ -367,9 +421,6 @@ pub struct MultiRel<R: Copy + 'static, D: Dense = usize> {
     pub values: &'static [R],
 }
 
-// Pair-stream constructors survive only as unit-test fixtures: regen bakes
-// the scatter/fill into the cache, so production loading never builds from
-// pairs.
 #[cfg(test)]
 impl<R: Copy + Default, D: Dense> VecRel<R, D> {
     pub fn from_pairs(n: usize, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
@@ -585,53 +636,6 @@ impl<E: 'static> Probe for Ident<E> {
     }
 }
 
-// ===== non-dense entities: Key<E> + DictTable =============================
-// The general entity table, for an entity whose external ids are NOT a dense
-// `0..n`. A foreign key into such an entity stores a `Key<E>` (the external
-// id); its `DictTable` translates `Key<E> → Id<E>` (the row) so the dense
-// columns can be addressed. The dense case (`Ident`) is the special case where
-// `Key == Id` and the table is the identity — and inlines away. Crossing a
-// `DictTable` on a nav costs one hash probe (the fundamental price of a
-// non-dense key); everything downstream — columns, group_by, fold, with — is
-// unchanged, because `Query::D` is only `Copy + Eq + Hash`, no `Dense` bound.
-
-/// External, possibly non-dense / non-contiguous id of entity `E` — distinct
-/// from `Id<E>` (the dense ROW index). Manual `Copy/Eq/Hash` like `Id<E>`
-/// (`derive` would wrongly bound the phantom `E`).
-#[repr(transparent)]
-pub struct Key<E: 'static>(pub u64, pub PhantomData<E>);
-impl<E> Key<E> {
-    #[inline(always)]
-    pub fn new(k: u64) -> Self {
-        Key(k, PhantomData)
-    }
-}
-impl<E> Copy for Key<E> {}
-impl<E> Clone for Key<E> {
-    #[inline(always)]
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<E> PartialEq for Key<E> {
-    #[inline(always)]
-    fn eq(&self, o: &Self) -> bool {
-        self.0 == o.0
-    }
-}
-impl<E> Eq for Key<E> {}
-impl<E> Hash for Key<E> {
-    #[inline(always)]
-    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        self.0.hash(h)
-    }
-}
-impl<E> std::fmt::Debug for Key<E> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Key({})", self.0)
-    }
-}
-
 /// Entity table for a NON-DENSE entity: `Key<E> → Id<E>` (external id → row),
 /// a hash lookup. Built once (at load / regen) from the entity's key column.
 pub struct DictTable<E: 'static> {
@@ -700,281 +704,7 @@ pub trait EntityKind: Sized + 'static {
     fn table() -> Self::Table;
 }
 
-// ===== Compose: a: D → M, b: M → R  ⟹  Compose: D → R ===================
-// Mode rule: the rhs is always probed; the lhs carries the Compose's mode.
-
-pub struct Compose<A, B> {
-    pub a: A,
-    pub b: B,
-}
-
-impl<A: Query, B: Query<D = A::R>> Query for Compose<A, B> {
-    type D = A::D;
-    type R = B::R;
-}
-impl<A: Drive, B: Probe<D = A::R>> Drive for Compose<A, B> {
-    #[inline(always)]
-    fn drive<K: FnMut(A::D, B::R)>(&self, mut k: K) {
-        self.a.drive(|x, m| self.b.probe(m, |r| k(x, r)));
-    }
-}
-impl<A: Probe, B: Probe<D = A::R>> Probe for Compose<A, B> {
-    #[inline(always)]
-    fn probe<K: FnMut(B::R)>(&self, x: A::D, mut k: K) {
-        self.a.probe(x, |m| self.b.probe(m, |r| k(r)));
-    }
-    #[inline(always)]
-    fn probe_any<K: FnMut(B::R) -> bool>(&self, x: A::D, mut k: K) -> bool {
-        self.a.probe_any(x, |m| self.b.probe_any(m, |r| k(r)))
-    }
-}
-
-// ===== Filter (relation × scalar predicate) =============================
-// The predicate is a plain closure `Fn(A::R) -> bool`, held directly — no
-// predicate trait layer (Julia: `Filter(a, pred)` with any callable). Every
-// comparison combinator below (`.eq`, `.gt`, `.rx`, …) is a captured-closure
-// form of `.filt`.
-
-pub struct Filter<A, F> {
-    pub a: A,
-    pub p: F,
-}
-
-impl<A: Query, F> Query for Filter<A, F> {
-    type D = A::D;
-    type R = A::R;
-}
-impl<A: Drive, F: Fn(A::R) -> bool> Drive for Filter<A, F> {
-    #[inline(always)]
-    fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
-        self.a.drive(|x, v| {
-            if (self.p)(v) {
-                k(x, v);
-            }
-        });
-    }
-}
-impl<A: Probe, F: Fn(A::R) -> bool> Probe for Filter<A, F> {
-    #[inline(always)]
-    fn probe<K: FnMut(A::R)>(&self, x: A::D, mut k: K) {
-        self.a.probe(x, |v| {
-            if (self.p)(v) {
-                k(v);
-            }
-        });
-    }
-    #[inline(always)]
-    fn probe_any<K: FnMut(A::R) -> bool>(&self, x: A::D, mut k: K) -> bool {
-        self.a.probe_any(x, |v| (self.p)(v) && k(v))
-    }
-}
-
-// ===== Restrict (relation × relation — `a : b`) =========================
-// Keeps a's pairs (a's VALUE flows through) where the value is a `member`
-// of b; b is consumed via `member` only (julia-engine branch, interp.jl:
-// `drive(n::Restrict, k) = drive(n.a, (x, m) -> member(n.b, m) && k(x, m))`,
-// probe/probe_any analogous). No `member` override: the defaulted
-// `probe_any(x, |_| true)` already reduces to
-// `a.probe_any(x, |v| b.member(v))`, which is the optimal form.
-
-pub struct Restrict<A, B> {
-    pub a: A,
-    pub b: B,
-}
-
-impl<A: Query, B: Query<D = A::R>> Query for Restrict<A, B> {
-    type D = A::D;
-    type R = A::R;
-}
-impl<A: Drive, B: Probe<D = A::R>> Drive for Restrict<A, B> {
-    #[inline(always)]
-    fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
-        self.a.drive(|x, v| {
-            if self.b.member(v) {
-                k(x, v);
-            }
-        });
-    }
-}
-impl<A: Probe, B: Probe<D = A::R>> Probe for Restrict<A, B> {
-    #[inline(always)]
-    fn probe<K: FnMut(A::R)>(&self, x: A::D, mut k: K) {
-        self.a.probe(x, |v| {
-            if self.b.member(v) {
-                k(v);
-            }
-        });
-    }
-    #[inline(always)]
-    fn probe_any<K: FnMut(A::R) -> bool>(&self, x: A::D, mut k: K) -> bool {
-        self.a.probe_any(x, |v| self.b.member(v) && k(v))
-    }
-}
-
-// ===== Diff / Disj / Union — set algebra ================================
-// Conjunction needs no node at all: `∧` IS the product (Julia:
-// `∧(a, b) = ⊗(a, b)`), and `member(Prod)` short-circuits flat across the
-// legs without building the pair value — see Prod below. The remaining set
-// operators take ANY member-capable rhs (no projection of a value-bearing
-// operand to a "keyset" node).
-
-/// `a - b` — Julia's value-bearing minus: keyed on `a`'s DOMAIN, drive and
-/// probe pass `a`'s `(x, v)` pairs through unchanged, skipping keys that
-/// are members of `b` (julia-engine interp.jl `drive(n::Diff, k) =
-/// drive(n.a, (x, y) -> member(n.b, x) || k(x, y))`). For an identity `a`
-/// this degenerates to the plain set difference (emits `(x, x)`).
-pub struct Difference<A, B> {
-    pub a: A,
-    pub b: B,
-}
-impl<A: Query, B: Query<D = A::D>> Query for Difference<A, B> {
-    type D = A::D;
-    type R = A::R;
-}
-impl<A: Drive, B: Probe<D = A::D>> Drive for Difference<A, B> {
-    #[inline(always)]
-    fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
-        self.a.drive(|x, v| {
-            if !self.b.member(x) {
-                k(x, v);
-            }
-        });
-    }
-}
-impl<A: Probe, B: Probe<D = A::D>> Probe for Difference<A, B> {
-    #[inline(always)]
-    fn probe<K: FnMut(A::R)>(&self, x: A::D, k: K) {
-        if !self.b.member(x) {
-            self.a.probe(x, k);
-        }
-    }
-    #[inline(always)]
-    fn probe_any<K: FnMut(A::R) -> bool>(&self, x: A::D, k: K) -> bool {
-        !self.b.member(x) && self.a.probe_any(x, k)
-    }
-    #[inline(always)]
-    fn member(&self, x: A::D) -> bool {
-        self.a.member(x) && !self.b.member(x)
-    }
-}
-
-/// `∨` — PROBE-ONLY membership union (julia-engine interp.jl: "driving a union
-/// (dedup-while-emitting) is the one operation that would need its lhs both
-/// driven and probed, so it lives elsewhere"). There is deliberately NO
-/// `Drive` impl — driving a `Disj` is a compile error. Enumerate a union
-/// with `Union` (bag-concat) instead, materializing first if the sink does
-/// not dedup.
-pub struct Disjunction<A, B> {
-    pub a: A,
-    pub b: B,
-}
-impl<A: Query, B: Query<D = A::D>> Query for Disjunction<A, B> {
-    type D = A::D;
-    type R = A::D;
-}
-impl<A: Probe, B: Probe<D = A::D>> Probe for Disjunction<A, B> {
-    #[inline(always)]
-    fn probe<K: FnMut(A::D)>(&self, x: A::D, mut k: K) {
-        if self.member(x) {
-            k(x);
-        }
-    }
-    #[inline(always)]
-    fn probe_any<K: FnMut(A::D) -> bool>(&self, x: A::D, mut k: K) -> bool {
-        self.member(x) && k(x)
-    }
-    #[inline(always)]
-    fn member(&self, x: A::D) -> bool {
-        self.a.member(x) || self.b.member(x)
-    }
-}
-
-/// Enumerable BAG union: drive `a` fully, then `b` fully — NO dedup and no
-/// membership pretense (drive-only; no `Probe`). The legs must agree on
-/// domain AND value type. A key in both legs is emitted by both, so feed a
-/// `Union` only to deduping sinks (`Bitset::over`,
-/// `.collect::<MatSet<_>>()`, …) or collect into a set first when
-/// duplicates would change results.
-/// Julia leaves this node as a design note next to `drive(::Disj)`; Rust
-/// implements it. Built with `.union(b)`.
-pub struct Union<A, B> {
-    pub a: A,
-    pub b: B,
-}
-impl<A: Query, B: Query<D = A::D, R = A::R>> Query for Union<A, B> {
-    type D = A::D;
-    type R = A::R;
-}
-impl<A: Drive, B: Drive<D = A::D, R = A::R>> Drive for Union<A, B> {
-    #[inline(always)]
-    fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
-        self.a.drive(&mut k);
-        self.b.drive(k);
-    }
-}
-
-// ===== Prod (× / ⊗, and ∧) — binary; n-ary by nesting ===================
-// Mode rule: like Compose — drive the first leg, probe the rest.
-// `∧` is an alias for `⊗` (Julia algebra.jl): a conjunction IS a product,
-// consumed in member position via the flat short-circuit `member` override
-// below, which never builds the pair value (Julia's `_prod_member`).
-
-pub struct Product<A, B> {
-    pub a: A,
-    pub b: B,
-}
-
-impl<A: Query, B: Query<D = A::D>> Query for Product<A, B> {
-    type D = A::D;
-    type R = (A::R, B::R);
-}
-impl<A: Drive, B: Probe<D = A::D>> Drive for Product<A, B> {
-    #[inline(always)]
-    fn drive<K: FnMut(A::D, (A::R, B::R))>(&self, mut k: K) {
-        self.a.drive(|x, a| self.b.probe(x, |b| k(x, (a, b))));
-    }
-}
-impl<A: Probe, B: Probe<D = A::D>> Probe for Product<A, B> {
-    #[inline(always)]
-    fn probe<K: FnMut((A::R, B::R))>(&self, x: A::D, mut k: K) {
-        self.a.probe(x, |a| self.b.probe(x, |b| k((a, b))));
-    }
-    #[inline(always)]
-    fn probe_any<K: FnMut((A::R, B::R)) -> bool>(&self, x: A::D, mut k: K) -> bool {
-        self.a.probe_any(x, |a| self.b.probe_any(x, |b| k((a, b))))
-    }
-    /// Flat short-circuit AND of the per-leg `member`s — the conj-position
-    /// fast path (Julia `_prod_member`). Unlike the default (which threads
-    /// the pair through `probe_any`), no pair value is ever built.
-    #[inline(always)]
-    fn member(&self, x: A::D) -> bool {
-        self.a.member(x) && self.b.member(x)
-    }
-}
-
-// ===== InvStream — `q'` in drive position: flip pairs, no state =========
-
-pub struct Inverse<Q> {
-    pub q: Q,
-}
-
-impl<Q: Query> Query for Inverse<Q>
-where
-    Q::R: Eq + Hash,
-{
-    type D = Q::R;
-    type R = Q::D;
-}
-
-impl<Q: Drive> Drive for Inverse<Q>
-where
-    Q::R: Eq + Hash,
-{
-    #[inline(always)]
-    fn drive<K: FnMut(Q::R, Q::D)>(&self, mut k: K) {
-        self.q.drive(|d, r| k(r, d));
-    }
-}
+// ----- materialized indexes -----
 
 // ===== FromQuery / collect — explicit materialization ======================
 // The relation mirror of `FromIterator`/`Iterator::collect`: `q.collect()`
@@ -1033,6 +763,7 @@ impl<K: Copy + Eq + Hash, V: Copy> Probe for HashIdx<K, V> {
 pub struct MatSet<D: Copy + Eq + Hash> {
     pub set: HashSet<D>,
 }
+
 /// Drive the input and collect the VALUE slot. Identity relations send
 /// their keys through the value slot, so one impl materializes a set's
 /// keys and a value-bearing query's values alike.
@@ -1048,10 +779,12 @@ where
         MatSet { set }
     }
 }
+
 impl<D: Copy + Eq + Hash> Query for MatSet<D> {
     type D = D;
     type R = D;
 }
+
 impl<D: Copy + Eq + Hash> Probe for MatSet<D> {
     #[inline(always)]
     fn probe<K: FnMut(D)>(&self, x: D, mut k: K) {
@@ -1100,6 +833,7 @@ impl<D: Dense> Bitset<D> {
             _d: PhantomData,
         }
     }
+
     /// A bitset over `u`, driven from `q`: set a bit at each emitted VALUE.
     /// Identity relations send their keys through the value slot, so one
     /// constructor bit-sets a set's keys and a value-bearing query's values
@@ -1107,6 +841,7 @@ impl<D: Dense> Bitset<D> {
     /// including `NO_ID` hole fills — are dropped by the `set` guard.
     /// Both arguments resolve via `IntoQuery`: universe handles for `u`,
     /// plans (usually by reference) or leaf handles for `q`.
+
     pub fn over<U: IntoQuery, Q: IntoQuery>(u: U, q: Q) -> Self
     where
         U::Q: UnivSize<D>,
@@ -1116,6 +851,7 @@ impl<D: Dense> Bitset<D> {
         q.iq().drive(|_, c| b.set(c));
         b
     }
+
     #[inline]
     pub fn set(&mut self, x: D) {
         let i = x.idx();
@@ -1129,6 +865,7 @@ impl<D: Dense> Query for Bitset<D> {
     type D = D;
     type R = D;
 }
+
 impl<D: Dense> Drive for Bitset<D> {
     #[inline]
     fn drive<K: FnMut(D, D)>(&self, mut k: K) {
@@ -1143,6 +880,7 @@ impl<D: Dense> Drive for Bitset<D> {
         }
     }
 }
+
 impl<D: Dense> Probe for Bitset<D> {
     #[inline]
     fn probe<K: FnMut(D)>(&self, x: D, mut k: K) {
@@ -1150,10 +888,12 @@ impl<D: Dense> Probe for Bitset<D> {
             k(x);
         }
     }
+
     #[inline]
     fn probe_any<K: FnMut(D) -> bool>(&self, x: D, mut k: K) -> bool {
         self.member(x) && k(x)
     }
+
     #[inline]
     fn member(&self, x: D) -> bool {
         let i = x.idx();
@@ -1247,33 +987,7 @@ impl<D: Dense> UnivSize<D> for SparseUniverse<D> {
     }
 }
 
-// ===== GroupBy (Julia `r ← s`) — drive src, probe key per row ===========
-// For src: Drive<D, SV> and key: Probe<D, RK>, produces a drive-only
-// RK → SV: each src pair is re-keyed by `key`'s value at the same d.
-// Method spelling is receiver-first on the DRIVEN side: `s.group_by(r)` —
-// Julia's `←` argument order is an infix-surface artifact.
-
-pub struct GroupBy<S, R> {
-    pub src: S,
-    pub key: R,
-}
-
-impl<S: Query, R: Query<D = S::D>> Query for GroupBy<S, R>
-where
-    R::R: Eq + Hash,
-{
-    type D = R::R;
-    type R = S::R;
-}
-impl<S: Drive, R: Probe<D = S::D>> Drive for GroupBy<S, R>
-where
-    R::R: Eq + Hash,
-{
-    #[inline(always)]
-    fn drive<K: FnMut(R::R, S::R)>(&self, mut k: K) {
-        self.src.drive(|d, sv| self.key.probe(d, |rk| k(rk, sv)));
-    }
-}
+// ----- accumulators -----
 
 // ===== Fold (`▷`) — per-key reduce into an eager cache ==================
 // One physical type serves foldl (`.fold`) and the buffered whole-group
@@ -1438,6 +1152,216 @@ impl<S: Copy, D: Dense> Probe for DenseFold<S, D> {
     }
 }
 
+// ===== Combinator nodes ===================================================
+
+// ===== Compose: a: D → M, b: M → R  ⟹  Compose: D → R ===================
+// Mode rule: the rhs is always probed; the lhs carries the Compose's mode.
+
+pub struct Compose<A, B> {
+    pub a: A,
+    pub b: B,
+}
+
+impl<A: Query, B: Query<D = A::R>> Query for Compose<A, B> {
+    type D = A::D;
+    type R = B::R;
+}
+impl<A: Drive, B: Probe<D = A::R>> Drive for Compose<A, B> {
+    #[inline(always)]
+    fn drive<K: FnMut(A::D, B::R)>(&self, mut k: K) {
+        self.a.drive(|x, m| self.b.probe(m, |r| k(x, r)));
+    }
+}
+impl<A: Probe, B: Probe<D = A::R>> Probe for Compose<A, B> {
+    #[inline(always)]
+    fn probe<K: FnMut(B::R)>(&self, x: A::D, mut k: K) {
+        self.a.probe(x, |m| self.b.probe(m, |r| k(r)));
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut(B::R) -> bool>(&self, x: A::D, mut k: K) -> bool {
+        self.a.probe_any(x, |m| self.b.probe_any(m, |r| k(r)))
+    }
+}
+
+// ===== Filter (relation × scalar predicate) =============================
+// The predicate is a plain closure `Fn(A::R) -> bool`, held directly — no
+// predicate trait layer (Julia: `Filter(a, pred)` with any callable). Every
+// comparison combinator below (`.eq`, `.gt`, `.rx`, …) is a captured-closure
+// form of `.filt`.
+
+pub struct Filter<A, F> {
+    pub a: A,
+    pub p: F,
+}
+
+impl<A: Query, F> Query for Filter<A, F> {
+    type D = A::D;
+    type R = A::R;
+}
+
+impl<A: Drive, F: Fn(A::R) -> bool> Drive for Filter<A, F> {
+    #[inline(always)]
+    fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
+        self.a.drive(|x, v| {
+            if (self.p)(v) {
+                k(x, v);
+            }
+        });
+    }
+}
+
+impl<A: Probe, F: Fn(A::R) -> bool> Probe for Filter<A, F> {
+    #[inline(always)]
+    fn probe<K: FnMut(A::R)>(&self, x: A::D, mut k: K) {
+        self.a.probe(x, |v| {
+            if (self.p)(v) {
+                k(v);
+            }
+        });
+    }
+
+    #[inline(always)]
+    fn probe_any<K: FnMut(A::R) -> bool>(&self, x: A::D, mut k: K) -> bool {
+        self.a.probe_any(x, |v| (self.p)(v) && k(v))
+    }
+}
+
+// ===== Restrict (relation × relation — `a : b`) =========================
+// Keeps a's pairs (a's VALUE flows through) where the value is a `member`
+// of b; b is consumed via `member` only (julia-engine branch, interp.jl:
+// `drive(n::Restrict, k) = drive(n.a, (x, m) -> member(n.b, m) && k(x, m))`,
+// probe/probe_any analogous). No `member` override: the defaulted
+// `probe_any(x, |_| true)` already reduces to
+// `a.probe_any(x, |v| b.member(v))`, which is the optimal form.
+
+pub struct Restrict<A, B> {
+    pub a: A,
+    pub b: B,
+}
+
+impl<A: Query, B: Query<D = A::R>> Query for Restrict<A, B> {
+    type D = A::D;
+    type R = A::R;
+}
+
+impl<A: Drive, B: Probe<D = A::R>> Drive for Restrict<A, B> {
+    #[inline(always)]
+    fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
+        self.a.drive(|x, v| {
+            if self.b.member(v) {
+                k(x, v);
+            }
+        });
+    }
+}
+
+impl<A: Probe, B: Probe<D = A::R>> Probe for Restrict<A, B> {
+    #[inline(always)]
+    fn probe<K: FnMut(A::R)>(&self, x: A::D, mut k: K) {
+        self.a.probe(x, |v| {
+            if self.b.member(v) {
+                k(v);
+            }
+        });
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut(A::R) -> bool>(&self, x: A::D, mut k: K) -> bool {
+        self.a.probe_any(x, |v| self.b.member(v) && k(v))
+    }
+}
+
+// ===== Prod (× / ⊗, and ∧) — binary; n-ary by nesting ===================
+// Mode rule: like Compose — drive the first leg, probe the rest.
+// `∧` is an alias for `⊗` (Julia algebra.jl): a conjunction IS a product,
+// consumed in member position via the flat short-circuit `member` override
+// below, which never builds the pair value (Julia's `_prod_member`).
+
+pub struct Product<A, B> {
+    pub a: A,
+    pub b: B,
+}
+
+impl<A: Query, B: Query<D = A::D>> Query for Product<A, B> {
+    type D = A::D;
+    type R = (A::R, B::R);
+}
+impl<A: Drive, B: Probe<D = A::D>> Drive for Product<A, B> {
+    #[inline(always)]
+    fn drive<K: FnMut(A::D, (A::R, B::R))>(&self, mut k: K) {
+        self.a.drive(|x, a| self.b.probe(x, |b| k(x, (a, b))));
+    }
+}
+impl<A: Probe, B: Probe<D = A::D>> Probe for Product<A, B> {
+    #[inline(always)]
+    fn probe<K: FnMut((A::R, B::R))>(&self, x: A::D, mut k: K) {
+        self.a.probe(x, |a| self.b.probe(x, |b| k((a, b))));
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut((A::R, B::R)) -> bool>(&self, x: A::D, mut k: K) -> bool {
+        self.a.probe_any(x, |a| self.b.probe_any(x, |b| k((a, b))))
+    }
+    /// Flat short-circuit AND of the per-leg `member`s — the conj-position
+    /// fast path (Julia `_prod_member`). Unlike the default (which threads
+    /// the pair through `probe_any`), no pair value is ever built.
+    #[inline(always)]
+    fn member(&self, x: A::D) -> bool {
+        self.a.member(x) && self.b.member(x)
+    }
+}
+
+// ===== InvStream — `q'` in drive position: flip pairs, no state =========
+
+pub struct Inverse<Q> {
+    pub q: Q,
+}
+
+impl<Q: Query> Query for Inverse<Q>
+where
+    Q::R: Eq + Hash,
+{
+    type D = Q::R;
+    type R = Q::D;
+}
+
+impl<Q: Drive> Drive for Inverse<Q>
+where
+    Q::R: Eq + Hash,
+{
+    #[inline(always)]
+    fn drive<K: FnMut(Q::R, Q::D)>(&self, mut k: K) {
+        self.q.drive(|d, r| k(r, d));
+    }
+}
+
+// ===== GroupBy (Julia `r ← s`) — drive src, probe key per row ===========
+// For src: Drive<D, SV> and key: Probe<D, RK>, produces a drive-only
+// RK → SV: each src pair is re-keyed by `key`'s value at the same d.
+// Method spelling is receiver-first on the DRIVEN side: `s.group_by(r)` —
+// Julia's `←` argument order is an infix-surface artifact.
+
+pub struct GroupBy<S, R> {
+    pub src: S,
+    pub key: R,
+}
+
+impl<S: Query, R: Query<D = S::D>> Query for GroupBy<S, R>
+where
+    R::R: Eq + Hash,
+{
+    type D = R::R;
+    type R = S::R;
+}
+
+impl<S: Drive, R: Probe<D = S::D>> Drive for GroupBy<S, R>
+where
+    R::R: Eq + Hash,
+{
+    #[inline(always)]
+    fn drive<K: FnMut(R::R, S::R)>(&self, mut k: K) {
+        self.src.drive(|d, sv| self.key.probe(d, |rk| k(rk, sv)));
+    }
+}
+
 // ===== Map (`↦ f`) — per-row lambda =====================================
 
 pub struct Map<Q, F, S: Copy> {
@@ -1460,12 +1384,14 @@ impl<Q: Query, F: Fn(Q::R) -> S, S: Copy> Query for Map<Q, F, S> {
     type D = Q::D;
     type R = S;
 }
+
 impl<Q: Drive, F: Fn(Q::R) -> S, S: Copy> Drive for Map<Q, F, S> {
     #[inline(always)]
     fn drive<K: FnMut(Q::D, S)>(&self, mut k: K) {
         self.q.drive(|d, v| k(d, (self.f)(v)));
     }
 }
+
 impl<Q: Probe, F: Fn(Q::R) -> S, S: Copy> Probe for Map<Q, F, S> {
     #[inline(always)]
     fn probe<K: FnMut(S)>(&self, x: Q::D, mut k: K) {
@@ -1474,6 +1400,109 @@ impl<Q: Probe, F: Fn(Q::R) -> S, S: Copy> Probe for Map<Q, F, S> {
     #[inline(always)]
     fn probe_any<K: FnMut(S) -> bool>(&self, x: Q::D, mut k: K) -> bool {
         self.q.probe_any(x, |v| k((self.f)(v)))
+    }
+}
+
+// ===== Diff / Disj / Union — set algebra ================================
+// Conjunction needs no node at all: `∧` IS the product (Julia:
+// `∧(a, b) = ⊗(a, b)`), and `member(Prod)` short-circuits flat across the
+// legs without building the pair value — see Prod below. The remaining set
+// operators take ANY member-capable rhs (no projection of a value-bearing
+// operand to a "keyset" node).
+
+
+/// Enumerable BAG union: drive `a` fully, then `b` fully — NO dedup and no
+/// membership pretense (drive-only; no `Probe`). The legs must agree on
+/// domain AND value type. A key in both legs is emitted by both, so feed a
+/// `Union` only to deduping sinks (`Bitset::over`,
+/// `.collect::<MatSet<_>>()`, …) or collect into a set first when
+/// duplicates would change results.
+/// Julia leaves this node as a design note next to `drive(::Disj)`; Rust
+/// implements it. Built with `.union(b)`.
+pub struct Union<A, B> {
+    pub a: A,
+    pub b: B,
+}
+impl<A: Query, B: Query<D = A::D, R = A::R>> Query for Union<A, B> {
+    type D = A::D;
+    type R = A::R;
+}
+impl<A: Drive, B: Drive<D = A::D, R = A::R>> Drive for Union<A, B> {
+    #[inline(always)]
+    fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
+        self.a.drive(&mut k);
+        self.b.drive(k);
+    }
+}
+
+/// `∨` — PROBE-ONLY membership union (julia-engine interp.jl: "driving a union
+/// (dedup-while-emitting) is the one operation that would need its lhs both
+/// driven and probed, so it lives elsewhere"). There is deliberately NO
+/// `Drive` impl — driving a `Disj` is a compile error. Enumerate a union
+/// with `Union` (bag-concat) instead, materializing first if the sink does
+/// not dedup.
+pub struct Disjunction<A, B> {
+    pub a: A,
+    pub b: B,
+}
+impl<A: Query, B: Query<D = A::D>> Query for Disjunction<A, B> {
+    type D = A::D;
+    type R = A::D;
+}
+impl<A: Probe, B: Probe<D = A::D>> Probe for Disjunction<A, B> {
+    #[inline(always)]
+    fn probe<K: FnMut(A::D)>(&self, x: A::D, mut k: K) {
+        if self.member(x) {
+            k(x);
+        }
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut(A::D) -> bool>(&self, x: A::D, mut k: K) -> bool {
+        self.member(x) && k(x)
+    }
+    #[inline(always)]
+    fn member(&self, x: A::D) -> bool {
+        self.a.member(x) || self.b.member(x)
+    }
+}
+
+/// `a - b` — Julia's value-bearing minus: keyed on `a`'s DOMAIN, drive and
+/// probe pass `a`'s `(x, v)` pairs through unchanged, skipping keys that
+/// are members of `b` (julia-engine interp.jl `drive(n::Diff, k) =
+/// drive(n.a, (x, y) -> member(n.b, x) || k(x, y))`). For an identity `a`
+/// this degenerates to the plain set difference (emits `(x, x)`).
+pub struct Difference<A, B> {
+    pub a: A,
+    pub b: B,
+}
+impl<A: Query, B: Query<D = A::D>> Query for Difference<A, B> {
+    type D = A::D;
+    type R = A::R;
+}
+impl<A: Drive, B: Probe<D = A::D>> Drive for Difference<A, B> {
+    #[inline(always)]
+    fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
+        self.a.drive(|x, v| {
+            if !self.b.member(x) {
+                k(x, v);
+            }
+        });
+    }
+}
+impl<A: Probe, B: Probe<D = A::D>> Probe for Difference<A, B> {
+    #[inline(always)]
+    fn probe<K: FnMut(A::R)>(&self, x: A::D, k: K) {
+        if !self.b.member(x) {
+            self.a.probe(x, k);
+        }
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut(A::R) -> bool>(&self, x: A::D, k: K) -> bool {
+        !self.b.member(x) && self.a.probe_any(x, k)
+    }
+    #[inline(always)]
+    fn member(&self, x: A::D) -> bool {
+        self.a.member(x) && !self.b.member(x)
     }
 }
 
@@ -1505,7 +1534,7 @@ pub trait QueryExt: IntoQuery + Sized {
     ///
     /// ## Example
     ///
-    /// ```
+    /// ```ignore
     /// movies.select(title).drive(|id, t| println!("id: {id}; title:{t}"));
     /// ```
     /// This example prints (id, title) pairs.
@@ -1525,7 +1554,7 @@ pub trait QueryExt: IntoQuery + Sized {
     /// Inverts the receiver relation.
     ///
     /// ## Examples
-    /// ```
+    /// ```ignore
     /// movies.select(year).inv().fold(0i64, |a, _| a + 1)
     /// ```
     /// Here, `movies.select(year)` is a `Id<Movie> -> year` relation, so
@@ -1548,7 +1577,7 @@ pub trait QueryExt: IntoQuery + Sized {
     /// `A.and(B)` is the set of pairs (x, (y, z)) such that A(x, y) and B(x, z).
     ///
     /// ## Examples
-    /// ```
+    /// ```ignore
     /// let title_and_year = movies.select(title.and(year))
     /// let late_orders = orders.with(commitdate.and(receiptdate).filt(|(c, r)| c < r))
     /// ```
@@ -1589,7 +1618,7 @@ pub trait QueryExt: IntoQuery + Sized {
     ///
     /// ## Examples
     ///
-    /// ```
+    /// ```ignore
     /// let post_1997_titles = movies.minus(year.gt(1997)).select(title);
     /// ```
     #[inline(always)]
@@ -1628,7 +1657,7 @@ pub trait QueryExt: IntoQuery + Sized {
     /// Retains receiver pairs `(x, y)` if `y == v`.
     ///
     /// ## Examples
-    /// ```
+    /// ```ignore
     /// let produced_by_a24 = movies.select(production).eq("A24");
     /// ```
     #[inline(always)]
@@ -1648,7 +1677,7 @@ pub trait QueryExt: IntoQuery + Sized {
     /// Retains receiver pairs `(x, y)` if `y != v`.
     ///
     /// ## Examples
-    /// ```
+    /// ```ignore
     /// let not_produced_by_a24 = movies.select(production).neq("A24");
     /// ```
     #[inline(always)]
@@ -1668,7 +1697,7 @@ pub trait QueryExt: IntoQuery + Sized {
     /// Retains receiver pairs `(x, y)` if `v < y`.
     ///
     /// ## Examples
-    /// ```
+    /// ```ignore
     /// let longer_than_two_hours = movies.select(duration).gt(7200);
     /// ```
     #[inline(always)]
@@ -1688,7 +1717,7 @@ pub trait QueryExt: IntoQuery + Sized {
     /// Retains receiver pairs `(x, y)` if `y < v`.
     ///
     /// ## Examples
-    /// ```
+    /// ```ignore
     /// let shorter_than_two_hours = movies.select(duration).lt(7200);
     /// ```
     #[inline(always)]
@@ -1708,7 +1737,7 @@ pub trait QueryExt: IntoQuery + Sized {
     /// Retains receiver pairs `(x, y)` if `v <= y`.
     ///
     /// ## Examples
-    /// ```
+    /// ```ignore
     /// let at_least_two_hours = movies.select(duration).ge(7200);
     /// ```
     #[inline(always)]
@@ -1728,7 +1757,7 @@ pub trait QueryExt: IntoQuery + Sized {
     /// Retains receiver pairs `(x, y)` if `y <= v`.
     ///
     /// ## Examples
-    /// ```
+    /// ```ignore
     /// let at_most_two_hours = movies.select(duration).le(7200);
     /// ```
     #[inline(always)]
@@ -1748,7 +1777,7 @@ pub trait QueryExt: IntoQuery + Sized {
     /// Retains receiver pairs `(x, y)` if `y` is among the `vs`.
     ///
     /// ## Examples
-    /// ```
+    /// ```ignore
     /// let new_wave = movies.select(director).in_v(["Truffaud",
     /// "Godard", "Varda"]);
     /// ```
@@ -1770,7 +1799,7 @@ pub trait QueryExt: IntoQuery + Sized {
     /// iterator.
     ///
     /// ## Examples
-    /// ```
+    /// ```ignore
     /// let new_wave = movies.select(director).in_v(["Truffaud",
     /// "Godard", "Varda"]);
     /// ```
@@ -1808,7 +1837,7 @@ pub trait QueryExt: IntoQuery + Sized {
     ///
     /// ## Examples
     ///
-    /// ```
+    /// ```ignore
     /// let late_orders = orders.with(commitdate.and(receiptdate).filt(|(c, r)| c < r));
     /// ```
     #[inline(always)]
@@ -1828,7 +1857,7 @@ pub trait QueryExt: IntoQuery + Sized {
     ///
     /// ## Examples
     ///
-    /// ```
+    /// ```ignore
     /// let lordly_movies = movies.select(title).rx("Lord of ");
     /// ```
     #[inline(always)]
@@ -1849,7 +1878,7 @@ pub trait QueryExt: IntoQuery + Sized {
     ///
     /// ## Examples
     ///
-    /// ```
+    /// ```ignore
     /// let lordless_movies = movies.select(title).nrx("(L|l)ord");
     /// ```
     #[inline(always)]
@@ -1874,7 +1903,7 @@ pub trait QueryExt: IntoQuery + Sized {
     /// `a.filt(f)` is equivalent to `SELECT * FROM a WHERE f`.
     ///
     /// ## Examples
-    /// ```
+    /// ```ignore
     /// let late_orders = orders.with(commitdate.and(receiptdate).filt(|(c, r)| c < r));
     /// ```
     #[inline(always)]
@@ -1890,7 +1919,7 @@ pub trait QueryExt: IntoQuery + Sized {
     ///
     /// ## Examples
     ///
-    /// ```
+    /// ```ignore
     /// let orders_1997 = orders.with(shipdate.during(19970101, 19980101));;
     /// ```
     #[inline(always)]
@@ -1913,7 +1942,7 @@ pub trait QueryExt: IntoQuery + Sized {
     ///
     /// ## Examples
     ///
-    /// ```
+    /// ```ignore
     /// let orders_1997 = orders.with(shipdate.between(19970101, 19971231));;
     /// ```
     #[inline(always)]
@@ -1940,7 +1969,7 @@ pub trait QueryExt: IntoQuery + Sized {
     ///
     /// ## Examples
     ///
-    /// ```
+    /// ```ignore
     /// let collected_new_wave = movies.select(director).in_v(["Truffaud",
     /// "Godard", "Varda"]).collect::<HashIdx<_, _>>();
     /// ```
