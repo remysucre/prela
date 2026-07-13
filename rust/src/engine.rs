@@ -1905,7 +1905,17 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    /// Closed range `[lo, hi]` — Julia `lo..hi`.
+    /// # between
+    ///
+    /// Retains receiver pairs `(x, y)` where `lo <= y <= hi`.
+    ///
+    /// ## SQL
+    ///
+    /// ## Examples
+    ///
+    /// ```
+    /// let orders_1997 = orders.with(shipdate.between(19970101, 19971231));;
+    /// ```
     #[inline(always)]
     fn between(self, lo: Sc<Self>, hi: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
     where
