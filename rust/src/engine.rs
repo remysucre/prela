@@ -1764,8 +1764,20 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    /// `in_v` over any `IntoIterator` — arrays, slices, the named set fns —
-    /// collected once into the captured Vec.
+    /// # is_in
+    ///
+    /// Retains receiver pairs `(x, y)` if `y` is among the `vs`. Can be built from any
+    /// iterator.
+    ///
+    /// ## Examples
+    /// ```
+    /// let new_wave = movies.select(director).in_v(["Truffaud",
+    /// "Godard", "Varda"]);
+    /// ```
+    ///
+    /// ## Notes
+    ///
+    /// Compare with `in_v`, which must be supplied a `Vec`.
     #[inline(always)]
     fn is_in<I: IntoIterator<Item = Sc<Self>>>(
         self,
