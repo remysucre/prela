@@ -1542,12 +1542,23 @@ pub trait QueryExt: IntoQuery + Sized {
         Inverse { q: self.iq() }
     }
 
-    /// `∧` / `×` / `⊗` — the product, in both of its uses (one node, one
-    /// name; Julia: `∧(a, b) = ⊗(a, b)`). In member position (a conjunct
-    /// tree fed to `.with`, `.minus`'s rhs, …) the `member` override
-    /// short-circuits flat across the legs without building pair values; in
-    /// drive/probe position it emits nested-pair values (output tuples) —
-    /// restrict-then-project is `a.with(p).select(b)`.
+    /// # and
+    ///
+    /// Builds the product of two relations.
+    /// `A.and(B)` is the set of pairs (x, (y, z)) such that A(x, y) and B(x, z).
+    ///
+    /// ## Examples
+    /// ```
+    /// let title_and_year = movies.select(title.and(year))
+    /// let late_orders = orders.with(commitdate.and(receiptdate).filt(|(c, r)| c < r))
+    /// ```
+    ///
+    /// ## Notes
+    ///
+    /// Using `.and` in `member` position (for example, as child of `.with` or `.minus`)
+    /// checks for membership among `Self` and `b`'s keys without building any pairs. In
+    /// addition, the check short-circuits.
+    /// See `Product`'s `member` override for details.
     #[inline(always)]
     fn and<B: IntoQuery>(self, b: B) -> Product<Self::Q, B::Q>
     where
