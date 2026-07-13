@@ -1520,7 +1520,20 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    /// Postfix adjoint in drive position — streams flipped pairs, no state.
+    /// # inv
+    ///
+    /// Inverts the receiver relation.
+    ///
+    /// ## Examples
+    /// ```
+    /// movies.select(year).inv().fold(0i64, |a, _| a + 1)
+    /// ```
+    /// Here, `movies.select(year)` is a `Id<Movie> -> year` relation, so
+    /// `movies.select(year).inv()` is `year -> Id<Movie>`.
+    /// We then fold a counting accumulator over the values, resulting in a `year -> count`
+    /// relation with unique keys.
+    /// This is essentially how `group_by` is implemented, and is the main use case for
+    /// `inv`.
     #[inline(always)]
     fn inv(self) -> Inverse<Self::Q>
     where
