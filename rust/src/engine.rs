@@ -1634,6 +1634,14 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// # neq
+    ///
+    /// Retains receiver pairs `(x, y)` if `y != v`.
+    ///
+    /// ## Examples
+    /// ```
+    /// let not_produced_by_a24 = movies.select(production).neq("A24");
+    /// ```
     #[inline(always)]
     fn ne(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
     where
