@@ -1933,6 +1933,21 @@ pub trait QueryExt: IntoQuery + Sized {
     /// `.collect::<HashIdx<_, _>>()` for a forward index, `.collect::<
     /// MatSet<_>>()` for a membership set (Julia: `prepare` probing a
     /// `Materialized`). The type annotation IS the visible physical choice.
+
+    /// # collect
+    ///
+    /// Materializes the receiver into a container of type `T`.
+    ///
+    /// ## Examples
+    ///
+    /// ```
+    /// let collected_new_wave = movies.select(director).in_v(["Truffaud",
+    /// "Godard", "Varda"]).collect::<HashIdx<_, _>>();
+    /// ```
+    ///
+    /// ## Notes
+    ///
+    ///
     #[inline(always)]
     fn collect<T: FromQuery<Self::Q>>(self) -> T
     where
