@@ -1843,6 +1843,15 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// # nrx
+    ///
+    /// Retains receiver pairs `(x, y)` where the regex `s` _does not_ match `y`.
+    ///
+    /// ## Examples
+    ///
+    /// ```
+    /// let lordless_movies = movies.select(title).nrx("(L|l)ord");
+    /// ```
     #[inline(always)]
     fn nrx(self, re: &str) -> Filter<Elided<Self>, impl Fn(&'static str) -> bool>
     where
