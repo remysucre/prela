@@ -1743,6 +1743,15 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// # in_v
+    ///
+    /// Retains receiver pairs `(x, y)` if `y` is among the `vs`.
+    ///
+    /// ## Examples
+    /// ```
+    /// let new_wave = movies.select(director).in_v(["Truffaud",
+    /// "Godard", "Varda"]);
+    /// ```
     #[inline(always)]
     fn in_v(self, vs: Vec<Sc<Self>>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
     where
