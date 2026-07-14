@@ -199,7 +199,7 @@ USA
 \end_layout
 
 \begin_layout Author
-Paul Joseph Talma
+Paul Talma
 \end_layout
 
 \begin_layout Affiliation
@@ -380,7 +380,7 @@ literal "false"
  both the physical layer and the semantic layer have drifted away from the original table-oriented abstraction.
  Yet,
  as we will show,
- the independent evolution of the physics and the semantics of relational data have lead to the same destiny!
+ the independent evolution of the physics and the semantics of relational data have led to the same destiny!
  This reunion calls for new abstractions that better connect queries to their execution.
  In this paper,
  we revisit an old formalism of relations predating Codd's relational algebra by over 100 years.
@@ -776,7 +776,7 @@ TAR
 human or machine—
 back in the driver seat of performance engineering.
  Nevertheless,
- this great power does not necessarily come as a responsibility,
+ this great power does not necessarily come with great responsibility,
  and Prela/
 \noun on
 TAR
@@ -1295,12 +1295,12 @@ tuple "list"
 
 .
  With Prela,
- we aim to demonstrate such extensions to SQL can be grounded on the firm theoretical foundation of 
+ we aim to demonstrate that such extensions to SQL can be grounded on the firm theoretical foundation of 
 \noun on
 TAR
 \noun default
 ,
- and that they are not merely syntactic sugars,
+ and that they are not merely syntactic sugar,
  but can produce tangible performance benefits when connected to the underlying execution engine.
  
 \end_layout
@@ -2223,7 +2223,7 @@ binarization
 Prela queries are composed of operators applied to relational arguments,
  much like the classic Relational Algebra 
 \emph on
-a la 
+à la 
 \emph default
 Codd.
  To reduce clutter,
@@ -2994,7 +2994,7 @@ movie.select(title)
 \end_inset
 
  returns a binary relation mapping each movie ID to its title,
- and similar for 
+ and similarly for 
 \begin_inset listings
 inline true
 status open
@@ -3472,7 +3472,7 @@ movie_company
  the company ID,
  name,
  and country,
- each of which becoming a binary relation in Prela as shown on the right of Figure
+ each of which becomes a binary relation in Prela as shown on the right of Figure
 \begin_inset space \thinspace{}
 \end_inset
 
@@ -3633,7 +3633,7 @@ throws away
 
  the join attributes,
  the reader may be wondering if there are certain SQL queries that Prela cannot express.
- We answer in two folds.
+ Our answer is two-fold.
  On one hand,
  real world queries almost always join on key/foreign keys,
  and keys rarely serve any other purpose —
@@ -4950,7 +4950,7 @@ country
 \end_inset
 
 ,
- and similar for 
+ and similarly for 
 \begin_inset listings
 inline true
 status open
@@ -4995,7 +4995,7 @@ TAR
  and Prela is the focus on binary relations,
  which closely models both attributes and relationships 
 \emph on
-a la
+à la
 \emph default
  Entity/Relationship.
  Modern business logic usually start life as an E/R diagram,
@@ -5017,6 +5017,10 @@ name "sec:Implementation"
 
 \end_inset
 
+
+\end_layout
+
+\begin_layout Standard
 
 \end_layout
 
