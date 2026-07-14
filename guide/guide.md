@@ -150,6 +150,92 @@ employees.group_by(dept).fold(0_i64, |a, _| a + 1) =
      ("Algebra",       3)}
 ```
 
+## Schema Definitions
+
+So far, we've defined our data manually.
+In most use cases, the data will live somewhere on disk.
+Manually loading it would be tedious and error-prone.
+
+To systematize data-loading, Prela exposes a `schema` macro.
+The macro has two primary purposes.
+First, it defines a `<schema_name>_init` function which you can call to load data from disk into Prela.
+Second, it exposes _navigation handles_ that facilitate access to relations.
+In addition, it does some technical bookkeeping the relevance of which will be examined later.
+
+The @sec:prela-internals section and the `schema` documentation explain how all this works under the hood.
+For now, we illustrate the use `schema` to set up a Prela application.
+The following invocation sets up a schema much like the one assumed in the example queries above.
+
+```rust
+schema! {
+    EMPLOYEE / EmployeeSchema / employee_init:
+    Employee(employee) / EmployeeNav {
+        pub dept: Dept,
+        pub name: str
+    }
+    Dept / DeptNav {
+        name: str
+    }
+}
+```
+
+The macro consists of a header,
+
+```rust
+    EMPLOYEE / EmployeeSchema / employee_init:
+```
+
+followed by a number of entity declarations
+
+```rust
+    Employee(employee) / EmployeeNav {
+        pub dept: Department,
+        pub name: str
+    }
+    Department / DepartmentNav {
+        name: str
+    }
+```
+
+The header consists mostly of bookkeeping declarations used internally by the macro but not exposed to the user.
+
+> [!warn]
+> The header structure is likely to change in future versions.
+
+The entity declarations consist of:
+
+- The entity name (`Employee`, `Dept`), optionally followed by that entity's universe (`(employee)`).
+- An `<EntityName>Nav` struct name, used internally by the macro.
+- A list of column declarations (`{ pub dept: Dept, pub name: str }`)
+
+Entity universes and columns marked `pub` are directly available in the global namespace.
+This allows us to write `employee.select(name)` instead of `Employee::employee.select(Employee::name)`.
+
+Entities correspond to SQL tables.
+Thus, the schema above is equivalent to declaring the following tables in SQL:
+
+```SQL
+CREATE TABLE employee (
+    id   INTEGER PRIMARY KEY,
+    dept INTEGER REFERENCES department(id),
+    name TEXT
+);
+
+CREATE TABLE department (
+    id   INTEGER PRIMARY KEY,
+    name TEXT
+);
+```
+
+Note that the `id` columns are implicit in Prela.
+
+### Building the DB
+
+To build the DB, first run the macro, then call the `init` function defined by the macro with a path to the data files.
+`init` expects an `<Entity>_<columns_name>.bin` data file at the provided path for each `(Entity, column)` appearing in `schema`.
+
+## From SQL to Prela
+
 Since Prela is embedded in Rust, it is easy to write expressive folds.
 Here is an implementation of the first TPC-H query in Prela, using all the features we've seen so far:
 
@@ -167,24 +253,3 @@ let grouped = lineitem
               },
         );
 ```
-
-## Schema Definitions
-
-So far, we've defined our data manually.
-In your use cases, your data is likely to live somewhere on disk.
-Manually loading it would be tedious and error-prone.
-
-To systematize data-loading, Prela exposes a `schema` macro.
-Here is an illustrative use of the macro (the full syntax is documented [here](macro_doc)).
-
-```rust
-schema! {
-    LIBRARY / LibrarySchema / library_init:
-    Book(book) / BookNav { pub title: str, author: Author }
-    Author / AuthorNav { name: str }
-}
-```
-
-## From SQL to Prela
-
-## Execution Model: Passing Queries through Continuations
