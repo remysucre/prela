@@ -11,7 +11,7 @@ The first element of a pair is a _key_; the second is a _value_.
 
 In Prela, queries are defined by composing binary relations via _relation combinators_.
 Relation combinators are operators that map binary relations to binary relations.
-For example, the composition operator `\to` represents _relation composition_: $R \to S = \{(x, z) : \exists y R(x, y) \text{ and } S(y, z) \}$.
+For example, the composition operator $\to$ represents _relation composition_: $R \to S = \{(x, z) : \exists y R(x, y) \text{ and } S(y, z) \}$.
 
 ## Your first Prela query
 
@@ -23,13 +23,13 @@ use prela::engine::*;
 fn main() {
     // define the data
     let employees = Universe::new(5);
-    let name: VecRel<&str> = VecRel::new(vec!["Alan", "Alonzo", "Alfred", "Arend", "Remy" ]);
+    let name: VecRel<&str> = VecRel::new(vec!["Alan", "Alonzo", "Alfred", "Arend", "Remy"]);
     let dept: VecRel<&str> = VecRel::new(vec!["Computability", "Computability", "Algebra", "Algebra", "Algebra"]);
 
     // define the query
     let algebraists = employees
                           .with(dept.eq("Algebra"))
-                        .select(&name);
+                        .select(name);
 
     // scan the query and print each row
     algebraists.drive(|id, n| println!("{id}: {n}"));
@@ -94,7 +94,7 @@ To actually do something with it, we `drive` a printing function over it: `r.dri
 Thus, `algebraists.drive(|id, n| println!("{id}: {n}"));` is equivalent to the SQL query
 
 ```sql
-SELECT id, name FROM employees WHERE dept = "Algebra"
+SELECT id, name FROM employees WHERE dept = 'Algebra'
 ```
 
 ## A More Complex Query
@@ -109,7 +109,7 @@ Now, we can print the name and department of algebraists as follows:
 ```rust
 employees
       .with(dept.eq("Algebra"))
-    .select(department.and(name))
+    .select(dept.and(name))
      .drive(|_, (d, n)| println!("{n}: {d}"));
 ```
 
@@ -140,7 +140,7 @@ employees.group_by(dept) =
 
 To count the number of employees per department, we use `fold`.
 `r.fold(base, f)` folds the function `f(acc, val)` into an accumulator initialized to `base`, separately for each key in `r`.
-You can think of `fold` as maintaining a hashmap `h` from keys of `r` to accumulator values initialized to `base`.
+You can think of `fold` as maintaining a hashmap `h` from keys of `r` to accumulators initialized to `base`.
 For each row `(x, y)` in `r`, `fold` updates the value of `h[x]` to `f(h[x], y)`.
 Thus,
 
