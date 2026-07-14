@@ -236,6 +236,125 @@ To build the DB, first run the macro, then call the `init` function defined by t
 
 ## From SQL to Prela
 
+## Prela Internals
+
+A Prela query is represented as a _query plan_: a tree whose internal nodes are _query combinators_ and whose leaves are _data nodes_.
+Data nodes are either _source_ nodes, representing entity attributes, or _materialized_ nodes, which are relations the user explicitly materializes.
+Query combinators can have both other combinators and data nodes as children.
+
+A query defines a binary relation.
+To do something with this relation, we call `query.drive(k)`, where `k: (d, r) -> _` is a [closure](https://doc.rust-lang.org/book/ch13-01-closures.html) taking tuples from the query as arguments.
+`query.drive(k)` has the effect of iterating over the tuples in `query` and applying `k` to each row.
+Note that this describes the semantic meaning of `query.drive(k)`, not its execution.
+In reality, the relation defined by `query` is usually not materialized.
+
+Prela defines various traits specifying the behavior of plan nodes and auxiliary data structures.
+The most important are `Query`, `Drive`, and `Probe`.
+
+The `Query` trait specifies a domain type `D` and a range type `R`:
+
+```rust
+pub trait Query {
+    type D: Copy + Eq + Hash;
+    type R: Copy;
+}
+```
+
+Thus, `Query`s represent binary relations.
+All plan nodes implement `Query`.
+
+`Drive` and `Probe` are subtraits of `Query`.
+A `Drive`able query implements a `drive` function whose meaning (though not implementation!) is "apply `k` to each row in the `Query`":
+
+```rust
+pub trait Drive: Query {
+    fn drive<K: FnMut(Self::D, Self::R)>(&self, k: K);
+}
+```
+
+Note that `k` must take two arguments, one of type `D` and the other of type `R`.
+
+Likewise, a `Probe`able query implements a few versions of the `probe` function:
+
+```rust
+pub trait Probe: Query {
+    fn probe<K: FnMut(Self::R)>(&self, x: Self::D, k: K);
+
+    fn probe_any<K: FnMut(Self::R) -> bool>(&self, x: Self::D, k: K) -> bool;
+
+    fn member(&self, x: Self::D) -> bool {
+        self.probe_any(x, |_| true)
+    }
+}
+```
+
+`query.probe(x, k)` looks `x` up in `query` and applies `k` to the corresponding value.
+`query.probe_any(k)` returns `true` if there is a pair `(x, y)` in `query` such that `k(y)`, and `false` otherwise.
+`query.member(x)` checks whether `x` is a key in `query`.
+
+A Prela database is organized in to entities each associated with a number of attributes (roughly corresponding to tables and columns in SQL).
+Each member of an entity is associated with an ID.
+Each attribute is represented as a map from IDs to attribute values.
+
+IDs are implemented by the `Id<Entity>` struct.
+An `Id<Entity>` is a zero-cost wrapper around the actual ID (an integer) tagged with the `Entity` type as a `PhantomData` item.
+Tagging with `PhantomData` means that IDs "belong" to their entities: using the ID `0` belonging the `Employee` entity to index into the `Department` entity results in a compile-time error.
+
+In most cases, attributes appearing in a query are represented by `VecRel` nodes.
+A `VecRel` represents a total, one-to-one relation (a bijective function) from a `Dense` domain to its range:
+
+```rust
+pub struct VecRel<R: Copy, D: Dense = usize> {
+    pub values: Vec<R>,
+    pub _d: PhantomData<D>,
+}
+```
+
+### Taxonomy of plan nodes
+
+Here is a taxonomy of plan nodes:
+
+| Node           | Category     |
+| -------------- | ------------ |
+| Compose        | Combinator   |
+| Filter         | Combinator   |
+| Restrict       | Combinator   |
+| Product        | Combinator   |
+| Inverse        | Combinator   |
+| GroupBy        | Combinator   |
+| Map            | Combinator   |
+| Union          | Combinator   |
+| Disjunction    | Combinator   |
+| VecRel         | Source       |
+| MultiRel       | Source       |
+| Universe       | Source       |
+| Ident          | Source       |
+| DictTable      | Source       |
+| HashIdx        | Materialized |
+| MatSet         | Materialized |
+| Bitset         | Materialized |
+| SparseUniverse | Materialized |
+| Fold           | Materialized |
+| DenseFold      | Materialized |
+
+Prela currently implements the following query combinators:
+
+- `Compose`
+- `Filter`:
+- `Restrict`
+-
+
+Prela operators define _query nodes_ (i.e. relations) which implement [traits](https://doc.rust-lang.org/book/ch10-02-traits.html) that specify how relations are manipulated and combined with one another.
+
+A Prela query is a tree of query nodes.
+Leaf nodes represent physical columns (as specified in the schema).
+Internal nodes are relation combinators.
+Each combinator defines a relation as a function of its children.
+
+### Indexing
+
+## scrap
+
 Since Prela is embedded in Rust, it is easy to write expressive folds.
 Here is an implementation of the first TPC-H query in Prela, using all the features we've seen so far:
 
