@@ -26,7 +26,12 @@ fn run_suite(
     on_pass: impl Fn(usize, &str, f64, &str),
     on_diff: impl Fn(&str, f64, &str, &str),
 ) {
-    for round in 1..=2 {
+    // ROUNDS=<n> overrides the default two timed rounds (used by bench scripts).
+    let rounds: usize = std::env::var("ROUNDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2);
+    for round in 1..=rounds {
         eprintln!("--- run {round} ---");
         let mut ok = 0usize;
         let t = std::time::Instant::now();
@@ -76,12 +81,13 @@ fn run_tpch() {
               tpch_schema::lineitem.iq().n, tpch_schema::orders.iq().n,
               tpch_schema::partsupp.iq().n);
 
-    // QS=idiomatic|optimized (default optimized)
+    // QS=idiomatic|optimized|idiomatic_optimized (default optimized)
     let variant = std::env::var("QS").unwrap_or_else(|_| "optimized".to_string());
     let qs = match variant.as_str() {
         "idiomatic" => tpch::idiomatic::queries(),
         "optimized" => tpch::optimized::queries(),
-        other => panic!("unknown QS variant: {other:?} (use idiomatic|optimized)"),
+        "idiomatic_optimized" => tpch::idiomatic_optimized::queries(),
+        other => panic!("unknown QS variant: {other:?} (use idiomatic|optimized|idiomatic_optimized)"),
     };
     eprintln!("{} TPC-H queries registered ({} variant)", qs.len(), variant);
 

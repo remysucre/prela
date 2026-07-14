@@ -9,6 +9,7 @@
 
 pub mod common;
 pub mod idiomatic;
+pub mod idiomatic_optimized;
 pub mod optimized;
 
 pub use common::Entry;
