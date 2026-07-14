@@ -17,3 +17,5 @@ zig/.zig-cache/
 
 *.pdf
 sandbox/
+
+rust/schema-proc/target
