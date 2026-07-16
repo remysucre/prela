@@ -764,8 +764,8 @@ library
 TAR
 \noun default
 .
- A common complaint in SQL is the difficulty to guide the query optimizer when it fails to find an efficient plan;
- in contrast,
+ A common complaint in SQL is the difficulty of guiding the query optimizer when it fails to find an efficient plan;
+ by contrast,
  the Prela user has complete control over all aspect of query planning,
  including join ordering,
  operator pushdown,
@@ -776,7 +776,7 @@ TAR
 human or machine—
 back in the driver seat of performance engineering.
  Nevertheless,
- this great power does not necessarily come with great responsibility,
+ this great power need not come with great responsibility,
  and Prela/
 \noun on
 TAR
@@ -875,7 +875,7 @@ TAR
 \noun default
 —
 despite being a century older—
-can be understood as an evolution of the relational algebra towards columns stores and modern application code;
+can be understood as an evolution of the relational algebra towards column stores and modern application code;
  the Prela language can also be considered a prototype demonstrating how SQL can be extended and made more flexible.
  In particular,
  
