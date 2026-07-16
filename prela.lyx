@@ -41,6 +41,8 @@
 
 % \let\Bbbk\relax
 \usepackage{newtxmath}
+
+\usepackage{forest}
 \end_preamble
 \options format=sigconf, review=false, screen=true
 \use_default_options false
@@ -5021,7 +5023,778 @@ name "sec:Implementation"
 \end_layout
 
 \begin_layout Standard
+A Prela query defines a 
+\emph on
+query tree
+\emph default
+ whose inner nodes are query combinators and whose leaves are data.
+ For example,
+ the query 
+\begin_inset listings
+inline true
+status open
 
+\begin_layout Plain Layout
+movie.with(year.eq(1997)).s(title.and(keyword))
+\end_layout
+
+\end_inset
+
+defines the following tree:
+\end_layout
+
+\begin_layout Standard
+\begin_inset ERT
+status open
+
+\begin_layout Plain Layout
+
+\backslash
+begin{figure}[h]
+\end_layout
+
+\begin_layout Plain Layout
+
+\backslash
+centering
+\end_layout
+
+\begin_layout Plain Layout
+
+\backslash
+begin{forest}
+\end_layout
+
+\begin_layout Plain Layout
+for tree={s sep=10mm,
+ l sep=1mm}
+\end_layout
+
+\begin_layout Plain Layout
+[select
+\end_layout
+
+\begin_layout Plain Layout
+  [with
+\end_layout
+
+\begin_layout Plain Layout
+    [movie]
+\end_layout
+
+\begin_layout Plain Layout
+    [eq
+\end_layout
+
+\begin_layout Plain Layout
+      [year]
+\end_layout
+
+\begin_layout Plain Layout
+      [1997]
+\end_layout
+
+\begin_layout Plain Layout
+    ]
+\end_layout
+
+\begin_layout Plain Layout
+  ]
+\end_layout
+
+\begin_layout Plain Layout
+  [and
+\end_layout
+
+\begin_layout Plain Layout
+    [title]
+\end_layout
+
+\begin_layout Plain Layout
+    [keyword]
+\end_layout
+
+\begin_layout Plain Layout
+  ]
+\end_layout
+
+\begin_layout Plain Layout
+]
+\end_layout
+
+\begin_layout Plain Layout
+
+\backslash
+end{forest}
+\end_layout
+
+\begin_layout Plain Layout
+
+\backslash
+caption{Query tree for 
+\backslash
+texttt{select(with(movie,eq(year,
+ 1997)),
+ and(title,
+ keyword))}}
+\end_layout
+
+\begin_layout Plain Layout
+
+\backslash
+end{figure}
+\end_layout
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\end_inset
+
+ A query tree is isomorphic to the query's AST.
+ Moreover,
+ Prela lacks a query optimizer:
+ the query tree 
+\emph on
+is
+\emph default
+ the query plan.
+ Thus,
+ Prela's surface syntax is transparent to the underlying execution plan.
+\end_layout
+
+\begin_layout Standard
+A naive implementation of this plan would propagate data from leaves to root,
+ materializing 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+A = year.eq(1997)
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+B = movie.with(A)
+\end_layout
+
+\end_inset
+
+,
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+C = title.and(keyword)
+\end_layout
+
+\end_inset
+
+ before finally iterating over 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+B.s(C)
+\end_layout
+
+\end_inset
+
+.
+ This approach must store the entire relation 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+B
+\end_layout
+
+\end_inset
+
+ while computing 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+C
+\end_layout
+
+\end_inset
+
+,
+ and traverses the data multiple times to compute each intermediate relation.
+ A pull-based query engine 
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:journals/tkde/Graefe94"
+literal "false"
+
+\end_inset
+
+ avoids materializing intermediate relations all at once and pipelines the data passes,
+ but still materializes each intermediate tuple;
+ likewise for vectorized engines 
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:conf/cidr/BonczZN05"
+literal "false"
+
+\end_inset
+
+.
+ By contrast,
+ an ideal column store implementation would compile the query to a single pass with no dynamic dispatch 
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:journals/pvldb/Neumann11"
+literal "false"
+
+\end_inset
+
+,
+ as in Figure 
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "fig:compiled_query"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+tuple "list"
+
+\end_inset
+
+.
+\end_layout
+
+\begin_layout Standard
+\begin_inset Float figure
+placement document
+alignment document
+wide false
+sideways false
+status open
+
+\begin_layout Plain Layout
+\begin_inset listings
+inline false
+status open
+
+\begin_layout Plain Layout
+for i in 0..len(movie)
+\end_layout
+
+\begin_layout Plain Layout
+    if year[i] == 1997
+\end_layout
+
+\begin_layout Plain Layout
+        print(movie[i],
+ title[i],
+ keyword[i])
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Plain Layout
+\begin_inset Caption Standard
+
+\begin_layout Plain Layout
+\begin_inset CommandInset label
+LatexCommand label
+name "fig:compiled_query"
+
+\end_inset
+
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.with(year.eq(1997)).s(title.and(keyword))
+\end_layout
+
+\end_inset
+
+ compiled to a fused loop.
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+Taking inspiration from functional compilers 
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:conf/fpca/GillLJ93"
+literal "false"
+
+\end_inset
+
+,
+ Prela implements query combinators in Continuation-Passing Style,
+ thereby recovering fused-loop execution.
+ The basic idea is that combinators push computation down from the query root to its leaves instead of pulling data up from leaves to root.
+\end_layout
+
+\begin_layout Standard
+More specifically,
+ we can think of the nodes in a query tree as higher-order functions accepting continuations.
+ For example,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.s(title)(print)
+\end_layout
+
+\end_inset
+
+ prints each 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+(id,
+ title)
+\end_layout
+
+\end_inset
+
+ pair in 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.s(title)
+\end_layout
+
+\end_inset
+
+.
+ In the interest of compactness,
+ we'll write 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+select(lhs,
+ rhs)
+\end_layout
+
+\end_inset
+
+ to represent the higher-order function (i.e.
+ the node) and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+select(lhs,
+ rhs,
+ k)
+\end_layout
+
+\end_inset
+
+ for its application to 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+k
+\end_layout
+
+\end_inset
+
+.
+ Note that 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+lhs
+\end_layout
+
+\end_inset
+
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+rhs
+\end_layout
+
+\end_inset
+
+ are themselves nodes in the query tree and hence can also accept continuations.
+ In addition,
+ we must wrap source nodes in one of two 
+\begin_inset Quotes eld
+\end_inset
+
+accessors
+\begin_inset Quotes erd
+\end_inset
+
+:
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+drive
+\end_layout
+
+\end_inset
+
+ or 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+probe
+\end_layout
+
+\end_inset
+
+.
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+drive(rel,
+ k)
+\end_layout
+
+\end_inset
+
+ applies 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+k
+\end_layout
+
+\end_inset
+
+ to each row of 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+rel
+\end_layout
+
+\end_inset
+
+,
+ while 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+probe(rel,
+ i,
+ k)
+\end_layout
+
+\end_inset
+
+ first looks 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+i
+\end_layout
+
+\end_inset
+
+ up in 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+rel
+\end_layout
+
+\end_inset
+
+ and applies 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+k
+\end_layout
+
+\end_inset
+
+ to the result.
+\end_layout
+
+\begin_layout Standard
+Let us illustrate the implementation of CPS combinators with the following simple query 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+select(drive(movie),
+ and(probe(title),
+ probe(keyword)))
+\end_layout
+
+\end_inset
+
+.
+ Here are the definitions of the combinators:
+\end_layout
+
+\begin_layout Standard
+\begin_inset listings
+inline false
+status open
+
+\begin_layout Plain Layout
+select(lhs,
+ rhs,
+ k) = lhs(|x,
+ y| rhs(y,
+ |z| k(x,
+ z)))
+\end_layout
+
+\begin_layout Plain Layout
+and(lhs,
+ rhs,
+ i,
+ k) = lhs(x,
+ |y| rhs(x,
+ |x| k(x,
+ (y,
+ z))))
+\end_layout
+
+\begin_layout Plain Layout
+drive(rel,
+ k) = for i in 0..len(rel) { k(i,
+ i) }
+\end_layout
+
+\begin_layout Plain Layout
+probe(rel,
+ i,
+ k) = k(rel[i])
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+If we now expand the definitions of the operators in our query,
+ we get the following:
+\end_layout
+
+\begin_layout Enumerate
+Expand 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+select
+\end_layout
+
+\end_inset
+
+:
+\end_layout
+
+\begin_layout LyX-Code
+drive(movie,
+ |x,
+ y| and(probe(title),
+\end_layout
+
+\begin_layout LyX-Code
+                        probe(keyword))(y,
+ |z| k(x,
+ z)))
+\end_layout
+
+\begin_layout Enumerate
+Expand 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+drive
+\end_layout
+
+\end_inset
+
+:
+\end_layout
+
+\begin_layout LyX-Code
+for i in 0..len(movie)
+\end_layout
+
+\begin_layout LyX-Code
+    and(probe(title,
+ probe(keyword))(i,
+ |z| k(i,
+ z))
+\end_layout
+
+\begin_layout Enumerate
+Expand 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+and
+\end_layout
+
+\end_inset
+
+:
+\end_layout
+
+\begin_layout LyX-Code
+for i in 0..len(movie)
+\end_layout
+
+\begin_layout LyX-Code
+    probe(title,
+ i,
+ |y| probe(keyword,
+ i,
+ |z| k(i,
+ (y,
+ z))))
+\end_layout
+
+\begin_layout Enumerate
+Expand 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+probe
+\end_layout
+
+\end_inset
+
+s:
+\end_layout
+
+\begin_layout LyX-Code
+for i in 0..len(movie)
+\end_layout
+
+\begin_layout LyX-Code
+    k(i,
+ (title[i],
+ keyword[i]))
+\end_layout
+
+\begin_layout Standard
+Taking 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+k = |x,
+ (y,
+ z)| print(x,
+ y,
+ z)
+\end_layout
+
+\end_inset
+
+,
+ we recover precisely the fused-loop implementation!
+ In practice,
+ we ask the Rust compiler to inline the definitions of 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+select
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+and
+\end_layout
+
+\end_inset
+
+,
+ and so on.
 \end_layout
 
 \begin_layout Section
