@@ -699,16 +699,25 @@ impl<A: Member, B: Member<D = A::D>> Member for Diff<A, B> {
     fn member(&self, x: A::D) -> bool { self.a.member(x) && !self.b.member(x) }
 }
 
-/// `∨` — MEMBER-ONLY membership union (julia-engine interp.jl: "driving a
-/// union (dedup-while-emitting) is the one operation that would need its lhs
-/// both driven and probed, so it lives elsewhere"). The legs need only be
-/// member-capable — never probed, never driven — so member-only nodes nest
-/// freely inside a `Disj`. There is deliberately neither a `Drive` nor a
-/// `Probe` impl: a `Disj` lives in member position only (`.with`,
-/// `.minus`'s rhs, conjunct-tree legs). Enumerate a union with `Union`
-/// (bag-concat) instead, materializing first if the sink does not dedup.
+/// `∨` — MEMBER-ONLY membership union. As a relation, `Disj(a, b)` holds
+/// the triples `(x, (y, z))` such that EITHER `a(x, y)` OR `b(x, z)`: the
+/// domain is the legs' shared domain, the range the PRODUCT of their
+/// ranges. That value set is what makes the node member-only: it is
+/// infinite in the leg that didn't match (if `a(x, y)` then
+/// `Disj(x, (y, z))` for EVERY `z`), so there is nothing finite to probe
+/// and nothing to drive — only the domain question "does x appear?" is
+/// answerable, and `member` asks exactly that. (julia-engine interp.jl
+/// reaches the same conclusion operationally: "driving a union
+/// (dedup-while-emitting) is the one operation that would need its lhs
+/// both driven and probed, so it lives elsewhere".) The legs need only be
+/// member-capable themselves, so member-only nodes nest freely inside a
+/// `Disj`. Enumerate a union with `Union` (bag-concat) instead,
+/// materializing first if the sink does not dedup.
 pub struct Disj<A, B> { pub a: A, pub b: B }
-impl<A: Query, B: Query<D = A::D>> Query for Disj<A, B> { type D = A::D; type R = A::D; }
+impl<A: Query, B: Query<D = A::D>> Query for Disj<A, B> {
+    type D = A::D;
+    type R = (A::R, B::R);
+}
 impl<A: Member, B: Member<D = A::D>> Member for Disj<A, B> {
     #[inline(always)]
     fn member(&self, x: A::D) -> bool { self.a.member(x) || self.b.member(x) }
