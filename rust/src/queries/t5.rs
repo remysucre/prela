@@ -6,23 +6,23 @@ use crate::queries::helpers::{min_row, Row};
 use crate::queries::sets::{genre6, kw7, kw8, kw10, nordic8, nordic9, voice4, writer5};
 use super::helpers::{film_or_warner_co, follow_link};
 
-fn k_23ab() -> impl Query<R = &'static str, D = Id<Movie>> + Drive + Probe {
+fn k_23ab() -> impl Query<R = &'static str, D = Id<Movie>> + Drive + Probe + Member {
     kind.eq("movie")
 }
 
-fn k_23c() -> impl Query<R = &'static str, D = Id<Movie>> + Drive + Probe {
+fn k_23c() -> impl Query<R = &'static str, D = Id<Movie>> + Drive + Probe + Member {
     kind.text()
         .is_in(["movie", "tv movie", "video movie", "video game"])
 }
 
 // Conjunct trees (∧ = Prod) — consumed via `member` only, so the value
 // type stays opaque (`impl Query<D = Id<Info>> + Probe`).
-fn gf_25ab() -> impl Query<D = Id<Info>> + Probe {
+fn gf_25ab() -> impl Query<D = Id<Info>> + Probe + Member {
     Info::ty.eq("genres")
         .and(Info::info.eq("Horror"))
 }
 
-fn gf_25c() -> impl Query<D = Id<Info>> + Probe {
+fn gf_25c() -> impl Query<D = Id<Info>> + Probe + Member {
     Info::ty.eq("genres")
         .and(Info::info.is_in(genre6()))
 }

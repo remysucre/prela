@@ -4,24 +4,26 @@
 //
 //   Query    { type D; type R; }              — a binary relation D → R
 //   Drive:  Query + fn drive(&self, k)        — can be scanned (k(d, r) per pair)
-//   Probe:  Query + fn probe / probe_any /    — can be looked up by key;
-//                  fn member                  member(x) = probe_any(x, |_| true)
+//   Probe:  Query + fn probe / probe_any      — can be looked up by key
+//   Member: Query + fn member                 — domain-membership test
 //
 // There is no separate key-set family: a set IS an identity relation D → D
 // (Julia's `Unary{D} <: Query{D, D}`). Set-shaped nodes (Universe, Bitset,
-// MatSet, Disj) emit `(x, x)` from drive and yield `x` from
+// MatSet) emit `(x, x)` from drive and yield `x` from
 // probe iff member — so they compose, product and left-compose like any
-// other relation, with no keyset projection in between. Membership is part
-// of the relation protocol: `member(q, x)` defaults to
-// `probe_any(x, |_| true)` for ANY probe-able query and is overridden where
-// a direct test is cheaper (Bitset bit-test, Universe bound check, MatSet
-// hash lookup).
+// other relation, with no keyset projection in between. Membership is its
+// own access mode: every probe-able node opts into the universal default
+// `member(x) = probe_any(x, |_| true)` via `member_via_probe!`, overridden
+// where a direct test is cheaper (Bitset bit-test, Universe bound check,
+// MatSet hash lookup) — and member-only nodes (Disj) implement `Member`
+// with no `Probe` at all.
 //
 // Set algebra mirrors Julia exactly: `∧`/`.and` is an ALIAS for the product
 // (`member(Prod)` short-circuits flat across the legs without building the
 // pair value); `-`/`.minus` is the value-bearing `Diff` (key-based test);
-// `∨`/`.or` is the probe-only membership union `Disj` (driving it is a
-// compile error); the enumerable bag union is the separate `Union` node.
+// `∨`/`.or` is the MEMBER-ONLY membership union `Disj` (driving or probing
+// it is a compile error); the enumerable bag union is the separate `Union`
+// node.
 //
 // A node implements exactly the modes it supports, with bounds that propagate
 // the mode rule through the plan (a Compose drives its lhs and probes its
@@ -74,14 +76,32 @@ pub trait Drive: Query {
 pub trait Probe: Query {
     fn probe<K: FnMut(Self::R)>(&self, x: Self::D, k: K);
     fn probe_any<K: FnMut(Self::R) -> bool>(&self, x: Self::D, k: K) -> bool;
-    /// Domain-membership test — "is `x` in the domain of this relation?".
-    /// The default is the universal definition (`probe_any` with a
-    /// trivially-true continuation, which short-circuits at the first
-    /// value); leaves with a cheaper direct test override it.
-    #[inline(always)]
-    fn member(&self, x: Self::D) -> bool {
-        self.probe_any(x, |_| true)
-    }
+}
+
+/// Domain-membership test — "is `x` in the domain of this relation?".
+/// A mode of its own (NOT part of `Probe`): member-position combinators
+/// (`Restrict`'s / `Diff`'s rhs, `Disj`'s legs) bound their operands on
+/// `Member` only, so member-only nodes like `Disj` compose there without
+/// pretending to probe.
+pub trait Member: Query {
+    fn member(&self, x: Self::D) -> bool;
+}
+
+/// Opt a probe-able type into the universal `member` definition
+/// (`probe_any` with a trivially-true continuation, which short-circuits
+/// at the first value). A macro rather than a blanket
+/// `impl<T: Probe> Member for T` because a blanket impl would forbid every
+/// per-type override (no specialization on stable Rust); types with a
+/// cheaper direct test write their `Member` impl by hand instead.
+macro_rules! member_via_probe {
+    ($(impl[$($g:tt)*] Member for $ty:ty;)+) => {$(
+        impl<$($g)*> Member for $ty {
+            #[inline(always)]
+            fn member(&self, x: Self::D) -> bool {
+                self.probe_any(x, |_| true)
+            }
+        }
+    )+};
 }
 
 // ===== IntoQuery — construction-time leaf resolution ====================
@@ -126,6 +146,8 @@ impl<T: Probe + ?Sized> Probe for &T {
     fn probe_any<K: FnMut(T::R) -> bool>(&self, x: T::D, k: K) -> bool {
         (**self).probe_any(x, k)
     }
+}
+impl<T: Member + ?Sized> Member for &T {
     #[inline(always)]
     fn member(&self, x: T::D) -> bool { (**self).member(x) }
 }
@@ -457,6 +479,8 @@ impl<D: Dense> Probe for Universe<D> {
     fn probe_any<K: FnMut(D) -> bool>(&self, x: D, mut k: K) -> bool {
         x.idx() < self.n && k(x)
     }
+}
+impl<D: Dense> Member for Universe<D> {
     #[inline(always)]
     fn member(&self, x: D) -> bool { x.idx() < self.n }
 }
@@ -478,6 +502,8 @@ impl<E: 'static> Query for Ident<E> { type D = Id<E>; type R = Id<E>; }
 impl<E: 'static> Probe for Ident<E> {
     #[inline(always)] fn probe<K: FnMut(Id<E>)>(&self, x: Id<E>, mut k: K) { k(x); }
     #[inline(always)] fn probe_any<K: FnMut(Id<E>) -> bool>(&self, x: Id<E>, mut k: K) -> bool { k(x) }
+}
+impl<E: 'static> Member for Ident<E> {
     #[inline(always)] fn member(&self, _x: Id<E>) -> bool { true }
 }
 
@@ -534,6 +560,8 @@ impl<E: 'static> Probe for DictTable<E> {
     #[inline] fn probe_any<K: FnMut(Id<E>) -> bool>(&self, x: Key<E>, mut k: K) -> bool {
         self.map.get(&x).is_some_and(|&r| k(r))
     }
+}
+impl<E: 'static> Member for DictTable<E> {
     #[inline] fn member(&self, x: Key<E>) -> bool { self.map.contains_key(&x) }
 }
 
@@ -609,8 +637,8 @@ impl<A: Probe, F: Fn(A::R) -> bool> Probe for Filter<A, F> {
 // Keeps a's pairs (a's VALUE flows through) where the value is a `member`
 // of b; b is consumed via `member` only (julia-engine branch, interp.jl:
 // `drive(n::Restrict, k) = drive(n.a, (x, m) -> member(n.b, m) && k(x, m))`,
-// probe/probe_any analogous). No `member` override: the defaulted
-// `probe_any(x, |_| true)` already reduces to
+// probe/probe_any analogous). Takes the `member_via_probe!` default (no
+// hand-written `member`): `probe_any(x, |_| true)` already reduces to
 // `a.probe_any(x, |v| b.member(v))`, which is the optimal form.
 
 pub struct Restrict<A, B> { pub a: A, pub b: B }
@@ -619,13 +647,13 @@ impl<A: Query, B: Query<D = A::R>> Query for Restrict<A, B> {
     type D = A::D;
     type R = A::R;
 }
-impl<A: Drive, B: Probe<D = A::R>> Drive for Restrict<A, B> {
+impl<A: Drive, B: Member<D = A::R>> Drive for Restrict<A, B> {
     #[inline(always)]
     fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
         self.a.drive(|x, v| if self.b.member(v) { k(x, v); });
     }
 }
-impl<A: Probe, B: Probe<D = A::R>> Probe for Restrict<A, B> {
+impl<A: Probe, B: Member<D = A::R>> Probe for Restrict<A, B> {
     #[inline(always)]
     fn probe<K: FnMut(A::R)>(&self, x: A::D, mut k: K) {
         self.a.probe(x, |v| if self.b.member(v) { k(v); });
@@ -650,13 +678,13 @@ impl<A: Probe, B: Probe<D = A::R>> Probe for Restrict<A, B> {
 /// this degenerates to the plain set difference (emits `(x, x)`).
 pub struct Diff<A, B> { pub a: A, pub b: B }
 impl<A: Query, B: Query<D = A::D>> Query for Diff<A, B> { type D = A::D; type R = A::R; }
-impl<A: Drive, B: Probe<D = A::D>> Drive for Diff<A, B> {
+impl<A: Drive, B: Member<D = A::D>> Drive for Diff<A, B> {
     #[inline(always)]
     fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
         self.a.drive(|x, v| if !self.b.member(x) { k(x, v); });
     }
 }
-impl<A: Probe, B: Probe<D = A::D>> Probe for Diff<A, B> {
+impl<A: Probe, B: Member<D = A::D>> Probe for Diff<A, B> {
     #[inline(always)]
     fn probe<K: FnMut(A::R)>(&self, x: A::D, k: K) {
         if !self.b.member(x) { self.a.probe(x, k); }
@@ -665,19 +693,24 @@ impl<A: Probe, B: Probe<D = A::D>> Probe for Diff<A, B> {
     fn probe_any<K: FnMut(A::R) -> bool>(&self, x: A::D, k: K) -> bool {
         !self.b.member(x) && self.a.probe_any(x, k)
     }
+}
+impl<A: Member, B: Member<D = A::D>> Member for Diff<A, B> {
     #[inline(always)]
     fn member(&self, x: A::D) -> bool { self.a.member(x) && !self.b.member(x) }
 }
 
-/// `∨` — PROBE-ONLY membership union (julia-engine interp.jl: "driving a union
-/// (dedup-while-emitting) is the one operation that would need its lhs both
-/// driven and probed, so it lives elsewhere"). There is deliberately NO
-/// `Drive` impl — driving a `Disj` is a compile error. Enumerate a union
-/// with `Union` (bag-concat) instead, materializing first if the sink does
-/// not dedup.
+/// `∨` — MEMBER-FIRST membership union (julia-engine interp.jl: "driving a
+/// union (dedup-while-emitting) is the one operation that would need its lhs
+/// both driven and probed, so it lives elsewhere"). The legs need only be
+/// member-capable — never probed, never driven — so member-only nodes nest
+/// freely inside a `Disj`. It still probes as a set (yield `x` iff member),
+/// which only needs the legs' `member`, so a union composes in probe
+/// position too. There is deliberately NO `Drive` impl — driving a `Disj`
+/// is a compile error. Enumerate a union with `Union` (bag-concat) instead,
+/// materializing first if the sink does not dedup.
 pub struct Disj<A, B> { pub a: A, pub b: B }
 impl<A: Query, B: Query<D = A::D>> Query for Disj<A, B> { type D = A::D; type R = A::D; }
-impl<A: Probe, B: Probe<D = A::D>> Probe for Disj<A, B> {
+impl<A: Member, B: Member<D = A::D>> Probe for Disj<A, B> {
     #[inline(always)]
     fn probe<K: FnMut(A::D)>(&self, x: A::D, mut k: K) {
         if self.member(x) { k(x); }
@@ -686,6 +719,8 @@ impl<A: Probe, B: Probe<D = A::D>> Probe for Disj<A, B> {
     fn probe_any<K: FnMut(A::D) -> bool>(&self, x: A::D, mut k: K) -> bool {
         self.member(x) && k(x)
     }
+}
+impl<A: Member, B: Member<D = A::D>> Member for Disj<A, B> {
     #[inline(always)]
     fn member(&self, x: A::D) -> bool { self.a.member(x) || self.b.member(x) }
 }
@@ -735,9 +770,12 @@ impl<A: Probe, B: Probe<D = A::D>> Probe for Prod<A, B> {
     fn probe_any<K: FnMut((A::R, B::R)) -> bool>(&self, x: A::D, mut k: K) -> bool {
         self.a.probe_any(x, |a| self.b.probe_any(x, |b| k((a, b))))
     }
-    /// Flat short-circuit AND of the per-leg `member`s — the conj-position
-    /// fast path (Julia `_prod_member`). Unlike the default (which threads
-    /// the pair through `probe_any`), no pair value is ever built.
+}
+/// Flat short-circuit AND of the per-leg `member`s — the conj-position
+/// fast path (Julia `_prod_member`). Unlike the probe-derived default
+/// (which threads the pair through `probe_any`), no pair value is ever
+/// built, and the legs need only be member-capable.
+impl<A: Member, B: Member<D = A::D>> Member for Prod<A, B> {
     #[inline(always)]
     fn member(&self, x: A::D) -> bool { self.a.member(x) && self.b.member(x) }
 }
@@ -828,6 +866,8 @@ impl<D: Copy + Eq + Hash> Probe for MatSet<D> {
     fn probe_any<K: FnMut(D) -> bool>(&self, x: D, mut k: K) -> bool {
         self.set.contains(&x) && k(x)
     }
+}
+impl<D: Copy + Eq + Hash> Member for MatSet<D> {
     #[inline(always)]
     fn member(&self, x: D) -> bool { self.set.contains(&x) }
 }
@@ -901,6 +941,8 @@ impl<D: Dense> Probe for Bitset<D> {
     fn probe_any<K: FnMut(D) -> bool>(&self, x: D, mut k: K) -> bool {
         self.member(x) && k(x)
     }
+}
+impl<D: Dense> Member for Bitset<D> {
     #[inline]
     fn member(&self, x: D) -> bool {
         let i = x.idx();
@@ -953,6 +995,8 @@ impl<D: Dense> Probe for SparseUniverse<D> {
     fn probe<K: FnMut(D)>(&self, x: D, mut k: K) { if x.idx() < self.n { k(x); } }
     #[inline(always)]
     fn probe_any<K: FnMut(D) -> bool>(&self, x: D, mut k: K) -> bool { x.idx() < self.n && k(x) }
+}
+impl<D: Dense> Member for SparseUniverse<D> {
     #[inline(always)]
     fn member(&self, x: D) -> bool { x.idx() < self.n }
 }
@@ -1139,6 +1183,22 @@ impl<Q: Probe, F: Fn(Q::R) -> S, S: Copy> Probe for Map<Q, F, S> {
     }
 }
 
+// Every probe-able node without a cheaper direct test takes the universal
+// probe-derived `member`. Hand-written `Member` impls (overrides) live next
+// to their type: Universe, Ident, DictTable, MatSet, Bitset, SparseUniverse,
+// and the flat short-circuits on Prod / Diff / Disj.
+member_via_probe! {
+    impl[R: Copy, D: Dense] Member for VecRel<R, D>;
+    impl[R: Copy, D: Dense] Member for MultiRel<R, D>;
+    impl[A: Probe, B: Probe<D = A::R>] Member for Compose<A, B>;
+    impl[A: Probe, F: Fn(A::R) -> bool] Member for Filter<A, F>;
+    impl[A: Probe, B: Member<D = A::R>] Member for Restrict<A, B>;
+    impl[K: Copy + Eq + Hash, V: Copy] Member for HashIdx<K, V>;
+    impl[D: Copy + Eq + Hash, S: Copy] Member for Fold<D, S>;
+    impl[S: Copy, D: Dense] Member for DenseFold<S, D>;
+    impl[Q: Probe, F: Fn(Q::R) -> S, S: Copy] Member for Map<Q, F, S>;
+}
+
 // ===== operators (method-only surface) ==================================
 // Constructors are mode-agnostic (they just build the node; the node's
 // trait impls carry the mode bounds) EXCEPT the eager physical nodes, whose
@@ -1171,8 +1231,8 @@ pub trait QueryExt: IntoQuery + Sized {
     fn and<B: IntoQuery>(self, b: B) -> Prod<Self::Q, B::Q>
     where B::Q: Query<D = DOf<Self>> { Prod { a: self.iq(), b: b.iq() } }
 
-    /// `∨` — probe-only membership union (`member` = a OR b). Driving it is
-    /// a compile error; enumerate with `.union(b)` instead.
+    /// `∨` — member-only membership union (`member` = a OR b). Driving or
+    /// probing it is a compile error; enumerate with `.union(b)` instead.
     #[inline(always)]
     fn or<B: IntoQuery>(self, b: B) -> Disj<Self::Q, B::Q>
     where B::Q: Query<D = DOf<Self>> { Disj { a: self.iq(), b: b.iq() } }
@@ -1184,7 +1244,7 @@ pub trait QueryExt: IntoQuery + Sized {
     where B::Q: Query<D = DOf<Self>> { Diff { a: self.iq(), b: b.iq() } }
 
     /// Enumerable bag union — drive self fully, then `b` fully, NO dedup
-    /// (the drive-position complement of the probe-only `.or`). Feed it to
+    /// (the drive-position complement of the member-only `.or`). Feed it to
     /// deduping sinks, or collect it into a `MatSet` when duplicates would matter.
     #[allow(dead_code)] // no suite query drives a union today (every `∨` is member-position); kept as the sanctioned enumerable form, exercised by unit tests
     #[inline(always)]
@@ -1231,10 +1291,10 @@ pub trait QueryExt: IntoQuery + Sized {
         Filter { a: <ROf<Self> as Field>::elide(self.iq()), p: move |x| vs.iter().any(|&v| v == x) }
     }
     /// Restriction `a : b` — keep self's pairs whose VALUE is a `member` of
-    /// `s` (any probe-able relation). Builds the dedicated `Restrict` node,
-    /// node-for-node with Julia.
+    /// `s` (any member-capable relation, including member-only `Disj` trees).
+    /// Builds the dedicated `Restrict` node, node-for-node with Julia.
     #[inline(always)] fn with<S: IntoQuery>(self, s: S) -> Restrict<Self::Q, S::Q>
-        where S::Q: Probe<D = ROf<Self>> { Restrict { a: self.iq(), b: s.iq() } }
+        where S::Q: Member<D = ROf<Self>> { Restrict { a: self.iq(), b: s.iq() } }
     #[inline(always)] fn rx(self, re: &str) -> Filter<Elided<Self>, impl Fn(&'static str) -> bool>
         where ROf<Self>: Field<Scalar = &'static str> {
         let re = Regex::new(re).unwrap();
@@ -1451,6 +1511,25 @@ mod tests {
     }
 
     #[test]
+    fn member_only_nodes_compose_in_member_position() {
+        // A node with `Member` but NO `Probe` — the reason `member` is its
+        // own trait. It slots into every member-position operand: Restrict's
+        // and Diff's rhs, Disj's and Prod's legs.
+        #[derive(Copy, Clone)]
+        struct Evens;
+        impl Query for Evens { type D = usize; type R = usize; }
+        impl Member for Evens {
+            fn member(&self, x: usize) -> bool { x % 2 == 0 }
+        }
+        let u4 = Universe::new(4);
+        assert_eq!(drive_all(&u4.with(Evens)), vec![(0, 0), (2, 2)]);
+        assert_eq!(drive_all(&u4.minus(Evens)), vec![(1, 1), (3, 3)]);
+        let u2 = Universe::new(2);
+        assert!(u2.or(Evens).member(2) && !u2.or(Evens).member(3)); // 2 ∉ u2 but even
+        assert!(u4.and(Evens).member(2) && !u4.and(Evens).member(3));
+    }
+
+    #[test]
     fn identity_sets_and_bitset() {
         let c = cast();
         let u3 = Universe::new(3);
@@ -1472,8 +1551,8 @@ mod tests {
         let u2 = Universe::new(2);
         assert_eq!(drive_all(&u2.with(&ms)), vec![(0, 0)]);
         assert_eq!(drive_all(&u2.minus(&ms)), vec![(1, 1)]);
-        // ∨ is PROBE-ONLY (no Drive impl — `drive_all(&u2.or(&b))` would be
-        // a compile error by design; `.union` is the enumerable form):
+        // ∨ is MEMBER-FIRST (no Drive impl — `drive_all(&u2.or(&b))` would
+        // be a compile error by design; `.union` is the enumerable form):
         // probe yields x iff member of either leg.
         let mut got = Vec::new();
         u2.or(&b).probe(2, |x| got.push(x));

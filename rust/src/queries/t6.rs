@@ -6,35 +6,35 @@ use crate::queries::helpers::{min_row, Row};
 use crate::queries::sets::{genre6, kw7, link3, murder4, nordic9, nordic10, voice3, voice4, writer5};
 use super::helpers::{film_or_warner_co, follow_link};
 
-fn co_28() -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive + Probe {
+fn co_28() -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive + Probe + Member {
     company.with(country.ne("[us]")
             .and(Company::note.nrx(r"\(USA\)"))
             .and(Company::note.rx(r"\(200.*\)")))
 }
 
-fn dt_28ac() -> impl Query<R = Id<Data>, D = Id<Movie>> + Drive + Probe {
+fn dt_28ac() -> impl Query<R = Id<Data>, D = Id<Movie>> + Drive + Probe + Member {
     data.with(Data::ty.eq("rating")
          .and(Data::text.lt("8.5")))
 }
 
-fn dt_28b() -> impl Query<R = Id<Data>, D = Id<Movie>> + Drive + Probe {
+fn dt_28b() -> impl Query<R = Id<Data>, D = Id<Movie>> + Drive + Probe + Member {
     data.with(Data::ty.eq("rating")
          .and(Data::text.gt("6.5")))
 }
 
 // Conjunct trees (∧ = Prod) — consumed via `member` only, so the value
 // type stays opaque (`impl Query<D = Id<Info>> + Probe`).
-fn gf_horror() -> impl Query<D = Id<Info>> + Probe {
+fn gf_horror() -> impl Query<D = Id<Info>> + Probe + Member {
     Info::ty.eq("genres")
         .and(Info::info.is_in(["Horror", "Thriller"]))
 }
 
-fn gf_genre6() -> impl Query<D = Id<Info>> + Probe {
+fn gf_genre6() -> impl Query<D = Id<Info>> + Probe + Member {
     Info::ty.eq("genres")
         .and(Info::info.is_in(genre6()))
 }
 
-fn qlink_33a() -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe {
+fn qlink_33a() -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe + Member {
     link.with(MovieLink::ty.is_in(link3())
          .and(target.with(kind.eq("tv series")
                      .and(company)
@@ -44,7 +44,7 @@ fn qlink_33a() -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe {
                      .and(production_year.le(2008)))))
 }
 
-fn qlink_33b() -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe {
+fn qlink_33b() -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe + Member {
     link.with(MovieLink::ty.rx(r"follow")
          .and(target.with(kind.eq("tv series")
                      .and(company)
@@ -53,7 +53,7 @@ fn qlink_33b() -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe {
                      .and(production_year.eq(2007)))))
 }
 
-fn qlink_33c() -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe {
+fn qlink_33c() -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe + Member {
     link.with(MovieLink::ty.is_in(link3())
          .and(target.with(kind.is_in(["tv series", "episode"])
                      .and(company)
