@@ -52,10 +52,10 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 fn q19a() -> impl Drive<R: Row> {
-    movie.with(company.select(country.eq("[us]")
+    movie.with(company.with(country.eq("[us]")
                          .and(Company::note.rx(r"\(USA\)")
                           .or(Company::note.rx(r"\(worldwide\)"))))
-          .and(info.select(Info::ty.eq("release dates")
+          .and(info.with(Info::ty.eq("release dates")
                       .and(Info::info.rx(r"^Japan:.*200")
                        .or(Info::info.rx(r"^USA:.*200")))))
           .and(production_year.ge(2005))
@@ -72,11 +72,11 @@ fn q19a() -> impl Drive<R: Row> {
 }
 
 fn q19b() -> impl Drive<R: Row> {
-    movie.with(company.select(country.eq("[us]")
+    movie.with(company.with(country.eq("[us]")
                          .and(Company::note.rx(r"\(200.*\)"))
                          .and(Company::note.rx(r"\(USA\)")
                           .or(Company::note.rx(r"\(worldwide\)"))))
-          .and(info.select(Info::ty.eq("release dates")
+          .and(info.with(Info::ty.eq("release dates")
                       .and(Info::info.rx(r"^Japan:.*2007")
                        .or(Info::info.rx(r"^USA:.*2008")))))
           .and(production_year.ge(2007))
@@ -95,7 +95,7 @@ fn q19b() -> impl Drive<R: Row> {
 
 fn q19c() -> impl Drive<R: Row> {
     movie.with(company.country().eq("[us]")
-          .and(info.select(Info::ty.eq("release dates")
+          .and(info.with(Info::ty.eq("release dates")
                       .and(Info::info.rx(r"^Japan:.*200")
                        .or(Info::info.rx(r"^USA:.*200")))))
           .and(production_year.gt(2000)))
@@ -130,7 +130,7 @@ fn q20a() -> impl Drive<R: Row> {
           .and(keyword.is_in(kw8()))
           .and(kind.eq("movie"))
           .and(production_year.gt(1950))
-          .and(cast.select(character.select(Character::text.nrx(r"Sherlock")
+          .and(cast.select(character.with(Character::text.nrx(r"Sherlock")
                                        .and(Character::text.rx(r"Tony.*Stark")
                                         .or(Character::text.rx(r"Iron.*Man")))))))
         .title()
@@ -142,7 +142,7 @@ fn q20b() -> impl Drive<R: Row> {
           .and(keyword.is_in(kw8()))
           .and(kind.eq("movie"))
           .and(production_year.gt(2000))
-          .and(cast.select(character.select(Character::text.nrx(r"Sherlock")
+          .and(cast.select(character.with(Character::text.nrx(r"Sherlock")
                                        .and(Character::text.rx(r"Tony.*Stark")
                                         .or(Character::text.rx(r"Iron.*Man"))))
                       .and(person.rx(r"Downey.*Robert")))))
@@ -180,7 +180,7 @@ fn q21c() -> impl Drive<R: Row> { q21(nordic9(), 1950, 2010) }
 fn q23a() -> impl Drive<R: Row> {
     movie.with(complete_cast.status().eq("complete+verified")
           .and(company.country().eq("[us]"))
-          .and(info.select(Info::ty.eq("release dates")
+          .and(info.with(Info::ty.eq("release dates")
                       .and(Info::note.rx(r"internet"))
                       .and(Info::info.rx(r"^USA:.* 199")
                        .or(Info::info.rx(r"^USA:.* 200")))))
@@ -205,7 +205,7 @@ fn q23b() -> impl Drive<R: Row> {
 fn q23c() -> impl Drive<R: Row> {
     movie.with(complete_cast.status().eq("complete+verified")
           .and(company.country().eq("[us]"))
-          .and(info.select(Info::ty.eq("release dates")
+          .and(info.with(Info::ty.eq("release dates")
                       .and(Info::note.rx(r"internet"))
                       .and(Info::info.rx(r"^USA:.* 199")
                        .or(Info::info.rx(r"^USA:.* 200")))))
@@ -217,7 +217,7 @@ fn q23c() -> impl Drive<R: Row> {
 
 fn q24a() -> impl Drive<R: Row> {
     movie.with(company.country().eq("[us]")
-          .and(info.select(Info::ty.eq("release dates")
+          .and(info.with(Info::ty.eq("release dates")
                       .and(Info::info.rx(r"^Japan:.*201")
                        .or(Info::info.rx(r"^USA:.*201")))))
           .and(keyword.is_in(["hero", "martial-arts", "hand-to-hand-combat"]))
@@ -236,7 +236,7 @@ fn q24a() -> impl Drive<R: Row> {
 fn q24b() -> impl Drive<R: Row> {
     movie.with(company.select(country.eq("[us]")
                          .and(Company::name.eq("DreamWorks Animation")))
-          .and(info.select(Info::ty.eq("release dates")
+          .and(info.with(Info::ty.eq("release dates")
                       .and(Info::info.rx(r"^Japan:.*201")
                        .or(Info::info.rx(r"^USA:.*201")))))
           .and(keyword.is_in(["hero", "martial-arts", "hand-to-hand-combat", "computer-animated-movie"]))

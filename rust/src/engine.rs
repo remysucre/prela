@@ -699,27 +699,16 @@ impl<A: Member, B: Member<D = A::D>> Member for Diff<A, B> {
     fn member(&self, x: A::D) -> bool { self.a.member(x) && !self.b.member(x) }
 }
 
-/// `∨` — MEMBER-FIRST membership union (julia-engine interp.jl: "driving a
+/// `∨` — MEMBER-ONLY membership union (julia-engine interp.jl: "driving a
 /// union (dedup-while-emitting) is the one operation that would need its lhs
 /// both driven and probed, so it lives elsewhere"). The legs need only be
 /// member-capable — never probed, never driven — so member-only nodes nest
-/// freely inside a `Disj`. It still probes as a set (yield `x` iff member),
-/// which only needs the legs' `member`, so a union composes in probe
-/// position too. There is deliberately NO `Drive` impl — driving a `Disj`
-/// is a compile error. Enumerate a union with `Union` (bag-concat) instead,
-/// materializing first if the sink does not dedup.
+/// freely inside a `Disj`. There is deliberately neither a `Drive` nor a
+/// `Probe` impl: a `Disj` lives in member position only (`.with`,
+/// `.minus`'s rhs, conjunct-tree legs). Enumerate a union with `Union`
+/// (bag-concat) instead, materializing first if the sink does not dedup.
 pub struct Disj<A, B> { pub a: A, pub b: B }
 impl<A: Query, B: Query<D = A::D>> Query for Disj<A, B> { type D = A::D; type R = A::D; }
-impl<A: Member, B: Member<D = A::D>> Probe for Disj<A, B> {
-    #[inline(always)]
-    fn probe<K: FnMut(A::D)>(&self, x: A::D, mut k: K) {
-        if self.member(x) { k(x); }
-    }
-    #[inline(always)]
-    fn probe_any<K: FnMut(A::D) -> bool>(&self, x: A::D, mut k: K) -> bool {
-        self.member(x) && k(x)
-    }
-}
 impl<A: Member, B: Member<D = A::D>> Member for Disj<A, B> {
     #[inline(always)]
     fn member(&self, x: A::D) -> bool { self.a.member(x) || self.b.member(x) }
@@ -1551,13 +1540,9 @@ mod tests {
         let u2 = Universe::new(2);
         assert_eq!(drive_all(&u2.with(&ms)), vec![(0, 0)]);
         assert_eq!(drive_all(&u2.minus(&ms)), vec![(1, 1)]);
-        // ∨ is MEMBER-FIRST (no Drive impl — `drive_all(&u2.or(&b))` would
-        // be a compile error by design; `.union` is the enumerable form):
-        // probe yields x iff member of either leg.
-        let mut got = Vec::new();
-        u2.or(&b).probe(2, |x| got.push(x));
-        u2.or(&b).probe(5, |x| got.push(x));
-        assert_eq!(got, vec![2]);
+        // ∨ is MEMBER-ONLY (no Drive or Probe impl — `drive_all(&u2.or(&b))`
+        // and `u2.or(&b).probe(…)` are compile errors by design; `.union`
+        // is the enumerable form): member = member of either leg.
         assert!(u2.or(&b).member(2) && !u2.or(&b).member(5));
         assert!(u2.minus(&ms).member(1) && !u2.minus(&ms).member(0));
         // identity composes like any relation

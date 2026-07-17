@@ -89,7 +89,7 @@ fn q8a() -> impl Drive<R: Row> {
 }
 
 fn q8b() -> impl Drive<R: Row> {
-    movie.with(company.select(country.eq("[jp]")
+    movie.with(company.with(country.eq("[jp]")
                          .and(Company::note.rx(r"\(Japan\)"))
                          .and(Company::note.nrx(r"\(USA\)"))
                          .and(Company::note.rx(r"\(2006\)")
@@ -118,7 +118,7 @@ fn q8c() -> impl Drive<R: Row> { q8cd("writer") }
 fn q8d() -> impl Drive<R: Row> { q8cd("costume designer") }
 
 fn q9a() -> impl Drive<R: Row> {
-    movie.with(company.select(country.eq("[us]")
+    movie.with(company.with(country.eq("[us]")
                          .and(Company::note.rx(r"\(USA\)")
                           .or(Company::note.rx(r"\(worldwide\)"))))
           .and(production_year.ge(2005))
@@ -134,7 +134,7 @@ fn q9a() -> impl Drive<R: Row> {
 }
 
 fn q9b() -> impl Drive<R: Row> {
-    movie.with(company.select(country.eq("[us]")
+    movie.with(company.with(country.eq("[us]")
                          .and(Company::note.rx(r"\(200.*\)"))
                          .and(Company::note.rx(r"\(USA\)")
                           .or(Company::note.rx(r"\(worldwide\)"))))
