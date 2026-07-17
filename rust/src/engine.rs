@@ -4,8 +4,9 @@
 //
 //   Query    { type D; type R; }              — a binary relation D → R
 //   Drive:  Query + fn drive(&self, k)        — can be scanned (k(d, r) per pair)
-//   Probe:  Query + fn probe / probe_any      — can be looked up by key
 //   Member: Query + fn member                 — domain-membership test
+//   Probe:  Member + fn probe / probe_any     — can be looked up by key
+//                                               (⟹ member-testable)
 //
 // There is no separate key-set family: a set IS an identity relation D → D
 // (Julia's `Unary{D} <: Query{D, D}`). Set-shaped nodes (Universe, Bitset,
@@ -73,18 +74,25 @@ pub trait Drive: Query {
     fn drive<K: FnMut(Self::D, Self::R)>(&self, k: K);
 }
 
-pub trait Probe: Query {
-    fn probe<K: FnMut(Self::R)>(&self, x: Self::D, k: K);
-    fn probe_any<K: FnMut(Self::R) -> bool>(&self, x: Self::D, k: K) -> bool;
-}
-
 /// Domain-membership test — "is `x` in the domain of this relation?".
-/// A mode of its own (NOT part of `Probe`): member-position combinators
-/// (`Restrict`'s / `Diff`'s rhs, `Disj`'s legs) bound their operands on
-/// `Member` only, so member-only nodes like `Disj` compose there without
-/// pretending to probe.
+/// A mode of its own, and the weakest of the lookup modes:
+/// member-position combinators (`Restrict`'s / `Diff`'s rhs, `Disj`'s
+/// legs) bound their operands on `Member` only, so member-only nodes like
+/// `Disj` compose there without pretending to probe.
 pub trait Member: Query {
     fn member(&self, x: Self::D) -> bool;
+}
+
+/// `Member` is a supertrait: probing strictly exceeds membership
+/// (`probe_any` with a trivially-true continuation decides it), so every
+/// probe-able node MUST say how it member-tests — one `member_via_probe!`
+/// line for the universal default, or a hand-written override. Forgetting
+/// is a compile error at the `impl Probe`, not a puzzle at some distant
+/// member-position use site. The converse does not hold (`Disj` is
+/// `Member` without `Probe`).
+pub trait Probe: Member {
+    fn probe<K: FnMut(Self::R)>(&self, x: Self::D, k: K);
+    fn probe_any<K: FnMut(Self::R) -> bool>(&self, x: Self::D, k: K) -> bool;
 }
 
 /// Opt a probe-able type into the universal `member` definition

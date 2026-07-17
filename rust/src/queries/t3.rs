@@ -54,7 +54,7 @@ fn q7b() -> impl Drive<R: Row> {
 
 // Conjunct tree (∧ = Prod) — consumed via `member` only, so the value
 // type stays opaque (`impl Query<D = Id<PersonInfo>> + Probe`).
-fn bio_filter_7c() -> impl Query<D = Id<PersonInfo>> + Probe + Member {
+fn bio_filter_7c() -> impl Query<D = Id<PersonInfo>> + Probe {
     PersonInfo::ty.eq("mini biography")
         .and(PersonInfo::note)
 }

@@ -73,7 +73,7 @@ fn q17e() -> impl Drive<R: Row> {
        .select(cast.person().name())
 }
 
-fn ib_18a() -> impl Query<R = &'static str, D = Id<Movie>> + Drive + Probe + Member {
+fn ib_18a() -> impl Query<R = &'static str, D = Id<Movie>> + Drive + Probe {
     info.with(Info::ty.eq("budget")).info()
 }
 
@@ -89,7 +89,7 @@ fn q18a() -> impl Drive<R: Row> {
 
 // Conjunct/diff tree (∧ = Prod, - = Diff) — consumed via `member` only, so
 // the value type stays opaque (`impl Query<D = Id<Info>> + Probe`).
-fn gf_18b() -> impl Query<D = Id<Info>> + Probe + Member {
+fn gf_18b() -> impl Query<D = Id<Info>> + Probe {
     Info::ty.eq("genres")
         .and(Info::info.is_in(["Horror", "Thriller"]))
         .minus(Info::note)
@@ -107,7 +107,7 @@ fn q18b() -> impl Drive<R: Row> {
           .and(title))
 }
 
-fn gf_18c() -> impl Query<D = Id<Info>> + Probe + Member {
+fn gf_18c() -> impl Query<D = Id<Info>> + Probe {
     Info::ty.eq("genres")
         .and(Info::info.is_in(genre6()))
 }
