@@ -74,6 +74,31 @@ structural: it bounds the legs on `Member` only (`A: Member, B: Member`),
 letting member-only nodes like `Disj` appear as conjuncts, whereas the
 probe-derived default requires both legs to be `Probe`.
 
+## Disassembly confirmation
+
+`src/bin/member_asm.rs` exposes each (leg shape × variant) as a
+`#[no_mangle] #[inline(never)]` symbol under the same release profile.
+Diffing `otool -tv` output after normalizing addresses (branch targets
+rewritten to function-relative instruction indices):
+
+```
+vecrel:   IDENTICAL (  6 instructions)
+multirel: IDENTICAL ( 59 instructions)
+matset:   IDENTICAL (102 instructions)
+```
+
+Both variants compile to instruction-for-instruction identical code:
+
+- **VecRel × VecRel** — 6 instructions: load both lengths, `cmp` + `ccmp` +
+  `cset`. Neither path touches the `values` data; the payload load and the
+  gen path's pair are fully elided.
+- **MultiRel × MultiRel** — 59 instructions and **no loop at all**. LLVM
+  doesn't merely hoist the invariant inner probe — it deletes the row scan
+  entirely, reducing both paths to `offsets_a[x+1] != offsets_a[x] &&
+  offsets_b[x+1] != offsets_b[x]` (plus shared bounds-check panics).
+- **MatSet × MatSet** — 102 instructions: two inlined hashbrown SIMD group
+  probes in sequence, second entered only if the first hits.
+
 **Caveats.** The equivalence rests on the optimizer: it holds for statically
 typed plans under `lto = "fat"`, `codegen-units = 1`. Behind a `dyn` boundary,
 without LTO, or with a continuation that isn't loop-invariant, the hoisting
