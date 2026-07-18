@@ -74,6 +74,29 @@ structural: it bounds the legs on `Member` only (`A: Member, B: Member`),
 letting member-only nodes like `Disj` appear as conjuncts, whereas the
 probe-derived default requires both legs to be `Probe`.
 
+## Follow-up: `Bitset` leaf — bit-test `member` vs probe-derived default
+
+Same question one level down: is `Bitset`'s hand-written `member` (direct
+bit test) faster than the probe-derived `probe_any(x, |_| true)`? Here the
+derivation is even shallower — `Bitset::probe_any` is `self.member(x) && k(x)`
+— so gen is `member(x) && true`. Measured on the leaf directly (same harness),
+at three densities, with out-of-range keys, and at a cache-hostile size:
+
+| case                                    | spec ns | gen ns | gen/spec | hit rate |
+|-----------------------------------------|--------:|-------:|---------:|---------:|
+| Bitset leaf, 70% set                    |    0.92 |   0.92 |    1.00× |    0.700 |
+| Bitset leaf, 10% set                    |    0.97 |   0.95 |    0.99× |    0.100 |
+| Bitset leaf, 100% set                   |    1.07 |   1.08 |    1.00× |    1.000 |
+| Bitset leaf, 50% key out-of-range       |    6.74 |   6.55 |    0.97× |    0.350 |
+| Bitset leaf 64M keys (8MB), 70% set     |    1.55 |   1.59 |    1.03× |    0.700 |
+
+Parity everywhere, and the disassembly (below) is instruction-identical:
+12 instructions — word-index bounds check, word load, shift, mask. The
+`&& k(x)` with `k = |_| true` folds away completely. As with `Prod`, the
+hand-written `Bitset::member` is not a speed win under this build; it earns
+its keep by letting `Bitset` be used where only `Member` is required and by
+guaranteeing the O(1) test without leaning on the optimizer.
+
 ## Disassembly confirmation
 
 `src/bin/member_asm.rs` exposes each (leg shape × variant) as a
@@ -85,6 +108,7 @@ rewritten to function-relative instruction indices):
 vecrel:   IDENTICAL (  6 instructions)
 multirel: IDENTICAL ( 59 instructions)
 matset:   IDENTICAL (102 instructions)
+bitset:   IDENTICAL ( 12 instructions)   (leaf, not in a Prod)
 ```
 
 Both variants compile to instruction-for-instruction identical code:

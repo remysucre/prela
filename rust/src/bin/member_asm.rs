@@ -9,7 +9,7 @@
 // spec_* : the hand-written flat short-circuit `a.member(x) && b.member(x)`
 // gen_*  : the probe-derived default `p.probe_any(x, |_| true)`
 
-use prela::engine::{MatSet, Member, MultiRel, Probe, Prod, VecRel};
+use prela::engine::{Bitset, MatSet, Member, MultiRel, Probe, Prod, Universe, VecRel};
 use std::hint::black_box;
 
 type PVec = Prod<VecRel<u32, usize>, VecRel<u32, usize>>;
@@ -49,6 +49,17 @@ pub fn gen_matset(p: &PSet, x: usize) -> bool {
     p.probe_any(x, |_| true)
 }
 
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn spec_bitset(p: &Bitset<usize>, x: usize) -> bool {
+    p.member(x)
+}
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn gen_bitset(p: &Bitset<usize>, x: usize) -> bool {
+    p.probe_any(x, |_| true)
+}
+
 fn main() {
     // Keep every symbol reachable so LTO can't drop them; results printed
     // so the calls aren't dead either.
@@ -64,14 +75,18 @@ fn main() {
         a: MatSet { set: [0usize, 2].into_iter().collect() },
         b: MatSet { set: [0usize, 1].into_iter().collect() },
     };
+    let mut bs = Bitset::<usize>::empty(Universe::<usize>::new(128));
+    bs.set(0);
     let x = black_box(0usize);
     println!(
-        "{} {} {} {} {} {}",
+        "{} {} {} {} {} {} {} {}",
         spec_vecrel(black_box(&pv), x),
         gen_vecrel(black_box(&pv), x),
         spec_multirel(black_box(&pm), x),
         gen_multirel(black_box(&pm), x),
         spec_matset(black_box(&ps), x),
         gen_matset(black_box(&ps), x),
+        spec_bitset(black_box(&bs), x),
+        gen_bitset(black_box(&bs), x),
     );
 }

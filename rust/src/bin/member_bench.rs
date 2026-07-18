@@ -171,6 +171,19 @@ fn main() {
         run_case("Bitset x Bitset, 70%/70% hit", &p, &keys_hit);
     }
 
+    // --- Bitset LEAF: hand-written bit-test member vs probe-derived --------
+    // (`Bitset::probe_any` is `member(x) && k(x)`, so gen should reduce to
+    // the same bit test; measured at several densities and one
+    // cache-hostile size.)
+    {
+        run_case("Bitset leaf, 70% set", &bitset(N, 70, 17), &keys_hit);
+        run_case("Bitset leaf, 10% set", &bitset(N, 10, 18), &keys_hit);
+        run_case("Bitset leaf, 100% set", &bitset(N, 100, 19), &keys_hit);
+        run_case("Bitset leaf, 50% key out-of-range", &bitset(N, 70, 20), &keys_half);
+        let big = 1 << 26; // 64M keys → 8 MB of mask words, spills L2
+        run_case("Bitset leaf 64M keys (8MB), 70% set", &bitset(big, 70, 21), &keys_in(big, 22));
+    }
+
     // --- MultiRel legs: the asymmetric case --------------------------------
     // A always has `fanout` values; B's row is empty half (or 90%) of the
     // time. gen re-probes B for every A value when B misses.
