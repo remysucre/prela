@@ -30,8 +30,10 @@ fn q7a() -> impl Drive<R: Row> {
                         .with(alias.rx(r"a")
                          .and(name_pcode_cf.ge("A"))
                          .and(name_pcode_cf.le("F"))
-                         .and(gender.eq("m")
-                          .or(gender.eq("f").and(Person::name.rx(r"^B"))))
+                         // m ∨ (f ∧ name~^B), spelled {m,f} ∖ (f ∖ ^B):
+                         // ∨ is member-only and can't sit inside a probed ∧-tree.
+                         .and(gender.is_in(["m", "f"])
+                          .minus(gender.eq("f").minus(Person::name.rx(r"^B"))))
                          .and(bio.select(PersonInfo::ty.eq("mini biography")
                                     .and(PersonInfo::note.eq("Volker Boehm")))))
                         .name())
@@ -68,8 +70,10 @@ fn q7c() -> impl Drive<R: Row> {
                         .with(alias.rx(r"a|^A")
                          .and(name_pcode_cf.ge("A"))
                          .and(name_pcode_cf.le("F"))
-                         .and(gender.eq("m")
-                          .or(gender.eq("f").and(Person::name.rx(r"^A"))))
+                         // m ∨ (f ∧ name~^A), spelled {m,f} ∖ (f ∖ ^A):
+                         // ∨ is member-only and can't sit inside a probed ∧-tree.
+                         .and(gender.is_in(["m", "f"])
+                          .minus(gender.eq("f").minus(Person::name.rx(r"^A"))))
                          .and(bio.with(bio_filter_7c())))
                         .select(Person::name
                            .and(bio.with(bio_filter_7c()).info()))))
@@ -92,11 +96,10 @@ fn q8b() -> impl Drive<R: Row> {
     movie.with(company.select(country.eq("[jp]")
                          .and(Company::note.rx(r"\(Japan\)"))
                          .and(Company::note.nrx(r"\(USA\)"))
-                         .and(Company::note.rx(r"\(2006\)")
-                          .or(Company::note.rx(r"\(2007\)"))))
+                         .and(Company::note.rx(r"\(2006\)|\(2007\)")))
           .and(production_year.ge(2006))
           .and(production_year.le(2007))
-          .and(title.rx(r"^One Piece").or(title.rx(r"^Dragon Ball Z"))))
+          .and(title.rx(r"^One Piece|^Dragon Ball Z")))
        .select(cast
              .with(Cast::note.eq("(voice: English version)")
               .and(role.eq("actress"))
@@ -119,8 +122,7 @@ fn q8d() -> impl Drive<R: Row> { q8cd("costume designer") }
 
 fn q9a() -> impl Drive<R: Row> {
     movie.with(company.select(country.eq("[us]")
-                         .and(Company::note.rx(r"\(USA\)")
-                          .or(Company::note.rx(r"\(worldwide\)"))))
+                         .and(Company::note.rx(r"\(USA\)|\(worldwide\)")))
           .and(production_year.ge(2005))
           .and(production_year.le(2015)))
        .select(cast
@@ -136,8 +138,7 @@ fn q9a() -> impl Drive<R: Row> {
 fn q9b() -> impl Drive<R: Row> {
     movie.with(company.select(country.eq("[us]")
                          .and(Company::note.rx(r"\(200.*\)"))
-                         .and(Company::note.rx(r"\(USA\)")
-                          .or(Company::note.rx(r"\(worldwide\)"))))
+                         .and(Company::note.rx(r"\(USA\)|\(worldwide\)")))
           .and(production_year.ge(2007))
           .and(production_year.le(2010)))
        .select(cast

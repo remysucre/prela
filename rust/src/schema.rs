@@ -489,7 +489,6 @@ mod tests {
         Tag / TagNav { tag: str, films: Multi<Film> }
     }
 
-
     pub(super) fn write_v2(dir: &PathBuf, name: &str, head: [u8; HEADER_LEN], payload: &[u8]) {
         let mut f = File::create(dir.join(format!("{name}.bin"))).unwrap();
         f.write_all(&head).unwrap();
@@ -507,7 +506,10 @@ mod tests {
         for v in vals {
             payload.extend_from_slice(v.as_bytes());
         }
-        (header(KIND_DENSE_STR, vals.len() as u64, off as u64), payload)
+        (
+            header(KIND_DENSE_STR, vals.len() as u64, off as u64),
+            payload,
+        )
     }
 
     pub(super) fn dense_words(vals: &[u64]) -> ([u8; HEADER_LEN], Vec<u8>) {
@@ -527,13 +529,19 @@ mod tests {
         for v in vals {
             payload.extend_from_slice(&v.to_le_bytes());
         }
-        (header(KIND_CSR_WORDS, (offsets.len() - 1) as u64, vals.len() as u64), payload)
+        (
+            header(
+                KIND_CSR_WORDS,
+                (offsets.len() - 1) as u64,
+                vals.len() as u64,
+            ),
+            payload,
+        )
     }
 
     #[test]
     fn schema_macro_loads_types_and_navigates() {
-        let dir = std::env::temp_dir()
-            .join(format!("prela_schema_test_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("prela_schema_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
 
         // films: 0 "Alien" 1979 genre 1 tags {0}, 1 "Blade" 1998 genre 0 tags {0, 1}
@@ -599,7 +607,10 @@ mod tests {
         Tag::films.year().probe(Id::new(0), |y| got.push(y));
         assert_eq!(got, vec![1979, 1998]);
         let mut got = Vec::new();
-        Tag::films.genre().gname().probe(Id::new(1), |g| got.push(g));
+        Tag::films
+            .genre()
+            .gname()
+            .probe(Id::new(1), |g| got.push(g));
         assert_eq!(got, vec!["drama"]);
 
         // field names are filenames verbatim (`ty` → Genre_ty.bin); a
@@ -614,18 +625,20 @@ mod tests {
         assert_eq!(got, vec![Id::<Genre>::new(0)]);
 
         // the generated manifest names every column with its cache kind
-        assert_eq!(MANIFEST, &[
-            ("Film", "ftitle", KIND_DENSE_STR),
-            ("Film", "year", KIND_DENSE_I64),
-            ("Film", "genre", KIND_DENSE_I64),
-            ("Film", "tags", KIND_CSR_WORDS),
-            ("Genre", "gname", KIND_DENSE_STR),
-            ("Genre", "ty", KIND_DENSE_STR),
-            ("Tag", "tag", KIND_DENSE_STR),
-            ("Tag", "films", KIND_CSR_WORDS),
-        ]);
+        assert_eq!(
+            MANIFEST,
+            &[
+                ("Film", "ftitle", KIND_DENSE_STR),
+                ("Film", "year", KIND_DENSE_I64),
+                ("Film", "genre", KIND_DENSE_I64),
+                ("Film", "tags", KIND_CSR_WORDS),
+                ("Genre", "gname", KIND_DENSE_STR),
+                ("Genre", "ty", KIND_DENSE_STR),
+                ("Tag", "tag", KIND_DENSE_STR),
+                ("Tag", "films", KIND_CSR_WORDS),
+            ]
+        );
     }
-
 }
 
 // A schema with a NON-DENSE (`dict`) entity, in its own module (each `schema!`
@@ -635,9 +648,8 @@ mod tests {
 // those external keys, navigated through the table.
 #[cfg(test)]
 mod dict_tests {
+    use super::tests::{dense_str, dense_words, write_v2};
     use crate::engine::*;
-    use crate::format::*;
-    use super::tests::{write_v2, dense_words, dense_str};
 
     schema! { DICTT / DictSchema / dictt_init:
         Movie(movie) / MovieNav { studio: Studio, year: i64 }
@@ -646,8 +658,7 @@ mod dict_tests {
 
     #[test]
     fn dict_entity_loads_and_navigates() {
-        let dir = std::env::temp_dir()
-            .join(format!("prela_dict_test_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("prela_dict_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
 
         // Studio: EXTERNAL ids 100/205/9899 at dense rows 0/1/2; names. The id
@@ -677,7 +688,9 @@ mod dict_tests {
         // the FK column genuinely stores a non-dense Key (not a row Id): the raw
         // handle `Movie::studio` resolves to the Key column, un-followed.
         let mut keys = Vec::new();
-        movie.select(Movie::studio).drive(|m, k: Key<Studio>| keys.push((m.idx(), k.0)));
+        movie
+            .select(Movie::studio)
+            .drive(|m, k: Key<Studio>| keys.push((m.idx(), k.0)));
         keys.sort();
         assert_eq!(keys, vec![(0, 205), (1, 100)]);
     }
