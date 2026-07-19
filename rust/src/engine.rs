@@ -853,7 +853,7 @@ pub struct Disj<A, B> {
 }
 impl<A: Query, B: Query<D = A::D>> Query for Disj<A, B> {
     type D = A::D;
-    type R = A::D;
+    type R = (A::R, B::R);
 }
 impl<A: Member, B: Member<D = A::D>> Member for Disj<A, B> {
     #[inline(always)]
