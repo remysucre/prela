@@ -1,54 +1,3 @@
-// Top-down CPS engine — eager physical state, compile-time access modes.
-//
-// One trait family mirrors prela's Driven/Probed access modes:
-//
-//   Query    { type D; type R; }              — a binary relation D → R
-//   Drive:  Query + fn drive(&self, k)        — can be scanned (k(d, r) per pair)
-//   Probe:  Query + fn probe / probe_any /    — can be looked up by key;
-//                  fn member                  member(x) = probe_any(x, |_| true)
-//
-// There is no separate key-set family: a set IS an identity relation D → D
-// (Julia's `Unary{D} <: Query{D, D}`). Set-shaped nodes (Universe, Bitset,
-// MatSet, Disj) emit `(x, x)` from drive and yield `x` from
-// probe iff member — so they compose, product and left-compose like any
-// other relation, with no keyset projection in between. Membership is part
-// of the relation protocol: `member(q, x)` defaults to
-// `probe_any(x, |_| true)` for ANY probe-able query and is overridden where
-// a direct test is cheaper (Bitset bit-test, Universe bound check, MatSet
-// hash lookup).
-//
-// Set algebra mirrors Julia exactly: `∧`/`.and` is an ALIAS for the product
-// (`member(Prod)` short-circuits flat across the legs without building the
-// pair value); `-`/`.minus` is the value-bearing `Diff` (key-based test);
-// `∨`/`.or` is the probe-only membership union `Disj` (driving it is a
-// compile error); the enumerable bag union is the separate `Union` node.
-//
-// A node implements exactly the modes it supports, with bounds that propagate
-// the mode rule through the plan (a Compose drives its lhs and probes its
-// rhs, etc.), so a mode error is a *compile* error — rustc performs the same
-// lowering prela's `prepare` does with `Driven()`/`Probed()`, at type-check
-// time. Stream/index pairs are separate types, chosen by the query author:
-//
-//   .inv()                     → InvStream  (drive-only: flips pairs, no state)
-//   .collect::<HashIdx<_,_>>() → HashIdx    (probe-only: eager HashMap<D, SVec<R>>)
-//   .collect::<MatSet<_>>()    → MatSet     (probe-only membership set)
-//   set.group_by(key)          → GroupBy    (drive-only)
-//   .fold(...)                 → Fold       (cache; both modes)
-//
-// NO HIDDEN MATERIALIZATION: a drive-only node in probe position is a compile
-// error, and the fix is an explicit `collect` whose target type names the
-// physical structure (the `FromQuery` mirror of Iterator's `FromIterator`) —
-// every index/set build is visible in the query text.
-//
-// State is EAGER: every index/cache-holding node builds its state in its
-// constructor, from already-built children, and holds it in plain
-// concretely-typed fields — no OnceCell, no interior mutability (everything
-// is Sync for free). Construction = prela's `prepare`; the monomorphized
-// `drive` = the staged scan. Continuations are generic FnMut closures, so
-// each query type monomorphizes into a fused loop nest at `cargo build` time.
-// All non-leaf operators are #[inline(always)]; the runtime cost matches a
-// hand-rolled imperative loop.
-
 use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use regex::Regex;
 use smallvec::SmallVec;
@@ -60,7 +9,7 @@ use std::marker::PhantomData;
 /// so this size keeps the common case inline + heap-free.
 type SVec<T> = SmallVec<[T; 4]>;
 
-// ===== the mode traits ==================================================
+// MODE TRAITS
 
 pub trait Query {
     type D: Copy + Eq + Hash;
@@ -87,20 +36,6 @@ impl<T: Probe> Member for T {
     }
 }
 
-// ===== IntoQuery — construction-time leaf resolution ====================
-// The combinator surface (`QueryExt`, the schema-generated nav traits,
-// `Bitset::over`) is rooted on `IntoQuery`, not `Query`: anything that can
-// RESOLVE to a plan node. Two kinds of implementor:
-//
-//   - every `Query` (identity blanket below) — plans pass through `iq`
-//     unchanged, so plan-on-plan combinators cost nothing new;
-//   - the schema-generated leaf HANDLES (`keyword`, `Movie::title`,
-//     universe handles like `movie`) — paren-free ZSTs whose `iq` fetches
-//     the `&'static` column/universe from the schema's OnceLock store ONCE,
-//     at plan construction. Handles implement `IntoQuery` directly and must
-//     NOT implement `Query` (that keeps them out of plans — every plan
-//     object is identical to one built from accessor fns — and avoids
-//     overlapping the identity blanket).
 pub trait IntoQuery {
     type Q: Query;
     fn iq(self) -> Self::Q;
@@ -173,6 +108,7 @@ pub const NO_ID: usize = usize::MAX;
 // `movie_keyword: Query<D = Id<Movie>, R = Id<Keyword>>` and
 // `person_name: Query<D = Id<Person>>`, `movie_keyword.select(person_name)`
 // fails to type-check (expected `Id<Keyword>`, found `Id<Person>`).
+
 pub trait Dense: Copy + Eq + Hash + 'static {
     /// Missing-id sentinel for this domain — fails every bounds check.
     const NONE: Self;
@@ -256,11 +192,6 @@ impl<E: 'static> Dense for Id<E> {
     }
 }
 
-// Entity → scalar hops are spelled by the `schema!`-generated NAVIGATION
-// traits (one method per field, blanket-implemented for anything that
-// RESOLVES to a query valued in the entity's ids — see src/schema.rs):
-// `Movie::kind.text()` composes with Kind's text column.
-//
 // ===== primary-field elision (Julia's `==` on an entity value) ==========
 // A comparison on an entity-valued query auto-navigates to the entity's
 // PRIMARY (first-declared) scalar field before comparing — `keyword.eq("x")`
@@ -351,7 +282,6 @@ impl<R: Copy, D: Dense> VecRel<R, D> {
             _d: PhantomData,
         }
     }
-    /// Size of the dense key space — the universe size of the owning entity.
     pub fn n_keys(&self) -> usize {
         self.values.len()
     }
@@ -366,9 +296,6 @@ pub struct MultiRel<R: Copy + 'static, D: Dense = usize> {
     pub values: &'static [R],
 }
 
-// Pair-stream constructors survive only as unit-test fixtures: regen bakes
-// the scatter/fill into the cache, so production loading never builds from
-// pairs.
 #[cfg(test)]
 impl<R: Copy + Default, D: Dense> VecRel<R, D> {
     pub fn from_pairs(n: usize, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
@@ -392,10 +319,6 @@ impl<R: Copy + 'static, D: Dense> MultiRel<R, D> {
         }
     }
 
-    /// Size of the dense key space — the universe size of the owning entity.
-    /// (Schema surface: sizes the universe of an entity whose first column
-    /// is `Multi`; no current schema declares one, so bin builds don't call
-    /// it — tests do.)
     #[allow(dead_code)]
     pub fn n_keys(&self) -> usize {
         self.offsets.len() - 1
@@ -440,12 +363,6 @@ impl<R: Copy + 'static, D: Dense> MultiRel<R, D> {
     }
 }
 
-// Probe policy: drive loops iterate, so they use safe iterators (bounds-
-// check-free by construction). Probe indexes by *data* (a foreign key);
-// with `usize` keys there is no cast, and `.get` IS the single bounds
-// check — a missing-key sentinel (`NO_ID` = usize::MAX) or any
-// out-of-universe id fails it, so "missing key emits nothing" and bounds
-// safety are the same one check. No `unsafe` needed.
 impl<R: Copy, D: Dense> Query for VecRel<R, D> {
     type D = D;
     type R = R;
@@ -540,13 +457,6 @@ impl<D: Dense> Probe for Universe<D> {
 
 // ===== Ident — the identity ENTITY TABLE `Id<E> → Id<E>` ================
 // The `id → row` map for a DENSE entity, where the external id IS the row.
-// A pure pass-through: `probe(x) = x`, no bounds check (a foreign key always
-// references a real row, so the range test `Universe` does would be wasted).
-// Crossing it on a navigation — `fk_col.select(Ident)` — is therefore free:
-// `Compose<_, Ident>::probe` inlines to the left operand's probe. It's the
-// trivial case of the entity-table generalisation (non-dense entities get a
-// `Key → Id` dictionary here instead); making it a distinct ZST keeps the
-// dense navigation path byte-identical, since the table compiles away.
 
 pub struct Ident<E: 'static>(pub PhantomData<E>);
 impl<E> Ident<E> {
@@ -578,13 +488,7 @@ impl<E: 'static> Probe for Ident<E> {
 
 // ===== non-dense entities: Key<E> + DictTable =============================
 // The general entity table, for an entity whose external ids are NOT a dense
-// `0..n`. A foreign key into such an entity stores a `Key<E>` (the external
-// id); its `DictTable` translates `Key<E> → Id<E>` (the row) so the dense
-// columns can be addressed. The dense case (`Ident`) is the special case where
-// `Key == Id` and the table is the identity — and inlines away. Crossing a
-// `DictTable` on a nav costs one hash probe (the fundamental price of a
-// non-dense key); everything downstream — columns, group_by, fold, with — is
-// unchanged, because `Query::D` is only `Copy + Eq + Hash`, no `Dense` bound.
+// `0..n`.
 
 /// External, possibly non-dense / non-contiguous id of entity `E` — distinct
 /// from `Id<E>` (the dense ROW index). Manual `Copy/Eq/Hash` like `Id<E>`
@@ -623,13 +527,10 @@ impl<E> std::fmt::Debug for Key<E> {
     }
 }
 
-/// Entity table for a NON-DENSE entity: `Key<E> → Id<E>` (external id → row),
-/// a hash lookup. Built once (at load / regen) from the entity's key column.
 pub struct DictTable<E: 'static> {
     map: HashMap<Key<E>, Id<E>>,
 }
 impl<E: 'static> DictTable<E> {
-    /// `keys[row]` = the external id assigned to dense row `row` (`0..keys.len()`).
     pub fn from_keys(keys: &[u64]) -> Self {
         DictTable {
             map: keys
@@ -674,11 +575,7 @@ impl<E: 'static> Probe for DictTable<E> {
     }
 }
 
-/// How an entity is ADDRESSED. A foreign key into `Self` stores `Self::Fk`,
-/// and a navigation crosses `Self::table()` (`Fk → Id<Self>`) before reading
-/// columns. The schema macro emits ONE impl per entity, so FK columns/navs
-/// just defer to `<Target as EntityKind>::Fk` / `::table()` without the macro
-/// branching per foreign key:
+/// How an entity is ADDRESSED:
 ///   - DENSE  (default) — `Fk = Id<Self>`, `Table = Ident` (inlines away).
 ///   - NON-DENSE (`dict`)— `Fk = Key<Self>`, `Table = &'static DictTable`.
 pub trait EntityKind: Sized + 'static {
@@ -717,10 +614,6 @@ impl<A: Probe, B: Probe<D = A::R>> Probe for Compose<A, B> {
 }
 
 // ===== Filter (relation × scalar predicate) =============================
-// The predicate is a plain closure `Fn(A::R) -> bool`, held directly — no
-// predicate trait layer (Julia: `Filter(a, pred)` with any callable). Every
-// comparison combinator below (`.eq`, `.gt`, `.rx`, …) is a captured-closure
-// form of `.filt`.
 
 pub struct Filter<A, F> {
     pub a: A,
@@ -757,12 +650,7 @@ impl<A: Probe, F: Fn(A::R) -> bool> Probe for Filter<A, F> {
 }
 
 // ===== Restrict (relation × relation — `a : b`) =========================
-// Keeps a's pairs (a's VALUE flows through) where the value is a `member`
-// of b; b is consumed via `member` only (julia-engine branch, interp.jl:
-// `drive(n::Restrict, k) = drive(n.a, (x, m) -> member(n.b, m) && k(x, m))`,
-// probe/probe_any analogous). No `member` override: the defaulted
-// `probe_any(x, |_| true)` already reduces to
-// `a.probe_any(x, |v| b.member(v))`, which is the optimal form.
+// Keeps a's pairs where the value is a `member` of b;
 
 pub struct Restrict<A, B> {
     pub a: A,
@@ -773,7 +661,7 @@ impl<A: Query, B: Query<D = A::R>> Query for Restrict<A, B> {
     type D = A::D;
     type R = A::R;
 }
-impl<A: Drive, B: Probe<D = A::R>> Drive for Restrict<A, B> {
+impl<A: Drive, B: Member<D = A::R>> Drive for Restrict<A, B> {
     #[inline(always)]
     fn drive<K: FnMut(A::D, A::R)>(&self, mut k: K) {
         self.a.drive(|x, v| {
@@ -799,17 +687,7 @@ impl<A: Probe, B: Probe<D = A::R>> Probe for Restrict<A, B> {
 }
 
 // ===== Diff / Disj / Union — set algebra ================================
-// Conjunction needs no node at all: `∧` IS the product (Julia:
-// `∧(a, b) = ⊗(a, b)`), and `member(Prod)` short-circuits flat across the
-// legs without building the pair value — see Prod below. The remaining set
-// operators take ANY member-capable rhs (no projection of a value-bearing
-// operand to a "keyset" node).
 
-/// `a - b` — Julia's value-bearing minus: keyed on `a`'s DOMAIN, drive and
-/// probe pass `a`'s `(x, v)` pairs through unchanged, skipping keys that
-/// are members of `b` (julia-engine interp.jl `drive(n::Diff, k) =
-/// drive(n.a, (x, y) -> member(n.b, x) || k(x, y))`). For an identity `a`
-/// this degenerates to the plain set difference (emits `(x, x)`).
 pub struct Diff<A, B> {
     pub a: A,
     pub b: B,
@@ -841,12 +719,6 @@ impl<A: Probe, B: Probe<D = A::D>> Probe for Diff<A, B> {
     }
 }
 
-/// `∨` — PROBE-ONLY membership union (julia-engine interp.jl: "driving a union
-/// (dedup-while-emitting) is the one operation that would need its lhs both
-/// driven and probed, so it lives elsewhere"). There is deliberately NO
-/// `Drive` impl — driving a `Disj` is a compile error. Enumerate a union
-/// with `Union` (bag-concat) instead, materializing first if the sink does
-/// not dedup.
 pub struct Disj<A, B> {
     pub a: A,
     pub b: B,
@@ -862,14 +734,6 @@ impl<A: Member, B: Member<D = A::D>> Member for Disj<A, B> {
     }
 }
 
-/// Enumerable BAG union: drive `a` fully, then `b` fully — NO dedup and no
-/// membership pretense (drive-only; no `Probe`). The legs must agree on
-/// domain AND value type. A key in both legs is emitted by both, so feed a
-/// `Union` only to deduping sinks (`Bitset::over`,
-/// `.collect::<MatSet<_>>()`, …) or collect into a set first when
-/// duplicates would change results.
-/// Julia leaves this node as a design note next to `drive(::Disj)`; Rust
-/// implements it. Built with `.union(b)`.
 pub struct Union<A, B> {
     pub a: A,
     pub b: B,
@@ -887,10 +751,6 @@ impl<A: Drive, B: Drive<D = A::D, R = A::R>> Drive for Union<A, B> {
 }
 
 // ===== Prod (× / ⊗, and ∧) — binary; n-ary by nesting ===================
-// Mode rule: like Compose — drive the first leg, probe the rest.
-// `∧` is an alias for `⊗` (Julia algebra.jl): a conjunction IS a product,
-// consumed in member position via the flat short-circuit `member` override
-// below, which never builds the pair value (Julia's `_prod_member`).
 
 pub struct Prod<A, B> {
     pub a: A,
@@ -918,7 +778,7 @@ impl<A: Probe, B: Probe<D = A::D>> Probe for Prod<A, B> {
     }
 }
 
-// ===== InvStream — `q'` in drive position: flip pairs, no state =========
+// ===== InvStream — `q'` in drive position =========
 
 pub struct InvStream<Q> {
     pub q: Q,
@@ -944,19 +804,13 @@ where
 // ===== FromQuery / collect — explicit materialization ======================
 // The relation mirror of `FromIterator`/`Iterator::collect`: `q.collect()`
 // drives `q` once into the physical structure named by the target type
-// (turbofish or `let` annotation). This is the ONLY way a stream becomes
-// probe-side state, so every materialization is visible in the query text.
-// `Bitset` deliberately does not implement `FromQuery`: it needs the universe
-// size `n` — part of the physical choice — so it keeps the explicit
-// `Bitset::over(universe, q)` constructor.
+// (turbofish or `let` annotation).
 
 pub trait FromQuery<Q: Drive>: Sized {
     fn from_rel(q: Q) -> Self;
 }
 
-// ===== HashIdx — THE probe-side physical node ===========================
-// An eager `HashMap<K, SVec<V>>` with probe access — the probed form of a
-// materialized forward index (`.collect::<HashIdx<_, _>>()`).
+// ===== HashIdx  ===========================
 
 pub struct HashIdx<K: Copy + Eq + Hash, V: Copy> {
     pub idx: HashMap<K, SVec<V>>,
@@ -993,14 +847,12 @@ impl<K: Copy + Eq + Hash, V: Copy> Probe for HashIdx<K, V> {
     }
 }
 
-// ===== MatSet — materialized membership set (probe-only identity) ====
+// ===== MatSet — materialized membership set ====
 
 pub struct MatSet<D: Copy + Eq + Hash> {
     pub set: HashSet<D>,
 }
-/// Drive the input and collect the VALUE slot. Identity relations send
-/// their keys through the value slot, so one impl materializes a set's
-/// keys and a value-bearing query's values alike.
+
 impl<Q: Drive> FromQuery<Q> for MatSet<Q::R>
 where
     Q::R: Eq + Hash,
@@ -1034,13 +886,7 @@ impl<D: Copy + Eq + Hash> Probe for MatSet<D> {
 //
 // Drop-in replacement for `MatSet` when the membership domain is a
 // dense `0..n`: trades the HashSet's hash+probe for one bit-test.
-// `drive` enumerates set bits via word-scan + `trailing_zeros` so
-// iteration cost is proportional to popcount, not the universe size.
-// `set` rejects keys ≥ n (`NO_ID` hole sentinels), so padding bits in the
-// last word stay 0 and `member`/`drive` can trust the words as-is.
 
-// Not a `FromQuery` target: the universe size `n` is part of the physical
-// choice, so construction stays explicit via `Bitset::over(universe, q)`.
 pub struct Bitset<D: Dense = usize> {
     pub bs: Vec<u64>,
     pub n: usize,
@@ -1048,8 +894,6 @@ pub struct Bitset<D: Dense = usize> {
 }
 
 impl<D: Dense> Bitset<D> {
-    /// `u` is anything that resolves to the universe — the `Universe` value
-    /// itself or a schema-generated universe handle (`orders`).
     pub fn empty<U: IntoQuery>(u: U) -> Self
     where
         U::Q: UnivSize<D>,
@@ -1061,13 +905,8 @@ impl<D: Dense> Bitset<D> {
             _d: PhantomData,
         }
     }
+
     /// A bitset over `u`, driven from `q`: set a bit at each emitted VALUE.
-    /// Identity relations send their keys through the value slot, so one
-    /// constructor bit-sets a set's keys and a value-bearing query's values
-    /// alike (julia-engine plan.jl `build_bitset`). Out-of-universe values —
-    /// including `NO_ID` hole fills — are dropped by the `set` guard.
-    /// Both arguments resolve via `IntoQuery`: universe handles for `u`,
-    /// plans (usually by reference) or leaf handles for `q`.
     pub fn over<U: IntoQuery, Q: IntoQuery>(u: U, q: Q) -> Self
     where
         U::Q: UnivSize<D>,
@@ -1084,10 +923,9 @@ impl<D: Dense> Bitset<D> {
             self.bs[i / 64] |= 1u64 << (i % 64);
         }
     }
+
     /// Direct bit test. INHERENT method, deliberately shadowing trait
-    /// `member`: `Probe for Bitset` calls `self.member(x)`, and method
-    /// resolution must find this — the blanket `Member` default is
-    /// `probe_any(x, |_| true)`, which would recurse forever.
+    /// `member` to avoid infinite mutual recursion.
     #[inline(always)]
     pub fn member(&self, x: D) -> bool {
         let i = x.idx();
@@ -1128,10 +966,7 @@ impl<D: Dense> Probe for Bitset<D> {
 
 impl<D: Dense> Bitset<D> {
     /// Validity mask for a SPARSE entity: bit set for each slot `0..fk.len()`
-    /// whose foreign key is a real target (`!= NONE`). The dense id space of a
-    /// sparse entity (e.g. `orders` over sparse orderkeys) has hole slots whose
-    /// FK columns are `NO_ID`; this enumerates the live ones. `D` is the entity
-    /// id, `T` the FK target id.
+    /// whose foreign key is a real target (`!= NONE`).
     pub fn validity<T: Dense>(fk: &[T]) -> Self {
         let mut b = Self::empty(Universe::<D>::new(fk.len()));
         for (i, &v) in fk.iter().enumerate() {
@@ -1145,12 +980,7 @@ impl<D: Dense> Bitset<D> {
 
 // ===== SparseUniverse — `Universe` with a validity mask =================
 // A dense id space `0..n` that carries holes (e.g. `orders` over sparse
-// orderkeys). DRIVE enumerates only live slots (word-scan the mask); PROBE /
-// MEMBER keep the plain range check and IGNORE the mask. That asymmetry is
-// sound and deliberate: a hole id never reaches a probe (probe keys come from
-// FKs — always real — or from the masked drive itself), and `NO_ID` is already
-// out of range. So sparse universes pay the mask only on drive (where it's the
-// whole point) and probe branch-for-branch identically to a dense `Universe`.
+// orderkeys).
 //
 // It is a SEPARATE TYPE from `Universe` on purpose: drive dispatch is at
 // compile time, so the dense `Universe::drive` loop is untouched — no shared
@@ -1188,8 +1018,6 @@ impl<D: Dense> Probe for SparseUniverse<D> {
     }
 }
 
-/// Exposes the size of a universe-like leaf so `Bitset::over` can be sized off
-/// either a dense `Universe` or a `SparseUniverse` handle.
 pub trait UnivSize<D: Dense> {
     fn univ_n(&self) -> usize;
 }
@@ -1206,17 +1034,7 @@ impl<D: Dense> UnivSize<D> for SparseUniverse<D> {
     }
 }
 
-// ===== GroupBy — drive the receiver set, probe key per row ==============
-// `r.group_by(s)` = `s.inv().with(r.inv())`: the receiver `r` is ROW-VALUED
-// (an entity set or a restriction of one — in general the pk map Key → row),
-// the key `s` maps row → group key. Drive `r`, probe `s` at each row, emit
-// (key-value, row). The result stays in row space, so column values are
-// navigated AFTER grouping: `set.group_by(key).select(col)`. (Both `inv`s
-// in the denotation are emit-order swaps — nothing is materialized.) This
-// generalizes the old column-receiver form, which assumed the entity table
-// is the identity (pk id = row): over the full table,
-// `entity.group_by(key).select(col)` ≡ the old `col.group_by(key)`.
-// (Julia's `r ← s` keeps the old column-receiver semantics.)
+// ===== GroupBy ==============
 
 pub struct GroupBy<S, R> {
     pub set: S,
@@ -1240,17 +1058,13 @@ where
     }
 }
 
-// ===== Fold (`▷`) — per-key reduce into an eager cache ==================
-// One physical type serves foldl (`.fold`) and the buffered whole-group
-// reduce (`.buf_fold`, Julia's BufFold; `.count_distinct` is an instance)
-// — they differ only in how the cache is filled (julia-engine interp.jl FoldP).
+// ===== Fold  ==================
 
 pub struct Fold<D: Copy + Eq + Hash, S: Copy> {
     pub cache: HashMap<D, S>,
 }
 
 impl<D: Copy + Eq + Hash, S: Copy> Fold<D, S> {
-    /// Per-key foldl: cache[d] = op(op(init, v1), v2)…
     pub fn build<Q, OP>(q: Q, init: S, op: OP) -> Self
     where
         Q: Drive<D = D>,
@@ -1310,7 +1124,7 @@ impl<D: Copy + Eq + Hash, S: Copy> Probe for Fold<D, S> {
     }
 }
 
-// ===== DenseFold — `▷` with dense id-keyed array cache ==================
+// ===== DenseFold ==================
 //
 // Drop-in replacement for `Fold` when `D = usize` and the key range is a
 // known, dense `0..n`. Backing store is `Vec<S>` (one slot per key) plus a
@@ -1401,7 +1215,7 @@ impl<S: Copy, D: Dense> Probe for DenseFold<S, D> {
     }
 }
 
-// ===== Map (`↦ f`) — per-row lambda =====================================
+// ===== Map =====================================
 
 pub struct Map<Q, F, S: Copy> {
     pub q: Q,
@@ -1446,14 +1260,7 @@ impl<Q: Probe, F: Fn(Q::R) -> S, S: Copy> Probe for Map<Q, F, S> {
 // constructors drive their input right here — those require `Self: Drive`
 // and consume their input, exactly like prela's `build_*` inside `prepare`.
 
-// Rooted on `IntoQuery`: receiver and every relation argument resolve via
-// `.iq()` at construction, so leaf handles and plan nodes mix freely
-// (`keyword.text().eq(…)`, `movie.with(…)`). Return types are built from
-// `Self::Q`/`B::Q` — the resolved plan types — so the plans are identical
-// to ones built from `&'static` leaves directly.
 pub trait QueryExt: IntoQuery + Sized {
-    /// `→` — compose two queries (bridge type = self's value type); reads
-    /// navigationally: "select `b` at each of self's values".
     #[inline(always)]
     fn select<B: IntoQuery>(self, b: B) -> Compose<Self::Q, B::Q>
     where
@@ -1465,7 +1272,6 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    /// Postfix adjoint in drive position — streams flipped pairs, no state.
     #[inline(always)]
     fn inv(self) -> InvStream<Self::Q>
     where
@@ -1474,12 +1280,6 @@ pub trait QueryExt: IntoQuery + Sized {
         InvStream { q: self.iq() }
     }
 
-    /// `∧` / `×` / `⊗` — the product, in both of its uses (one node, one
-    /// name; Julia: `∧(a, b) = ⊗(a, b)`). In member position (a conjunct
-    /// tree fed to `.with`, `.minus`'s rhs, …) the `member` override
-    /// short-circuits flat across the legs without building pair values; in
-    /// drive/probe position it emits nested-pair values (output tuples) —
-    /// restrict-then-project is `a.with(p).select(b)`.
     #[inline(always)]
     fn and<B: IntoQuery>(self, b: B) -> Prod<Self::Q, B::Q>
     where
@@ -1491,8 +1291,6 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    /// `∨` — probe-only membership union (`member` = a OR b). Driving it is
-    /// a compile error; enumerate with `.union(b)` instead.
     #[inline(always)]
     fn or<B: IntoQuery>(self, b: B) -> Disj<Self::Q, B::Q>
     where
@@ -1504,8 +1302,6 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    /// `-` — value-bearing difference: self's pairs whose KEY is not a
-    /// member of `b` (identity self ⟹ plain set difference).
     #[inline(always)]
     fn minus<B: IntoQuery>(self, b: B) -> Diff<Self::Q, B::Q>
     where
@@ -1517,11 +1313,6 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    /// Enumerable bag union — drive self fully, then `b` fully, NO dedup
-    /// (the drive-position complement of the probe-only `.or`). Feed it to
-    /// deduping sinks, or collect it into a `MatSet` when duplicates would matter.
-    #[allow(dead_code)]
-    // no suite query drives a union today (every `∨` is member-position); kept as the sanctioned enumerable form, exercised by unit tests
     #[inline(always)]
     fn union<B: IntoQuery>(self, b: B) -> Union<Self::Q, B::Q>
     where
@@ -1534,8 +1325,7 @@ pub trait QueryExt: IntoQuery + Sized {
     }
 
     // Predicate filters — all elide the primary field (scalar = identity)
-    // then compare; see the `Field`/`Primary` traits above. `filt` is the
-    // non-eliding escape hatch.
+    // then compare; see the `Field`/`Primary` traits above.
     #[inline(always)]
     fn eq(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
     where
@@ -1613,8 +1403,7 @@ pub trait QueryExt: IntoQuery + Sized {
             p: move |x| vs.iter().any(|&v| v == x),
         }
     }
-    /// `in_v` over any `IntoIterator` — arrays, slices, the named set fns —
-    /// collected once into the captured Vec.
+    /// `in_v` over any `IntoIterator`
     #[inline(always)]
     fn is_in<I: IntoIterator<Item = Sc<Self>>>(
         self,
@@ -1630,9 +1419,7 @@ pub trait QueryExt: IntoQuery + Sized {
             p: move |x| vs.iter().any(|&v| v == x),
         }
     }
-    /// Restriction `a : b` — keep self's pairs whose VALUE is a `member` of
-    /// `s` (any probe-able relation). Builds the dedicated `Restrict` node,
-    /// node-for-node with Julia.
+
     #[inline(always)]
     fn with<S: IntoQuery>(self, s: S) -> Restrict<Self::Q, S::Q>
     where
@@ -1643,6 +1430,7 @@ pub trait QueryExt: IntoQuery + Sized {
             b: s.iq(),
         }
     }
+
     #[inline(always)]
     fn rx(self, re: &str) -> Filter<Elided<Self>, impl Fn(&'static str) -> bool>
     where
@@ -1654,6 +1442,7 @@ pub trait QueryExt: IntoQuery + Sized {
             p: move |s| re.is_match(s),
         }
     }
+
     #[inline(always)]
     fn nrx(self, re: &str) -> Filter<Elided<Self>, impl Fn(&'static str) -> bool>
     where
@@ -1665,11 +1454,12 @@ pub trait QueryExt: IntoQuery + Sized {
             p: move |s| !re.is_match(s),
         }
     }
-    /// Closure-predicate filter — for things like cross-column compares.
+
     #[inline(always)]
     fn filt<F: Fn(ROf<Self>) -> bool>(self, f: F) -> Filter<Self::Q, F> {
         Filter { a: self.iq(), p: f }
     }
+
     /// Half-open range `[lo, hi)` — Julia `during(lo, hi)`.
     #[inline(always)]
     fn during(self, lo: Sc<Self>, hi: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
@@ -1682,6 +1472,7 @@ pub trait QueryExt: IntoQuery + Sized {
             p: move |x| x >= lo && x < hi,
         }
     }
+
     /// Closed range `[lo, hi]` — Julia `lo..hi`.
     #[inline(always)]
     fn between(self, lo: Sc<Self>, hi: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
@@ -1695,11 +1486,8 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    /// Materialize — drive self once into the physical structure named by
-    /// the target type (`FromQuery`, the relation mirror of `FromIterator`):
-    /// `.collect::<HashIdx<_, _>>()` for a forward index, `.collect::<
-    /// MatSet<_>>()` for a membership set (Julia: `prepare` probing a
-    /// `Materialized`). The type annotation IS the visible physical choice.
+    /// Materialize into the physical structure named by
+    /// the target type
     #[inline(always)]
     fn collect<T: FromQuery<Self::Q>>(self) -> T
     where
@@ -1708,11 +1496,6 @@ pub trait QueryExt: IntoQuery + Sized {
         T::from_rel(self.iq())
     }
 
-    /// `r.group_by(s)` — group the rows of a ROW-VALUED receiver (an entity
-    /// set or a restriction of one) by the key relation `s`, emitting
-    /// (key-value, row): semantically `s.inv().with(r.inv())`. The result
-    /// stays in row space — navigate columns after grouping
-    /// (`set.group_by(key).select(col)`), then aggregate.
     #[inline(always)]
     fn group_by<R: IntoQuery>(self, key: R) -> GroupBy<Self::Q, R::Q>
     where
@@ -1725,7 +1508,6 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    /// `▷ (op, init)` — per-key foldl into an eager cache.
     #[inline(always)]
     fn fold<OP: Fn(S, ROf<Self>) -> S, S: Copy>(self, init: S, op: OP) -> Fold<DOf<Self>, S>
     where
@@ -1734,10 +1516,6 @@ pub trait QueryExt: IntoQuery + Sized {
         Fold::build(self.iq(), init, op)
     }
 
-    /// `▷ f` with a callable — per-key whole-multiset reduce (Julia's
-    /// BufFold): buffer each group, then cache `f(group)`. For reducers
-    /// that need the whole group (count-distinct, median, …) rather than
-    /// foldl's streaming `(S, R) -> S` shape.
     #[inline(always)]
     fn buf_fold<F: Fn(SVec<ROf<Self>>) -> S, S: Copy>(self, f: F) -> Fold<DOf<Self>, S>
     where
@@ -1746,9 +1524,6 @@ pub trait QueryExt: IntoQuery + Sized {
         Fold::build_buf(self.iq(), f)
     }
 
-    /// `▷ (op, init)` with a dense id-keyed `Vec<S>` cache. Use when the
-    /// key range is known to be `0..n` (`n` slots) and small/dense enough
-    /// that a `Vec<S>` of size `n` beats the HashMap path of `fold`.
     #[inline(always)]
     fn dense_fold<OP: Fn(S, ROf<Self>) -> S, S: Copy>(
         self,
@@ -1764,11 +1539,7 @@ pub trait QueryExt: IntoQuery + Sized {
     }
 
     /// Left-outer-join aggregate: like `dense_fold`, but every key in `0..n`
-    /// is emitted — keys with no match carry the seeded `init` (the aggregate
-    /// identity). The dense array IS the left-key enumeration, so no extra
-    /// scan or default-probe is needed. Correct ONLY when `0..n` is exactly
-    /// the key universe (e.g. a dense `Id<E>`); a sparse/packed key space
-    /// would fabricate identity rows for absent keys.
+    /// is emitted.
     #[inline(always)]
     fn dense_fold_outer<OP: Fn(S, ROf<Self>) -> S, S: Copy>(
         self,
@@ -1799,15 +1570,11 @@ pub trait QueryExt: IntoQuery + Sized {
         })
     }
 
-    /// `↦ f` — per-row map.
     #[inline(always)]
     fn map<F: Fn(ROf<Self>) -> S, S: Copy>(self, f: F) -> Map<Self::Q, F, S> {
         Map::new(self.iq(), f)
     }
 
-    /// `⊵ (op, init)` — no-group foldl. Drives the whole query, returns
-    /// scalar. Consumes the receiver like every other combinator — fold a
-    /// plan you still need through a reference (`(&q).unwrap_fold(…)`).
     #[inline(always)]
     fn unwrap_fold<OP: Fn(S, ROf<Self>) -> S, S: Copy>(self, init: S, op: OP) -> S
     where
