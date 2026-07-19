@@ -9,7 +9,9 @@ use std::marker::PhantomData;
 /// so this size keeps the common case inline + heap-free.
 type SVec<T> = SmallVec<[T; 4]>;
 
+// ==================
 // MODE TRAITS
+// ==================
 
 pub trait Query {
     type D: Copy + Eq + Hash;
@@ -75,7 +77,10 @@ impl<T: Probe + ?Sized> Probe for &T {
     }
 }
 
-// ===== leaf storage =====================================================
+// ==================
+// LEAF STORAGE
+// ==================
+
 // Entity ids are 0-based `usize`: a universe of size n has ids 0..n-1,
 // indexing its dense columns directly. (The cache stores these final
 // physical layouts — 0-based, `NO_ID` holes baked in; see src/format.rs.)
@@ -584,7 +589,11 @@ pub trait EntityKind: Sized + 'static {
     fn table() -> Self::Table;
 }
 
-// ===== Compose: a: D → M, b: M → R  ⟹  Compose: D → R ===================
+// ====================
+// COMBINATOR NODES
+// ====================
+
+// ===== Compose ===================
 // Mode rule: the rhs is always probed; the lhs carries the Compose's mode.
 
 pub struct Compose<A, B> {
@@ -613,7 +622,7 @@ impl<A: Probe, B: Probe<D = A::R>> Probe for Compose<A, B> {
     }
 }
 
-// ===== Filter (relation × scalar predicate) =============================
+// ===== Filter =============================
 
 pub struct Filter<A, F> {
     pub a: A,
@@ -649,7 +658,7 @@ impl<A: Probe, F: Fn(A::R) -> bool> Probe for Filter<A, F> {
     }
 }
 
-// ===== Restrict (relation × relation — `a : b`) =========================
+// ===== Restrict =========================
 // Keeps a's pairs where the value is a `member` of b;
 
 pub struct Restrict<A, B> {
@@ -750,7 +759,7 @@ impl<A: Drive, B: Drive<D = A::D, R = A::R>> Drive for Union<A, B> {
     }
 }
 
-// ===== Prod (× / ⊗, and ∧) — binary; n-ary by nesting ===================
+// ===== Prod ===================
 
 pub struct Prod<A, B> {
     pub a: A,
@@ -1254,7 +1263,10 @@ impl<Q: Probe, F: Fn(Q::R) -> S, S: Copy> Probe for Map<Q, F, S> {
     }
 }
 
-// ===== operators (method-only surface) ==================================
+// ==================
+// OPERATORS
+// ==================
+
 // Constructors are mode-agnostic (they just build the node; the node's
 // trait impls carry the mode bounds) EXCEPT the eager physical nodes, whose
 // constructors drive their input right here — those require `Self: Drive`
