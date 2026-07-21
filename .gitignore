@@ -16,3 +16,6 @@ zig/.zig-cache/
 .DS_Store
 
 *.pdf
+notes/
+sandbox/
+\#prela.lyx#/
