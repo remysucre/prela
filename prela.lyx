@@ -4644,7 +4644,139 @@ status open
 \end_inset
 
  predicate.
+\end_layout
+
+\begin_layout Standard
+Prela's 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.gather()
+\end_layout
+
+\end_inset
+
+ operator provides an alternative approach to aggregation.
  
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+ r.gather(s)
+\end_layout
+
+\end_inset
+
+ maps each key of 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r
+\end_layout
+
+\end_inset
+
+ to a vector containing the corresponding values of 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+s
+\end_layout
+
+\end_inset
+
+.
+ In other words,
+ Prela has first-class support for 
+\emph on
+nested relations
+\emph default
+ 
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:conf/pods/JaeschkeS82,DBLP:conf/nf2/SchekS87"
+literal "false"
+
+\end_inset
+
+.
+ We can then aggregate over the keys of 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r
+\end_layout
+
+\end_inset
+
+ using another general-purpose Prela operator,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.map()
+\end_layout
+
+\end_inset
+
+.
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.map(f)
+\end_layout
+
+\end_inset
+
+ applies 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+f
+\end_layout
+
+\end_inset
+
+ to each value in 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r
+\end_layout
+
+\end_inset
+
+.
+ Thus our example query is equivalent to 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.group_by(keyword).gather(year).map(min)
+\end_layout
+
+\end_inset
+
+.
 \end_layout
 
 \begin_layout Standard
@@ -5596,7 +5728,7 @@ lhs.and(rhs).probe(x,
 
 \begin_layout Plain Layout
     lhs.probe(x,
- |y| rhs.probe(key,
+ |y| rhs.probe(x,
  |z| k((y,
  z))))
 \end_layout
@@ -5922,19 +6054,55 @@ tuple "list"
 \end_inset
 
  illustrates driving over a query tree.
- Taking 
+ At each step,
+ we expand the appropriate definition of 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-k = print
+drive
 \end_layout
 
 \end_inset
 
-,
- we automatically recover fast columnar execution!
+ or 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+probe
+\end_layout
+
+\end_inset
+
+.
+ In Prela,
+ this is done automatically by requiring the compiler to inline the definitions of 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+drive
+\end_layout
+
+\end_inset
+
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+probe
+\end_layout
+
+\end_inset
+
+.
+ We thereby automatically recover fast columnar execution!
 \end_layout
 
 \begin_layout Standard
@@ -6085,51 +6253,11 @@ name "fig:inlining"
 \end_layout
 
 \begin_layout Standard
-While here we had to expand each 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-drive
-\end_layout
-
-\end_inset
-
- and 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-probe
-\end_layout
-
-\end_inset
-
- definition by hand,
- Rust allows us to annotate the definitions with 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-inline
-\end_layout
-
-\end_inset
-
- compiler hints.
- As a result,
- query plans are automatically implemented as fused loops.
-\end_layout
-
-\begin_layout Standard
 Of course,
  CPS is not magic:
  it is not possible to avoid all materializations.
  However,
- Prela ensures that all necessary materializations are enforced by the type system and that all actual materializations are explicit.
+ necessary materializations are enforced at the type level and actual materializations are all explicit.
  In other words,
  we can't forget to materialize,
  and there are no hidden materializations.
