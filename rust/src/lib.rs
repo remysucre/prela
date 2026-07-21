@@ -13,6 +13,7 @@ pub mod format;
 pub mod job_schema;
 pub mod queries;
 pub mod schema;
+pub mod schema_experiment;
 pub mod tpch;
 pub mod tpch_schema;
 
