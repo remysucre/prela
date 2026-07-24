@@ -1,0 +1,6 @@
+cradle:
+  cabal:
+    - path: "./src/Prela.hs"
+      component: "lib:prela"
+    - path: "./app/Demo.hs"
+      component: "exe:prela-demo"
