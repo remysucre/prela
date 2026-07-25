@@ -38,11 +38,21 @@
 
 \lstdefinelanguage{Prela}{
     sensitive=true,
-    morekeywords=[1]{
-        with, and, s, eq, select
+    morekeywords={
+       with, and, s, eq, select, gt, lt, filt, reduce, fold, inv, group_by
     }
 }
 
+
+
+
+\lstdefinelanguage{rql}[]{SQL}{
+  deletekeywords={year}
+}
+
+\lstset{
+  language=Prela
+}
 
 \renewcommand{\noun}[1]{\textsf{#1}}
 
@@ -547,6 +557,7 @@ character-name-in-title
  First,
  there is no explicit 
 \begin_inset listings
+lstparams "language=SQL"
 inline true
 status open
 
@@ -4006,6 +4017,7 @@ movie.select(title.and(year).and(keyword))
 
  implements the SQL query 
 \begin_inset listings
+lstparams "language=SQL"
 inline true
 status open
 
@@ -4239,6 +4251,7 @@ r.with(s)
 ,
  and it emulates SQL's 
 \begin_inset listings
+lstparams "language=SQL"
 inline true
 status open
 
@@ -4418,6 +4431,7 @@ status open
 
 \begin_layout Plain Layout
 \begin_inset listings
+lstparams "language=SQL,deletekeywords={year, YEAR},deletekeywords={[2]year, [2]YEAR}"
 inline false
 status open
 
@@ -4856,6 +4870,7 @@ status open
  whereas in SQL,
  a 
 \begin_inset listings
+lstparams "language=SQL"
 inline true
 status open
 
@@ -4867,6 +4882,7 @@ GROUP BY
 
  clause must be accompanied by aggregation in the 
 \begin_inset listings
+lstparams "language=SQL"
 inline true
 status open
 
@@ -4896,6 +4912,7 @@ tuple "list"
 
  implements the 
 \begin_inset listings
+lstparams "language=SQL"
 inline true
 status open
 
