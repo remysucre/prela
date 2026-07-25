@@ -37,6 +37,21 @@ ordinary loop argument and unbox it. That monad is `Acc` in `Prela.hs`. The
 grouped `fold` still uses `ST`, which is fine because its cache is built once
 rather than touched per row.
 
+The storage layer added a third thing that could have gone wrong and did not.
+Element access goes through a class method, `atStore`, so that each element type
+gets its own flat layout, and a class method in a hot loop is exactly the kind of
+thing that stays an unknown call. It does not here: the dictionary is resolved at
+the use site, and `atStore` on an `Int` column becomes a bare `indexIntArray#`
+inline in the loop body. The only mention of `Elem` left in the dump is the
+mode-polymorphic `year` binding itself, which nothing calls at runtime because
+both of its uses specialize. So the class is free, but it is free for the same
+reason as everything else here, and it earns the same warning: the `Store` must
+be matched inside the lambda, not before the record is built.
+
 Both of these regress quietly, so re-run `CoreProbe` after adding operators or
 storage kinds. Grep the dump for `Prb`, `$fMonad`, `MutVar#` and `((), I#`; all
-four should be absent.
+four should be absent. Note also that this checks one query shape. The other
+streaming operators are built the same way and should behave the same, but that
+has not been read out of Core. `index`, `materialize`, `inv`, `fold`,
+`foldDense` and `bitset` deliberately do not fuse: each drives its input once
+into real storage and stops the pipeline there, which is what they are for.

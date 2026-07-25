@@ -1,9 +1,14 @@
 -- | Not part of the build. A single realistic query, used to check whether the
 -- operator chain fuses into one loop nest under -O2.
 --
---   cd haskell && ghc -O2 -isrc -fforce-recomp design/CoreProbe.hs \
---        -outputdir /tmp/coreprobe -o /tmp/coreprobe/probe \
---        -ddump-simpl -dsuppress-all -ddump-to-file
+--   cd haskell && mkdir -p /tmp/coreprobe && cabal exec -- \
+--     ghc -O2 -isrc -fforce-recomp design/CoreProbe.hs \
+--         -outputdir /tmp/coreprobe -o /tmp/coreprobe/probe \
+--         -ddump-simpl -dsuppress-all -ddump-to-file
+--
+-- (`cabal exec` is needed because the library depends on regex-tdfa, which is in
+-- the cabal store rather than the global package db. The dump lands under
+-- -outputdir, at /tmp/coreprobe/design/CoreProbe.dump-simpl.)
 --
 -- then read design/CoreProbe.dump-simpl.
 --

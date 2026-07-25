@@ -6,14 +6,24 @@ build-type:         Simple
 
 library
     exposed-modules:  Prela
+                    , Prela.Cache
     hs-source-dirs:   src
-    build-depends:    base >=4.14, containers, array
+    build-depends:    base >=4.14, containers, array, bytestring, regex-tdfa
+                    , vector, mmap
+    default-language: Haskell2010
+    ghc-options:      -Wall
+
+test-suite prela-test
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    hs-source-dirs:   test
+    build-depends:    base >=4.14, prela, bytestring, directory, filepath
     default-language: Haskell2010
     ghc-options:      -Wall
 
 executable prela-demo
     main-is:          Demo.hs
     hs-source-dirs:   app
-    build-depends:    base >=4.14, prela, containers
+    build-depends:    base >=4.14, prela, bytestring
     default-language: Haskell2010
     ghc-options:      -Wall
