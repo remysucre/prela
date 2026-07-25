@@ -64,7 +64,9 @@ import Foreign.Ptr (Ptr, ptrToIntPtr)
 import Foreign.Storable (Storable, alignment, sizeOf)
 import System.IO.MMap (mmapFileByteString)
 
-import Prela
+-- Only the storage layer: a cache file is data, and the reader has no business
+-- knowing there is an executor above it.
+import Prela.Storage
 
 --------------------------------------------------------------------------------
 -- The format

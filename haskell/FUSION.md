@@ -33,7 +33,7 @@ natural reach, since `drive` hands its continuation a monadic action and the
 accumulator has to live somewhere in the monad, but it cost a `readMutVar#`, a
 `writeMutVar#` and a freshly boxed `Int` on every matching row. Threading the
 accumulator through a small strict state monad instead lets GHC make it an
-ordinary loop argument and unbox it. That monad is `Acc` in `Prela.hs`. The
+ordinary loop argument and unbox it. That monad is `Acc` in `Prela.Stream`. The
 grouped `fold` still uses `ST`, which is fine because its cache is built once
 rather than touched per row.
 
@@ -41,12 +41,23 @@ The storage layer added a third thing that could have gone wrong and did not.
 Element access goes through a class method, `atStore`, so that each element type
 gets its own flat layout, and a class method in a hot loop is exactly the kind of
 thing that stays an unknown call. It does not here: the dictionary is resolved at
-the use site, and `atStore` on an `Int` column becomes a bare `indexIntArray#`
-inline in the loop body. The only mention of `Elem` left in the dump is the
+the use site, and `atStore` on an `Int` column becomes a bare `readIntOffAddr#`
+inline in the loop body, plus a `touch#` that keeps the backing buffer live and
+costs nothing at the machine level. The only mention of `Elem` left in the dump is the
 mode-polymorphic `year` binding itself, which nothing calls at runtime because
 both of its uses specialize. So the class is free, but it is free for the same
 reason as everything else here, and it earns the same warning: the `Store` must
 be matched inside the lambda, not before the record is built.
+
+Splitting the engine into per-phase modules changed none of this, which is worth
+saying because it easily could have. Nothing here survives without inlining, and
+inlining across a module boundary needs the unfolding to be in the interface
+file — which it is, because every method of `Mode` and every streaming operator
+carries an `INLINE` pragma. That is also why both `Mode` instances have to stay in
+`Prela.Ops` rather than getting a module each: an orphan instance's unfoldings are
+not reliably available at the use site, and one unspecialized dictionary in the
+inner loop would undo the whole thing. The loop after the split is
+instruction-for-instruction the one before it.
 
 Both of these regress quietly, so re-run `CoreProbe` after adding operators or
 storage kinds. Grep the dump for `Prb`, `$fMonad`, `MutVar#` and `((), I#`; all

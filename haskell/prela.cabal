@@ -6,6 +6,12 @@ build-type:         Simple
 
 library
     exposed-modules:  Prela
+                    , Prela.Mode
+                    , Prela.Storage
+                    , Prela.Ops
+                    , Prela.Predicate
+                    , Prela.Stream
+                    , Prela.Materialize
                     , Prela.Cache
     hs-source-dirs:   src
     build-depends:    base >=4.14, containers, array, bytestring, regex-tdfa

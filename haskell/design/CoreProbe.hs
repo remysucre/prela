@@ -17,11 +17,18 @@
 -- accumulator, indexArray# and the `> 1980` test inline in the loop body, no
 -- allocation per row, no Mode dictionary, no Prb record, no intermediate.
 --
--- Two things had to be fixed to get there, both recorded in Prela.hs:
---   * `column` must not match its Col on the left of the `=`, or the Prb is a
---     thunk and GHC calls the probe through a shared record field per row.
---   * `foldAll` must thread its accumulator through a state monad, not an
---     STRef, or every row does a readMutVar/writeMutVar on a boxed Int.
+-- Two things had to be fixed to get there, both recorded in FUSION.md:
+--   * `column` (Prela.Ops) must not match its Col on the left of the `=`, or the
+--     Prb is a thunk and GHC calls the probe through a shared record field per
+--     row.
+--   * `foldAll` (Prela.Stream) must thread its accumulator through a state
+--     monad, not an STRef, or every row does a readMutVar/writeMutVar on a
+--     boxed Int.
+--
+-- Still holds after the split into per-phase modules: the operators inline
+-- across module boundaries because they all carry INLINE pragmas, so the loop is
+-- unchanged apart from the array read, which is now a `readIntOffAddr#` plus a
+-- free `touch#` since the store became a Storable vector.
 module Main where
 
 import Prela

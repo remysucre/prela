@@ -10,7 +10,7 @@ buffer, multi-valued columns as CSR. Nothing is left for the reader to compute.
 That is the point, and it decided the design of `Prela.Cache`. If the writer has
 already chosen the physical layout, the reader should not convert anything: it
 should memory-map the file, check the header, and hand back a column that points
-into the mapping. So the storage types in `Prela.hs` were made to *be* the on-disk
+into the mapping. So the storage types in `Prela.Storage` were made to *be* the on-disk
 layouts — eight-byte words for numbers and ids, four-byte offsets over one packed
 buffer for strings — and a column is then a `Storable` vector, which is a pointer,
 an offset and a length. Loading a gigabyte table costs page-table entries rather
