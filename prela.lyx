@@ -39,7 +39,7 @@
 \lstdefinelanguage{Prela}{
     sensitive=true,
     morekeywords={
-       with, and, s, eq, select, gt, lt, filt, reduce, fold, inv, group_by, rx
+       with, and, s, eq, select, gt, lt, filt, reduce, fold, inv, group_by, rx, map, gather, drive, probe, for, in, len
     }
 }
 
@@ -4300,7 +4300,7 @@ status open
  because the semijoin ignores the second column of its right-hand-side.
  
 \begin_inset Note Note
-status collapsed
+status open
 
 \begin_layout Plain Layout
 Prela supports generalized projection with 
@@ -4472,11 +4472,11 @@ movie.group_by(keyword)
 \end_layout
 
 \begin_layout Plain Layout
-     .select(year)
+     .gather(year)
 \end_layout
 
 \begin_layout Plain Layout
-     .reduce(min)
+     .map(min)
 \end_layout
 
 \begin_layout Plain Layout
@@ -4531,11 +4531,22 @@ name "subsec:Grouping-and-Aggregation"
 \end_layout
 
 \begin_layout Standard
-\begin_inset Note Note
-status open
+Just like the original form of Codd's relational algebra,
+ 
+\noun on
+TAR
+\noun default
+ was designed to model first order logic,
+ and requires extensions to support practical workloads.
+ Prela supports 
+\begin_inset Quotes eld
+\end_inset
 
-\begin_layout Plain Layout
-First introduce 
+generalized projection
+\begin_inset Quotes erd
+\end_inset
+
+ with the 
 \begin_inset listings
 inline true
 status open
@@ -4546,48 +4557,30 @@ status open
 
 \end_inset
 
- to show how one can apply arbitrary Rust functions as UDFs,
- then 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.gather
-\end_layout
-
-\end_inset
-
- for nested/structured output,
- and finally how to combine them to implement aggregation.
- 
-\end_layout
-
-\end_inset
-
-
-\end_layout
-
-\begin_layout Standard
-Just like the original form of Codd's relational algebra,
- the mathematical definition of 
-\noun on
-TAR
-\noun default
- does not support aggregation.
- It is however straightforward to add such operators:
+ operator:
  
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-r.reduce(g)
+r.map(f)
 \end_layout
 
 \end_inset
 
- groups 
+ maps the function 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+f
+\end_layout
+
+\end_inset
+
+ to each value in the second column of 
 \begin_inset listings
 inline true
 status open
@@ -4598,61 +4591,160 @@ r
 
 \end_inset
 
- by its first column,
- and applies 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-g
-\end_layout
-
-\end_inset
-
- per group to aggregate over the second column.
- It is equivalent to 
-\begin_inset Formula $\gamma_{r.1,g(r.2)}(r)$
-\end_inset
-
 .
- But 
+ One advantage of embedding Prela in Rust is to allow arbitrary Rust code to be used as UDFs.
+ In particular,
+ the query can construct structured outputs.
+ For example,
+ the following query returns a list of 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-reduce
+Movie
 \end_layout
 
 \end_inset
 
- alone is not very useful —
- for example,
+ structs instead of tuples:
+\end_layout
+
+\begin_layout Standard
+\begin_inset listings
+inline false
+status open
+
+\begin_layout Plain Layout
+movie.select(title.and(year))
+\end_layout
+
+\begin_layout Plain Layout
+     .map(|(id,(t,y))| Movie{title:
+ t,
+ year:
+ y})
+\end_layout
+
+\end_inset
+
+Another extension allows Prela to return 
+\emph on
+nested
+\emph default
+ outputs:
  
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-year.reduce(min)
+r.gather(t)
 \end_layout
 
 \end_inset
 
- groups over the row number (a no-op) and returns the 
+ is like 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-year
+r.select(t)
 \end_layout
 
 \end_inset
 
- relation as-is.
- To support nontrivial grouping,
+,
+ but maps each distinct 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.1
+\end_layout
+
+\end_inset
+
+ to a list of 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+t.2
+\end_layout
+
+\end_inset
+
+ values.
+ For example,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.gather(keyword)
+\end_layout
+
+\end_inset
+
+ returns a binary relation mapping each movie ID to all the keywords associated with that movie.
+ Together with 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.map
+\end_layout
+
+\end_inset
+
+,
+ we can use 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.gather
+\end_layout
+
+\end_inset
+
+ to implement aggregation:
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie.gather(year).map(min)
+\end_layout
+
+\end_inset
+
+ returns the minimum year associated with each movie,
+ by mapping the list function 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+min
+\end_layout
+
+\end_inset
+
+ over the list of years per movie.
+ 
+\end_layout
+
+\begin_layout Standard
+To support grouping,
  we need to introduce one last operation from the original 
 \noun on
 TAR
@@ -4668,7 +4760,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-s.inv()
+t.inv()
 \end_layout
 
 \end_inset
@@ -4679,7 +4771,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-s
+t
 \end_layout
 
 \end_inset
@@ -4691,7 +4783,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-r.group_by(s)
+r.group_by(t)
 \end_layout
 
 \end_inset
@@ -4702,14 +4794,14 @@ inline true
 status open
 
 \begin_layout Plain Layout
-s.inv().with(r.inv())
+t.inv().with(r.inv())
 \end_layout
 
 \end_inset
 
 ,
  or 
-\begin_inset Formula $\pi_{s.2,s.1}(s\ltimes_{s.1=r.2}r)$
+\begin_inset Formula $\pi_{t.2,t.1}(t\ltimes_{t.1=r.2}r)$
 \end_inset
 
  in relational algebra.
@@ -4801,7 +4893,7 @@ year
 
 \end_inset
 
- to obtain a mapping from keyword to year.
+ to obtain a mapping from keyword to years.
  Line 3 aggregates with 
 \begin_inset listings
 inline true
@@ -4814,69 +4906,6 @@ min
 \end_inset
 
  to find the earliest year associated with each keyword.
- Note that in this process,
- each of 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.group_by()
-\end_layout
-
-\end_inset
-
-,
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.select()
-\end_layout
-
-\end_inset
-
-,
- and 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.reduce()
-\end_layout
-
-\end_inset
-
- produces a valid binary relation,
- whereas in SQL,
- a 
-\begin_inset listings
-lstparams "language=SQL"
-inline true
-status open
-
-\begin_layout Plain Layout
-GROUP BY
-\end_layout
-
-\end_inset
-
- clause must be accompanied by aggregation in the 
-\begin_inset listings
-lstparams "language=SQL"
-inline true
-status open
-
-\begin_layout Plain Layout
-SELECT
-\end_layout
-
-\end_inset
-
- clause.
  Finally,
  the last line of the Prela query in Figure
 \begin_inset space \thinspace{}
@@ -4913,155 +4942,19 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.gt()
+.gt
 \end_layout
 
 \end_inset
 
  predicate.
-\end_layout
-
-\begin_layout Standard
-Prela's 
+ Grouping by multiple columns can be achieved with the help of 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-.gather()
-\end_layout
-
-\end_inset
-
- operator provides an alternative approach to aggregation.
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
- r.gather(s)
-\end_layout
-
-\end_inset
-
- maps each key of 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-r
-\end_layout
-
-\end_inset
-
- to a vector containing the corresponding values of 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-s
-\end_layout
-
-\end_inset
-
-.
- In other words,
- Prela has first-class support for 
-\emph on
-nested relations
-\emph default
- 
-\begin_inset CommandInset citation
-LatexCommand citep
-key "DBLP:conf/pods/JaeschkeS82,DBLP:conf/nf2/SchekS87"
-literal "false"
-
-\end_inset
-
-.
- We can then aggregate over the keys of 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-r
-\end_layout
-
-\end_inset
-
- using another general-purpose Prela operator,
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.map()
-\end_layout
-
-\end_inset
-
-.
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-r.map(f)
-\end_layout
-
-\end_inset
-
- applies 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-f
-\end_layout
-
-\end_inset
-
- to each value in 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-r
-\end_layout
-
-\end_inset
-
-.
- Thus our example query is equivalent to 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-movie.group_by(keyword).gather(year).map(min)
-\end_layout
-
-\end_inset
-
-.
-\end_layout
-
-\begin_layout Standard
-Grouping by multiple columns can be achieved with the help of 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.and()
+.and
 \end_layout
 
 \end_inset
@@ -5080,177 +4973,8 @@ movie.group_by(keyword.and(year))
 
 .
  To aggregate over multiple columns,
- we can pass in a function that reduces a group of tuples at once.
- Prela also provides another form 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-r.fold(o)
-\end_layout
-
-\end_inset
-
- where 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-o
-\end_layout
-
-\end_inset
-
- is a binary 
-\begin_inset Quotes eld
-\end_inset
-
-combine
-\begin_inset Quotes erd
-\end_inset
-
- function.
- This allows more ergonomic multi-column aggregates like:
-\end_layout
-
-\begin_layout Standard
-\begin_inset listings
-inline false
-status open
-
-\begin_layout Plain Layout
-r.fold(|(x,y),
- (dx,dy)| (x+dx,
- min(y,dy)))
-\end_layout
-
-\end_inset
-
-Aggregation without grouping is supported with the 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.reduce_all()
-\end_layout
-
-\end_inset
-
- and 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.fold_all()
-\end_layout
-
-\end_inset
-
- operators.
+ we can pass in a function that reduces all of them at once.
  
-\begin_inset Note Note
-status open
-
-\begin_layout Plain Layout
-What about aggregation without grouping?
- We can group by the 
-\emph on
-abstract relation
-\emph default
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-unit
-\end_layout
-
-\end_inset
-
- which is a constant function returning 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-()
-\end_layout
-
-\end_inset
-
-:
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-movie.group_by(unit)
-\end_layout
-
-\end_inset
-
- returns a relation mapping 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-()
-\end_layout
-
-\end_inset
-
- to all rows in the movie table,
- then 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-movie.group_by(unit).select(year).reduce(min)
-\end_layout
-
-\end_inset
-
- finds the earliest year for all movies.
- However,
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-unit.inv()
-\end_layout
-
-\end_inset
-
- is an infinite relation!
- For this reason,
- Prela provides a 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.reduce_all()
-\end_layout
-
-\end_inset
-
- operator that simply aggregates without grouping.
- 
-\end_layout
-
-\end_inset
-
-
 \end_layout
 
 \begin_layout Subsection
@@ -5414,7 +5138,6 @@ TAR
  Built with a set of compositional operators,
  Prela queries blend into the surrounding application,
  obviating the need for ORMs.
- The binary relation foundation also paves the way to support emerging workloads over nested documents and graph data.
  
 \end_layout
 
@@ -5531,7 +5254,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.and()
+.and
 \end_layout
 
 \end_inset
@@ -5542,7 +5265,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.select()
+.select
 \end_layout
 
 \end_inset
@@ -5667,7 +5390,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.select()
+.select
 \end_layout
 
 \end_inset
@@ -5679,7 +5402,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.and()
+.and
 \end_layout
 
 \end_inset
@@ -5831,7 +5554,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.drive()
+.drive
 \end_layout
 
 \end_inset
@@ -5842,7 +5565,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.probe()
+.probe
 \end_layout
 
 \end_inset
@@ -5854,7 +5577,7 @@ status open
 
 
 \begin_inset CommandInset ref
-LatexCommand formatted
+LatexCommand ref
 reference "fig:CPS-protocol"
 plural "false"
 caps "false"
@@ -5870,7 +5593,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.drive()
+.drive
 \end_layout
 
 \end_inset
@@ -5881,7 +5604,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.probe()
+.probe
 \end_layout
 
 \end_inset
@@ -5892,7 +5615,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.select()
+.select
 \end_layout
 
 \end_inset
@@ -5904,7 +5627,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.and()
+.and
 \end_layout
 
 \end_inset
@@ -5933,7 +5656,7 @@ k
 
 \begin_layout Standard
 \begin_inset listings
-lstparams "language=Python"
+lstparams "language=Prela"
 inline false
 status open
 
@@ -5970,7 +5693,7 @@ status open
 
 \begin_layout Standard
 \begin_inset listings
-lstparams "language=Python"
+lstparams "language=Prela"
 inline false
 status open
 
@@ -6001,7 +5724,6 @@ m
 
 \begin_layout Standard
 \begin_inset listings
-lstparams "language=Python"
 inline false
 status open
 
@@ -6031,7 +5753,6 @@ status open
 
 \begin_layout Standard
 \begin_inset listings
-lstparams "language=Python"
 inline false
 status open
 
@@ -6078,7 +5799,6 @@ keyword
 
 \begin_layout Standard
 \begin_inset listings
-lstparams "language=Python"
 inline false
 status open
 
