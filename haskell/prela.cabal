@@ -13,15 +13,17 @@ library
                     , Prela.Stream
                     , Prela.Materialize
                     , Prela.Cache
+                    , Prela.Schema
     hs-source-dirs:   src
     build-depends:    base >=4.14, containers, array, bytestring, regex-tdfa
-                    , vector, mmap
+                    , vector, mmap, template-haskell
     default-language: Haskell2010
     ghc-options:      -Wall
 
 test-suite prela-test
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
+    other-modules:    TinySchema
     hs-source-dirs:   test
     build-depends:    base >=4.14, prela, bytestring, directory, filepath
     default-language: Haskell2010

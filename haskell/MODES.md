@@ -251,3 +251,59 @@ single operator is written against, so any operator written before it is settled
 has to be rewritten afterwards. It is much cheaper to decide now, with twelve
 operators on the books, than after the schema layer and the storage layer have
 been built on top of the current shape.
+
+## Still open: splitting membership out of `Prb`
+
+The second option is what got built, and it holds up, but it merged one
+distinction that Rust keeps. Rust has three traits, not two. `Member` carries only
+`member`, `Probe` carries `probe` and `probe_any` and requires `Member`, and a
+type that implements `Probe` gets `Member` free from a default that calls
+`probe_any` with a test that always says yes. So a node can honestly say it can
+answer "is this key present" without claiming it can produce values, and `Disj`
+does exactly that: it implements `Member` alone.
+
+Our `Prb` is those two traits collapsed into one record, so `disj` is obliged to
+supply a `probe` field it has no way to implement meaningfully. It fills it with
+`()`, which is why `disj`'s value type is `()` rather than anything real. The
+guarantee still lands, since a `()` carries no information and nothing can
+navigate through it, but it lands by convention rather than by construction:
+`probe` on a `disj` is a function you can call, and it hands you back nothing
+useful instead of not existing.
+
+The fix is to make membership a class rather than a record field, so that a weaker
+record can satisfy it:
+
+```haskell
+newtype Mem d r = Mem (d -> Bool)          -- membership and nothing else
+
+class Membership f where
+  member :: f d r -> d -> Bool
+
+instance Membership Mem where member (Mem f) x = f x
+instance Membership Prb where member q x = probeAny q x (const True)
+```
+
+The operators that only ever need membership then stop demanding a `Prb` and take
+anything in the class, and `disj` returns the weaker record:
+
+```haskell
+restrict :: Membership f => q d r -> f r e -> q d r
+diff     :: Membership f => q d r -> f d e -> q d r
+disj     :: Membership f => f d u -> f d v -> Mem d ()
+```
+
+`Mem` has no `probe` field, so reading a value out of an OR becomes impossible
+rather than merely pointless. Existing queries are unaffected, because `Prb` is
+still an instance and a filter chain still works in every position it worked
+before.
+
+Two costs. One extra class, and an extra type variable in the signatures of
+`restrict`, `diff` and `disj`, which shows up in error messages. And it is
+unverified against Core: a new class means a new dictionary reaching the inner
+loop, and while two instances plus `INLINE` on every method should specialize it
+away exactly as `Mode` does, that is the sort of thing FUSION.md exists to say
+should be read out of the dump rather than assumed.
+
+Worth doing, and much less disruptive than the decision above, since it changes
+three operator signatures rather than all of them. Not before the schema layer,
+which is what actually blocks running real queries.

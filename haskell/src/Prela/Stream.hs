@@ -47,6 +47,10 @@ union a b = Drv (\k -> drive a k >> drive b k)
 -- navigate through a `∨` or read a value out of one, and the type says so, which
 -- is how the Rust port gets the same guarantee by implementing only `Member`.
 -- The two sides may relate their keys to entirely different things.
+--
+-- The `probe` field below is the part that is not honest: Rust can decline to
+-- implement `Probe` at all, whereas `Prb` is one record and forces us to supply
+-- something. MODES.md, under "Still open", has the fix and its cost.
 disj :: Prb d u -> Prb d v -> Prb d ()
 disj a b = Prb
   { probe    = \x k -> when (member a x || member b x) (k ())

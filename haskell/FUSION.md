@@ -59,7 +59,21 @@ not reliably available at the use site, and one unspecialized dictionary in the
 inner loop would undo the whole thing. The loop after the split is
 instruction-for-instruction the one before it.
 
-Both of these regress quietly, so re-run `CoreProbe` after adding operators or
+The schema layer had to be measured too, and there the first design was the
+broken one. A schema is a record of loaded columns, and the obvious thing is to
+store the relations themselves in it, as fields of type `forall q. Mode q => q
+(Id Movie) Int`, so that unpacking the record puts every leaf name in scope at
+once. That allocates about 250 bytes per row and leaves `Prb` and a `Monad`
+dictionary in the loop. The reason is the same one as everywhere else on this
+page, seen from a new angle: what arrives at the use site is a field selection
+rather than a definition, so the compiler never learns which instance to
+specialize to. Keeping plain columns in the record and reading them through
+top-level functions of it, which is what `Prela.Schema` generates, is back to 57
+KB and a clean dump; so is binding the names locally in a `where` with
+signatures, which is how a query module gets the bare spelling back. The three
+variants and their numbers are in `design/SchemaProbe.hs`.
+
+All of these regress quietly, so re-run `CoreProbe` after adding operators or
 storage kinds. Grep the dump for `Prb`, `$fMonad`, `MutVar#` and `((), I#`; all
 four should be absent. Note also that this checks one query shape. The other
 streaming operators are built the same way and should behave the same, but that

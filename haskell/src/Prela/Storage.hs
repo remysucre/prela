@@ -147,6 +147,11 @@ data Col e r = Col !Int !(Store r)
 mkCol :: Elem r => [r] -> Col e r
 mkCol vs = Col (storeLen s) s where s = packStore vs
 
+-- | How many keys the column covers, which is also the size of its entity's id
+-- space. `Prela.Schema` uses this to size a universe from a loaded column.
+colLen :: Col e r -> Int
+colLen (Col n _) = n
+
 -- | 1:1 with holes: the values array stays full width, and a presence bit per
 -- key says which slots are real. For an id-valued column `noId` in the holes
 -- would do the same job for free, but a scalar column has no spare value — a
@@ -166,6 +171,9 @@ data MultiCol e r = MultiCol !Int !(V.Vector Word32) !(Store r)
 
 -- | Pairs with a key outside `0 .. n-1` are dropped. Per-key value order follows
 -- the input.
+multiColLen :: MultiCol e r -> Int
+multiColLen (MultiCol n _ _) = n
+
 mkMultiCol :: Elem r => Int -> [(Int, r)] -> MultiCol e r
 mkMultiCol n prs = MultiCol n (packV (scanl (+) 0 (map (fromIntegral . length) buckets)))
                              (packStore (concat buckets))
