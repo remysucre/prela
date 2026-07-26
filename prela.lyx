@@ -6245,6 +6245,7 @@ name "fig:job_plot"
 
 \begin_inset Graphics
 	filename rust/bench/job_scatter.png
+	lyxscale 30
 	width 50col%
 
 \end_inset
@@ -6252,6 +6253,7 @@ name "fig:job_plot"
 
 \begin_inset Graphics
 	filename rust/bench/tpch_scatter.png
+	lyxscale 30
 	width 50col%
 
 \end_inset
