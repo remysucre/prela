@@ -38,6 +38,7 @@
 
 \lstdefinelanguage{Prela}{
     sensitive=true,
+    string=[d]{"},
     morekeywords={
        with, and, s, eq, select, gt, lt, filt, reduce, fold, inv, group_by, rx, map, gather, drive, probe, for, in, len
     }
@@ -294,59 +295,6 @@ TAR
  clear,
  and efficient.
  
-\end_layout
-
-\begin_layout Standard
-\begin_inset Note Note
-status open
-
-\begin_layout Itemize
-In the code 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-group_by
-\end_layout
-
-\end_inset
-
- desugars to composing with an inversion,
- which only works because the ID happens to be the row number.
- When that's not true,
- we need 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-r.group_by(s)
-\end_layout
-
-\end_inset
-
- to be 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-s.inv().with(r.inv())
-\end_layout
-
-\end_inset
-
-
-\end_layout
-
-\begin_layout Itemize
-Set Prela code snippets to language=Prela
-\end_layout
-
-\end_inset
-
-
 \end_layout
 
 \begin_layout Section
