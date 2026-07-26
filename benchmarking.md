@@ -124,6 +124,35 @@ Both scripts read from `data/` and write the PNG next to themselves. The
 Prela timings come from the bench runs above; the DuckDB baselines
 (`data/job_duck.txt`, `data/duckdb_st.txt`) are checked in.
 
+`plot_tpch.py` also takes `--data` / `--out`, so a re-measured run can live
+in its own dated subdirectory instead of overwriting the checked-in numbers:
+
+```bash
+python3 plot_tpch.py --data data/2026-07-26 --out tpch_scatter_2026-07-26.png
+```
+
+### Re-measuring the TPC-H comparison from scratch
+
+Both sides must be measured on the same machine in the same session —
+absolute numbers are not comparable across hosts. Write into a fresh dated
+directory so earlier measurements stay intact:
+
+```bash
+cd rust/bench
+D=data/$(date +%F); mkdir -p $D
+OUT=$PWD/$D/duckdb_st.txt ./run_tpch_duck.sh          # DuckDB-ST baseline
+
+cd ..                                                  # rust/
+export PRELA_CACHE=/path/to/prela/cache                # binary cache (SF=1)
+QS=idiomatic ./target/release/prela tpch > bench/$D/idiomatic.txt 2>&1
+QS=optimized ./target/release/prela tpch > bench/$D/optimized.txt 2>&1
+
+cd bench && python3 plot_tpch.py --data $D --out tpch_scatter_$(date +%F).png
+```
+
+Both Prela files must end in `22/22 ok` — a `DIFF` line means the timing
+came from a query that returned wrong results.
+
 ### Regenerate the DuckDB baseline + TPCH oracles
 
 The capture scripts live under `rust/bench/`; the baselines they produce
@@ -132,8 +161,15 @@ are checked in as `rust/bench/data/{job_duck,duckdb_st}.txt`.
 ```bash
 cd rust/bench
 ./run_job_duck.sh         # → data/job_duck.txt (canonical JOB, ST DuckDB)
+./run_tpch_duck.sh        # → data/duckdb_st.txt (canonical TPC-H, ST DuckDB)
 ./regen_tpch_oracles.sh   # → ../../oracles/tpch/Q{2,7,8,...}.txt
 ```
+
+`run_tpch_duck.sh` runs the 22 canonical TPC-H queries against a
+single-threaded DuckDB built from native `dbgen` tables, twice per query,
+and writes the cold/warm pairs `plot_tpch.py` reads. It builds the database
+(`CALL dbgen`) and dumps the queries (`tpch_queries()`) itself if they are
+missing, and refuses to overwrite an existing `$OUT` unless `FORCE=1`.
 
 `run_job_duck.sh` runs each canonical JOB query (from `../../join-order-benchmark/`)
 against a single-threaded DuckDB instance built from `~/projects/jobdata/parquet/`,

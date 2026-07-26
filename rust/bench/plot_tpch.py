@@ -7,13 +7,19 @@
 # Reads warm run-2 timings from data/{idiomatic,optimized}.txt
 # and DuckDB `.timer on` output from data/duckdb_st.txt.
 # Writes tpch_scatter.png next to this script.
+#
+# A re-measured run lives in its own dated data subdirectory, so pass both
+# paths to keep the checked-in numbers and plot intact:
+#   ./plot_tpch.py --data data/2026-07-26 --out tpch_scatter_2026-07-26.png
 
+import argparse
 import re
 import sys
 from pathlib import Path
 import matplotlib.pyplot as plt
 
-DATA = Path(__file__).resolve().parent / "data"
+HERE = Path(__file__).resolve().parent
+DATA = HERE / "data"
 
 
 def parse_rust(path):
@@ -42,9 +48,17 @@ def parse_duck(path):
 
 
 def main():
-    ido   = parse_rust(DATA / "idiomatic.txt")
-    opt   = parse_rust(DATA / "optimized.txt")
-    duck  = parse_duck(DATA / "duckdb_st.txt")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--data", default=DATA, type=Path,
+                    help="directory holding {idiomatic,optimized,duckdb_st}.txt")
+    ap.add_argument("--out", default="tpch_scatter.png",
+                    help="PNG filename (relative paths resolve next to this script)")
+    args = ap.parse_args()
+    data = args.data if args.data.is_absolute() else HERE / args.data
+
+    ido   = parse_rust(data / "idiomatic.txt")
+    opt   = parse_rust(data / "optimized.txt")
+    duck  = parse_duck(data / "duckdb_st.txt")
 
     qs = list(range(1, 23))
     xs  = [duck[q]  for q in qs]
@@ -81,7 +95,9 @@ def main():
     ax.legend(loc="upper left", fontsize=9)
 
     plt.tight_layout()
-    out_path = Path(__file__).resolve().parent / "tpch_scatter.png"
+    out_path = Path(args.out)
+    if not out_path.is_absolute():
+        out_path = HERE / out_path
     plt.savefig(out_path, dpi=130)
     print(f"saved {out_path}")
 
