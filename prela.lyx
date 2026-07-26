@@ -39,7 +39,7 @@
 \lstdefinelanguage{Prela}{
     sensitive=true,
     morekeywords={
-       with, and, s, eq, select, gt, lt, filt, reduce, fold, inv, group_by
+       with, and, s, eq, select, gt, lt, filt, reduce, fold, inv, group_by, rx
     }
 }
 
@@ -1202,7 +1202,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.and()
+.and
 \end_layout
 
 \end_inset
@@ -2591,7 +2591,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-r.and(s)
+r.and(t)
 \end_layout
 
 \end_inset
@@ -2605,7 +2605,7 @@ r.and(s)
 \begin_inset Text
 
 \begin_layout Plain Layout
-\begin_inset Formula $r\bowtie_{r.1=s.1}s$
+\begin_inset Formula $r\bowtie_{r.1=t.1}t$
 \end_inset
 
 
@@ -2742,23 +2742,12 @@ inline true
 status open
 
 \begin_layout Plain Layout
-r.with(s)
+r.with(t)
 \end_layout
 
 \end_inset
 
- / 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-r.w(s)
-\end_layout
-
-\end_inset
-
-
+ 
 \end_layout
 
 \end_inset
@@ -2767,7 +2756,7 @@ r.w(s)
 \begin_inset Text
 
 \begin_layout Plain Layout
-\begin_inset Formula $r\ltimes_{r.2=s.1}s$
+\begin_inset Formula $r\ltimes_{r.2=t.1}t$
 \end_inset
 
 
@@ -2896,7 +2885,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-r.group_by(s)
+r.group_by(t)
 \end_layout
 
 \end_inset
@@ -2910,7 +2899,7 @@ r.group_by(s)
 \begin_inset Text
 
 \begin_layout Plain Layout
-\begin_inset Formula $\pi_{s.2,s.1}(s\ltimes_{s.1=r.2}r)$
+\begin_inset Formula $\pi_{t.2,t.1}(t\ltimes_{t.1=r.2}r)$
 \end_inset
 
 
@@ -2958,22 +2947,22 @@ Select,
 
 \begin_layout Standard
 The most important operator in Prela is the 
-\noun on
+\emph on
 relational composition
-\noun default
+\emph default
  
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-r.select(s)
+r.select(t)
 \end_layout
 
 \end_inset
 
  which is equivalent to the relational algebra expression 
-\begin_inset Formula $\pi_{r.1,s.2}(r\bowtie_{r.2=s.1}s)$
+\begin_inset Formula $\pi_{r.1,t.2}(r\bowtie_{r.2=t.1}t)$
 \end_inset
 
 ,
@@ -3050,7 +3039,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-s
+t
 \end_layout
 
 \end_inset
@@ -3084,7 +3073,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-r.select(s)
+r.select(t)
 \end_layout
 
 \end_inset
@@ -3140,7 +3129,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-s
+t
 \end_layout
 
 \end_inset
@@ -3771,7 +3760,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.s()
+.s
 \end_layout
 
 \end_inset
@@ -3782,7 +3771,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.select()
+.select
 \end_layout
 
 \end_inset
@@ -3907,34 +3896,29 @@ literal "false"
 
 .
  In Prela,
- we propose an equivalent extension —
- the
+ we propose the
 \emph on
- 
+ product
 \emph default
-\noun on
-product
-\noun default
  operator 
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-.and()
+.and
 \end_layout
 
 \end_inset
 
- —
- that is more practical for writing queries.
+ as an equivalent yet more practical extension.
  
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-r.and(s)
+r.and(t)
 \end_layout
 
 \end_inset
@@ -3942,7 +3926,7 @@ r.and(s)
  joins the relations on their first column,
  i.e.,
  
-\begin_inset Formula $r\bowtie_{r.1=s.1}s$
+\begin_inset Formula $r\bowtie_{r.1=t.1}t$
 \end_inset
 
 .
@@ -3957,7 +3941,7 @@ binary
 \end_inset
 
  and 
-\begin_inset Formula $s.1$
+\begin_inset Formula $t.1$
 \end_inset
 
 ,
@@ -3966,11 +3950,11 @@ binary
 \end_inset
 
  and 
-\begin_inset Formula $s.2$
+\begin_inset Formula $t.2$
 \end_inset
 
  for each matching 
-\begin_inset Formula $r.1=s.1$
+\begin_inset Formula $r.1=t.1$
 \end_inset
 
 .
@@ -3998,7 +3982,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.select()
+.select
 \end_layout
 
 \end_inset
@@ -4049,9 +4033,9 @@ tuple "list"
 \end_inset
 
  is the 
-\noun on
+\emph on
 predicate
-\noun default
+\emph default
  
 \begin_inset listings
 inline true
@@ -4092,7 +4076,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.gt()
+.gt
 \end_layout
 
 \end_inset
@@ -4104,7 +4088,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.rx()
+.rx
 \end_layout
 
 \end_inset
@@ -4176,7 +4160,7 @@ character-name-in-title
 \end_inset
 
 ;
- the expression 
+ 
 \begin_inset listings
 inline true
 status open
@@ -4218,7 +4202,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.and()
+.and
 \end_layout
 
 \end_inset
@@ -4230,22 +4214,22 @@ status open
 
 \begin_layout Standard
 The last operator used in our example is the 
-\noun on
+\emph on
 restriction
-\noun default
+\emph default
  
 \begin_inset listings
 inline true
 status open
 
 \begin_layout Plain Layout
-r.with(s)
+r.with(t)
 \end_layout
 
 \end_inset
 
  which is exactly the left-semijoin 
-\begin_inset Formula $r\ltimes_{r.2=s.1}s$
+\begin_inset Formula $r\ltimes_{r.2=t.1}t$
 \end_inset
 
 ,
@@ -4288,7 +4272,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.and()
+.and
 \end_layout
 
 \end_inset
@@ -4307,7 +4291,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-.with()
+.with
 \end_layout
 
 \end_inset
@@ -4488,15 +4472,15 @@ movie.group_by(keyword)
 \end_layout
 
 \begin_layout Plain Layout
-       .select(year)
+     .select(year)
 \end_layout
 
 \begin_layout Plain Layout
-       .reduce(min)
+     .reduce(min)
 \end_layout
 
 \begin_layout Plain Layout
-           .gt(1950)
+     .gt(1950)
 \end_layout
 
 \end_inset
