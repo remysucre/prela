@@ -18,4 +18,5 @@ zig/.zig-cache/
 *.pdf
 notes/
 sandbox/
-\#prela.lyx#/
+.claude/worktrees
+rust/bench/__pycache__
