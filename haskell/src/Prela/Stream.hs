@@ -77,9 +77,13 @@ union a b = Drv (\k -> drive a k >> drive b k)
 -- is how the Rust port gets the same guarantee by implementing only `Member`.
 -- The two sides may relate their keys to entirely different things.
 --
--- The `probe` field below is the part that is not honest: Rust can decline to
--- implement `Probe` at all, whereas `Prb` is one record and forces us to supply
--- something. MODES.md, under "Still open", has the fix and its cost.
+-- The `()` is not a stub. A membership set is a relation INTO the unit type: the
+-- value carries no information because there is none to carry, and the `probe`
+-- below is that set's characteristic function. Rust reaches the same guarantee
+-- from the other side, by declining to implement `Probe` at all. Splitting
+-- membership out of `Prb` to copy it exactly was tried and does not survive type
+-- inference; MODES.md, under "Closed", has the failure and design/MemSplit.hs
+-- reproduces it.
 disj :: Prb d u -> Prb d v -> Prb d ()
 disj a b = Prb
   { probe    = \x k -> when (member a x || member b x) (k ())

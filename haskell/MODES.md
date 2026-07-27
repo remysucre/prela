@@ -252,7 +252,7 @@ has to be rewritten afterwards. It is much cheaper to decide now, with twelve
 operators on the books, than after the schema layer and the storage layer have
 been built on top of the current shape.
 
-## Still open: splitting membership out of `Prb`
+## Closed: splitting membership out of `Prb`
 
 The second option is what got built, and it holds up, but it merged one
 distinction that Rust keeps. Rust has three traits, not two. `Member` carries only
@@ -292,18 +292,44 @@ diff     :: Membership f => q d r -> f d e -> q d r
 disj     :: Membership f => f d u -> f d v -> Mem d ()
 ```
 
-`Mem` has no `probe` field, so reading a value out of an OR becomes impossible
-rather than merely pointless. Existing queries are unaffected, because `Prb` is
-still an instance and a filter chain still works in every position it worked
-before.
+`Mem` has no `probe` field, so reading a value out of an OR would become
+impossible rather than merely pointless.
 
-Two costs. One extra class, and an extra type variable in the signatures of
-`restrict`, `diff` and `disj`, which shows up in error messages. And it is
-unverified against Core: a new class means a new dictionary reaching the inner
-loop, and while two instances plus `INLINE` on every method should specialize it
-away exactly as `Mode` does, that is the sort of thing FUSION.md exists to say
-should be read out of the dump rather than assumed.
+It does not work. `design/MemSplit.hs` is that sketch cut down to two modes, one
+leaf and one operator, and it does not compile:
 
-Worth doing, and much less disruptive than the decision above, since it changes
-three operator signatures rather than all of them. Not before the schema layer,
-which is what actually blocks running real queries.
+```
+Ambiguous type variable 'f0' arising from a use of 'filt'
+prevents the constraint '(Mode f0)' from being solved.
+  Potentially matching instances: Mode Drv, Mode Prb
+```
+
+The reason is a property of the whole encoding rather than of these three
+operators. A filter argument is itself mode-polymorphic: `gt 1980 year` has type
+`Mode q => q d r`, because the leaf inside it does. What decides its mode today
+is the concrete `Prb` sitting in `restrict`'s signature. Replace that with a
+class variable and nothing decides it, since GHC has two instances that fit and
+no reason to prefer either, so every filter in every query would need an
+annotation.
+
+The variants cost more than they buy. Making `Mem` a third instance of `Mode`
+would resolve the mode, but membership cannot implement `compose` — deciding
+whether some value of `a` at `x` is in `b` means enumerating `a`'s values — so
+`restrict movie (compose keyword keywordText)`, the commonest filter shape there
+is, would have no meaning. Keeping `restrict` on `Prb` and injecting `Mem` into
+it only moves the same fudge into the injection. Letting `disj` return a fully
+polymorphic `Prb d r` whose probe yields nothing is worse than the status quo,
+because navigating through an OR would then typecheck and silently return no rows
+instead of being rejected.
+
+So `Prb d ()` stays, and it deserves a better description than the one this
+section opened with. A membership set IS a relation into the unit type: the value
+carries no information because there is none to carry, and a probe handing back
+`()` is that set's characteristic function rather than a stub. What Rust has and
+we do not is the ability to DECLINE to implement probing; what we have instead is
+a value type that makes probing useless. Same guarantee, reached differently.
+
+Reopen this only if the port ever moves to a deep embedding, where a query is
+data and `drive`/`probe` are functions over it. That design, which this document
+rejects above for other reasons, can say "this node implements membership only",
+because a node's type no longer has to name its mode.
