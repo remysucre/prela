@@ -566,7 +566,7 @@ structure
  join conditions are not specified by explicit join clauses,
  but by query structure.
  Finally,
- thanks to the algebraic nature of Prela,
+ thanks to Prela's algebraic nature,
  queries can be written in a compositional way:
  in the example,
  every subexpression,
@@ -4528,7 +4528,7 @@ f
 
 \end_inset
 
- to each value in the second column of 
+ over each value in the second column of 
 \begin_inset listings
 inline true
 status open
@@ -5256,7 +5256,7 @@ literal "false"
  Unfortunately,
  both approaches require significant engineering effort that would exceed the scope of a prototype like Prela.
  To achieve good performance while keeping Prela's implementation simple and modular,
- we turn to a technique in functional compilers —
+ we turn to a technique from functional compilers —
  deforestation in continuation-passing style (CPS)
 \begin_inset space \thinspace{}
 \end_inset
@@ -5767,7 +5767,7 @@ expand
 \emph default
 :
  in Prela's implementation,
- all we had to do is to annotation the definition of 
+ all we had to do is annotate the definition of 
 \begin_inset listings
 inline true
 status open
@@ -5795,7 +5795,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-@inline
+#[inline]
 \end_layout
 
 \end_inset
@@ -5880,10 +5880,10 @@ literal "false"
  We follow the conventions of the two benchmarks (for example,
  we measure TPC-H performance on the second of two runs).
  TPC-H was ran at scale factor 1.
- Summaries of the results are collected in Figures 
+ Summaries of the results are collected in Figure 
 \begin_inset CommandInset ref
 LatexCommand ref
-reference "fig:job_plot"
+reference "fig:perf_plot"
 plural "false"
 caps "false"
 noprefix "false"
@@ -5892,7 +5892,7 @@ tuple "list"
 
 \end_inset
 
- and .
+.
 \end_layout
 
 \begin_layout Standard
@@ -5904,13 +5904,6 @@ sideways false
 status open
 
 \begin_layout Plain Layout
-\begin_inset CommandInset label
-LatexCommand label
-name "fig:job_plot"
-
-\end_inset
-
-
 \begin_inset Graphics
 	filename rust/bench/job_scatter.png
 	lyxscale 30
@@ -5941,6 +5934,13 @@ JOB results.
  Dashed line:
  parity.
 \end_layout
+
+\end_inset
+
+
+\begin_inset CommandInset label
+LatexCommand label
+name "fig:perf_plot"
 
 \end_inset
 
