@@ -7,7 +7,14 @@
 #   data/job_rust.txt   — Rust prela bench (warm, run 2)
 #   data/job_duck.txt   — DuckDB `.timer on` log (cold+warm per query)
 # Writes job_scatter.png next to this script.
+#
+# Both captures must come from the SAME machine to be comparable, so a run
+# on other hardware goes to its own files rather than over these:
+#   plot_job.py --rust data/job_rust_current.txt \
+#               --duck data/job_duck_current.txt \
+#               --out  job_scatter_current.png
 
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -47,10 +54,20 @@ def parse_duck(path, qnames):
 
 
 def main():
+    here = Path(__file__).resolve().parent
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--rust", default=DATA / "job_rust.txt", type=Path,
+                    help="prela bench log (default data/job_rust.txt)")
+    ap.add_argument("--duck", default=DATA / "job_duck.txt", type=Path,
+                    help="DuckDB .timer log (default data/job_duck.txt)")
+    ap.add_argument("--out", default=here / "job_scatter.png", type=Path,
+                    help="output png (default job_scatter.png)")
+    args = ap.parse_args()
+
     with open(DATA / "job_qnames.txt") as f:
         qnames = [l.strip() for l in f if l.strip()]
-    rust  = parse_rust(DATA / "job_rust.txt")
-    duck  = parse_duck(DATA / "job_duck.txt", qnames)
+    rust  = parse_rust(args.rust)
+    duck  = parse_duck(args.duck, qnames)
     common = [q for q in qnames if q in rust and q in duck]
 
     xs = [duck[q]  for q in common]
@@ -82,9 +99,8 @@ def main():
     ax.legend(loc="upper left", fontsize=10)
 
     plt.tight_layout()
-    out_path = Path(__file__).resolve().parent / "job_scatter.png"
-    plt.savefig(out_path, dpi=130)
-    print(f"saved {out_path}")
+    plt.savefig(args.out, dpi=130)
+    print(f"saved {args.out}")
 
 
 if __name__ == "__main__":
