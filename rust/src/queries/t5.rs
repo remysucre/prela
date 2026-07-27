@@ -154,13 +154,18 @@ fn q20c() -> impl Drive<R: Row> {
 }
 
 // q21a/b/c differ only in the country list and year range.
+//
+// `co`/`lk` appear ONLY in the select, like q11a's: the select is a join, so
+// a movie with no Film/Warner company (or no "follow"-typed link) simply
+// probes to no row — repeating them as `with` conjuncts filters nothing extra
+// and costs a company/link walk (plus the `Film|Warner` regex) on all 2.5M
+// movies. What is left in `with` is ordered cheapest-and-most-selective
+// first: `keyword = sequel` alone cuts the drive to a few thousand movies,
+// so the year and country tests run on almost nothing.
 fn q21(countries: Vec<&'static str>, ylo: i64, yhi: i64) -> impl Drive<R: Row> {
-    movie.with(film_or_warner_co()
-          .and(keyword.eq("sequel"))
-          .and(follow_link())
-          .and(info.is_in(countries))
-          .and(production_year.ge(ylo))
-          .and(production_year.le(yhi)))
+    movie.with(keyword.eq("sequel")
+          .and(production_year.between(ylo, yhi))
+          .and(info.is_in(countries)))
        .select(film_or_warner_co().name()
           .and(follow_link())
           .and(title))
