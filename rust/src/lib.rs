@@ -14,6 +14,7 @@ pub mod job_schema;
 pub mod queries;
 pub mod schema;
 pub mod schema_experiment;
+pub mod schema_structs;
 pub mod tpch;
 pub mod tpch_schema;
 
