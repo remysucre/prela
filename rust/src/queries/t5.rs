@@ -155,17 +155,28 @@ fn q20c() -> impl Drive<R: Row> {
 
 // q21a/b/c differ only in the country list and year range.
 //
-// `co`/`lk` appear ONLY in the select, like q11a's: the select is a join, so
-// a movie with no Film/Warner company (or no "follow"-typed link) simply
-// probes to no row — repeating them as `with` conjuncts filters nothing extra
-// and costs a company/link walk (plus the `Film|Warner` regex) on all 2.5M
-// movies. What is left in `with` is ordered cheapest-and-most-selective
-// first: `keyword = sequel` alone cuts the drive to a few thousand movies,
-// so the year and country tests run on almost nothing.
+// `co` appears ONLY in the select, like q11a's: the select is a join, so a
+// movie with no Film/Warner company simply probes to no row — repeating it as
+// a `with` conjunct filters nothing extra and costs a company walk plus the
+// `Film|Warner` regex on all 2.5M movies. What is left in `with` is ordered
+// cheapest-and-most-selective first: the keyword test alone cuts the drive to
+// a few thousand movies, so the year, country and link tests run on almost
+// nothing.
+//
+// `keyword.eq("sequel")` would elide `Id<Keyword>` to its `text` field and so
+// index into `Keyword_text` + string-compare once per movie-keyword pair
+// (~4.5M times). Only one keyword id can match, so resolve it up front: one
+// scan of the 134k-row text column (~0.1 ms) into a bitset over the keyword
+// id space, and the inner test becomes a bit lookup. `inv` puts the ids in
+// value position — `Bitset::over` sets a bit per emitted VALUE — and is a
+// callback-argument swap, not a materialization.
 fn q21(countries: Vec<&'static str>, ylo: i64, yhi: i64) -> impl Drive<R: Row> {
-    movie.with(keyword.eq("sequel")
+    let kws = Universe::<Id<Keyword>>::new(Keyword::text.iq().n_keys());
+    let sequel = Bitset::over(kws, Keyword::text.eq("sequel").inv());
+    movie.with(keyword.with(sequel)
           .and(production_year.between(ylo, yhi))
-          .and(info.is_in(countries)))
+          .and(info.is_in(countries))
+          .and(follow_link()))
        .select(film_or_warner_co().name()
           .and(follow_link())
           .and(title))
