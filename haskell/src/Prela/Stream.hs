@@ -32,6 +32,35 @@ leftCompose :: Drv d e -> Prb d f -> Drv e f
 leftCompose a b = compose (invStream a) b
 {-# INLINE leftCompose #-}
 
+-- | Re-key a stream by something computed from each VALUE (`▷`'s grouping half).
+-- The original key is dropped: what comes out is (group key, value), which is
+-- exactly the input a grouped fold wants, so the pair
+-- `fold op ini (groupBy q key)` is Prela's GROUP BY over a non-key column.
+--
+-- @
+-- -- total revenue per country: drive the sales, group each by its customer's
+-- -- country, then reduce
+-- fold (+) 0 (groupBy (compose sale amount) (compose customer country))
+-- @
+--
+-- Driven only, and free: it is one extra probe per row with nothing stored. Its
+-- second argument is probed at the VALUE rather than the key, which is what
+-- makes it different from `compose` — `compose` would keep the key and throw the
+-- value away, and this does the opposite.
+--
+-- One sharp edge, shared with the Rust port. Grouping by a foreign key that has
+-- holes puts every hole in a group of its own, keyed by `noId`, rather than
+-- dropping those rows. A hole vanishes when it is used as a key, since the range
+-- check fails; here it is being used as a value, and nothing has looked at it
+-- yet. Restrict first if that group is unwanted:
+--
+-- @
+-- groupBy (restrict movie (compose kind kinds)) kind   -- kinds that resolve
+-- @
+groupBy :: Drv d r -> Prb r k -> Drv k r
+groupBy s key = Drv (\emit -> drive s (\_ x -> probe key x (\gk -> emit gk x)))
+{-# INLINE groupBy #-}
+
 -- | Union of two relations over the same domain and value type (`Drive`-only in
 -- the Rust port too): drive one and then the other. There is no probed form,
 -- because probing a union would have to probe both sides and de-duplicate, and

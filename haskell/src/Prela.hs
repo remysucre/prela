@@ -35,10 +35,12 @@
 --   "Prela.Stream"      mode-fixed operators that still fuse, and `foldAll`
 --   "Prela.Materialize" the ones that stop the pipeline and hold data
 --
--- Two related pieces are deliberately NOT re-exported here. "Prela.Cache" reads
--- and writes the on-disk column format and is imported explicitly by whatever
--- loads a dataset; FUSION.md records what the executor's shape depends on and
--- must be read before editing "Prela.Ops" or "Prela.Storage".
+-- Two more modules are deliberately NOT re-exported here, because neither is
+-- part of writing a query. "Prela.Cache" reads and writes the on-disk column
+-- format, and "Prela.Schema" turns a dataset declaration into leaf names; both
+-- are imported explicitly by the one module that loads a dataset. FUSION.md
+-- records what the executor's shape depends on and must be read before editing
+-- "Prela.Ops" or "Prela.Storage".
 module Prela
   ( module Prela.Mode
   , module Prela.Storage

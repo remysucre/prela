@@ -33,6 +33,9 @@
 --   * an accessor per field and per universe, taking the record:
 --     @title :: Mode q => Tiny -> q (Id Movie) ByteString@.
 --
+-- An entity declared with `sparseEntity` gets one more record field, its
+-- validity mask, and a universe accessor that reads it.
+--
 -- The accessors take the record rather than being stored in it, and that is not
 -- a stylistic choice. A relation stored in a record field is a polymorphic
 -- function inside a data structure, which GHC cannot see through, so the query
@@ -69,7 +72,7 @@ module Prela.Schema
     -- * Fields
   , Field, one, many, as
     -- * Entities
-  , Ent, entity
+  , Ent, entity, sparseEntity
     -- * The generator
   , declareSchema
   ) where
@@ -132,10 +135,27 @@ data Ent = Ent
   { eName   :: String
   , eUniv   :: String
   , eFields :: [Field]
+  , eSparse :: Bool
   }
 
 entity :: String -> String -> [Field] -> Ent
-entity = Ent
+entity n u fs = Ent n u fs False
+
+-- | An entity whose id space has holes: the ids run `0 .. n-1` as usual, but
+-- some of them are dead, so driving its universe should skip them. TPC-H's
+-- orders are the standard case, being a dense range over a key that is not.
+--
+-- Which ids are dead is derived rather than declared, from the holes in the
+-- entity's FIRST field, which must therefore be a 1:1 `ref`: a foreign key
+-- pointing nowhere is what a dead row looks like, and no other column kind can
+-- say it. The Rust port writes this as @Order(orders sparse)@ and derives the
+-- mask the same way.
+--
+-- Only the DRIVE changes. Probing the universe stays a range check, because an
+-- id arriving in probe position was navigated to from real data and so cannot be
+-- dead.
+sparseEntity :: String -> String -> [Field] -> Ent
+sparseEntity n u fs = Ent n u fs True
 
 --------------------------------------------------------------------------------
 -- Generation
@@ -156,6 +176,11 @@ declareSchema sname ents
   | (nm, owners) : _ <- clashes =
       fail ("declareSchema: the name " ++ show nm ++ " is claimed by " ++ intercalate " and " owners
             ++ ".\nRename the universe, or the field with `as`.")
+  -- A sparse entity's validity mask comes from the holes in its first field, and
+  -- `validityBits` can only read them out of a 1:1 id column.
+  | ((e, f) : _) <- badSparse =
+      fail ("declareSchema: " ++ eName e ++ " is sparse, so its first field must be a 1:1 `ref`\
+            \ (the mask is derived from that column's holes), but it is " ++ show (fFile f) ++ ".")
   | otherwise = do
       let recN = mkName sname
       tags <- mapM tagDec ents
@@ -170,6 +195,10 @@ declareSchema sname ents
               | (nm, _) <- claimed
               , let owners = [ o | (nm', o) <- claimed, nm' == nm ]
               , length owners > 1 ]
+    badSparse = [ (e, f) | e <- ents, eSparse e, f : _ <- [eFields e], not (isRef1 f) ]
+    isRef1 f = case (fMany f, fTy f) of
+                 (False, TRef _) -> True
+                 _               -> False
 
 -- `data Movie` — no constructors, because a tag exists only in types.
 tagDec :: Ent -> Q Dec
@@ -183,11 +212,20 @@ recDec recN ents = do
     entRecFields e = do
       nT  <- [t| Int |]
       cs  <- mapM (colField e) (eFields e)
-      return ((countFieldName e, strict, nT) : cs)
+      -- The validity mask, for a sparse entity only. Deliberately the one LAZY
+      -- field in the record: a schema with many sparse entities should not walk
+      -- every one of their key columns at load time, and a thunk gets that for
+      -- free, once, on first use. The Rust port needs a `OnceLock` to say it.
+      lv <- if eSparse e
+              then do t <- [t| Bits $(conT (mkName (eName e))) |]
+                      return [(liveFieldName e, lazy, t)]
+              else return []
+      return ((countFieldName e, strict, nT) : lv ++ cs)
     colField e f = do
       t <- colType e f
       return (colFieldName e f, strict, t)
     strict = Bang NoSourceUnpackedness SourceStrict
+    lazy   = Bang NoSourceUnpackedness NoSourceStrictness
 
 loaderDecs :: Name -> [Ent] -> Q [Dec]
 loaderDecs recN ents = do
@@ -207,11 +245,14 @@ loaderDecs recN ents = do
       bindS (varP v) [| $(loadFn f) $(varE dir) $(litE (stringL (eName e ++ "_" ++ fFile f))) |]
     -- The universe size comes from the entity's first field, so that binder has
     -- to be picked out. `declareSchema` has already rejected a fieldless entity.
-    ctorArgs (_, fvs) = case fvs of
+    ctorArgs (e, fvs) = case fvs of
       [] -> fail "declareSchema: entity with no fields"
       ((f0, v0) : _) -> do
         n <- if fMany f0 then [| multiColLen $(varE v0) |] else [| colLen $(varE v0) |]
-        return (n : map (VarE . snd) fvs)
+        -- Sized and masked from the same column: `declareSchema` has already
+        -- checked that a sparse entity's first field is a 1:1 `ref`.
+        lv <- if eSparse e then (: []) <$> [| validityBits $(varE v0) |] else return []
+        return (n : lv ++ map (VarE . snd) fvs)
 
 accessorDecs :: Name -> Ent -> Q [Dec]
 accessorDecs recN e = do
@@ -224,8 +265,10 @@ accessorDecs recN e = do
       s <- newName "s"
       let n = mkName (eUniv e)
       sig <- sigD n [t| forall q. Mode q => $(conT recN) -> q (Id $tag) (Id $tag) |]
-      fun <- funD n [clause [varP s]
-                            (normalB [| universe ($(varE (countFieldName e)) $(varE s)) |]) []]
+      let n' = [| $(varE (countFieldName e)) $(varE s) |]
+          body | eSparse e = [| sparseUniverse ($(varE (liveFieldName e)) $(varE s)) $n' |]
+               | otherwise = [| universe $n' |]
+      fun <- funD n [clause [varP s] (normalB body) []]
       inl <- pragInlD n Inline FunLike AllPhases
       return [sig, fun, inl]
     fieldAcc f = do
@@ -250,6 +293,10 @@ colFieldName e f = mkName (lower1 (eName e) ++ "_" ++ fFile f)
 
 countFieldName :: Ent -> Name
 countFieldName e = mkName (lower1 (eName e) ++ "_n")
+
+-- Only exists for a sparse entity.
+liveFieldName :: Ent -> Name
+liveFieldName e = mkName (lower1 (eName e) ++ "_live")
 
 lower1 :: String -> String
 lower1 (c : cs) = toLower c : cs

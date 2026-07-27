@@ -16,6 +16,7 @@ module Prela.Materialize where
 import Control.Monad (when)
 import Control.Monad.ST (runST)
 import Data.Array.ST (freeze, readArray, runSTUArray, writeArray)
+import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.STRef (modifySTRef', newSTRef, readSTRef)
@@ -57,6 +58,26 @@ fold op ini q = fromCache cache
       ref <- newSTRef Map.empty
       drive q (\d v -> modifySTRef' ref (Map.alter (Just . flip op v . maybe ini id) d))
       readSTRef ref
+
+-- | The whole-group fold: instead of reducing pairwise, hand the reducer the
+-- entire group at once. For anything that does not fit `fold`'s
+-- `(s -> r -> s)` shape, which is to say anything needing to see the group
+-- twice, or in order: count-distinct, median, a range between the extremes.
+-- The Julia port calls this a BufFold for the buffer it has to keep.
+--
+-- It costs strictly more than `fold`, since every value is retained until the
+-- group is complete rather than collapsing into an accumulator, so reach for
+-- `fold` unless the reducer genuinely cannot be written that way. The list each
+-- group is handed is in drive order.
+bufFold :: (Mode q, Ord d) => ([r] -> s) -> Drv d r -> q d s
+bufFold f = fromCache . Map.map (f . reverse) . index
+
+-- | Distinct values per key (SQL's `COUNT(DISTINCT x)`), the instance of
+-- `bufFold` that motivates it. Sorting and then counting runs of equals beats a
+-- set per group at the sizes that actually occur, which is the same choice the
+-- Rust port makes for the same reason.
+countDistinct :: (Mode q, Ord d, Ord r) => Drv d r -> q d Int
+countDistinct = bufFold (length . List.group . List.sort)
 
 -- | The dense-array grouped fold (`q ▷ (op, init, n)`): the same thing as
 -- `fold`, opted into a different physical cache. When the keys are entity ids

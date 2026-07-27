@@ -29,4 +29,10 @@ declareSchema "Tiny"
       [ one "text" str `as` "keywordText" ]
   , entity "Kind" "kinds"
       [ one "text" str `as` "kindText" ]
+  -- A sparse entity: its ids run 0..n-1 like any other, but the ones whose
+  -- `about` foreign key is a hole are dead and driving `links` skips them.
+  , sparseEntity "Link" "links"
+      [ one "about" (ref "Movie")
+      , one "note"  str
+      ]
   ]

@@ -35,6 +35,17 @@ isIn :: (Mode q, Eq r) => [r] -> q d r -> q d r
 isIn vs = filt (`elem` vs)
 {-# INLINE isIn #-}
 
+-- Ranges. `between` is closed at both ends, which is Julia's `lo..hi` and what a
+-- SQL BETWEEN means; `range` is half-open, which is what a date bound written as
+-- `>= '1994-01-01' AND < '1995-01-01'` wants. Both are here rather than left to
+-- two `filt`s because writing them as `ge lo . le hi` builds two nodes and reads
+-- worse at the use site.
+between, range :: (Mode q, Ord r) => r -> r -> q d r -> q d r
+between lo hi = filt (\x -> x >= lo && x <= hi)
+range   lo hi = filt (\x -> x >= lo && x <  hi)
+{-# INLINE between #-}
+{-# INLINE range #-}
+
 -- Regex match and its negation (`~` and `≁`). Also just `filt`, but note the
 -- absence of an INLINE pragma, which is deliberate: the compiled regex is bound
 -- in the `where` so it is built once and shared by every row. Inlining these

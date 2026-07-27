@@ -193,6 +193,9 @@ main = do
   writeDoubles   sdir "Movie_rating"  [8.5, 8.4, 8.0, 7.0]
   writeStrs      sdir "Keyword_text"  ["sequel", "alien"]
   writeStrs      sdir "Kind_text"     ["movie", "tv series"]
+  -- Four link ids, of which 1 and 3 are dead: their FK is a hole.
+  writeIds       sdir "Link_about"    [Just (Id 0), Nothing, Just (Id 3), Nothing]
+  writeStrs      sdir "Link_note"     ["first", "", "third", ""]
   s <- Sch.loadTiny sdir
 
   -- The loader read the right filenames, in the right kinds.
@@ -215,6 +218,48 @@ main = do
   -- accessors, and the record fields are prefixed by entity, so both survive.
   gotS4 <- pairs (Sch.keywordText s)
   check "schema: renamed accessors" gotS4 [(Id 0, "sequel"), (Id 1, "alien")]
+
+  -- A sparse entity's universe: the mask is derived from the holes in its first
+  -- field, so driving it skips the dead ids...
+  gotS5 <- pairs (Sch.links s)
+  check "schema: sparse universe drive" gotS5 [(Id 0, Id 0), (Id 2, Id 2)]
+
+  -- ...while probing it stays a plain range check, dead id and all. Same
+  -- asymmetry as the hand-built case above, now reached through the generator.
+  check "schema: sparse universe probe" (map (member (Sch.links s) . Id) [0, 1, 3, 4])
+    [True, True, True, False]
+
+  -- GROUP BY a non-key column: re-key the movies by their kind, then reduce.
+  --
+  -- Movie 3's kind is a hole, and it lands in a group of its OWN rather than
+  -- being dropped. That is not a bug and it is not special to `groupBy`: a hole
+  -- disappears when it is used as a KEY, because the range check then fails, and
+  -- here it is being used as a value. Rust's `group_by` does the same. Pinned
+  -- because the shape of the answer depends on it.
+  let byKind = groupBy (Sch.movie s) (Sch.kind s)
+  gotG1 <- pairs (fold (\n _ -> n + 1) (0 :: Int) byKind)
+  check "groupBy then fold, hole is its own group" gotG1 [(noId, 1), (Id 0, 2), (Id 1, 1)]
+
+  -- The idiom for excluding it: keep only the movies whose kind resolves to a
+  -- real kind. `compose (kind s) (kinds s)` is that test, and it is the ordinary
+  -- membership check rather than anything to do with grouping.
+  let byLiveKind = groupBy (restrict (Sch.movie s) (compose (Sch.kind s) (Sch.kinds s)))
+                           (Sch.kind s)
+  gotG2 <- pairs (fold (\n _ -> n + 1) (0 :: Int) byLiveKind)
+  check "groupBy over resolvable keys only" gotG2 [(Id 0, 2), (Id 1, 1)]
+
+  -- The whole-group fold, and its main instance. Kind 1's movie has no keywords,
+  -- so that group has no rows at all and does not appear.
+  gotG3 <- pairs (bufFold id (compose byLiveKind (Sch.title s)))
+  check "bufFold keeps drive order" gotG3 [(Id 0, ["Alien", "Aliens"]), (Id 1, ["Solaris"])]
+  gotG4 <- pairs (countDistinct (compose byLiveKind (Sch.keyword s)))
+  check "countDistinct" gotG4 [(Id 0, 2 :: Int)]
+
+  -- Ranges: closed against half-open, on the same three years.
+  check "between is closed" (values (between 1979 1986 (compose (Sch.movie s) (Sch.year s))))
+    [1979, 1986]
+  check "range is half-open" (values (range 1979 1986 (compose (Sch.movie s) (Sch.year s))))
+    [1979]
 
   check "schema: queries" (schemaQueries s)
     ( ["Aliens", "Alien 3"]   -- keyword "sequel"
