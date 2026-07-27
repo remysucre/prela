@@ -125,11 +125,21 @@ pub struct Db {
     pub genres: Genres,
     pub tags: Tags,
     pub studios: Studios,
-    /// The dict entity's key→row table. In the token design this lived INSIDE
-    /// `Film::studio`'s resolution (`Compose<_, &DictTable<Studios>>`). With
-    /// bare fields it has no home on the column, so it is hoisted to the Db
-    /// and spliced in by hand at every call site. This field IS the drawback,
-    /// made concrete.
+    /// Studios' ID → ROW column (external key 205 → row 1).
+    ///
+    /// EVERY entity conceptually has one of these. For a dense entity the
+    /// external id IS the row, so it is the identity and compiles away to
+    /// nothing — which is why `Films`, `Genres` and `Tags` have no such field
+    /// here. Only `Studios`, whose ids are sparse (100/205/9899), needs it
+    /// materialized as a real `DictTable`.
+    ///
+    /// Note the asymmetry this design forces: in the token version the ID→Row
+    /// hop lives INSIDE the column's resolution (`Compose<_, Ident<E>>` for
+    /// dense, `Compose<_, &DictTable<E>>` for dict), so both cases are written
+    /// and read identically. With bare fields it has no home on the column, so
+    /// it is hoisted to the `Db` and spliced in by hand — and only for the
+    /// dict case. The no-op does not "compile away" so much as go MISSING,
+    /// which is why dense and dict queries end up spelled differently.
     pub studio_table: DictTable<Studios>,
 }
 
@@ -161,10 +171,12 @@ impl Db {
 //    The token design never hits this: `Film::year` already hands back a
 //    `Copy` `&'static VecRel`. Here the `&` is on the programmer, forever.
 //
-// 2. DICT NAVIGATION IS HAND-WIRED. A dense FK composes directly, but the
-//    dict FK's range is `Key<Studios>` while `studios.name`'s domain is
-//    `Id<Studios>`, so they do not compose. The `DictTable` must be spliced
-//    in explicitly at each use:
+// 2. THE ID→ROW COLUMN HAS NO HOME. Every entity conceptually has an ID→Row
+//    column; for a dense entity it is the identity and vanishes. A bare field
+//    cannot carry it, so the dense case silently has nothing while the dict
+//    case needs a hand-spliced `DictTable` — the two are spelled differently
+//    at every call site. Concretely, the dict FK's range is `Key<Studios>`
+//    while `studios.name`'s domain is `Id<Studios>`, so they do not compose:
 //
 //        (&db.films.studio).select(&db.studios.name)   // error[E0271]:
 //                                    //   type mismatch resolving
@@ -194,7 +206,7 @@ impl Db {
 mod tests {
     use super::*;
     use crate::engine::*;
-    use crate::format::{align8, header, HEADER_LEN};
+    use crate::format::{HEADER_LEN, align8, header};
     use crate::format::{KIND_CSR_WORDS, KIND_DENSE_F64, KIND_DENSE_I64, KIND_DENSE_STR};
     use std::fs::File;
     use std::io::Write;
@@ -320,10 +332,7 @@ mod tests {
         assert_eq!(db.genres.all().n, 2);
 
         // scalar columns. note the `&`: without it this is E0507.
-        assert_eq!(
-            collect(&db.films.title),
-            vec!["Alien", "Blade", "Solaris"]
-        );
+        assert_eq!(collect(&db.films.title), vec!["Alien", "Blade", "Solaris"]);
         assert_eq!(collect(&db.films.rating), vec![8.5, 7.1, 8.1]);
 
         // filter + restrict. `&` on every column reference.
@@ -347,7 +356,8 @@ mod tests {
         assert_eq!(
             collect(
                 db.films
-                    .all()
+                    .all() // films is a struct of cols, not a col, so can't directly call
+                    // combinators (doesn't impl Query, etc.)
                     .with((&db.films.genre).select(&db.genres.name).eq("horror"))
                     .select(&db.films.title)
             ),
@@ -379,6 +389,17 @@ mod tests {
         assert_eq!(
             collect(&db.films.studio),
             vec![Key::<Studios>::new(205), Key::new(100), Key::new(205)]
+        );
+
+        // The dict table maps ID → ROW, not row → ID. Pinned explicitly,
+        // since the test data is asymmetric enough to catch an inversion:
+        // Studio_id = [100, 205, 9899], so external key 205 is ROW 1.
+        // Inverted, 205 would land on row 2 ("Mubi") or miss entirely.
+        let rows = collect((&db.films.studio).select(&db.studio_table));
+        assert_eq!(
+            rows,
+            vec![Id::<Studios>::new(1), Id::new(0), Id::new(1)],
+            "DictTable must map external id → row"
         );
 
         // cross-entity mistakes ARE still compile errors — the phantom on
