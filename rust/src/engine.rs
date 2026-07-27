@@ -22,6 +22,7 @@ pub trait Drive: Query {
     fn drive<K: FnMut(Self::D, Self::R)>(&self, k: K);
 }
 
+/// Domain-membership test — "is `x` in the domain of this relation?".
 pub trait Member: Query {
     fn member(&self, x: Self::D) -> bool;
 }
@@ -29,13 +30,6 @@ pub trait Member: Query {
 pub trait Probe: Member {
     fn probe<K: FnMut(Self::R)>(&self, x: Self::D, k: K);
     fn probe_any<K: FnMut(Self::R) -> bool>(&self, x: Self::D, k: K) -> bool;
-}
-
-impl<T: Probe> Member for T {
-    #[inline(always)]
-    fn member(&self, x: Self::D) -> bool {
-        self.probe_any(x, |_| true)
-    }
 }
 
 pub trait IntoQuery {
@@ -74,6 +68,12 @@ impl<T: Probe + ?Sized> Probe for &T {
     #[inline(always)]
     fn probe_any<K: FnMut(T::R) -> bool>(&self, x: T::D, k: K) -> bool {
         (**self).probe_any(x, k)
+    }
+}
+impl<T: Member + ?Sized> Member for &T {
+    #[inline(always)]
+    fn member(&self, x: T::D) -> bool {
+        (**self).member(x)
     }
 }
 
@@ -380,6 +380,12 @@ impl<R: Copy, D: Dense> Drive for VecRel<R, D> {
         }
     }
 }
+impl<R: Copy, D: Dense> Member for VecRel<R, D> {
+    #[inline(always)]
+    fn member(&self, x: D) -> bool {
+        x.idx() < self.values.len()
+    }
+}
 impl<R: Copy, D: Dense> Probe for VecRel<R, D> {
     #[inline(always)]
     fn probe<K: FnMut(R)>(&self, x: D, mut k: K) {
@@ -405,6 +411,12 @@ impl<R: Copy, D: Dense> Drive for MultiRel<R, D> {
                 k(D::from_idx(i), v);
             }
         }
+    }
+}
+impl<R: Copy, D: Dense> Member for MultiRel<R, D> {
+    #[inline(always)]
+    fn member(&self, x: D) -> bool {
+        !self.row(x.idx()).is_empty()
     }
 }
 impl<R: Copy, D: Dense> Probe for MultiRel<R, D> {
@@ -447,6 +459,12 @@ impl<D: Dense> Drive for Universe<D> {
         }
     }
 }
+impl<D: Dense> Member for Universe<D> {
+    #[inline(always)]
+    fn member(&self, x: D) -> bool {
+        x.idx() < self.n
+    }
+}
 impl<D: Dense> Probe for Universe<D> {
     #[inline(always)]
     fn probe<K: FnMut(D)>(&self, x: D, mut k: K) {
@@ -479,6 +497,12 @@ impl<E> Default for Ident<E> {
 impl<E: 'static> Query for Ident<E> {
     type D = Id<E>;
     type R = Id<E>;
+}
+impl<E: 'static> Member for Ident<E> {
+    #[inline(always)]
+    fn member(&self, _x: Id<E>) -> bool {
+        true
+    }
 }
 impl<E: 'static> Probe for Ident<E> {
     #[inline(always)]
@@ -567,6 +591,12 @@ impl<E: 'static> Query for DictTable<E> {
     type D = Key<E>;
     type R = Id<E>;
 }
+impl<E: 'static> Member for DictTable<E> {
+    #[inline]
+    fn member(&self, x: Key<E>) -> bool {
+        self.map.contains_key(&x)
+    }
+}
 impl<E: 'static> Probe for DictTable<E> {
     #[inline]
     fn probe<K: FnMut(Id<E>)>(&self, x: Key<E>, mut k: K) {
@@ -611,6 +641,12 @@ impl<A: Drive, B: Probe<D = A::R>> Drive for Compose<A, B> {
         self.a.drive(|x, m| self.b.probe(m, |r| k(x, r)));
     }
 }
+impl<A: Probe, B: Member<D = A::R>> Member for Compose<A, B> {
+    #[inline(always)]
+    fn member(&self, x: A::D) -> bool {
+        self.a.probe_any(x, |m| self.b.member(m))
+    }
+}
 impl<A: Probe, B: Probe<D = A::R>> Probe for Compose<A, B> {
     #[inline(always)]
     fn probe<K: FnMut(B::R)>(&self, x: A::D, mut k: K) {
@@ -641,6 +677,12 @@ impl<A: Drive, F: Fn(A::R) -> bool> Drive for Filter<A, F> {
                 k(x, v);
             }
         });
+    }
+}
+impl<A: Probe, F: Fn(A::R) -> bool> Member for Filter<A, F> {
+    #[inline(always)]
+    fn member(&self, x: A::D) -> bool {
+        self.a.probe_any(x, |v| (self.p)(v))
     }
 }
 impl<A: Probe, F: Fn(A::R) -> bool> Probe for Filter<A, F> {
@@ -680,6 +722,12 @@ impl<A: Drive, B: Member<D = A::R>> Drive for Restrict<A, B> {
         });
     }
 }
+impl<A: Probe, B: Member<D = A::R>> Member for Restrict<A, B> {
+    #[inline(always)]
+    fn member(&self, x: A::D) -> bool {
+        self.a.probe_any(x, |v| self.b.member(v))
+    }
+}
 impl<A: Probe, B: Probe<D = A::R>> Probe for Restrict<A, B> {
     #[inline(always)]
     fn probe<K: FnMut(A::R)>(&self, x: A::D, mut k: K) {
@@ -713,6 +761,12 @@ impl<A: Drive, B: Probe<D = A::D>> Drive for Diff<A, B> {
                 k(x, v);
             }
         });
+    }
+}
+impl<A: Member, B: Member<D = A::D>> Member for Diff<A, B> {
+    #[inline(always)]
+    fn member(&self, x: A::D) -> bool {
+        self.a.member(x) && !self.b.member(x)
     }
 }
 impl<A: Probe, B: Probe<D = A::D>> Probe for Diff<A, B> {
@@ -774,6 +828,12 @@ impl<A: Drive, B: Probe<D = A::D>> Drive for Prod<A, B> {
     #[inline(always)]
     fn drive<K: FnMut(A::D, (A::R, B::R))>(&self, mut k: K) {
         self.a.drive(|x, a| self.b.probe(x, |b| k(x, (a, b))));
+    }
+}
+impl<A: Member, B: Member<D = A::D>> Member for Prod<A, B> {
+    #[inline(always)]
+    fn member(&self, x: A::D) -> bool {
+        self.a.member(x) && self.b.member(x)
     }
 }
 impl<A: Probe, B: Probe<D = A::D>> Probe for Prod<A, B> {
@@ -838,6 +898,12 @@ impl<K: Copy + Eq + Hash, V: Copy> Query for HashIdx<K, V> {
     type D = K;
     type R = V;
 }
+impl<K: Copy + Eq + Hash, V: Copy> Member for HashIdx<K, V> {
+    #[inline(always)]
+    fn member(&self, x: K) -> bool {
+        self.idx.get(&x).is_some_and(|vs| !vs.is_empty())
+    }
+}
 impl<K: Copy + Eq + Hash, V: Copy> Probe for HashIdx<K, V> {
     #[inline(always)]
     fn probe<F: FnMut(V)>(&self, x: K, mut k: F) {
@@ -877,6 +943,12 @@ where
 impl<D: Copy + Eq + Hash> Query for MatSet<D> {
     type D = D;
     type R = D;
+}
+impl<D: Copy + Eq + Hash> Member for MatSet<D> {
+    #[inline(always)]
+    fn member(&self, x: D) -> bool {
+        self.set.contains(&x)
+    }
 }
 impl<D: Copy + Eq + Hash> Probe for MatSet<D> {
     #[inline(always)]
@@ -932,14 +1004,6 @@ impl<D: Dense> Bitset<D> {
             self.bs[i / 64] |= 1u64 << (i % 64);
         }
     }
-
-    /// Direct bit test. INHERENT method, deliberately shadowing trait
-    /// `member` to avoid infinite mutual recursion.
-    #[inline(always)]
-    pub fn member(&self, x: D) -> bool {
-        let i = x.idx();
-        i < self.n && (self.bs[i / 64] >> (i % 64)) & 1 != 0
-    }
 }
 
 impl<D: Dense> Query for Bitset<D> {
@@ -958,6 +1022,13 @@ impl<D: Dense> Drive for Bitset<D> {
                 w &= w - 1;
             }
         }
+    }
+}
+impl<D: Dense> Member for Bitset<D> {
+    #[inline(always)]
+    fn member(&self, x: D) -> bool {
+        let i = x.idx();
+        i < self.n && (self.bs[i / 64] >> (i % 64)) & 1 != 0
     }
 }
 impl<D: Dense> Probe for Bitset<D> {
@@ -1012,6 +1083,12 @@ impl<D: Dense> Drive for SparseUniverse<D> {
     #[inline(always)]
     fn drive<K: FnMut(D, D)>(&self, k: K) {
         self.valid.drive(k);
+    }
+}
+impl<D: Dense> Member for SparseUniverse<D> {
+    #[inline(always)]
+    fn member(&self, x: D) -> bool {
+        x.idx() < self.n
     }
 }
 impl<D: Dense> Probe for SparseUniverse<D> {
@@ -1117,6 +1194,12 @@ impl<D: Copy + Eq + Hash, S: Copy> Drive for Fold<D, S> {
         }
     }
 }
+impl<D: Copy + Eq + Hash, S: Copy> Member for Fold<D, S> {
+    #[inline(always)]
+    fn member(&self, x: D) -> bool {
+        self.cache.contains_key(&x)
+    }
+}
 impl<D: Copy + Eq + Hash, S: Copy> Probe for Fold<D, S> {
     #[inline(always)]
     fn probe<K: FnMut(S)>(&self, x: D, mut k: K) {
@@ -1207,6 +1290,12 @@ impl<S: Copy, D: Dense> Drive for DenseFold<S, D> {
         }
     }
 }
+impl<S: Copy, D: Dense> Member for DenseFold<S, D> {
+    #[inline(always)]
+    fn member(&self, x: D) -> bool {
+        x.idx() < self.vals.len() && (self.emit_all || self.seen[x.idx()])
+    }
+}
 impl<S: Copy, D: Dense> Probe for DenseFold<S, D> {
     #[inline(always)]
     fn probe<K: FnMut(S)>(&self, x: D, mut k: K) {
@@ -1250,6 +1339,12 @@ impl<Q: Drive, F: Fn(Q::R) -> S, S: Copy> Drive for Map<Q, F, S> {
     #[inline(always)]
     fn drive<K: FnMut(Q::D, S)>(&self, mut k: K) {
         self.q.drive(|d, v| k(d, (self.f)(v)));
+    }
+}
+impl<Q: Member, F: Fn(Q::R) -> S, S: Copy> Member for Map<Q, F, S> {
+    #[inline(always)]
+    fn member(&self, x: Q::D) -> bool {
+        self.q.member(x)
     }
 }
 impl<Q: Probe, F: Fn(Q::R) -> S, S: Copy> Probe for Map<Q, F, S> {
