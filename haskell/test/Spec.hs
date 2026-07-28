@@ -275,6 +275,16 @@ main = do
   gotT2 <- sort <$> pairs (fold (\n _ -> n + 1) (0 :: Int) (fromPairs (zip strKeys [1 :: Int ..])))
   check "fold table survives growth (string keys)" gotT2 (tallied strKeys)
 
+  -- A compound key, which is stored as one flat array per leaf of the tuple
+  -- rather than as tuples. Nested and mixed on purpose: this is the shape Q3
+  -- groups by, and it is the case where a `Keys` built wrong would pair up
+  -- components from different rows and silently merge two groups into one.
+  let pairKeys = [ ((Id (i `mod` 37), i `mod` 11), BS8.pack (show (i `mod` 5)))
+                 | i <- [1 .. manyRows] ]
+  gotT3 <- sort <$> pairs (fold (\n _ -> n + 1) (0 :: Int)
+                                (fromPairs (zip pairKeys [1 :: Int ..])))
+  check "fold table with nested tuple keys" gotT3 (tallied pairKeys)
+
   -- A key absent from the table must probe to nothing, which is the case that
   -- exercises the empty-slot marker rather than the key comparison.
   let tbl = fold (\n _ -> n + 1) (0 :: Int) (fromPairs (zip idKeys [1 :: Int ..]))

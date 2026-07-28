@@ -28,7 +28,6 @@ import qualified Data.Array.Unboxed as U
 import Data.Hashable (Hashable)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import qualified Data.Vector as BV
 import qualified Data.Vector.Unboxed as UV
 
 import Prela.Mode
@@ -55,7 +54,7 @@ class Mode q where
   -- order, which is to say arbitrary — a fold has never promised one, but the
   -- `Map` this replaced happened to give sorted keys, so anything that was
   -- quietly relying on that has to sort for itself now.
-  fromTable :: (Hashable d, UV.Unbox t) => Table d t -> q d t
+  fromTable :: (Hashable d, Key d, UV.Unbox t) => Table d t -> q d t
   fromBits  :: Bits e -> q (Id e) (Id e)
 
   -- Chain two relations through a shared middle value: `r : d -> e` and
@@ -108,7 +107,7 @@ instance Mode Drv where
   fromTable t = Drv (\k -> case t of
                              Table mask hs ks vs ->
                                mapM_ (\i -> when (hs UV.! i /= 0)
-                                                (k (ks BV.! i) (vs UV.! i)))
+                                                (k (indexKey ks i) (vs UV.! i)))
                                      [0 .. mask])
   fromBits b = Drv (\k -> case b of
                             Bits bs -> mapM_ (\i -> when (bs U.! i) (k (Id i) (Id i)))

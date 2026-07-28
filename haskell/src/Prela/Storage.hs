@@ -24,6 +24,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Unsafe as BSU
 import Data.Maybe (isJust)
 import qualified Data.Vector as BV
+import qualified Data.Vector.Mutable as BMV
 import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Unboxed as UV
 import qualified Data.Vector.Unboxed.Mutable as UMV
@@ -145,6 +146,110 @@ instance Elem ByteString where
   {-# INLINE atStore #-}
 
 --------------------------------------------------------------------------------
+-- How fold keys are physically stored
+--------------------------------------------------------------------------------
+
+-- `Elem` above says how a COLUMN's values are laid out. This says the same for a
+-- hash table's KEYS, and it exists for the same reason. A boxed vector of
+-- `Id Order` is a vector of pointers, so confirming that a slot really holds the
+-- key being looked up chases into the heap for an object wrapping one machine
+-- word. The hash is compared first, so that chase lands on the slot that
+-- matched, which is to say once per input row.
+--
+-- Two associated data families rather than one, because a table is filled
+-- mutably and read immutably and the two want different types. `Data.Vector`
+-- splits `MVector`/`Vector` for the same reason.
+--
+-- The PAIR instance is what makes four instances cover the whole schema: a key
+-- of `((Id Order, Int), Int)` becomes three flat arrays side by side and is
+-- never a tuple in memory. Every compound key in TPC-H is built by pairing, so
+-- nothing else needs an instance of its own. Same structure-of-arrays trick as
+-- `Data.Vector.Unboxed`'s tuple instances, which is also why the accumulators
+-- can use those directly.
+--
+-- INVARIANT: a slot is written before it is read. `newKeys` does not initialize,
+-- so the caller has to have its own record of which slots are live — for the
+-- table below that is the hash vector, where 0 marks an empty slot.
+class Eq d => Key d where
+  data MKeys s d
+  data Keys d
+  newKeys    :: Int -> ST s (MKeys s d)
+  readKey    :: MKeys s d -> Int -> ST s d
+  writeKey   :: MKeys s d -> Int -> d -> ST s ()
+  freezeKeys :: MKeys s d -> ST s (Keys d)
+  indexKey   :: Keys d -> Int -> d
+
+instance Key Int where
+  newtype MKeys s Int = MIntKeys (UMV.MVector s Int)
+  newtype Keys Int    = IntKeys (UV.Vector Int)
+  newKeys n                 = MIntKeys <$> UMV.new n
+  readKey (MIntKeys v) i    = UMV.read v i
+  writeKey (MIntKeys v) i x = UMV.write v i x
+  freezeKeys (MIntKeys v)   = IntKeys <$> UV.freeze v
+  indexKey (IntKeys v) i    = v UV.! i
+  {-# INLINE newKeys #-}
+  {-# INLINE readKey #-}
+  {-# INLINE writeKey #-}
+  {-# INLINE indexKey #-}
+
+-- The tag is erased, so an id column of keys is an `Int` array, exactly as the
+-- `Elem` instance for ids is.
+instance Key (Id e) where
+  newtype MKeys s (Id e) = MIdKeys (UMV.MVector s Int)
+  newtype Keys (Id e)    = IdKeys (UV.Vector Int)
+  newKeys n                       = MIdKeys <$> UMV.new n
+  readKey (MIdKeys v) i           = Id <$> UMV.read v i
+  writeKey (MIdKeys v) i (Id x)   = UMV.write v i x
+  freezeKeys (MIdKeys v)          = IdKeys <$> UV.freeze v
+  indexKey (IdKeys v) i           = Id (v UV.! i)
+  {-# INLINE newKeys #-}
+  {-# INLINE readKey #-}
+  {-# INLINE writeKey #-}
+  {-# INLINE indexKey #-}
+
+instance Key Double where
+  newtype MKeys s Double = MDblKeys (UMV.MVector s Double)
+  newtype Keys Double    = DblKeys (UV.Vector Double)
+  newKeys n                 = MDblKeys <$> UMV.new n
+  readKey (MDblKeys v) i    = UMV.read v i
+  writeKey (MDblKeys v) i x = UMV.write v i x
+  freezeKeys (MDblKeys v)   = DblKeys <$> UV.freeze v
+  indexKey (DblKeys v) i    = v UV.! i
+  {-# INLINE newKeys #-}
+  {-# INLINE readKey #-}
+  {-# INLINE writeKey #-}
+  {-# INLINE indexKey #-}
+
+-- The one key type that stays boxed: a ByteString is a pointer, a length and an
+-- offset, so there is no flat form to put it in. Group keys that are strings are
+-- common enough (Q1, Q4 and Q22 all group by one) that this is not a fallback.
+instance Key ByteString where
+  newtype MKeys s ByteString = MBsKeys (BMV.MVector s ByteString)
+  newtype Keys ByteString    = BsKeys (BV.Vector ByteString)
+  newKeys n                = MBsKeys <$> BMV.new n
+  readKey (MBsKeys v) i    = BMV.read v i
+  writeKey (MBsKeys v) i x = BMV.write v i x
+  freezeKeys (MBsKeys v)   = BsKeys <$> BV.freeze v
+  indexKey (BsKeys v) i    = v BV.! i
+  {-# INLINE newKeys #-}
+  {-# INLINE readKey #-}
+  {-# INLINE writeKey #-}
+  {-# INLINE indexKey #-}
+
+instance (Key a, Key b) => Key (a, b) where
+  data MKeys s (a, b) = MPairKeys !(MKeys s a) !(MKeys s b)
+  data Keys (a, b)    = PairKeys !(Keys a) !(Keys b)
+  newKeys n                         = MPairKeys <$> newKeys n <*> newKeys n
+  readKey (MPairKeys u v) i         = (,) <$> readKey u i <*> readKey v i
+  writeKey (MPairKeys u v) i (x, y) = writeKey u i x >> writeKey v i y
+  freezeKeys (MPairKeys u v)        = PairKeys <$> freezeKeys u <*> freezeKeys v
+  indexKey (PairKeys u v) i         = (indexKey u i, indexKey v i)
+  {-# INLINE newKeys #-}
+  {-# INLINE readKey #-}
+  {-# INLINE writeKey #-}
+  {-# INLINE indexKey #-}
+
+--------------------------------------------------------------------------------
 -- The three column shapes
 --------------------------------------------------------------------------------
 
@@ -237,7 +342,7 @@ data Dense e t = Dense !Int !(UV.Vector t) !(UArray Int Bool)
 -- Hash 0 marks an empty slot, which is why `slotHash` never returns it.
 data Table d t = Table !Int              -- capacity - 1, used as the wrap mask
                        !(UV.Vector Word) -- slot hashes, 0 where empty
-                       !(BV.Vector d)    -- key, meaningful where hash /= 0
+                       !(Keys d)         -- key, meaningful where hash /= 0
                        !(UV.Vector t)    -- accumulator, likewise
 
 -- | A key's slot hash: never 0, since 0 is the empty marker.
@@ -262,13 +367,13 @@ slotHash d = if h == 0 then 1 else h
 -- An index rather than a `Maybe t`, because the accumulator is unboxed: handing
 -- back a `Maybe` would have to build the `Just` and box the value inside it,
 -- once per probe, which is the cost this whole representation exists to avoid.
-tableSlot :: Hashable d => Table d t -> d -> Int
+tableSlot :: (Hashable d, Key d) => Table d t -> d -> Int
 tableSlot (Table mask hs ks _) d = go (fromIntegral h .&. mask)
   where
     h = slotHash d
     go i = case hs UV.! i of
              0                                -> -1
-             h' | h' == h && ks BV.! i == d   -> i
+             h' | h' == h && indexKey ks i == d -> i
                 | otherwise                   -> go ((i + 1) .&. mask)
 {-# INLINE tableSlot #-}
 
