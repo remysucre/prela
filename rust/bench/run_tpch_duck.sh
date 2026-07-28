@@ -13,14 +13,19 @@
 # single session — absolute times on this hardware move far more between
 # sessions than the differences being measured.
 #
+# SF=1 only, deliberately: prela's side of the comparison reads a prebuilt
+# binary cache that nothing here regenerates, so a scale-factor knob would
+# only ever desynchronise the two engines. Other scales belong in a sweep
+# script that rebuilds the cache per scale.
+#
 # Env knobs (defaults shown):
-#   DUCKDB=duckdb          SF=1   THREADS=1
+#   DUCKDB=duckdb          THREADS=1
 #   OUT=<repo>/rust/bench/data/duckdb_st.txt
 
 set -e
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 DUCKDB=${DUCKDB:-duckdb}
-SF=${SF:-1}
+SF=1
 THREADS=${THREADS:-1}
 OUT=${OUT:-$REPO/rust/bench/data/duckdb_st.txt}
 
