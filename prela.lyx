@@ -5957,12 +5957,12 @@ tuple "list"
 \end_inset
 
 .
- Prela executes all 113 queries of JOB in 5.15s,
- a 2.98
+ Prela executes all 113 queries of JOB in 8.68s,
+ a 4.5
 \begin_inset Formula $\times$
 \end_inset
 
- speedup over DuckDB's 15.34s.
+ speedup over DuckDB's 38.82s.
  Prela's advantage is mainly due to data representation:
  because JOB's primary keys are contiguous integers,
  the ID to row mapping degenerates to the identity;
@@ -5970,7 +5970,7 @@ tuple "list"
  we represent this mapping as the identity function which is optimized away during compilation.
  And because each column is stored as a vector indexed by the row number,
  joins degrade to simple array accesses which are very fast.
- We tried to port the same optimizations back to DuckDB but was not successful.
+ We tried to port the same optimizations back to DuckDB but were not successful.
  The only user-accessible index provided by DuckDB is the hashing-based adaptive radix tree
 \begin_inset space \thinspace{}
 \end_inset
@@ -5994,15 +5994,23 @@ literal "false"
 idiomatic
 \emph default
  queries which are written in the most natural way without regard to performance.
- These queries run in TODOs,
- TODO slower than DuckDB's ??.
+ These queries run in 1.13s,
+ only 1.11
+\begin_inset Formula $\times$
+\end_inset
+
+ faster than DuckDB's 1.26s.
  Fortunately,
  it is easy to improve the performance of the Prela queries.
  By directly rewriting the queries,
  we were able to speed them up by reordering joins,
  introducing materialization points,
  and specifying data structures like bit sets for materialized intermediates.
- The tuned queries run ??
+ The tuned queries take 0.44s,
+ 2.86
+\begin_inset Formula $\times$
+\end_inset
+
  faster than DuckDB overall.
  
 \end_layout
