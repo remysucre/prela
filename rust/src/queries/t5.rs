@@ -4,7 +4,7 @@ use crate::engine::*;
 use crate::job_schema::*;
 use crate::queries::helpers::{min_row, Row};
 use crate::queries::sets::{genre6, kw7, kw8, kw10, nordic8, nordic9, voice4, writer5};
-use super::helpers::{film_or_warner_co, follow_link, kw_eq};
+use super::helpers::{film_or_warner_co, follow_link};
 
 fn k_23ab() -> impl Query<R = &'static str, D = Id<Movie>> + Drive + Probe {
     kind.eq("movie")
@@ -163,10 +163,13 @@ fn q20c() -> impl Drive<R: Row> {
 // a few thousand movies, so the year, country and link tests run on almost
 // nothing.
 //
-// The keyword test goes through `kw_eq` so the constant is resolved to an id
-// once rather than string-compared per movie-keyword pair — see helpers.rs.
+// Bare `link` leads: only 6.4k of the 2.5M movies have one, against ~10k for
+// the keyword, and its test is a CSR-emptiness check rather than a walk of
+// the movie's keyword ids. `lk` in the select makes it redundant, so it costs
+// nothing but the ordering.
 fn q21(countries: Vec<&'static str>, ylo: i64, yhi: i64) -> impl Drive<R: Row> {
-    movie.with(keyword.with(kw_eq("sequel"))
+    movie.with(link
+          .and(keyword.eq("sequel"))
           .and(production_year.between(ylo, yhi))
           .and(info.is_in(countries))
           .and(follow_link()))

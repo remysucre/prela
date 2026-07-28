@@ -2,7 +2,7 @@
 
 use crate::engine::*;
 use crate::job_schema::*;
-use crate::queries::helpers::{kw_eq, kw_rx, min_row, Row};
+use crate::queries::helpers::{kw_rx, min_row, Row};
 use crate::queries::sets::{murder4, nordic8, nordic10};
 
 pub const ENTRIES: &[super::Entry] = &[
@@ -79,7 +79,8 @@ fn q13a() -> impl Drive<R: Row> {
 }
 
 fn q11a() -> impl Drive<R: Row> {
-    movie.with(keyword.with(kw_eq("sequel"))
+    movie.with(link
+          .and(keyword.eq("sequel"))
           .and(production_year.between(1950, 2000)))
        .select(company.with(country.ne("[pl]")
                        .and(Company::name.rx(r"Film|Warner"))
@@ -169,7 +170,8 @@ fn q3c() -> impl Drive<R: Row> {
 }
 
 fn q11b() -> impl Drive<R: Row> {
-    movie.with(keyword.with(kw_eq("sequel"))
+    movie.with(link
+          .and(keyword.eq("sequel"))
           .and(production_year.eq(1998))
           .and(title.rx(r"Money")))
        .select(company.with(country.ne("[pl]")

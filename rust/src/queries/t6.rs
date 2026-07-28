@@ -4,7 +4,7 @@ use crate::engine::*;
 use crate::job_schema::*;
 use crate::queries::helpers::{min_row, Row};
 use crate::queries::sets::{genre6, kw7, link3, murder4, nordic9, nordic10, voice3, voice4, writer5};
-use super::helpers::{film_or_warner_co, follow_link, kw_eq};
+use super::helpers::{film_or_warner_co, follow_link};
 
 fn co_28() -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive + Probe {
     company.with(country.ne("[us]")
@@ -87,7 +87,8 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 fn q27a() -> impl Drive<R: Row> {
-    movie.with(keyword.with(kw_eq("sequel"))
+    movie.with(link
+          .and(keyword.eq("sequel"))
           .and(production_year.between(1950, 2000))
           .and(info.select(Info::info.is_in(["Sweden", "Germany", "Swedish", "German"])))
           .and(complete_cast.select(subject.is_in(["cast", "crew"])
@@ -99,7 +100,8 @@ fn q27a() -> impl Drive<R: Row> {
 }
 
 fn q27b() -> impl Drive<R: Row> {
-    movie.with(keyword.with(kw_eq("sequel"))
+    movie.with(link
+          .and(keyword.eq("sequel"))
           .and(production_year.eq(1998))
           .and(info.select(Info::info.is_in(["Sweden", "Germany", "Swedish", "German"])))
           .and(complete_cast.select(subject.is_in(["cast", "crew"])
@@ -111,7 +113,8 @@ fn q27b() -> impl Drive<R: Row> {
 }
 
 fn q27c() -> impl Drive<R: Row> {
-    movie.with(keyword.with(kw_eq("sequel"))
+    movie.with(link
+          .and(keyword.eq("sequel"))
           .and(production_year.between(1950, 2010))
           .and(info.select(Info::info.is_in(nordic9())))
           .and(complete_cast.select(subject.eq("cast")
@@ -310,8 +313,8 @@ fn q31c() -> impl Drive<R: Row> {
 
 // q32a/q32b differ only in the keyword constant.
 fn q32(kw: &'static str) -> impl Drive<R: Row> {
-    movie.with(keyword.with(kw_eq(kw))
-          .and(link))
+    movie.with(link
+          .and(keyword.eq(kw)))
        .select(link.ty().text()
           .and(title)
           .and(link.target().title()))
