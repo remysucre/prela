@@ -51,6 +51,33 @@ pub fn min_row<Q: Drive>(q: Q) -> String where Q::R: Row {
 
 // ===== shared sub-queries (Julia `let` bindings used by several queries) =
 
+// ===== keyword constants, resolved to ids once ==========================
+// `keyword.eq("sequel")` elides `Id<Keyword>` to its `text` field, so the
+// test indexes into `Keyword_text` and string-compares ONCE PER
+// movie-keyword pair — ~4.5M times per driven query (and `keyword.rx(…)`
+// runs the regex that many times). The predicate only ever looks at the
+// keyword, so resolve it up front instead: one pass over the 134k-row text
+// column (~0.1 ms) into a bitset over the keyword id space, after which the
+// per-pair test is a bit lookup. Spelled `keyword.with(kw_eq("sequel"))`.
+//
+// `inv` is what puts the ids in value position — `Bitset::over` sets a bit
+// per emitted VALUE, and the text column is keyed BY id — and in drive
+// position it is a callback-argument swap, not a materialization.
+
+fn kw_univ() -> Universe<Id<Keyword>> {
+    Universe::new(Keyword::text.iq().n_keys())
+}
+
+/// Keywords whose text is exactly `kw`.
+pub fn kw_eq(kw: &'static str) -> Bitset<Id<Keyword>> {
+    Bitset::over(kw_univ(), Keyword::text.eq(kw).inv())
+}
+
+/// Keywords whose text matches `re`.
+pub fn kw_rx(re: &str) -> Bitset<Id<Keyword>> {
+    Bitset::over(kw_univ(), Keyword::text.rx(re).inv())
+}
+
 /// Companies named *Film*/*Warner*, non-Polish production companies without
 /// a note — the `co` binding of queries 21a-c and 27a-c.
 pub fn film_or_warner_co() -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive + Probe {

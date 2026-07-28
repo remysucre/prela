@@ -4,7 +4,7 @@ use crate::engine::*;
 use crate::job_schema::*;
 use crate::queries::helpers::{min_row, Row};
 use crate::queries::sets::{genre6, kw7, kw8, kw10, nordic8, nordic9, voice4, writer5};
-use super::helpers::{film_or_warner_co, follow_link};
+use super::helpers::{film_or_warner_co, follow_link, kw_eq};
 
 fn k_23ab() -> impl Query<R = &'static str, D = Id<Movie>> + Drive + Probe {
     kind.eq("movie")
@@ -163,17 +163,10 @@ fn q20c() -> impl Drive<R: Row> {
 // a few thousand movies, so the year, country and link tests run on almost
 // nothing.
 //
-// `keyword.eq("sequel")` would elide `Id<Keyword>` to its `text` field and so
-// index into `Keyword_text` + string-compare once per movie-keyword pair
-// (~4.5M times). Only one keyword id can match, so resolve it up front: one
-// scan of the 134k-row text column (~0.1 ms) into a bitset over the keyword
-// id space, and the inner test becomes a bit lookup. `inv` puts the ids in
-// value position — `Bitset::over` sets a bit per emitted VALUE — and is a
-// callback-argument swap, not a materialization.
+// The keyword test goes through `kw_eq` so the constant is resolved to an id
+// once rather than string-compared per movie-keyword pair — see helpers.rs.
 fn q21(countries: Vec<&'static str>, ylo: i64, yhi: i64) -> impl Drive<R: Row> {
-    let kws = Universe::<Id<Keyword>>::new(Keyword::text.iq().n_keys());
-    let sequel = Bitset::over(kws, Keyword::text.eq("sequel").inv());
-    movie.with(keyword.with(sequel)
+    movie.with(keyword.with(kw_eq("sequel"))
           .and(production_year.between(ylo, yhi))
           .and(info.is_in(countries))
           .and(follow_link()))

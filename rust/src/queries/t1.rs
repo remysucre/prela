@@ -2,7 +2,7 @@
 
 use crate::engine::*;
 use crate::job_schema::*;
-use crate::queries::helpers::{min_row, Row};
+use crate::queries::helpers::{kw_eq, kw_rx, min_row, Row};
 use crate::queries::sets::{murder4, nordic8, nordic10};
 
 pub const ENTRIES: &[super::Entry] = &[
@@ -58,7 +58,7 @@ fn q3b() -> impl Drive<R: Row> {
 
 // q4a–q4c differ only in the year cutoff and rating threshold.
 fn q4(year: i64, rating: &'static str) -> impl Drive<R: Row> {
-    movie.with(keyword.rx(r"sequel")
+    movie.with(keyword.with(kw_rx(r"sequel"))
           .and(production_year.gt(year)))
        .select(data.with(Data::ty.eq("rating")
                     .and(Data::text.gt(rating))).text()
@@ -79,9 +79,8 @@ fn q13a() -> impl Drive<R: Row> {
 }
 
 fn q11a() -> impl Drive<R: Row> {
-    movie.with(keyword.eq("sequel")
-          .and(production_year.ge(1950))
-          .and(production_year.le(2000)))
+    movie.with(keyword.with(kw_eq("sequel"))
+          .and(production_year.between(1950, 2000)))
        .select(company.with(country.ne("[pl]")
                        .and(Company::name.rx(r"Film|Warner"))
                        .and(Company::ty.eq("production companies"))
@@ -170,7 +169,7 @@ fn q3c() -> impl Drive<R: Row> {
 }
 
 fn q11b() -> impl Drive<R: Row> {
-    movie.with(keyword.eq("sequel")
+    movie.with(keyword.with(kw_eq("sequel"))
           .and(production_year.eq(1998))
           .and(title.rx(r"Money")))
        .select(company.with(country.ne("[pl]")

@@ -4,7 +4,7 @@ use crate::engine::*;
 use crate::job_schema::*;
 use crate::queries::helpers::{min_row, Row};
 use crate::queries::sets::{genre6, kw7, link3, murder4, nordic9, nordic10, voice3, voice4, writer5};
-use super::helpers::{film_or_warner_co, follow_link};
+use super::helpers::{film_or_warner_co, follow_link, kw_eq};
 
 fn co_28() -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive + Probe {
     company.with(country.ne("[us]")
@@ -87,41 +87,36 @@ pub const ENTRIES: &[super::Entry] = &[
 ];
 
 fn q27a() -> impl Drive<R: Row> {
-    movie.with(complete_cast.select(subject.is_in(["cast", "crew"])
-                               .and(status.eq("complete")))
-          .and(film_or_warner_co())
-          .and(keyword.eq("sequel"))
-          .and(follow_link())
+    movie.with(keyword.with(kw_eq("sequel"))
+          .and(production_year.between(1950, 2000))
           .and(info.select(Info::info.is_in(["Sweden", "Germany", "Swedish", "German"])))
-          .and(production_year.ge(1950))
-          .and(production_year.le(2000)))
+          .and(complete_cast.select(subject.is_in(["cast", "crew"])
+                               .and(status.eq("complete"))))
+          .and(follow_link()))
        .select(film_or_warner_co().name()
           .and(follow_link())
           .and(title))
 }
 
 fn q27b() -> impl Drive<R: Row> {
-    movie.with(complete_cast.select(subject.is_in(["cast", "crew"])
-                               .and(status.eq("complete")))
-          .and(film_or_warner_co())
-          .and(keyword.eq("sequel"))
-          .and(follow_link())
+    movie.with(keyword.with(kw_eq("sequel"))
+          .and(production_year.eq(1998))
           .and(info.select(Info::info.is_in(["Sweden", "Germany", "Swedish", "German"])))
-          .and(production_year.eq(1998)))
+          .and(complete_cast.select(subject.is_in(["cast", "crew"])
+                               .and(status.eq("complete"))))
+          .and(follow_link()))
        .select(film_or_warner_co().name()
           .and(follow_link())
           .and(title))
 }
 
 fn q27c() -> impl Drive<R: Row> {
-    movie.with(complete_cast.select(subject.eq("cast")
-                               .and(status.rx(r"^complete")))
-          .and(film_or_warner_co())
-          .and(keyword.eq("sequel"))
-          .and(follow_link())
+    movie.with(keyword.with(kw_eq("sequel"))
+          .and(production_year.between(1950, 2010))
           .and(info.select(Info::info.is_in(nordic9())))
-          .and(production_year.ge(1950))
-          .and(production_year.le(2010)))
+          .and(complete_cast.select(subject.eq("cast")
+                               .and(status.rx(r"^complete"))))
+          .and(follow_link()))
        .select(film_or_warner_co().name()
           .and(follow_link())
           .and(title))
@@ -315,7 +310,7 @@ fn q31c() -> impl Drive<R: Row> {
 
 // q32a/q32b differ only in the keyword constant.
 fn q32(kw: &'static str) -> impl Drive<R: Row> {
-    movie.with(keyword.eq(kw)
+    movie.with(keyword.with(kw_eq(kw))
           .and(link))
        .select(link.ty().text()
           .and(title)
