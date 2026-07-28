@@ -13,13 +13,17 @@
 -- back are ordinary leaves — a fold's result composes and probes like a column.
 module Prela.Materialize where
 
-import Control.Monad (when)
-import Control.Monad.ST (runST)
+import Control.Monad (forM_, when)
+import Control.Monad.ST (ST, runST)
 import Data.Array.ST (freeze, runSTUArray, writeArray)
+import Data.Bits ((.&.))
+import Data.Hashable (Hashable)
 import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.STRef (modifySTRef', newSTRef, readSTRef)
+import Data.STRef (STRef, modifySTRef', newSTRef, readSTRef, writeSTRef)
+import qualified Data.Vector as BV
+import qualified Data.Vector.Mutable as BMV
 import qualified Data.Vector.Unboxed as UV
 import qualified Data.Vector.Unboxed.Mutable as UMV
 
@@ -53,13 +57,80 @@ inv = fromIndex . index . invStream
 -- it drives once into a cache, but the cache holds ONE value per key.
 -- `count = fold (\n _ -> n + 1) 0`. The result is an ordinary relation, so a
 -- fold composes and probes like anything else.
-fold :: (Mode q, Ord d) => (s -> r -> s) -> s -> Drv d r -> q d s
-fold op ini q = fromCache cache
-  where
-    cache = runST $ do
-      ref <- newSTRef Map.empty
-      drive q (\d v -> modifySTRef' ref (Map.alter (Just . flip op v . maybe ini id) d))
-      readSTRef ref
+fold :: (Mode q, Hashable d, UV.Unbox s) => (s -> r -> s) -> s -> Drv d r -> q d s
+fold op ini q = fromTable (buildTable op ini q)
+{-# INLINE fold #-}
+
+-- The mutable table under construction: the same three stores as `Table`, plus
+-- the mask. Held in an `STRef` because growth replaces all of it at once and the
+-- driving continuation has nowhere else to keep state — `drive`'s callback
+-- returns `m ()`, so nothing can be threaded through it.
+--
+-- That costs one pointer read per input row, which is the price of amortized
+-- growth and is what Rust pays too, its closure reaching the map through a
+-- borrow. Everything downstream of the read is flat.
+data MTable s d t = MTable !Int !(UMV.MVector s Word) !(BMV.MVector s d) !(UMV.MVector s t)
+
+newMTable :: UV.Unbox t => Int -> t -> ST s (MTable s d t)
+newMTable cap ini =
+  MTable (cap - 1) <$> UMV.replicate cap 0 <*> BMV.new cap <*> UMV.replicate cap ini
+
+-- | Drive once, reducing into an open-addressed table.
+--
+-- Growth is at three quarters full. Linear probing degrades badly past that,
+-- and every rehash is paid back over the rows that follow it, so the doubling
+-- costs O(n) in total across the whole build.
+buildTable :: (Hashable d, UV.Unbox t) => (t -> r -> t) -> t -> Drv d r -> Table d t
+buildTable op ini q = runST $ do
+  ref  <- newSTRef =<< newMTable 64 ini
+  nref <- newSTRef (0 :: Int)
+  drive q $ \d v -> do
+    MTable mask hs ks vs <- readSTRef ref
+    let h = slotHash d
+        go i = do
+          h' <- UMV.read hs i
+          if h' == 0
+            then do
+              UMV.write hs i h
+              BMV.write ks i d
+              UMV.write vs i (op ini v)
+              n <- (+ 1) <$> readSTRef nref
+              writeSTRef nref n
+              when (4 * n > 3 * (mask + 1)) (growTable ref ini)
+            else do
+              k <- BMV.read ks i
+              if h' == h && k == d
+                then UMV.modify vs (`op` v) i
+                else go ((i + 1) .&. mask)
+    go (fromIntegral h .&. mask)
+  MTable mask hs ks vs <- readSTRef ref
+  Table mask <$> UV.freeze hs <*> BV.freeze ks <*> UV.freeze vs
+-- INLINE, not INLINABLE: the point is for the `drive` inside to fuse with the
+-- query it is given, the same way every other operator does. Left to itself GHC
+-- will not export an unfolding for something this size, and the fold degenerates
+-- into a generic call that re-enters the query through a closure on every row.
+-- Measured: without this the streaming queries run ~10x slower.
+{-# INLINE buildTable #-}
+
+-- Rehash into a table of twice the capacity. Only occupied slots move, and each
+-- one lands on the first free slot of its new probe sequence, so no key
+-- comparison is needed here: every key present is already distinct.
+growTable :: UV.Unbox t => STRef s (MTable s d t) -> t -> ST s ()
+growTable ref ini = do
+  MTable mask hs ks vs <- readSTRef ref
+  MTable mask' hs' ks' vs' <- newMTable (2 * (mask + 1)) ini
+  forM_ [0 .. mask] $ \i -> do
+    h <- UMV.read hs i
+    when (h /= 0) $ do
+      k <- BMV.read ks i
+      v <- UMV.read vs i
+      let place j = do
+            h' <- UMV.read hs' j
+            if h' == 0
+              then UMV.write hs' j h >> BMV.write ks' j k >> UMV.write vs' j v
+              else place ((j + 1) .&. mask')
+      place (fromIntegral h .&. mask')
+  writeSTRef ref (MTable mask' hs' ks' vs')
 
 -- | The whole-group fold: instead of reducing pairwise, hand the reducer the
 -- entire group at once. For anything that does not fit `fold`'s

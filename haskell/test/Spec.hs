@@ -19,7 +19,10 @@ module Main where
 import Control.Exception (ErrorCall, evaluate, try)
 import Control.Monad (unless)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString.Char8 as BS8
 import Data.IORef (modifyIORef', newIORef, readIORef)
+import Data.List (sort)
+import qualified Data.Map.Strict as Map
 import System.Directory (createDirectoryIfMissing, getTemporaryDirectory)
 import System.Exit (exitFailure)
 import System.FilePath ((</>))
@@ -37,6 +40,11 @@ pairs q = do
   ref <- newIORef []
   drive q (\x y -> modifyIORef' ref ((x, y) :))
   reverse <$> readIORef ref
+
+-- A driven relation straight from a list, for testing an operator on input that
+-- no schema has to exist for.
+fromPairs :: [(d, r)] -> Drv d r
+fromPairs ps = Drv (\k -> mapM_ (uncurry k) ps)
 
 -- The same thing without IO, for the queries below. `foldAll` threads its
 -- accumulator through the fused loop, so no ref is needed.
@@ -236,8 +244,12 @@ main = do
   -- disappears when it is used as a KEY, because the range check then fails, and
   -- here it is being used as a value. Rust's `group_by` does the same. Pinned
   -- because the shape of the answer depends on it.
+  --
+  -- Sorted before comparing, here and below: a `fold` drives its hash table in
+  -- slot order, which is arbitrary and depends on the capacity it grew to. It
+  -- has never promised an order, and every query that wants one sorts.
   let byKind = groupBy (Sch.movie s) (Sch.kind s)
-  gotG1 <- pairs (fold (\n _ -> n + 1) (0 :: Int) byKind)
+  gotG1 <- sort <$> pairs (fold (\n _ -> n + 1) (0 :: Int) byKind)
   check "groupBy then fold, hole is its own group" gotG1 [(noId, 1), (Id 0, 2), (Id 1, 1)]
 
   -- The idiom for excluding it: keep only the movies whose kind resolves to a
@@ -245,8 +257,29 @@ main = do
   -- membership check rather than anything to do with grouping.
   let byLiveKind = groupBy (restrict (Sch.movie s) (compose (Sch.kind s) (Sch.kinds s)))
                            (Sch.kind s)
-  gotG2 <- pairs (fold (\n _ -> n + 1) (0 :: Int) byLiveKind)
+  gotG2 <- sort <$> pairs (fold (\n _ -> n + 1) (0 :: Int) byLiveKind)
   check "groupBy over resolvable keys only" gotG2 [(Id 0, 2), (Id 1, 1)]
+
+  -- The fold's table itself: enough distinct keys to force several rounds of
+  -- doubling from the starting capacity, so a key inserted before a rehash has
+  -- to survive being moved. Every key here shares its group with exactly two
+  -- rows, which makes a lost or conflated slot show up as a wrong count rather
+  -- than a missing row. String keys as well as ids, since those are the two
+  -- shapes the TPC-H folds actually use.
+  let manyRows = 5000 :: Int
+      tallied ks = Map.toList (Map.fromListWith (+) [(k, 1 :: Int) | k <- ks])
+      idKeys  = [Id (i `mod` 1500) | i <- [1 .. manyRows]]
+      strKeys = [BS8.pack (show (i `mod` 1500)) | i <- [1 .. manyRows]]
+  gotT1 <- sort <$> pairs (fold (\n _ -> n + 1) (0 :: Int) (fromPairs (zip idKeys [1 :: Int ..])))
+  check "fold table survives growth (id keys)" gotT1 (tallied idKeys)
+  gotT2 <- sort <$> pairs (fold (\n _ -> n + 1) (0 :: Int) (fromPairs (zip strKeys [1 :: Int ..])))
+  check "fold table survives growth (string keys)" gotT2 (tallied strKeys)
+
+  -- A key absent from the table must probe to nothing, which is the case that
+  -- exercises the empty-slot marker rather than the key comparison.
+  let tbl = fold (\n _ -> n + 1) (0 :: Int) (fromPairs (zip idKeys [1 :: Int ..]))
+  check "fold table probes miss cleanly"
+    (map (member tbl . Id) [0, 1499, 1500, -1]) [True, True, False, False]
 
   -- The whole-group fold, and its main instance. Kind 1's movie has no keywords,
   -- so that group has no rows at all and does not appear.

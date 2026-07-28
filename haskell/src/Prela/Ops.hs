@@ -25,8 +25,10 @@ import Control.Monad (when)
 import Data.Array.Base (unsafeAt)
 import Data.Array.Unboxed (UArray)
 import qualified Data.Array.Unboxed as U
+import Data.Hashable (Hashable)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Vector as BV
 import qualified Data.Vector.Unboxed as UV
 
 import Prela.Mode
@@ -49,6 +51,11 @@ class Mode q where
   -- `Unbox` because a `Dense`'s slots are stored componentwise; see the note on
   -- the type in "Prela.Storage".
   fromDense :: UV.Unbox t => Dense e t -> q (Id e) t
+  -- The same, for keys that are not entity ids. Note the DRIVE order is slot
+  -- order, which is to say arbitrary — a fold has never promised one, but the
+  -- `Map` this replaced happened to give sorted keys, so anything that was
+  -- quietly relying on that has to sort for itself now.
+  fromTable :: (Hashable d, UV.Unbox t) => Table d t -> q d t
   fromBits  :: Bits e -> q (Id e) (Id e)
 
   -- Chain two relations through a shared middle value: `r : d -> e` and
@@ -98,6 +105,11 @@ instance Mode Drv where
                              Dense n vals seen ->
                                mapM_ (\i -> when (seen U.! i) (k (Id i) (vals UV.! i)))
                                      [0 .. n - 1])
+  fromTable t = Drv (\k -> case t of
+                             Table mask hs ks vs ->
+                               mapM_ (\i -> when (hs UV.! i /= 0)
+                                                (k (ks BV.! i) (vs UV.! i)))
+                                     [0 .. mask])
   fromBits b = Drv (\k -> case b of
                             Bits bs -> mapM_ (\i -> when (bs U.! i) (k (Id i) (Id i)))
                                              (U.indices bs))
@@ -116,6 +128,7 @@ instance Mode Drv where
   {-# INLINE fromIndex #-}
   {-# INLINE fromCache #-}
   {-# INLINE fromDense #-}
+  {-# INLINE fromTable #-}
   {-# INLINE fromBits #-}
   {-# INLINE compose #-}
   {-# INLINE prod #-}
@@ -170,6 +183,17 @@ instance Mode Prb where
                                     Dense n vals seen ->
                                       0 <= i && i < n && seen U.! i
                                         && p (vals UV.! i) }
+  fromTable t =
+    Prb { probe    = \x k -> case t of
+                               tb@(Table _ _ _ vs) ->
+                                 case tableSlot tb x of
+                                   i | i >= 0    -> k (vs UV.! i)
+                                     | otherwise -> return ()
+        , probeAny = \x p -> case t of
+                               tb@(Table _ _ _ vs) ->
+                                 case tableSlot tb x of
+                                   i | i >= 0    -> p (vs UV.! i)
+                                     | otherwise -> False }
   fromBits b =
     Prb { probe    = \x k -> case b of Bits bs -> when (hasBit bs x) (k x)
         , probeAny = \x p -> case b of Bits bs -> hasBit bs x && p x }
@@ -206,6 +230,7 @@ instance Mode Prb where
   {-# INLINE fromIndex #-}
   {-# INLINE fromCache #-}
   {-# INLINE fromDense #-}
+  {-# INLINE fromTable #-}
   {-# INLINE fromBits #-}
   {-# INLINE compose #-}
   {-# INLINE prod #-}

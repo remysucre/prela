@@ -14,6 +14,8 @@ module Prela.Storage where
 import Control.Monad (when)
 import Control.Monad.ST (ST)
 import Data.Array (accumArray, elems)
+import Data.Bits (shiftR, xor, (.&.))
+import Data.Hashable (Hashable, hash, hashWithSalt)
 import Data.Array.ST (STUArray, newArray, writeArray, runSTUArray)
 import Data.Array.Unboxed (UArray)
 import qualified Data.Array.Unboxed as U
@@ -21,6 +23,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Unsafe as BSU
 import Data.Maybe (isJust)
+import qualified Data.Vector as BV
 import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Unboxed as UV
 import qualified Data.Vector.Unboxed.Mutable as UMV
@@ -36,6 +39,13 @@ import Data.Word (Word32)
 -- Movie-keyed relation onto a Person-keyed one is a compile error, not a
 -- silent wrong answer. Erased at runtime, so the safety is free.
 newtype Id e = Id Int deriving (Eq, Ord, Show)
+
+-- Ids are the commonest fold key, so hashing one has to cost nothing. The
+-- phantom tag plays no part: two ids of different entities that hash alike can
+-- never meet, since they cannot inhabit the same relation to begin with.
+instance Hashable (Id e) where
+  hashWithSalt s (Id i) = hashWithSalt s i
+  {-# INLINE hashWithSalt #-}
 
 -- | The missing-id sentinel — a foreign key that points at nothing. The value is
 -- not arbitrary: it fails every `0 <= i && i < n` range check, so a hole probes
@@ -210,6 +220,57 @@ mkMultiCol n prs = MultiCol n (packV (scanl (+) 0 (map (fromIntegral . length) b
 -- the accumulator has to be built out of primitives. In practice a fold state is
 -- a number or a tuple of them, and anything that is not keeps to `fold`.
 data Dense e t = Dense !Int !(UV.Vector t) !(UArray Int Bool)
+
+-- | One reduced value per key when the keys are NOT a dense id space: a group
+-- key of `(returnflag, linestatus)` or `(nation, year)` has no array index to
+-- be. Same contents as `Dense`, addressed by hashing instead.
+--
+-- Open addressing with linear probing, over three parallel stores rather than
+-- one array of entries: slot hashes, keys, accumulators. Splitting them is what
+-- lets the accumulators be UNBOXED, for the reason spelled out on `Dense` — the
+-- reduce step then writes machine words in place instead of allocating a fresh
+-- accumulator per input row. It is also why the probe is cheap: scanning for a
+-- slot touches only the hash vector, which is contiguous machine words, and the
+-- boxed keys are read at most once, on the slot that actually matched.
+--
+-- Capacity is a power of two, so wrapping is a mask rather than a division.
+-- Hash 0 marks an empty slot, which is why `slotHash` never returns it.
+data Table d t = Table !Int              -- capacity - 1, used as the wrap mask
+                       !(UV.Vector Word) -- slot hashes, 0 where empty
+                       !(BV.Vector d)    -- key, meaningful where hash /= 0
+                       !(UV.Vector t)    -- accumulator, likewise
+
+-- | A key's slot hash: never 0, since 0 is the empty marker.
+--
+-- The extra mixing is not paranoia. `Hashable` combines a tuple's fields with a
+-- multiply-add, which leaves the low bits of a key like `(Id, year)` poorly
+-- distributed, and the low bits are exactly what the mask keeps. Linear probing
+-- is unforgiving about that: keys that agree in the low bits land in one run and
+-- probing degrades to a scan. This is the standard 64-bit avalanche step, which
+-- spreads every input bit across the whole word.
+slotHash :: Hashable d => d -> Word
+slotHash d = if h == 0 then 1 else h
+  where
+    h  = z2 `xor` (z2 `shiftR` 33)
+    z2 = (z1 `xor` (z1 `shiftR` 33)) * 0xc4ceb9fe1a85ec53
+    z1 = (z0 `xor` (z0 `shiftR` 33)) * 0xff51afd7ed558ccd
+    z0 = fromIntegral (hash d) :: Word
+{-# INLINE slotHash #-}
+
+-- | The slot holding `d`, or -1 if there is none.
+--
+-- An index rather than a `Maybe t`, because the accumulator is unboxed: handing
+-- back a `Maybe` would have to build the `Just` and box the value inside it,
+-- once per probe, which is the cost this whole representation exists to avoid.
+tableSlot :: Hashable d => Table d t -> d -> Int
+tableSlot (Table mask hs ks _) d = go (fromIntegral h .&. mask)
+  where
+    h = slotHash d
+    go i = case hs UV.! i of
+             0                                -> -1
+             h' | h' == h && ks BV.! i == d   -> i
+                | otherwise                   -> go ((i + 1) .&. mask)
+{-# INLINE tableSlot #-}
 
 -- A dense membership set: the identity relation on whichever ids are present.
 -- `UArray Int Bool` is bit-packed by GHC, so a test is a word load and a shift,
