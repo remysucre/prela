@@ -81,13 +81,12 @@ fn run_tpch() {
               tpch_schema::lineitem.iq().n, tpch_schema::orders.iq().n,
               tpch_schema::partsupp.iq().n);
 
-    // QS=idiomatic|optimized|idiomatic_optimized (default optimized)
+    // QS=idiomatic|optimized (default optimized)
     let variant = std::env::var("QS").unwrap_or_else(|_| "optimized".to_string());
     let qs = match variant.as_str() {
         "idiomatic" => tpch::idiomatic::queries(),
         "optimized" => tpch::optimized::queries(),
-        "idiomatic_optimized" => tpch::idiomatic_optimized::queries(),
-        other => panic!("unknown QS variant: {other:?} (use idiomatic|optimized|idiomatic_optimized)"),
+        other => panic!("unknown QS variant: {other:?} (use idiomatic|optimized)"),
     };
     eprintln!("{} TPC-H queries registered ({} variant)", qs.len(), variant);
 
