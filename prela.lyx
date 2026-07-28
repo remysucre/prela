@@ -348,7 +348,7 @@ literal "false"
  As a result,
  both the physical layer and the semantic layer have drifted away from the original table-oriented abstraction.
  Yet,
- as we will show,
+ as if by serendipity,
  the independent evolution of the physics and the semantics of relational data have led to the same destiny!
  This reunion calls for new abstractions that better connect queries to their execution.
  In this paper,
@@ -974,32 +974,39 @@ TAR
 \end_layout
 
 \begin_layout Standard
-\begin_inset Note Note
-status open
-
-\begin_layout Plain Layout
-Conclude this section with Figure
-\begin_inset space \thinspace{}
-\end_inset
-
-
+In summary,
+ 
 \begin_inset CommandInset ref
-LatexCommand ref
+LatexCommand formatted
 reference "fig:compare-abstractions"
 plural "false"
-caps "false"
+caps "true"
 noprefix "false"
 nolink "false"
 tuple "list"
 
 \end_inset
 
+ compares the architecture of a traditional database with one based on 
+\noun on
+TAR
+\noun default
 .
-\end_layout
-
-\end_inset
-
-
+ Unlike the layers of abstractions that pull the programmer away from the data,
+ 
+\noun on
+TAR
+\noun default
+ serves as the 
+\emph on
+universal representation
+\emph default
+ shared by the programmer,
+ the storage engine,
+ the execution engine,
+ and the optimizer,
+ bringing each component closer to each other and enabling cross-cutting optimizations.
+ 
 \end_layout
 
 \begin_layout Section
@@ -1033,7 +1040,7 @@ Despite countless attempts at replacement,
 
 \begin_inset CommandInset citation
 LatexCommand citep
-key "stonebraker2005what,DBLP:journals/sigmod/StonebrakerP24"
+key "stonebraker2005what"
 literal "false"
 
 \end_inset
@@ -1095,7 +1102,7 @@ PODS
 
 \begin_inset CommandInset citation
 LatexCommand citep
-key "10.1145/588111.588139,DBLP:journals/jcss/ImielinskiL84"
+key "DBLP:journals/jcss/ImielinskiL84"
 literal "false"
 
 \end_inset
@@ -1111,7 +1118,7 @@ cylindric algebras
 
 \begin_inset CommandInset citation
 LatexCommand citep
-key "henkin1971cylindric,henkin1985cylindric"
+key "henkin1971cylindric"
 literal "false"
 
 \end_inset
@@ -1170,7 +1177,7 @@ TAR
 
 \begin_inset CommandInset citation
 LatexCommand citep
-key "DBLP:conf/icdt/FletcherGLBGVW11,DBLP:journals/jacm/LibkinMV16,DBLP:journals/igpl/SurinxFGLBGVW15,DBLP:journals/jlap/HellingsWGG22,DBLP:journals/lmcs/0001CMB24"
+key "DBLP:conf/icdt/FletcherGLBGVW11,DBLP:journals/jacm/LibkinMV16,DBLP:journals/igpl/SurinxFGLBGVW15,DBLP:journals/jlap/HellingsWGG22"
 literal "false"
 
 \end_inset
@@ -1333,7 +1340,7 @@ Dataframes
 \end_layout
 
 \begin_layout Standard
-Libraries like 
+Dataframe libraries like 
 \noun on
 pandas
 \noun default
@@ -1344,13 +1351,12 @@ pandas
 
 \begin_inset CommandInset citation
 LatexCommand citep
-key "mckinney2010pandas,pandas"
+key "mckinney2010pandas"
 literal "false"
 
 \end_inset
 
-,
- 
+ and 
 \noun on
 polars
 \noun default
@@ -1366,23 +1372,6 @@ literal "false"
 
 \end_inset
 
-,
- and 
-\noun on
-datafusion
-\noun default
-
-\begin_inset space \thinspace{}
-\end_inset
-
-
-\begin_inset CommandInset citation
-LatexCommand citep
-key "lamb2024datafusion"
-literal "false"
-
-\end_inset
-
 
 \noun on
  
@@ -1391,21 +1380,6 @@ provide an interface to tabular data based on relational algebra.
  As such,
  these libraries also struggle to express multi-table queries succinctly,
  as each join operation must specify the join condition explicitly.
- 
-\begin_inset Note Note
-status open
-
-\begin_layout Plain Layout
-Moreover,
- since the libraries typically implement column names as attributes of each dataframe object,
- the user must take great care and rename columns when joining tables,
- to avoid conflicts and ambiguity.
- As a result,
- queries spanning multiple tables look even more complicated in dataframes code as compared to their SQL counterparts.
-\end_layout
-
-\end_inset
-
  At the engine level,
  
 \noun on
@@ -1417,13 +1391,9 @@ pandas
 eagerly
 \emph default
  – every dataframe operation immediately produces a result when it is called.
- Other more optimized engines including 
+ Other more optimized engines like 
 \noun on
 polars
-\noun default
- and 
-\noun on
-datafusion
 \noun default
  generate and optimize query plans,
  much like traditional OLAP databases.
@@ -1498,7 +1468,7 @@ Several functional data models have been proposed over the years
 
 \begin_inset CommandInset citation
 LatexCommand citep
-key "DBLP:conf/sigmod/BunemanF79,DBLP:conf/sigmod/Shipman79,DBLP:conf/edbt/Beech88,Chan1987AdaDBMS,Gray2005FunctionalApproach,Gray2018AMOSQL,Gray2018FunctionalDataModel,Gray2018FunctionalQueryLanguage,DBLP:journals/cj/KulkarniA86"
+key "DBLP:conf/sigmod/BunemanF79,Gray2005FunctionalApproach,DBLP:journals/cj/KulkarniA86,DBLP:conf/sigmod/Shipman79"
 literal "false"
 
 \end_inset
@@ -1552,14 +1522,6 @@ The Prela Language
 This section defines the data model,
  syntax,
  and semantics of the Prela query language.
- To keep the presentation intuitive,
- we introduce constructs of 
-\noun on
-TAR
-\noun default
- one by one,
- guided by examples,
- instead of reciting their formal definitions.
  Table
 \begin_inset space \thinspace{}
 \end_inset
@@ -1576,7 +1538,7 @@ tuple "list"
 
 \end_inset
 
- provides a reference of the 
+ provides a reference of 
 \noun on
 TAR
 \noun default
@@ -1795,15 +1757,6 @@ Romance
 \end_inset
 
 
-\begin_inset Caption Standard
-
-\begin_layout Plain Layout
-Original movie table
-\end_layout
-
-\end_inset
-
-
 \end_layout
 
 \end_inset
@@ -2208,15 +2161,6 @@ Romance
 \end_inset
 
 
-\begin_inset Caption Standard
-
-\begin_layout Plain Layout
-Decomposed binary relations
-\end_layout
-
-\end_inset
-
-
 \end_layout
 
 \end_inset
@@ -2225,22 +2169,17 @@ Decomposed binary relations
 \begin_inset Caption Standard
 
 \begin_layout Plain Layout
-Decomposition of a wide table into binary relations
 \begin_inset CommandInset label
 LatexCommand label
 name "fig:Decomposition-of-a"
 
 \end_inset
 
-
+A wide table (top) and its decomposition (bottom)
 \end_layout
 
 \end_inset
 
-
-\end_layout
-
-\begin_layout Plain Layout
 
 \end_layout
 
@@ -2408,18 +2347,6 @@ binarization
 \end_layout
 
 \begin_layout Standard
-Prela queries are composed of operators applied to relational arguments,
- much like the classic Relational Algebra 
-\emph on
-à la 
-\emph default
-Codd.
- To reduce clutter,
- we will introduce the operators directly in Prela's surface syntax and omit their mathematical symbols.
- 
-\end_layout
-
-\begin_layout Standard
 \begin_inset Float table
 placement document
 alignment document
@@ -2428,6 +2355,22 @@ sideways false
 status open
 
 \begin_layout Plain Layout
+\begin_inset Caption Standard
+
+\begin_layout Plain Layout
+Relational operators in Prela
+\begin_inset CommandInset label
+LatexCommand label
+name "tab:Relational-operators-in"
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+
+
 \begin_inset Tabular
 <lyxtabular version="3" rows="9" columns="3">
 <features borderColor="default" oddRowsColor="default" evenRowsColor="default" tabularvalignment="middle">
@@ -2863,25 +2806,6 @@ r.group_by(t)
 
 \end_layout
 
-\begin_layout Plain Layout
-\begin_inset Caption Standard
-
-\begin_layout Plain Layout
-Relational operators in Prela
-\begin_inset CommandInset label
-LatexCommand label
-name "tab:Relational-operators-in"
-
-\end_inset
-
-
-\end_layout
-
-\end_inset
-
-
-\end_layout
-
 \end_inset
 
 
@@ -2894,7 +2818,8 @@ Select,
 \end_layout
 
 \begin_layout Standard
-The most important operator in Prela is the 
+Prela queries are composed of operators applied to relational arguments.
+ The most important operator in Prela is the 
 \emph on
 relational composition
 \emph default
@@ -5636,7 +5561,7 @@ status open
 
 \end_inset
 
- drives the LHS while probing into the RHS:
+ drives its LHS and probes its RHS:
 \end_layout
 
 \begin_layout Standard
@@ -5718,7 +5643,8 @@ for i in 0..len(m):
 
 \end_inset
 
-As each of 
+Finally,
+ probing 
 \begin_inset listings
 inline true
 status open
@@ -5740,9 +5666,7 @@ keyword
 
 \end_inset
 
- is an input column,
- the probes expand to array accesses:
- 
+ expand to array accesses:
 \end_layout
 
 \begin_layout Standard
@@ -5849,15 +5773,43 @@ tuple "list"
 \end_layout
 
 \begin_layout Section
-Experiments
-\end_layout
-
-\begin_layout Subsubsection*
-Setup
+Evaluation
 \end_layout
 
 \begin_layout Standard
-We compare Prela against DuckDB 1.5.3 on the JOB 
+In 
+\begin_inset CommandInset ref
+LatexCommand formatted
+reference "sec:Introduction"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+tuple "list"
+
+\end_inset
+
+ we promised that Prela leads to concise,
+ clear,
+ and efficient queries.
+ Clarity is subjective,
+ and measuring conciseness in lines of code only tells part of the story.
+ We therefore invite the reader to compare Prela queries to their SQL counterparts to judge for themselves.
+ Nevertheless,
+ we share some 
+\begin_inset Quotes eld
+\end_inset
+
+quick numbers
+\begin_inset Quotes erd
+\end_inset
+
+ here:
+ the Prela code for all 113 queries in the Join Order Benchmark
+\begin_inset space \thinspace{}
+\end_inset
+
+
 \begin_inset CommandInset citation
 LatexCommand citep
 key "DBLP:journals/pvldb/LeisGMBK015"
@@ -5865,7 +5817,13 @@ literal "false"
 
 \end_inset
 
- and TPC-H 
+ (JOB) total ~1000 lines,
+ while the original SQL queries span over 4000 lines;
+ for TPC-H
+\begin_inset space \thinspace{}
+\end_inset
+
+
 \begin_inset CommandInset citation
 LatexCommand citep
 key "tpch"
@@ -5873,17 +5831,15 @@ literal "false"
 
 \end_inset
 
- benchmarks.
- Since Prela is currently single-threaded,
- we use single-threaded DuckDB to ensure a meaningful comparison.
- We plan to implement multi-threading in a later Prela release.
- We follow the conventions of the two benchmarks (for example,
- we measure TPC-H performance on the second of two runs).
- TPC-H was ran at scale factor 1.
- Summaries of the results are collected in Figure 
+,
+ it takes Prela ~300 lines to express all 22 queries,
+ whereas the SQL queries span ~600 lines.
+ Prela achieves more savings on JOB because the queries there join together many tables,
+ and the implicit/structural joins in Prela avoids spelling out all the join conditions,
+ as demonstrated in 
 \begin_inset CommandInset ref
-LatexCommand ref
-reference "fig:perf_plot"
+LatexCommand formatted
+reference "fig:JOB-query-16b"
 plural "false"
 caps "false"
 noprefix "false"
@@ -5893,6 +5849,41 @@ tuple "list"
 \end_inset
 
 .
+ 
+\end_layout
+
+\begin_layout Standard
+Does the brevity of Prela queries sacrifice their performance?
+ To answer this question,
+ we benchmark Prela DuckDB v1.5.3 on JOB and TPC-H.
+ Care must be taken to interpret our results.
+ On one hand,
+ Prela is an early prototype and has not implemented the myriad of optimizations found in mature systems;
+ on the other,
+ Prela is also not weighed down by a large set of features.
+ In addition,
+ Prela has no query optimizer,
+ but offers more flexibility for performance tuning.
+ One way to understand our experiments is that they gauge the 
+\emph on
+performance ceiling
+\emph default
+ of a database system built on a foundation of 
+\noun on
+TAR
+\noun default
+,
+ assuming such a system implements a competent query optimizer as well as low-level optimizations.
+ 
+\end_layout
+
+\begin_layout Standard
+All experiments run on an M5 MacBook Air with 32 GiB of RAM.
+ Data is pre-loaded into memory.
+ Since Prela is currently single-threaded,
+ we also run DuckDB on a single thread for fairness.
+ Each query is executed 5 times and the median run time is reported.
+ 
 \end_layout
 
 \begin_layout Standard
@@ -5906,7 +5897,7 @@ status open
 \begin_layout Plain Layout
 \begin_inset Graphics
 	filename rust/bench/job_scatter.png
-	lyxscale 30
+	lyxscale 35
 	width 50col%
 
 \end_inset
@@ -5914,7 +5905,7 @@ status open
 
 \begin_inset Graphics
 	filename rust/bench/tpch_scatter.png
-	lyxscale 30
+	lyxscale 35
 	width 50col%
 
 \end_inset
@@ -5952,40 +5943,103 @@ name "fig:perf_plot"
 
 \end_layout
 
-\begin_layout Subsubsection*
-JOB
+\begin_layout Standard
+Summaries of the results are collected in Figure 
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "fig:perf_plot"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+tuple "list"
+
+\end_inset
+
+.
+ Prela executes all 113 queries of JOB in 5.15s,
+ a 2.98
+\begin_inset Formula $\times$
+\end_inset
+
+ speedup over DuckDB's 15.34s.
+ Prela's advantage is mainly due to data representation:
+ because JOB's primary keys are contiguous integers,
+ the ID to row mapping degenerates to the identity;
+ instead of materializing the relation,
+ we represent this mapping as the identity function which is optimized away during compilation.
+ And because each column is stored as a vector indexed by the row number,
+ joins degrade to simple array accesses which are very fast.
+ We tried to port the same optimizations back to DuckDB but was not successful.
+ The only user-accessible index provided by DuckDB is the hashing-based adaptive radix tree
+\begin_inset space \thinspace{}
+\end_inset
+
+
+\begin_inset CommandInset citation
+LatexCommand citep
+key "DBLP:conf/icde/LeisK013"
+literal "false"
+
+\end_inset
+
+,
+ and its query optimizer ignored every foreign key index.
+ DuckDB frequently picks bushy join plans,
+ whereas Prela simply follows left-deep plans shaped by the query structure and uses index nested loop joins to avoid allocation.
+ For TPC-H,
+ the plot shows two sets of queries:
+ the circular dots represent 
+\emph on
+idiomatic
+\emph default
+ queries which are written in the most natural way without regard to performance.
+ These queries run in TODOs,
+ TODO slower than DuckDB's ??.
+ Fortunately,
+ it is easy to improve the performance of the Prela queries.
+ By directly rewriting the queries,
+ we were able to speed them up by reordering joins,
+ introducing materialization points,
+ and specifying data structures like bit sets for materialized intermediates.
+ The tuned queries run ??
+ faster than DuckDB overall.
+ 
 \end_layout
 
 \begin_layout Standard
-Across the 133 JOB queries,
- single-threaded DuckDB totals 15.34 s versus Prela's 5.15 s,
- for a 2.98x aggregate speedup.
- The Prela queries were written in a single pass by a Claude agent with access to the Prela codebase.
- Without being trained on Prela code and without access to any 
-\begin_inset Quotes eld
-\end_inset
-
-performance hints,
-\begin_inset Quotes erd
-\end_inset
-
- the agent was able to write very fast queries,
- a testament to Prela's ergonomics.
+The experiments show how Prela empowers the programmer to fine tune query performance,
+ and a future query optimizer can achieve results on par or exceeding that of current systems.
+ 
 \end_layout
 
-\begin_layout Subsubsection*
-TPC-H
+\begin_layout Section
+Conclusion
 \end_layout
 
 \begin_layout Standard
-Across the 22 TPC-H queries,
- the first-pass queries written by Claude total 1.14 s against DuckDB's 0.86 s.
- Hand-tuned Prela queries total 0.44 s,
- for a 1.95x speedup.
- The gap between the optimized and unoptimized Prela queries is mostly due to a few plan-sensitive queries,
- where the naive join order incurs a large penalty.
- TPC-H results indicate that while Claude is not (yet?) a perfect query optimizer,
- Prela's performance ceiling is already quite high.
+We have presented the design and implementation of Prela,
+ a query language based on 
+\noun on
+TAR
+\noun default
+.
+ At the core of Prela is the binary relation which connects columnar storage with entity/relationship semantics,
+ resulting in succinct and efficient queries.
+ Our experiments show there is strong potential for a database system based on 
+\noun on
+TAR
+\noun default
+ to match or outperform state-of-the-art OLAP systems.
+ Future work include parallelization,
+ fast compilation,
+ and query optimization of 
+\noun on
+TAR
+\noun default
+,
+ as well as consideration of transactional workloads.
+ 
 \end_layout
 
 \begin_layout Standard
