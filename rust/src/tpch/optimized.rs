@@ -328,36 +328,49 @@ fn q18() -> String {
     }))
 }
 
+// Per-order supplier state for q21, packed into one `u32`: the low 31 bits
+// hold `supplier id + 1` (0 = "no supplier seen yet"), the top bit is the
+// "more than one distinct supplier" flag. Two of these are all q21 needs per
+// order, so its `dense_fold` state is 8 bytes rather than the 48 that the
+// natural `((Option<Id<Supplier>>, bool), (Option<Id<Supplier>>, bool))`
+// tuple occupies.
+const Q21_MULTI: u32 = 1 << 31;
+const Q21_ID: u32 = !Q21_MULTI;
+
+#[inline(always)]
+fn q21_note(slot: u32, s: Id<Supplier>) -> u32 {
+    debug_assert!(s.0 + 1 < Q21_MULTI as usize, "supplier id needs the flag bit");
+    let id = s.0 as u32 + 1;
+    if slot == 0 {
+        id
+    } else if slot & Q21_ID != id {
+        slot | Q21_MULTI
+    } else {
+        slot
+    }
+}
+
 // Optimizations:
 // Cheap `dense_fold` over state tracking whether 0, 1, or more suppliers seen per order instead
 // of expensive `group_by` + `count`.
 // Single pass over data to capture both (i) orders with > 1 suppliers and (ii) orders with exactly 1 late supplier.
 // `select` into `Bitset` instead of `with` to restrict to SA suppliers.
+// The fold state is bit-packed (see `q21_note`): `orders` is a *sparse*
+// universe — 6M slots for 1.5M live orders at SF=1 — so the `dense_fold`
+// array is 6M × size_of::<S>() regardless of how many orders exist. At the
+// natural 48-byte tuple that is a 288 MB array to zero and stream; at 8
+// bytes it is 48 MB.
+// The scan leads with the SAUDI ARABIA supplier bitset instead of the date
+// comparison, so the commit/receipt columns are only read for the ~4% of
+// lineitems whose supplier can possibly qualify (`Restrict` short-circuits
+// left to right).
 fn q21() -> String {
     let mut rows: Vec<(&str, i64)> = Vec::new();
 
     // track overall suppliers and late suppliers
-    let track = |((first, multi), (first_late, multi_late)): (
-        (Option<Id<Supplier>>, bool),
-        (Option<Id<Supplier>>, bool),
-    ),
-                 ((s, c), r): ((Id<Supplier>, i64), i64)| {
-        let t1 = match first {
-            None => (Some(s), multi),
-            Some(f) if f != s => (first, true),
-            _ => (first, multi),
-        };
-        // if order is late, update late suppliers state
-        let t2 = if c < r {
-            match first_late {
-                None => (Some(s), multi_late),
-                Some(f) if f != s => (first_late, true),
-                _ => (first_late, multi_late),
-            }
-        } else {
-            (first_late, multi_late)
-        };
-        (t1, t2)
+    let track = |(all, late): (u32, u32), ((s, c), r): ((Id<Supplier>, i64), i64)| {
+        // if the line is late, update the late-supplier state too
+        (q21_note(all, s), if c < r { q21_note(late, s) } else { late })
     };
 
     let state = lineitem
@@ -365,24 +378,23 @@ fn q21() -> String {
         .select(Lineitem::supplier
            .and(commitdate)
            .and(receiptdate))
-        .dense_fold(orders.iq().n, ((None, false), (None, false)), track);
+        .dense_fold(orders.iq().n, (0, 0), track);
+
+    let saudi = Bitset::over(
+        supplier,
+        &supplier.with(Supplier::nation.eq("SAUDI ARABIA")),
+    );
 
     lineitem
+        .with(Lineitem::supplier.select(&saudi))
         .with(commitdate.and(receiptdate).filt(|(c, r)| c < r))
-        .with(
-            Lineitem::supplier
-                .select(Bitset::over(
-                    supplier,
-                    &supplier.with(Supplier::nation.eq("SAUDI ARABIA")),
-                ))
-                .and(order.select(Order::status.eq("F").and(
-                    // order has > 1 supp <-> `m_late`
-                    state.filt(|((_, m), (f_late, m_late))| m 
-                    && 
-                    // order has 1 late supp <-> `f_late.is_some() && !m_late`
-                    (f_late.is_some() && !m_late)),
-                ))),
-        )
+        .with(order.select(Order::status.eq("F").and(
+            state.filt(|(all, late)| {
+                // order has > 1 supplier, and exactly one distinct late one
+                // (which must be this line's, since this line is late)
+                all & Q21_MULTI != 0 && late != 0 && late & Q21_MULTI == 0
+            }),
+        )))
         .group_by(Lineitem::supplier)
         .fold(0_i64, |a, _| a + 1)
         .and(Supplier::name)
