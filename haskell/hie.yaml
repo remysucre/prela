@@ -1,6 +1,10 @@
 cradle:
   cabal:
-    - path: "./src/Prela.hs"
+    - path: "./src"
       component: "lib:prela"
-    - path: "./app/Demo.hs"
+    - path: "./app"
       component: "exe:prela-demo"
+    - path: "./tpch"
+      component: "exe:prela-tpch"
+    - path: "./test"
+      component: "test:prela-test"

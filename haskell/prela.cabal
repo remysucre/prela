@@ -35,3 +35,16 @@ executable prela-demo
     build-depends:    base >=4.14, prela, bytestring
     default-language: Haskell2010
     ghc-options:      -Wall
+
+-- The TPC-H suite: schema, the 22 queries, and the runner that checks each
+-- against its oracle. Needs a cache built by the Rust regen tool — see
+-- ../benchmarking.md.
+executable prela-tpch
+    main-is:          Main.hs
+    other-modules:    TPCH.Schema
+                    , TPCH.Queries
+    hs-source-dirs:   tpch
+    build-depends:    base >=4.14, prela, bytestring, containers, directory
+                    , filepath
+    default-language: Haskell2010
+    ghc-options:      -Wall -O2
