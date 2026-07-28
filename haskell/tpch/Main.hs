@@ -12,13 +12,14 @@ module Main (main) where
 import Control.Monad (forM, unless)
 import Data.List (isPrefixOf)
 import Data.Maybe (fromMaybe)
+import GHC.Clock (getMonotonicTime)
 import System.Environment (getArgs, lookupEnv)
 import System.Exit (exitFailure)
 import System.FilePath ((</>))
 import System.IO (hSetBuffering, stdout, BufferMode (LineBuffering))
 
 import TPCH.Queries (inlineOracles, queries)
-import TPCH.Schema (loadTPCH)
+import TPCH.Schema (lineitem_n, loadTPCH)
 
 main :: IO ()
 main = do
@@ -29,20 +30,41 @@ main = do
              | otherwise = [ q | q@(n, _) <- queries, n `elem` args ]
   unless (length picked == max (length args) (length picked)) $
     putStrLn "warning: some names on the command line are not query names"
-  putStrLn ("loading " ++ cacheDir)
-  s <- loadTPCH cacheDir
-  results <- forM picked $ \(name, run) -> do
-    want <- oracle name
-    let got = run s
-    if got == want
-      then putStrLn ("Q" ++ name ++ " ok") >> return True
-      else do
-        putStrLn ("Q" ++ name ++ " MISMATCH")
-        mapM_ putStrLn (take 6 (diffLines (lines want) (lines got)))
-        return False
-  let ok = length (filter id results)
-  putStrLn (show ok ++ "/" ++ show (length results) ++ " queries match reference")
-  unless (ok == length results) exitFailure
+  rounds <- maybe 2 read <$> lookupEnv "ROUNDS"
+  (loadT, s) <- timed (loadTPCH cacheDir >>= \r -> lineitem_n r `seq` return r)
+  putStrLn ("load " ++ secs loadT ++ "  from " ++ cacheDir)
+  wants <- mapM (oracle . fst) picked
+  oks <- forM [1 .. rounds :: Int] $ \round_ -> do
+    putStrLn ("--- run " ++ show round_ ++ " ---")
+    (totalT, results) <- timed (forM (zip picked wants) (check s))
+    let ok = length (filter id results)
+    putStrLn ("run " ++ show round_ ++ ": " ++ show ok ++ "/" ++ show (length results)
+              ++ " match reference, total " ++ secs totalT)
+    return ok
+  unless (all (== length picked) oks) exitFailure
+  where
+    check s ((name, run), want) = do
+      (dt, got) <- timed (let g = run s in length g `seq` return g)
+      if got == want
+        then putStrLn (pad 4 ("Q" ++ name) ++ " ok   " ++ secs dt) >> return True
+        else do
+          putStrLn (pad 4 ("Q" ++ name) ++ " DIFF " ++ secs dt)
+          mapM_ putStrLn (take 6 (diffLines (lines want) (lines got)))
+          return False
+    pad n t = t ++ replicate (n - length t) ' '
+
+-- | Wall time around an action, in seconds. The caller forces the result first,
+-- since a query that has only been built has not run.
+timed :: IO a -> IO (Double, a)
+timed act = do
+  t0 <- getMonotonicTime
+  a  <- act
+  t1 <- getMonotonicTime
+  return (t1 - t0, a)
+
+secs :: Double -> String
+secs t = pad 8 (show (fromIntegral (round (t * 10000) :: Integer) / 10000 :: Double) ++ "s")
+  where pad n x = replicate (n - length x) ' ' ++ x
 
 -- | The first few lines that differ, each shown as want then got.
 diffLines :: [String] -> [String] -> [String]
