@@ -65,7 +65,7 @@
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta}
 \end_preamble
-\options format=sigconf, review=false, screen=true
+\options format=sigconf, review=true, screen=true
 \use_default_options false
 \begin_modules
 InStar
@@ -3793,7 +3793,7 @@ throws away
  it does not make sense to aggregate over them.
  So dropping the keys after the join is not a real sacrifice.
  On the other hand,
- it is true that 
+ it is true that the original 
 \noun on
 TAR
 \noun default
@@ -5609,7 +5609,7 @@ status open
 
 \end_inset
 
- drives its LHS while probing its RHS:
+ drives its left-hand-side and probes its right-hand-side:
 \end_layout
 
 \begin_layout Standard
@@ -5898,7 +5898,7 @@ literal "false"
  it takes Prela ~300 lines to express all 22 queries,
  whereas the SQL queries span ~600 lines.
  Prela achieves more savings on JOB because the queries there join together many tables,
- and the implicit/structural joins in Prela avoids spelling out all the join conditions,
+ and the implicit/structural joins in Prela avoids spelling out the join conditions,
  as demonstrated in 
 \begin_inset CommandInset ref
 LatexCommand formatted
