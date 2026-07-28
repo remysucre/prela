@@ -97,7 +97,7 @@ PackageOptions algorithm2e ruled
 \use_dash_ligatures true
 \graphics default
 \default_output_format default
-\output_sync 0
+\output_sync 1
 \bibtex_command default
 \index_command default
 \float_placement class
@@ -5896,7 +5896,7 @@ status open
 
 \begin_layout Plain Layout
 \begin_inset Graphics
-	filename rust/bench/job_scatter.png
+	filename rust/bench/job_scatter.pdf
 	lyxscale 35
 	width 50col%
 
@@ -5904,7 +5904,7 @@ status open
 
 
 \begin_inset Graphics
-	filename rust/bench/tpch_scatter.png
+	filename rust/bench/tpch_scatter.pdf
 	lyxscale 35
 	width 50col%
 
@@ -5986,7 +5986,7 @@ literal "false"
 ,
  and its query optimizer ignored every foreign key index.
  DuckDB frequently picks bushy join plans,
- whereas Prela simply follows left-deep plans shaped by the query structure and uses index nested loop joins to avoid allocation.
+ whereas Prela follows left-deep plans shaped by the query structure and uses index nested loop joins to avoid allocation.
  For TPC-H,
  the plot shows two sets of queries:
  the circular dots represent 

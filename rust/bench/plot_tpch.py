@@ -6,7 +6,7 @@
 #
 # Reads warm run-2 timings from data/{idiomatic,optimized}.txt
 # and DuckDB `.timer on` output from data/duckdb_st.txt.
-# Writes tpch_scatter.png next to this script.
+# Writes tpch_scatter.pdf next to this script.
 
 import re
 import sys
@@ -51,10 +51,11 @@ def main():
     yr  = [ido[q]   for q in qs]
     yo  = [opt[q]   for q in qs]
 
-    lo = min(min(xs), min(yr), min(yo)) * 0.5
-    hi = max(max(xs), max(yr), max(yo)) * 2.0
+    # Fixed limits shared with plot_job.py so the paper's side-by-side
+    # y scales align; widen both if a capture ever falls outside.
+    lo, hi = 1e-3, 2.0
 
-    fig, ax = plt.subplots(figsize=(8, 8))
+    fig, ax = plt.subplots(figsize=(4.5, 4.5))
     ax.plot([lo, hi], [lo, hi], color="#888", linestyle="--", linewidth=1,
             label="y = x (parity)")
     ax.scatter(xs, yr, s=40, color="#2BA84A", edgecolor="black",
@@ -67,22 +68,20 @@ def main():
     ax.set_xscale("log"); ax.set_yscale("log")
     ax.set_xlim(lo, hi);  ax.set_ylim(lo, hi)
     ax.set_aspect("equal")
-    ax.grid(True, which="both", alpha=0.3, linestyle=":")
-    ax.set_xlabel("DuckDB-ST time (s, log)")
-    ax.set_ylabel("prela time (s, log)")
+    ax.set_xlabel("DuckDB time (s, log)", fontsize=13)
+    ax.tick_params(labelsize=11)
 
-    tx  = sum(xs)
-    tr  = sum(yr);  to  = sum(yo)
-    ax.set_title(
-        f"TPC-H SF=1 — prela vs DuckDB single-threaded\n"
-        f"DuckDB {tx:>5.2f}s   idiomatic {tr:>5.2f}s ({tr/tx:.2f}×)   "
-        f"optimized {to:>5.2f}s ({to/tx:.2f}×)"
-    )
-    ax.legend(loc="upper left", fontsize=9)
+    ax.text(0.5, 0.035, "Prela faster", transform=ax.transAxes,
+            ha="center", va="bottom", fontsize=12, color="#666")
+    ax.text(0.035, 0.65, "DuckDB faster", transform=ax.transAxes,
+            ha="left", va="center", fontsize=12, color="#666")
+
+    ax.set_title("TPC-H", fontsize=14)
+    ax.legend(loc="upper left", fontsize=11, framealpha=0)
 
     plt.tight_layout()
-    out_path = Path(__file__).resolve().parent / "tpch_scatter.png"
-    plt.savefig(out_path, dpi=130)
+    out_path = Path(__file__).resolve().parent / "tpch_scatter.pdf"
+    plt.savefig(out_path)
     print(f"saved {out_path}")
 
 

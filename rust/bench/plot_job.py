@@ -6,13 +6,13 @@
 #   data/job_qnames.txt — 113 query names in canonical order
 #   data/job_rust.txt   — Rust prela bench (warm, run 2)
 #   data/job_duck.txt   — DuckDB `.timer on` log (cold+warm per query)
-# Writes job_scatter.png next to this script.
+# Writes job_scatter.pdf next to this script.
 #
 # Both captures must come from the SAME machine to be comparable, so a run
 # on other hardware goes to its own files rather than over these:
 #   plot_job.py --rust data/job_rust_current.txt \
 #               --duck data/job_duck_current.txt \
-#               --out  job_scatter_current.png
+#               --out  job_scatter_current.pdf
 
 import argparse
 import re
@@ -56,12 +56,12 @@ def parse_duck(path, qnames):
 def main():
     here = Path(__file__).resolve().parent
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--rust", default=DATA / "job_rust.txt", type=Path,
-                    help="prela bench log (default data/job_rust.txt)")
-    ap.add_argument("--duck", default=DATA / "job_duck.txt", type=Path,
-                    help="DuckDB .timer log (default data/job_duck.txt)")
-    ap.add_argument("--out", default=here / "job_scatter.png", type=Path,
-                    help="output png (default job_scatter.png)")
+    ap.add_argument("--rust", default=DATA / "job_rust_current.txt", type=Path,
+                    help="prela bench log (default data/job_rust_current.txt)")
+    ap.add_argument("--duck", default=DATA / "job_duck_current.txt", type=Path,
+                    help="DuckDB .timer log (default data/job_duck_current.txt)")
+    ap.add_argument("--out", default=here / "job_scatter.pdf", type=Path,
+                    help="output file (default job_scatter.pdf)")
     args = ap.parse_args()
 
     with open(DATA / "job_qnames.txt") as f:
@@ -73,10 +73,11 @@ def main():
     xs = [duck[q]  for q in common]
     yr = [rust[q]  for q in common]
 
-    lo = max(min(min(xs), min(yr)) * 0.5, 1e-3)
-    hi = max(max(xs), max(yr)) * 2.0
+    # Fixed limits shared with plot_tpch.py so the paper's side-by-side
+    # y scales align; widen both if a capture ever falls outside.
+    lo, hi = 1e-3, 2.0
 
-    fig, ax = plt.subplots(figsize=(8, 8))
+    fig, ax = plt.subplots(figsize=(4.5, 4.5))
     ax.plot([lo, hi], [lo, hi], color="#888", linestyle="--", linewidth=1,
             label="y = x (parity)")
     ax.scatter(xs, yr, s=40, color="#2BA84A", edgecolor="black",
@@ -85,21 +86,20 @@ def main():
     ax.set_xscale("log"); ax.set_yscale("log")
     ax.set_xlim(lo, hi); ax.set_ylim(lo, hi)
     ax.set_aspect("equal")
-    ax.grid(True, which="both", alpha=0.3, linestyle=":")
-    ax.set_xlabel("DuckDB-ST time (s, log)")
-    ax.set_ylabel("prela time (s, log)")
+    ax.set_xlabel("DuckDB time (s, log)", fontsize=13)
+    ax.set_ylabel("prela time (s, log)", fontsize=13)
+    ax.tick_params(labelsize=11)
 
-    tx = sum(xs); tr = sum(yr)
-    wr = sum(1 for x, y in zip(xs, yr) if y < x)
-    ax.set_title(
-        f"Join Order Benchmark — prela vs DuckDB single-threaded\n"
-        f"DuckDB {tx:>5.2f}s   prela {tr:>5.2f}s  "
-        f"({tx/tr:.1f}× speedup, {wr}/{len(common)} wins)"
-    )
-    ax.legend(loc="upper left", fontsize=10)
+    ax.text(0.5, 0.035, "Prela faster", transform=ax.transAxes,
+            ha="center", va="bottom", fontsize=12, color="#666")
+    ax.text(0.035, 0.65, "DuckDB faster", transform=ax.transAxes,
+            ha="left", va="center", fontsize=12, color="#666")
+
+    ax.set_title("Join Order Benchmark", fontsize=14)
+    ax.legend(loc="upper left", fontsize=11, framealpha=0)
 
     plt.tight_layout()
-    plt.savefig(args.out, dpi=130)
+    plt.savefig(args.out)
     print(f"saved {args.out}")
 
 
