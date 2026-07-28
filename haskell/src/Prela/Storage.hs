@@ -13,8 +13,8 @@ module Prela.Storage where
 
 import Control.Monad (when)
 import Control.Monad.ST (ST)
-import Data.Array (Array, accumArray, elems)
-import Data.Array.ST (STArray, STUArray, newArray, writeArray, runSTUArray)
+import Data.Array (accumArray, elems)
+import Data.Array.ST (STUArray, newArray, writeArray, runSTUArray)
 import Data.Array.Unboxed (UArray)
 import qualified Data.Array.Unboxed as U
 import Data.ByteString (ByteString)
@@ -22,6 +22,8 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Unsafe as BSU
 import Data.Maybe (isJust)
 import qualified Data.Vector.Storable as V
+import qualified Data.Vector.Unboxed as UV
+import qualified Data.Vector.Unboxed.Mutable as UMV
 import Data.Word (Word32)
 
 --------------------------------------------------------------------------------
@@ -194,7 +196,20 @@ mkMultiCol n prs = MultiCol n (packV (scanl (+) 0 (map (fromIntegral . length) b
 -- presence array is what distinguishes "this key folded to init" from "this key
 -- was never seen", and it is also how the outer variant is expressed — seeding
 -- presence to all-True makes every key emit, so there is no separate flag.
-data Dense e t = Dense !Int !(Array Int t) !(UArray Int Bool)
+--
+-- The slots are an UNBOXED vector, which is the whole reason a fold over entity
+-- ids is worth having. A boxed array holds a pointer per key, so folding a step
+-- has to allocate a fresh accumulator on the heap and store a pointer to it —
+-- once per input row, not once per key. `Data.Vector.Unboxed` instead stores a
+-- product componentwise, so an accumulator of `(Double, Int)` is one `Double`
+-- array beside one `Int` array and a step writes two machine words in place.
+-- That is what makes the reduce loop allocation-free, matching what the Rust
+-- port gets from a `Vec<S>` of `Copy` values.
+--
+-- The price is the `Unbox` constraint, which every reader of a `Dense` carries:
+-- the accumulator has to be built out of primitives. In practice a fold state is
+-- a number or a tuple of them, and anything that is not keeps to `fold`.
+data Dense e t = Dense !Int !(UV.Vector t) !(UArray Int Bool)
 
 -- A dense membership set: the identity relation on whichever ids are present.
 -- `UArray Int Bool` is bit-packed by GHC, so a test is a word load and a shift,
@@ -210,10 +225,10 @@ mkBits n ids = Bits (runSTUArray (do
   mapM_ (\(Id i) -> when (0 <= i && i < n) (writeArray bs i True)) ids
   return bs))
 
--- Typed wrappers so the two arrays above are built in one pass over the input.
--- `freeze` alone leaves the mutable array type ambiguous; these pin it.
-newBoxed :: Int -> t -> ST s (STArray s Int t)
-newBoxed n v = newArray (0, n - 1) v
+-- Typed wrappers so the two stores above are built in one pass over the input.
+-- `freeze` alone leaves the mutable type ambiguous; these pin it.
+newSlots :: UV.Unbox t => Int -> t -> ST s (UMV.MVector s t)
+newSlots = UMV.replicate
 
 newBits :: Int -> Bool -> ST s (STUArray s Int Bool)
 newBits n v = newArray (0, n - 1) v

@@ -15,11 +15,13 @@ module Prela.Materialize where
 
 import Control.Monad (when)
 import Control.Monad.ST (runST)
-import Data.Array.ST (freeze, readArray, runSTUArray, writeArray)
+import Data.Array.ST (freeze, runSTUArray, writeArray)
 import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.STRef (modifySTRef', newSTRef, readSTRef)
+import qualified Data.Vector.Unboxed as UV
+import qualified Data.Vector.Unboxed.Mutable as UMV
 
 import Prela.Mode
 import Prela.Ops
@@ -84,25 +86,30 @@ countDistinct = bufFold (length . List.group . List.sort)
 -- over a known `0 .. n-1` the per-key slot can be an array index instead of a
 -- map entry, which removes a hash and an allocation from every reduce step. Keys
 -- outside the range are dropped rather than growing the store.
-foldDense :: Mode q => Int -> (t -> r -> t) -> t -> Drv (Id e) r -> q (Id e) t
+foldDense :: (Mode q, UV.Unbox t) => Int -> (t -> r -> t) -> t -> Drv (Id e) r -> q (Id e) t
 foldDense n op ini = fromDense . buildDense n op ini False
 
 -- | Like `foldDense`, but every key in `0 .. n-1` emits, seeded with `init`
 -- where nothing matched — the left-outer-join aggregate. Correct ONLY when
 -- `0 .. n-1` is exactly the key universe; over a sparse key space it invents
 -- rows for keys that do not exist.
-foldDenseOuter :: Mode q => Int -> (t -> r -> t) -> t -> Drv (Id e) r -> q (Id e) t
+foldDenseOuter :: (Mode q, UV.Unbox t)
+               => Int -> (t -> r -> t) -> t -> Drv (Id e) r -> q (Id e) t
 foldDenseOuter n op ini = fromDense . buildDense n op ini True
 
-buildDense :: Int -> (t -> r -> t) -> t -> Bool -> Drv (Id e) r -> Dense e t
+-- The reduce step is `modify` rather than a read, an apply and a write, because
+-- that is the form that stays allocation-free: `op` is applied to the slot's
+-- components and the result written straight back, with no accumulator built on
+-- the heap in between. The bounds check `modify` does on top of the guard above
+-- it measures as free, so this is not the unchecked `unsafeModify`.
+buildDense :: UV.Unbox t => Int -> (t -> r -> t) -> t -> Bool -> Drv (Id e) r -> Dense e t
 buildDense n op ini pre q = runST $ do
-  vals <- newBoxed n ini
+  vals <- newSlots n ini
   seen <- newBits n pre
   drive q (\(Id i) v -> when (0 <= i && i < n) (do
-             acc <- readArray vals i
-             writeArray vals i (op acc v)
+             UMV.modify vals (`op` v) i
              writeArray seen i True))
-  Dense n <$> freeze vals <*> freeze seen
+  Dense n <$> UV.freeze vals <*> freeze seen
 
 -- | Precompute dense membership (`bitset(q, n)`): drive a relation and set a bit
 -- at each VALUE it emits, giving back the identity relation on those ids. This is

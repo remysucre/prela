@@ -22,12 +22,12 @@
 module Prela.Ops where
 
 import Control.Monad (when)
-import Data.Array ((!))
 import Data.Array.Base (unsafeAt)
 import Data.Array.Unboxed (UArray)
 import qualified Data.Array.Unboxed as U
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Vector.Unboxed as UV
 
 import Prela.Mode
 import Prela.Storage
@@ -46,7 +46,9 @@ class Mode q where
   multiColumn  :: Elem r => MultiCol e r -> q (Id e) r
   fromIndex :: Ord d => Map d [r] -> q d r
   fromCache :: Ord d => Map d s -> q d s
-  fromDense :: Dense e t -> q (Id e) t
+  -- `Unbox` because a `Dense`'s slots are stored componentwise; see the note on
+  -- the type in "Prela.Storage".
+  fromDense :: UV.Unbox t => Dense e t -> q (Id e) t
   fromBits  :: Bits e -> q (Id e) (Id e)
 
   -- Chain two relations through a shared middle value: `r : d -> e` and
@@ -94,7 +96,7 @@ instance Mode Drv where
   fromCache m = Drv (\k -> mapM_ (uncurry k) (Map.toList m))
   fromDense c = Drv (\k -> case c of
                              Dense n vals seen ->
-                               mapM_ (\i -> when (seen U.! i) (k (Id i) (vals ! i)))
+                               mapM_ (\i -> when (seen U.! i) (k (Id i) (vals UV.! i)))
                                      [0 .. n - 1])
   fromBits b = Drv (\k -> case b of
                             Bits bs -> mapM_ (\i -> when (bs U.! i) (k (Id i) (Id i)))
@@ -162,10 +164,12 @@ instance Mode Prb where
   fromDense c =
     Prb { probe    = \(Id i) k -> case c of
                                     Dense n vals seen ->
-                                      when (0 <= i && i < n && seen U.! i) (k (vals ! i))
+                                      when (0 <= i && i < n && seen U.! i)
+                                           (k (vals UV.! i))
         , probeAny = \(Id i) p -> case c of
                                     Dense n vals seen ->
-                                      0 <= i && i < n && seen U.! i && p (vals ! i) }
+                                      0 <= i && i < n && seen U.! i
+                                        && p (vals UV.! i) }
   fromBits b =
     Prb { probe    = \x k -> case b of Bits bs -> when (hasBit bs x) (k x)
         , probeAny = \x p -> case b of Bits bs -> hasBit bs x && p x }
