@@ -6030,7 +6030,7 @@ TAR
 \noun on
 TAR
 \noun default
- to match or outperform state-of-the-art OLAP systems.
+ to outperform state-of-the-art OLAP systems.
  Future work include parallelization,
  fast compilation,
  and query optimization of 
@@ -6040,6 +6040,21 @@ TAR
 ,
  as well as consideration of transactional workloads.
  
+\end_layout
+
+\begin_layout Standard
+\begin_inset ERT
+status open
+
+\begin_layout Plain Layout
+
+\backslash
+balance
+\end_layout
+
+\end_inset
+
+
 \end_layout
 
 \begin_layout Standard
