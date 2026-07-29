@@ -1,4 +1,4 @@
-use super::common::{f, fmt_yyyymmdd, join_lines, with_overrides};
+use super::idiomatic::{f, fmt_yyyymmdd, join_lines, with_overrides};
 use crate::engine::*;
 use crate::tpch_schema::*;
 use std::collections::HashMap;
