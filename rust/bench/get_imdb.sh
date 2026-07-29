@@ -5,13 +5,13 @@
 # Usage: ./get_imdb.sh
 #
 # Source: imdb.tgz, the standard JOB dump from Leis et al., "How Good Are
-# Query Optimizers, Really?" (VLDB 2015). Schema (schematext.sql) comes from
+# Query Optimizers, Really?" (VLDB 2015). Schema (schema.sql) comes from
 # github.com/gregrahn/join-order-benchmark, the same canonical JOB checkout
 # used by job/run_job_all.sh (QDIR) and job/fairness/run_job_prela_schema.sh.
 #
 # Env knobs (defaults shown):
-#   JOB_REPO_DIR=<repo>/../join-order-benchmark
-#   IMDB_TGZ_URL=http://homepages.cwi.nl/~boncz/job/imdb.tgz
+#   JOB_REPO_DIR=<repo>/data/join-order-benchmark
+#   IMDB_TGZ_URL=https://event.cwi.nl/da/job/imdb.tgz
 
 set -euo pipefail
 
@@ -20,15 +20,18 @@ REPO=$(cd "$SCRIPT_DIR/../.." && pwd)
 DEST=$REPO/data/imdb
 CSV_DIR=$DEST/csv
 PARQUET_DIR=$DEST/parquet
-JOB_REPO_DIR=${JOB_REPO_DIR:-$REPO/../join-order-benchmark}
-IMDB_TGZ_URL=${IMDB_TGZ_URL:-http://homepages.cwi.nl/~boncz/job/imdb.tgz}
+JOB_REPO_DIR=${JOB_REPO_DIR:-$REPO/data/join-order-benchmark}
+# homepages.cwi.nl/~boncz/job/imdb.tgz (the original source) 404s as of 2026;
+# event.cwi.nl/da/job/imdb.tgz is the CWI-hosted mirror (also mirrored at
+# bonsai.cedardb.com/job/imdb.tgz), same file.
+IMDB_TGZ_URL=${IMDB_TGZ_URL:-https://event.cwi.nl/da/job/imdb.tgz}
 
 mkdir -p "$CSV_DIR" "$PARQUET_DIR"
 
-# schema (only schematext.sql is needed here; the same checkout's canonical
+# schema (only schema.sql is needed here; the same checkout's canonical
 # query SQL is used separately, via QDIR, by the JOB bench scripts)
-if [ ! -f "$JOB_REPO_DIR/schematext.sql" ]; then
-    echo "cloning join-order-benchmark for schematext.sql ..."
+if [ ! -f "$JOB_REPO_DIR/schema.sql" ]; then
+    echo "cloning join-order-benchmark for schema.sql ..."
     git clone --depth 1 https://github.com/gregrahn/join-order-benchmark.git "$JOB_REPO_DIR"
 fi
 
@@ -43,7 +46,7 @@ fi
 # load into DuckDB with the canonical schema, export one parquet per table
 echo "loading CSVs into DuckDB and exporting parquet ..."
 duckdb <<SQL
-.read $JOB_REPO_DIR/schematext.sql
+.read $JOB_REPO_DIR/schema.sql
 $(for f in "$CSV_DIR"/*.csv; do
     t=$(basename "$f" .csv)
     echo "COPY $t FROM '$f' (DELIMITER ',', QUOTE '\"', ESCAPE '\\', HEADER false, NULL '');"
