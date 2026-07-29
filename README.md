@@ -280,18 +280,63 @@ Each query will be executed exactly as it is written,
 Physical data structures can be selected with type annotations,
  and materialization points specified by calls to `.collect()`.
 I will write more about that later, but for now,
- treat yourself to the queries here:
- see [rust/src/queries/](./rust/src/queries/) for all 113 JOB queries, and
- [rust/src/tpch/common.rs](./rust/src/tpch/common.rs) for TPC-H.
+treat yourself to the queries here:
+see [rust/src/job_queries/](./rust/src/job_queries/) for all 113 JOB queries, and
+[rust/src/tpch_queries/common.rs](./rust/src/tpch_queries/common.rs) for TPC-H.
 
 The plots below compare Prela against DuckDB 1.5.3 (1 thread) as baseline,
- over TPC-H and the Join Order Benchmark.
-On JOB, Prela runs the 113 queries in 5.2s vs DuckDB's 15.3s
- (3.0× faster, winning 99 of 113).
-On TPC-H SF=1, idiomatic Prela is within ~1.3× of DuckDB's vectorized engine
- (1.14s vs 0.86s), and an optimized variant beats it by ~2× (0.44s).
+over TPC-H and the Join Order Benchmark.
+On JOB, Prela runs the 113 queries in 8.7s vs DuckDB's 38.8s
+(4.5× faster).
+On TPC-H SF=1, idiomatic Prela (1.1s) is already 1.11× faster than DuckDB's 1.3s.
+An optimized variant of the Prela queries runs in 0.4s, for a speed up of ~2.9.
 
 <p>
   <img src="./rust/bench/tpch_scatter.png" width="49%" alt="TPC-H SF=1">
   <img src="./rust/bench/job_scatter.png" width="49%" alt="JOB">
 </p>
+
+## Reproducibility
+
+To fetch the data and set it up for the benchmark, run
+
+```bash
+./rust/bench/get_imdb.sh
+./rust/bench/setup_tpch.sh
+```
+
+These scripts
+
+- download the JOB dataset,
+- clone the JOB schema and queries from the JOB [repo](https://github.com/gregrahn/join-order-benchmark),
+- load the JOB CSVs into DuckDB and generate the parquet files
+- and generate the Prela binary caches for JOB and TPC-H.
+
+These scripts only need to be run once.
+
+To collect the data and regenerate the charts, run
+
+```bash
+cd rust/bench/tpch
+./run_tpch_all.sh
+
+cd ../job
+./run_job_all.sh
+```
+
+The charts are available at `rust/bench/{tpch,job}_scatter.{pdf,png}`.
+
+You can expect the absolute numbers to vary from those above, though the relative performance should be the same.
+
+### Requirements
+
+Tools:
+
+- Rust 1.85+.
+- `duckdb` version `1.5.x` must be on `PATH`.
+- `python3` with `matplotlib` or `uv` (for plotting only, can skip with `PLOT=0`).
+- `perl`, for a compatibility rename.
+
+Disk:
+
+- About 11GB free space.
