@@ -1,5 +1,9 @@
 # Prela: A Compositional & Controllable Query Language
 
+> [!NOTE]
+> CIDR reviewers: please visit the [`cidr` branch](https://github.com/remysucre/prela/tree/cidr) of the repository
+> for example queries and steps to reproduce the experiments. 
+
 > "The calculus of relations has an intrinsic charm and beauty which makes it a source of intellectual
 > delight to all who become acquainted with it." —Alfred Tarski
 
