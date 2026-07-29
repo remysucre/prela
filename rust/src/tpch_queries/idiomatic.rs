@@ -1,8 +1,5 @@
-// Idiomatic TPC-H implementations — direct algebraic ports of
-// the historic reference queries — plus the oracles and the registry machinery
-// shared by all variants. Queries read the typed schema's global `OnceLock`
-// store (src/tpch_schema.rs), so runners take no data argument.
-//
+// Idiomatic TPC-H implementations plus the oracles and the registry machinery
+// shared by all variants. 
 // Short oracle strings are inlined as consts; long ones live in the repo at
 // ../oracles/tpch/Q*.txt and are loaded once by `oracle()`.
 
