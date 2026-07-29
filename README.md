@@ -1,5 +1,12 @@
 # Prela: A Compositional & Controllable Query Language
 
+## Queries
+
+The Prela implementation of the JOB queries can be found [here](/rust/src/job_queries/queries.rs).
+Once you've ran [`get_imdb.sh`](/rust/bench/get_imdb.sh), the original SQL JOB queries can be found at [`data/join-order-benchmark`](/data/join-order-benchmark).
+
+The idiomatic TPC-H queries are [here](/rust/src/tpch_queries/idiomatic.rs), and the optimized ones are [here](/rust/src/tpch_queries/optimized.rs).
+
 ## Reproducibility
 
 To fetch the data and set it up for the benchmark, run
