@@ -24,7 +24,7 @@ DATA=$JOB/data
 DUCKDB=${DUCKDB:-duckdb}
 DBFILE=${DBFILE:-/tmp/ddb_bench/job.duckdb}
 PARQUET=${PARQUET:-$REPO/data/imdb/parquet}
-QDIR=${QDIR:-$REPO/../join-order-benchmark}
+QDIR=${QDIR:-$REPO/data/join-order-benchmark}
 QNAMES=$DATA/job_qnames.txt
 
 TMP=$(mktemp -d)
