@@ -3,7 +3,7 @@
 
 use crate::engine::*;
 use crate::job_schema::*;
-use crate::queries::helpers::{min_row, Row};
+use crate::job_queries::helpers::{min_row, Row};
 
 pub const ENTRIES: &[super::Entry] = &[
     ("6a/method", "marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert", || min_row(q6a_methods())),
