@@ -313,6 +313,7 @@ These scripts
 - and generate the Prela binary caches for JOB and TPC-H.
 
 These scripts only need to be run once.
+Downloading the JOB dataset and building the TPCH may each take a few minutes.
 
 To collect the data and regenerate the charts, run
 
