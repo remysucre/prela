@@ -18,7 +18,6 @@ import Control.Monad.ST (ST, runST)
 import Data.Array.ST (freeze, runSTUArray, writeArray)
 import Data.Bits ((.&.))
 import Data.Hashable (Hashable)
-import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.STRef (STRef, modifySTRef', newSTRef, readSTRef, writeSTRef)
@@ -145,12 +144,31 @@ growTable ref ini = do
 bufFold :: (Mode q, Ord d) => ([r] -> s) -> Drv d r -> q d s
 bufFold f = fromCache . Map.map (f . reverse) . index
 
--- | Distinct values per key (SQL's `COUNT(DISTINCT x)`), the instance of
--- `bufFold` that motivates it. Sorting and then counting runs of equals beats a
--- set per group at the sizes that actually occur, which is the same choice the
--- Rust port makes for the same reason.
-countDistinct :: (Mode q, Ord d, Ord r) => Drv d r -> q d Int
-countDistinct = bufFold (length . List.group . List.sort)
+-- | Distinct values per key (SQL's `COUNT(DISTINCT x)`).
+--
+-- Two tables rather than a buffer per group. The first is a SET: key it on the
+-- whole pair and reduce with `()`, so a repeated `(d, r)` finds its slot already
+-- taken and nothing happens. `Unbox ()` stores no bytes, so that accumulator is
+-- free. Then re-key what survived to `d` alone and count with an ordinary
+-- `fold`.
+--
+-- This used to go through `bufFold`, which meant a `Map` of cons-lists and a
+-- sort per group. Dropping it removes the sort as well as the lists, so the
+-- change is algorithmic and not only a matter of layout.
+countDistinct :: (Mode q, Hashable d, Key d, Hashable r, Key r)
+              => Drv d r -> q d Int
+countDistinct q = fold (\n _ -> n + (1 :: Int)) 0 distinct
+  where
+    pairs    = Drv (\k -> drive q (\d r -> k (d, r) ()))
+    distinct = Drv (\k -> drive (dedup pairs) (\(d, _) u -> k d u))
+{-# INLINE countDistinct #-}
+
+-- Drop duplicate keys by building a table and reading it back. The `Drv`
+-- annotation is on the result type here rather than inline at the use site so
+-- that the mode is pinned without needing a scoped type variable.
+dedup :: (Hashable a, Key a) => Drv a b -> Drv a ()
+dedup s = fromTable (buildTable (\_ _ -> ()) () s)
+{-# INLINE dedup #-}
 
 -- | The dense-array grouped fold (`q ▷ (op, init, n)`): the same thing as
 -- `fold`, opted into a different physical cache. When the keys are entity ids
