@@ -1,7 +1,7 @@
 // Terminal continuation: drive a query, fold the lexicographic minimum of
 // each output column independently, and render `a || b || …` (or "(empty)"
 // when no row survived) — the JOB benchmark's MIN(...) projection.
-// Plus the typed shared sub-queries (Julia `let` bindings used by several
+// Plus the typed shared sub-queries (`let` bindings used by several
 // queries).
 
 use crate::engine::*;
@@ -49,7 +49,7 @@ pub fn min_row<Q: Drive>(q: Q) -> String where Q::R: Row {
     }
 }
 
-// ===== shared sub-queries (Julia `let` bindings used by several queries) =
+// ===== shared sub-queries (`let` bindings used by several queries) =
 
 // ===== keyword patterns, resolved to ids once ===========================
 // `keyword.rx(…)` elides `Id<Keyword>` to its `text` field, so it runs the
@@ -87,7 +87,7 @@ pub fn film_or_warner_co() -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive
 
 /// The link-type label ("followed by", …) of each movie's "follow"-typed
 /// links — the `lk` binding of queries 21a-c and 27a-c. String-valued like
-/// Julia's `link → (MovieLink.type ~ r"follow")` (whose primary elision
+/// `link -> (MovieLink.type ~ r"follow")` (whose primary elision
 /// composes through to `LinkType.link`), so output products use it directly.
 pub fn follow_link() -> impl Query<D = Id<Movie>, R = &'static str> + Drive + Probe {
     link.select(MovieLink::ty.rx(r"follow"))

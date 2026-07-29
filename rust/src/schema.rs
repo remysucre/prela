@@ -1,11 +1,11 @@
-// `schema!` — declarative typed schemas over the v2 binary cache.
+// `schema!` — declarative typed schemas over the binary cache.
 //
 // One declaration generates, per entity:
 //   - a unit-struct entity tag (`pub struct Movie;`) — the phantom `E` of
 //     `Id<E>`, so cross-entity compositions are COMPILE errors;
 //   - a cols struct (same ident, inside the schema's module) holding the
 //     entity's typed columns, loaded by the generated `init(cache_dir)`
-//     from `<Entity>_<field>.bin` via the src/cache.rs v2 readers
+//     from `<Entity>_<field>.bin` via the src/cache.rs cache readers
 //     (id-valued columns are bulk-reinterpreted to `Id<T>` through the
 //     `repr(transparent)` layout — no per-element conversion);
 //   - a paren-free leaf HANDLE per field: a ZST named by the field, living
@@ -19,7 +19,7 @@
 //     entity tag (`impl Info { pub const ty: TPCH-internal handle type }`),
 //     so `Info::ty` is a value usable wherever a relation is expected;
 //   - a BARE re-export of the handle (`pub use …::production_year;`) for
-//     fields marked `pub` — explicit, like Julia's selective `@expose`,
+//     fields marked `pub` — explicit selective exposure,
 //     because macro_rules cannot detect cross-entity name collisions.
 //     CAVEAT (unit structs in patterns): a bare handle in scope captures
 //     any same-named BINDING pattern — `let kind = …`, a closure param
@@ -49,9 +49,9 @@
 //     trait. Predicate ROOTS are bare handles (`keyword`) or qualified
 //     consts (`Entity::field`); everything after the root navigates.
 //
-// Field types: `str` → `VecRel<&'static str, Id<E>>`; `i64`/`f64` →
-// `VecRel<i64/f64, Id<E>>`; a bare entity ident `Kind` →
-// `VecRel<Id<Kind>, Id<E>>`; `Multi<T>` → `MultiRel<…, Id<E>>` likewise.
+// Field types: `str` -> `VecRel<&'static str, Id<E>>`; `i64`/`f64` ->
+// `VecRel<i64/f64, Id<E>>`; a bare entity ident `Kind` ->
+// `VecRel<Id<Kind>, Id<E>>`; `Multi<T>` -> `MultiRel<…, Id<E>>` likewise.
 // The literal idents `str|i64|f64` are matched before the entity-ident
 // case, so an entity cannot be named `str`/`i64`/`f64`.
 //
@@ -62,7 +62,7 @@
 // The declaration is also regen's source of truth for WHAT the cache must
 // contain: the macro emits a `pub const MANIFEST: &[(&str, &str, u32)]`
 // of (entity, field, cache kind — src/format.rs `KIND_*`). regen's
-// parquet→cache TRANSFORMATION logic (FK joins, multi-table splits) stays
+// parquet->cache TRANSFORMATION logic (FK joins, multi-table splits) stays
 // hand-written — it is parquet-specific — but after writing, regen checks
 // its output file set and header kinds against the manifest, so a column
 // regen produces that the schema doesn't declare (or vice versa, or with
@@ -113,7 +113,7 @@ macro_rules! schema {
     };
 
     // ===== manifest: (entity, field, cache kind) for every column ========
-    // Accumulator muncher over entities × fields. Field names are used
+    // Accumulator muncher over entities x fields. Field names are used
     // verbatim — `<Entity>_<field>` IS the cache filename.
     (@manifest [$($acc:tt)*]) => {
         /// Generated (entity, field, `format::KIND_*`) manifest — the file
@@ -157,7 +157,7 @@ macro_rules! schema {
     (@primary $mod_:ident; $Ent:ident; $ff:ident : f64 $(, $($rest:tt)*)?) => {
         $crate::schema::schema!(@primary_emit $mod_; $Ent; $ff; f64; f64);
     };
-    // first field is an entity ref or Multi<…> → no scalar primary.
+    // first field is an entity ref or Multi<…> -> no scalar primary.
     (@primary $mod_:ident; $Ent:ident; $ff:ident : $t1:tt $(< $t2:tt >)? $(, $($rest:tt)*)?) => {};
     (@primary_emit $mod_:ident; $Ent:ident; $ff:ident; $scalar:ty; $colkind:tt) => {
         impl $crate::engine::Primary for $Ent {
@@ -170,7 +170,7 @@ macro_rules! schema {
         }
     };
 
-    // ===== field type → cache kind ========================================
+    // ===== field type -> cache kind ========================================
     (@kind str) => { $crate::format::KIND_DENSE_STR };
     (@kind i64) => { $crate::format::KIND_DENSE_I64 };
     (@kind f64) => { $crate::format::KIND_DENSE_F64 };
@@ -198,7 +198,7 @@ macro_rules! schema {
             $($($rest)*)?);
     };
 
-    // ===== field type → physical column type ============================
+    // ===== field type -> physical column type ============================
     // The parenthesized prefix is a `::`-joined path back to the scope
     // holding the entity tags: `()` at the invocation scope, `(super)` from
     // inside the schema module, `(super super)` from a handle module.
@@ -236,7 +236,7 @@ macro_rules! schema {
             $($($rest)*)?)
     };
 
-    // ===== field type → cache reader =====================================
+    // ===== field type -> cache reader =====================================
     (@load $dir:ident; $name:expr; str) => { $crate::cache::load_strs_in($dir, $name) };
     (@load $dir:ident; $name:expr; i64) => { $crate::cache::load_i64_in($dir, $name) };
     (@load $dir:ident; $name:expr; f64) => { $crate::cache::load_f64_in($dir, $name) };
@@ -389,7 +389,7 @@ macro_rules! schema {
         $crate::schema::schema!(@navplain $mod_; $Ent; $Nav; [$($acc)*] $f; Multi($t2); $($($rest)*)?);
     };
     // Foreign key (bare entity): the nav crosses E's entity table — `Ident` for
-    // a dense entity, so it inlines away (a non-dense entity gets a Key→Id
+    // a dense entity, so it inlines away (a non-dense entity gets a Key->Id
     // dictionary here instead). The result is still valued `Id<$T>`.
     (@nav $mod_:ident; $Ent:ident; $Nav:ident; [$($acc:tt)*] $f:ident : $T:ident $(, $($rest:tt)*)? ) => {
         $crate::schema::schema!(@nav $mod_; $Ent; $Nav;
@@ -471,7 +471,7 @@ macro_rules! schema {
 
 pub(crate) use schema;
 
-// ===== tests — a tiny schema over a generated v2 cache dir ===============
+// ===== tests — a tiny schema over a generated cache dir ===============
 
 #[cfg(test)]
 mod tests {
@@ -489,7 +489,7 @@ mod tests {
         Tag / TagNav { tag: str, films: Multi<Film> }
     }
 
-    pub(super) fn write_v2(dir: &PathBuf, name: &str, head: [u8; HEADER_LEN], payload: &[u8]) {
+    pub(super) fn write_cache_file(dir: &PathBuf, name: &str, head: [u8; HEADER_LEN], payload: &[u8]) {
         let mut f = File::create(dir.join(format!("{name}.bin"))).unwrap();
         f.write_all(&head).unwrap();
         f.write_all(payload).unwrap();
@@ -546,23 +546,23 @@ mod tests {
 
         // films: 0 "Alien" 1979 genre 1 tags {0}, 1 "Blade" 1998 genre 0 tags {0, 1}
         let (h, p) = dense_str(&["Alien", "Blade"]);
-        write_v2(&dir, "Film_ftitle", h, &p);
+        write_cache_file(&dir, "Film_ftitle", h, &p);
         let (h, p) = dense_words(&[1979, 1998]);
-        write_v2(&dir, "Film_year", h, &p);
+        write_cache_file(&dir, "Film_year", h, &p);
         let (h, p) = dense_words(&[1, 0]);
-        write_v2(&dir, "Film_genre", h, &p);
+        write_cache_file(&dir, "Film_genre", h, &p);
         let (h, p) = csr_words(&[0, 1, 3], &[0, 0, 1]);
-        write_v2(&dir, "Film_tags", h, &p);
+        write_cache_file(&dir, "Film_tags", h, &p);
         // genres: 0 "drama"/"main", 1 "horror"/"sub"
         let (h, p) = dense_str(&["drama", "horror"]);
-        write_v2(&dir, "Genre_gname", h, &p);
+        write_cache_file(&dir, "Genre_gname", h, &p);
         let (h, p) = dense_str(&["main", "sub"]);
-        write_v2(&dir, "Genre_ty", h, &p);
+        write_cache_file(&dir, "Genre_ty", h, &p);
         // tags: 0 "cult" films {0, 1}, 1 "noir" films {1}
         let (h, p) = dense_str(&["cult", "noir"]);
-        write_v2(&dir, "Tag_tag", h, &p);
+        write_cache_file(&dir, "Tag_tag", h, &p);
         let (h, p) = csr_words(&[0, 2, 3], &[0, 1, 1]);
-        write_v2(&dir, "Tag_films", h, &p);
+        write_cache_file(&dir, "Tag_films", h, &p);
 
         test_init(&dir);
 
@@ -602,7 +602,7 @@ mod tests {
 
         // same-named nav methods on different entities resolve by the
         // receiver's RESOLVED value type: Tag::films is Film-valued, so
-        // `.year()` picks FilmNav; the chain navigates Film → Genre → gname.
+        // `.year()` picks FilmNav; the chain navigates Film -> Genre -> gname.
         let mut got = Vec::new();
         Tag::films.year().probe(Id::new(0), |y| got.push(y));
         assert_eq!(got, vec![1979, 1998]);
@@ -613,13 +613,13 @@ mod tests {
             .probe(Id::new(1), |g| got.push(g));
         assert_eq!(got, vec!["drama"]);
 
-        // field names are filenames verbatim (`ty` → Genre_ty.bin); a
+        // field names are filenames verbatim (`ty` -> Genre_ty.bin); a
         // handle in leaf (non-chain) position resolves explicitly via `iq`
         let mut got = Vec::new();
         Genre::ty.iq().probe(Id::new(0), |v| got.push(v));
         assert_eq!(got, vec!["main"]);
 
-        // typed ids round-trip the bulk reinterpret: Film_genre words → Id<Genre>
+        // typed ids round-trip the bulk reinterpret: Film_genre words -> Id<Genre>
         let mut got = Vec::new();
         Film::genre.iq().probe(Id::<Film>::new(1), |g| got.push(g));
         assert_eq!(got, vec![Id::<Genre>::new(0)]);
@@ -648,7 +648,7 @@ mod tests {
 // those external keys, navigated through the table.
 #[cfg(test)]
 mod dict_tests {
-    use super::tests::{dense_str, dense_words, write_v2};
+    use super::tests::{dense_str, dense_words, write_cache_file};
     use crate::engine::*;
 
     schema! { DICTT / DictSchema / dictt_init:
@@ -662,16 +662,16 @@ mod dict_tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         // Studio: EXTERNAL ids 100/205/9899 at dense rows 0/1/2; names. The id
-        // column is what the DictTable inverts (external id → row).
+        // column is what the DictTable inverts (external id -> row).
         let (h, p) = dense_words(&[100, 205, 9899]);
-        write_v2(&dir, "Studio_id", h, &p);
+        write_cache_file(&dir, "Studio_id", h, &p);
         let (h, p) = dense_str(&["Warner", "A24", "Mubi"]);
-        write_v2(&dir, "Studio_sname", h, &p);
+        write_cache_file(&dir, "Studio_sname", h, &p);
         // Movie.studio: FK storing the external KEYS (205, 100) — NOT row ids.
         let (h, p) = dense_words(&[205, 100]);
-        write_v2(&dir, "Movie_studio", h, &p);
+        write_cache_file(&dir, "Movie_studio", h, &p);
         let (h, p) = dense_words(&[2008, 1999]);
-        write_v2(&dir, "Movie_year", h, &p);
+        write_cache_file(&dir, "Movie_year", h, &p);
 
         dictt_init(&dir);
 
@@ -682,7 +682,7 @@ mod dict_tests {
         let mut got = Vec::new();
         q.drive(|m, n| got.push((m.idx(), n)));
         got.sort();
-        // movie 0 → studio key 205 → row 1 → "A24"; movie 1 → key 100 → row 0 → "Warner"
+        // movie 0 -> studio key 205 -> row 1 -> "A24"; movie 1 -> key 100 -> row 0 -> "Warner"
         assert_eq!(got, vec![(0, "A24"), (1, "Warner")]);
 
         // the FK column genuinely stores a non-dense Key (not a row Id): the raw

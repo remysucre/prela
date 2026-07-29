@@ -91,7 +91,7 @@ impl<T: Member + ?Sized> Member for &T {
 // states): it fails every `i < len` / `.get` bounds check, so a hole probes
 // to nothing for free.
 //
-// `VecRel<R>` — total 1:1 relation; entity-id → R (one value per id).
+// `VecRel<R>` — total 1:1 relation; entity-id -> R (one value per id).
 // INVARIANT: an FK-valued column over a gappy key space (holes that a query
 // can drive or probe, e.g. TPC-H ord_customer over the sparse orderkey
 // domain) holds `NO_ID` in the holes — a default-0 hole would alias entity
@@ -133,7 +133,7 @@ impl Dense for usize {
     }
 }
 
-/// Phantom-typed entity id (the Julia engine's `ID{E}`). `repr(transparent)`
+/// Phantom-typed entity id. `repr(transparent)`
 /// over `usize`, so typed id columns can be reinterpreted in bulk from the
 /// cache's word arrays.
 #[repr(transparent)]
@@ -197,7 +197,7 @@ impl<E: 'static> Dense for Id<E> {
     }
 }
 
-// ===== primary-field elision (Julia's `==` on an entity value) ==========
+// ===== primary-field elision (`==` on an entity value) ==========
 // A comparison on an entity-valued query auto-navigates to the entity's
 // PRIMARY (first-declared) scalar field before comparing — `keyword.eq("x")`
 // ≡ `keyword.text().eq("x")`. The dispatch is on the RECEIVER's value type,
@@ -478,8 +478,8 @@ impl<D: Dense> Probe for Universe<D> {
     }
 }
 
-// ===== Ident — the identity ENTITY TABLE `Id<E> → Id<E>` ================
-// The `id → row` map for a DENSE entity, where the external id IS the row.
+// ===== Ident — the identity ENTITY TABLE `Id<E> -> Id<E>` ================
+// The `id -> row` map for a DENSE entity, where the external id IS the row.
 
 pub struct Ident<E: 'static>(pub PhantomData<E>);
 impl<E> Ident<E> {
@@ -569,8 +569,8 @@ impl<E: 'static> DictTable<E> {
                 .collect(),
         }
     }
-    /// Build from the entity's i64 external-id column (`row → external id`),
-    /// the inverse `external id → row`. Used by the schema macro at load.
+    /// Build from the entity's i64 external-id column (`row -> external id`),
+    /// the inverse `external id -> row`. Used by the schema macro at load.
     pub fn from_i64(keys: &[i64]) -> Self {
         DictTable {
             map: keys
@@ -1164,7 +1164,7 @@ impl<D: Copy + Eq + Hash, S: Copy> Fold<D, S> {
         Fold { cache: m }
     }
 
-    /// Whole-multiset reduce (Julia's BufFold — julia-engine plan.jl
+    /// Whole-multiset reduce (BufFold —
     /// `build_buffold`): buffer every group into an `SVec`, then compute
     /// each cache entry as `f(vs)` over the whole group. For reducers that
     /// don't fit foldl's `(S, R) -> S` shape — count-distinct, median, … —
@@ -1222,7 +1222,7 @@ impl<D: Copy + Eq + Hash, S: Copy> Probe for Fold<D, S> {
 // known, dense `0..n`. Backing store is `Vec<S>` (one slot per key) plus a
 // parallel `Vec<bool>` presence map. Avoids HashMap probe + entry alloc on
 // every reduce step; for Q1 (≤6 group keys via packed byte index), Q2 / Q20
-// (per-part), Q18 (per-order), the gain is ~5-10× over `Fold`.
+// (per-part), Q18 (per-order), the gain is ~5-10x over `Fold`.
 
 pub struct DenseFold<S: Copy, D: Dense = usize> {
     pub vals: Vec<S>,
@@ -1567,7 +1567,7 @@ pub trait QueryExt: IntoQuery + Sized {
         Filter { a: self.iq(), p: f }
     }
 
-    /// Half-open range `[lo, hi)` — Julia `during(lo, hi)`.
+    /// Half-open range `[lo, hi)` — `during(lo, hi)`.
     #[inline(always)]
     fn during(self, lo: Sc<Self>, hi: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
     where
@@ -1580,7 +1580,7 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    /// Closed range `[lo, hi]` — Julia `lo..hi`.
+    /// Closed range `[lo, hi]` — `lo..hi`.
     #[inline(always)]
     fn between(self, lo: Sc<Self>, hi: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
     where
@@ -1661,7 +1661,7 @@ pub trait QueryExt: IntoQuery + Sized {
         DenseFold::build_outer(self.iq(), n, init, op)
     }
 
-    /// Count-distinct — the `length ∘ unique` instance of `.buf_fold`. The
+    /// Count-distinct — the `length(unique(..))` instance of `.buf_fold`. The
     /// closure sorts + dedups the per-key SVec on finalization — much
     /// faster than a HashSet per group for the typical small-group case.
     #[inline(always)]
@@ -1700,7 +1700,7 @@ impl<T: IntoQuery> QueryExt for T {}
 mod tests {
     use super::*;
 
-    // films: 0 → 10, 1 → 20, 2 → 30 (VecRel); cast: 0 → {7, 8}, 2 → {7} (MultiRel)
+    // films: 0 -> 10, 1 -> 20, 2 -> 30 (VecRel); cast: 0 -> {7, 8}, 2 -> {7} (MultiRel)
     // Values are id-typed (usize) so they can feed compose/restrict domains.
     fn films() -> VecRel<usize> {
         VecRel::from_pairs(3, [(0, 10), (1, 20), (2, 30)])
@@ -1736,7 +1736,7 @@ mod tests {
     fn compose_filter_prod() {
         let f = films();
         let c = cast();
-        // cast ∘ (films probed at cast values)? — compose cast: i64→i64 with films
+        // compose cast (films probed at cast values)? — compose cast: i64->i64 with films
         assert_eq!(drive_all(&(&c).select(&f)), vec![]); // cast values 7,8 not film keys <3
         assert_eq!(drive_all(&(&f).filt(|v| v > 15)), vec![(1, 20), (2, 30)]);
         let u = Universe::new(2);
@@ -1793,7 +1793,7 @@ mod tests {
             vs[vs.len() / 2]
         });
         assert_eq!(drive_all(&med), vec![(7, 30), (8, 10)]);
-        // count_distinct = buf_fold's `length ∘ unique` instance; the
+        // count_distinct = buf_fold's `length(unique(..))` instance; the
         // duplicate (7, 10) row collapses
         let cd = fs
             .group_by(&c)
@@ -1825,7 +1825,7 @@ mod tests {
         let c = cast();
         let u3 = Universe::new(3);
         // films-with-cast as an identity relation: restrict the universe by
-        // membership in cast (Julia's `a : b`, the Restrict node).
+        // membership in cast (`a.with(b)`, the Restrict node).
         let people = u3.with(&c);
         assert_eq!(drive_all(&people), vec![(0, 0), (2, 2)]);
         assert!(people.member(0) && !people.member(1));
@@ -1842,7 +1842,7 @@ mod tests {
         let u2 = Universe::new(2);
         assert_eq!(drive_all(&u2.with(&ms)), vec![(0, 0)]);
         assert_eq!(drive_all(&u2.minus(&ms)), vec![(1, 1)]);
-        // ∨ is MEMBER-ONLY (no Drive/Probe impl — `drive_all(&u2.or(&b))`
+        // `.or` is MEMBER-ONLY (no Drive/Probe impl — `drive_all(&u2.or(&b))`
         // and `u2.or(&b).probe(…)` would be compile errors by design;
         // `.union` is the enumerable form): member iff member of either leg.
         assert!(u2.or(&b).member(2) && !u2.or(&b).member(5));
@@ -1857,7 +1857,7 @@ mod tests {
         // b maps a's values (10, 20) to DIFFERENT values (99, 88); the
         // restriction must pass a's pairs through untouched — the membership
         // test is on a's VALUE against b's DOMAIN, and b's values never flow.
-        let f = films(); // 0 → 10, 1 → 20, 2 → 30
+        let f = films(); // 0 -> 10, 1 -> 20, 2 -> 30
         let b = MultiRel::from_pairs(31, [(10, 99usize), (20, 88)]);
         let r = (&f).with(&b);
         assert_eq!(drive_all(&r), vec![(0, 10), (1, 20)]); // not (0, 99) …
@@ -1889,7 +1889,7 @@ mod tests {
     fn prod_member_is_flat_short_circuit_and() {
         let f = films();
         let c = cast();
-        // ∧ = ⊗: member is the flat AND of the per-leg members
+        // `.and` on member checks is the flat AND of the per-leg members
         let conj = (&f).filt(|v| v > 15).and(&c);
         assert!(conj.member(2)); // film 2: 30 > 15, has cast
         assert!(!conj.member(1)); // film 1: no cast row
@@ -1898,7 +1898,7 @@ mod tests {
         let never = (&f).filt(|_| false);
         let trap = (&f).filt(|_| -> bool { panic!("second leg must not be probed") });
         assert!(!(&never).and(&trap).member(1));
-        // in drive position ∧ IS the product: pair values, lhs multiplicity
+        // in drive position `.and` IS the product: pair values, lhs multiplicity
         assert_eq!(
             drive_all(&(&c).and(&f)),
             vec![(0, (7, 10)), (0, (8, 10)), (2, (7, 30))]
@@ -1941,7 +1941,7 @@ mod tests {
     fn typed_ids_compose() {
         struct M;
         struct K;
-        // typed fixture columns: movie → kind id, kind → name
+        // typed fixture columns: movie -> kind id, kind -> name
         let mk: VecRel<Id<K>, Id<M>> = VecRel::new(vec![Id::new(1), Id::new(0), Id::new(1)]);
         let kname: VecRel<&'static str, Id<K>> = VecRel::new(vec!["alpha", "beta"]);
         // compose through the typed bridge (Id<K> = Id<K>) — the shape the
@@ -1972,8 +1972,8 @@ mod tests {
     fn collect_set_restrict_and_map() {
         let f = films();
         let u = Universe::new(31);
-        // Julia's `⩘`: the universe 0..31 restricted by films' collected
-        // value-set {10, 20, 30}
+        // left-driving restrict: the universe 0..31 restricted by films'
+        // collected value-set {10, 20, 30}
         let w = u.with((&f).collect::<MatSet<_>>());
         assert_eq!(drive_all(&w), vec![(10, 10), (20, 20), (30, 30)]);
         assert!(w.member(10) && !w.member(11));
@@ -1986,14 +1986,14 @@ mod tests {
     // ===== non-dense entities (Key<E> + DictTable) =======================
 
     // An FK into a NON-DENSE entity stores a `Key`; navigation crosses the
-    // entity's `DictTable` (Key→row) before reading columns. The whole chain is
+    // entity's `DictTable` (Key->row) before reading columns. The whole chain is
     // the stock `.select` combinator — only the entity table differs from the
     // dense `Ident` case.
     #[test]
     fn nondense_entity_navigation() {
         struct Movie;
         struct Person;
-        // Person: non-dense external ids {100,205,9899} → rows {0,1,2}; names.
+        // Person: non-dense external ids {100,205,9899} -> rows {0,1,2}; names.
         let person_table = DictTable::<Person>::from_keys(&[100, 205, 9899]);
         let person_name: VecRel<&str, Id<Person>> = VecRel {
             values: vec!["Nolan", "Kubrick", "Tarkovsky"],
@@ -2006,7 +2006,7 @@ mod tests {
         };
         let movies = Universe::<Id<Movie>>::new(3);
 
-        // movie → director(Key) → person(row) → name
+        // movie -> director(Key) -> person(row) -> name
         let q = (&movies)
             .select(&director)
             .select(&person_table)
@@ -2052,7 +2052,7 @@ mod tests {
         let mut rows: Vec<(&str, i64)> = Vec::new();
         counts.drive(|k, v| rows.push((k, v)));
         rows.sort();
-        // director keys 205(UK) 100(US) 9899(RU) 100(US) → US=2, UK=1, RU=1
+        // director keys 205(UK) 100(US) 9899(RU) 100(US) -> US=2, UK=1, RU=1
         assert_eq!(rows, vec![("RU", 1), ("UK", 1), ("US", 2)]);
     }
 

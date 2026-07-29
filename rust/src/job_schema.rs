@@ -1,5 +1,5 @@
 // The typed JOB schema — the `schema!` declaration of the JOB cache
-// (entities and fields per the cache file list; v2 readers, every column
+// (entities and fields per the cache file list; cache readers, every column
 // keyed by `Id<Entity>`).
 //
 // `pub` marks the fields that get bare top-level leaf handles — names that
@@ -19,7 +19,7 @@ use crate::schema::schema;
 
 schema! { JOB / JobSchema / job_init:
     // Universe is singular `movie` — Cast has no stored movie back-pointer
-    // (movie→cast traversal uses the Movie.cast edge), so the name is free.
+    // (movie->cast traversal uses the Movie.cast edge), so the name is free.
     // `persons` IS plural: `person` is the hot bare Cast.person handle.
     Movie(movie) / MovieNav {
         pub title: str,
@@ -88,7 +88,7 @@ mod tests {
     use std::path::Path;
 
     /// Full typed init against the real cache, cross-checked column-by-
-    /// column against the untyped v2 readers (lengths AND a value spot
+    /// column against the untyped cache readers (lengths AND a value spot
     /// check through the `repr(transparent)` id reinterpret). Skipped when
     /// the cache isn't present (CI without regen output).
     #[test]

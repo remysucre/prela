@@ -1,4 +1,4 @@
-// Named tuple-constants from queries.jl. Each call constructs a fresh Vec so
+// Named tuple-constants for the query set. Each call constructs a fresh Vec so
 // the owning Filter holds its own InVec — the engine consumes by value.
 
 pub fn kw7()  -> Vec<&'static str> { vec!["murder","violence","blood","gore","death","female-nudity","hospital"] }

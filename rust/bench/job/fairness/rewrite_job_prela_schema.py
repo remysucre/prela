@@ -11,7 +11,7 @@
 # self-joins), which the assertions below re-verify on every run.
 #
 # Emits TWO query sets: <out-canon> (canonical schema) and <out-prela>
-# (prela schema). Both get the semantics-neutral alias rename at → att
+# (prela schema). Both get the semantics-neutral alias rename at -> att
 # (15a-d alias aka_title AS at; AT is a reserved word in duckdb 1.5.3,
 # which silently zeroed those timings in an earlier capture).
 #
@@ -27,7 +27,7 @@ for path in sorted(glob.glob(f"{QDIR}/[0-9]*.sql")):
     name = os.path.basename(path)
     sql = open(path).read()
 
-    # reserved-word alias: `aka_title AS at` → `AS att` (both schemas)
+    # reserved-word alias: `aka_title AS at` -> `AS att` (both schemas)
     if re.search(r"\bAS\s+at\b", sql):
         sql = re.sub(r"\bAS\s+at\b", "AS att", sql)
         sql = re.sub(r"\bat\.", "att.", sql)

@@ -1,4 +1,4 @@
-// All 113 JOB queries — one entry per Julia _q(name, oracle) block —
+// All 113 JOB queries — one entry per reference _q(name, oracle) block —
 // plus the method-chain demo. Queries read the typed schema's global
 // `OnceLock` store (src/job_schema.rs), so runners take no data argument
 // — call `job_schema::job_init` once before running.

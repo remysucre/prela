@@ -1,5 +1,5 @@
 // Baseline TPC-H implementations — direct algebraic ports of
-// the historic julia-engine tpch_queries_*.jl — plus the oracles and the registry machinery
+// the historic reference queries — plus the oracles and the registry machinery
 // shared by all variants. Queries read the typed schema's global `OnceLock`
 // store (src/tpch_schema.rs), so runners take no data argument.
 //
@@ -21,7 +21,7 @@ pub type Entry = crate::Entry;
 
 pub fn f(x: f64) -> String { format!("{x:.2}") }
 
-/// Packed-i64-date (yyyymmdd) → "YYYY-MM-DD" — used for output formatting
+/// Packed-i64-date (yyyymmdd) -> "YYYY-MM-DD" — used for output formatting
 /// (Q3, Q10, Q18). The parse direction lives in regen, which bakes dates
 /// into the cache as i64.
 #[inline] pub fn fmt_yyyymmdd(d: i64) -> String {
@@ -45,8 +45,8 @@ pub fn oracle(name: &'static str) -> &'static str {
                 .unwrap_or_else(|e| panic!("read oracle {path}: {e}"));
             m.insert(n, &*s.leak());
         }
-        // Q9 cent-drift: the algebraic version's sum order matches Julia
-        // (drifts on both EGYPT 1996 and MOROCCO 1997). Patch both rows.
+        // Q9 cent-drift: the algebraic version's sum order matches the
+        // reference (drifts on both EGYPT 1996 and MOROCCO 1997). Patch both rows.
         let fixed = m["Q9"]
             .replace("EGYPT|1996|47745727.55", "EGYPT|1996|47745727.54")
             .replace("MOROCCO|1997|42698382.85", "MOROCCO|1997|42698382.86");
@@ -371,7 +371,7 @@ fn q13() -> String {
         .with(Order::comment.nrx("special.*requests"))
         .group_by(Order::customer)
         .dense_fold_outer(customer.iq().n, 0_i64, |a, _| a + 1);
-    // Histogram: invert (c_count ← customer) and count customers per c_count.
+    // Histogram: invert (c_count <- customer) and count customers per c_count.
     let dist = count_per_cust.inv().fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(i64, i64)> = Vec::new();
     dist.drive(|k, v| rows.push((k, v)));
@@ -552,7 +552,7 @@ fn q21() -> String {
 fn q22() -> String {
     // SQL: customers whose phone country-code is in the set, with acctbal above
     //      the avg of positive-balance such customers, and no orders (NOT
-    //      EXISTS).  GROUP BY cntrycode → count, sum(acctbal).  ORDER BY
+    //      EXISTS).  GROUP BY cntrycode -> count, sum(acctbal).  ORDER BY
     //      cntrycode.
     let prefix = Customer::phone.map(|p: &str| &p[..2]);
     let codes = ["13","31","23","29","30","18","17"];
@@ -586,7 +586,7 @@ fn q2() -> String {
         .group_by(PartSupp::part)
         .supplycost()
         .fold(f64::INFINITY, |a, c| if c < a { c } else { a });
-    // Project per PS row → (acct, sname, nname, pkey, mfgr, addr, phone, comm)
+    // Project per PS row -> (acct, sname, nname, pkey, mfgr, addr, phone, comm)
     // by navigation; flatten the tuple as it's collected.
     let mut rows: Vec<(f64, &str, &str, Id<Part>, &str, &str, &str, &str)> = Vec::new();
     (&eu_ps)

@@ -1,4 +1,4 @@
-// All 113 JOB queries (queries.jl lines 107..1394).
+// All 113 JOB queries.
 
 use crate::engine::*;
 use crate::job_schema::*;
@@ -16,7 +16,7 @@ fn k_23c() -> impl Query<R = &'static str, D = Id<Movie>> + Drive + Probe {
         .is_in(["movie", "tv movie", "video movie", "video game"])
 }
 
-// Conjunct trees (∧ = Prod) — consumed via `member` only, so the value
+// Conjunct trees (built with , i.e. Prod) — consumed via `member` only, so the value
 // type stays opaque (`impl Query<D = Id<Info>> + Probe`).
 fn gf_25ab() -> impl Query<D = Id<Info>> + Probe {
     Info::ty.eq("genres")
@@ -44,7 +44,7 @@ fn dt_28b() -> impl Query<R = Id<Data>, D = Id<Movie>> + Drive + Probe {
          .and(Data::text.gt("6.5")))
 }
 
-// Conjunct trees (∧ = Prod) — consumed via `member` only, so the value
+// Conjunct trees (built with , i.e. Prod) — consumed via `member` only, so the value
 // type stays opaque (`impl Query<D = Id<Info>> + Probe`).
 fn gf_horror() -> impl Query<D = Id<Info>> + Probe {
     Info::ty.eq("genres")
@@ -621,8 +621,9 @@ fn q7a() -> impl Drive<R: Row> {
                         .with(alias.rx(r"a")
                          .and(name_pcode_cf.ge("A"))
                          .and(name_pcode_cf.le("F"))
-                         // m ∨ (f ∧ name~^B), spelled {m,f} ∖ (f ∖ ^B):
-                         // ∨ is member-only and can't sit inside a probed ∧-tree.
+                         // "male, or female with a name not matching ^B" spelled as
+                         // {m,f} minus (f minus name~^B): `.or` is member-only and
+                         // can't sit inside a probed `.and`-tree.
                          .and(gender.is_in(["m", "f"])
                           .minus(gender.eq("f").minus(Person::name.rx(r"^B"))))
                          .and(bio.select(PersonInfo::ty.eq("mini biography")
@@ -645,7 +646,7 @@ fn q7b() -> impl Drive<R: Row> {
           .and(title))
 }
 
-// Conjunct tree (∧ = Prod) — consumed via `member` only, so the value
+// Conjunct tree (built with , i.e. Prod) — consumed via `member` only, so the value
 // type stays opaque (`impl Query<D = Id<PersonInfo>> + Probe`).
 fn bio_filter_7c() -> impl Query<D = Id<PersonInfo>> + Probe {
     PersonInfo::ty.eq("mini biography")
@@ -661,8 +662,9 @@ fn q7c() -> impl Drive<R: Row> {
                         .with(alias.rx(r"a|^A")
                          .and(name_pcode_cf.ge("A"))
                          .and(name_pcode_cf.le("F"))
-                         // m ∨ (f ∧ name~^A), spelled {m,f} ∖ (f ∖ ^A):
-                         // ∨ is member-only and can't sit inside a probed ∧-tree.
+                         // "male, or female with a name not matching ^A" spelled as
+                         // {m,f} minus (f minus name~^A): `.or` is member-only and
+                         // can't sit inside a probed `.and`-tree.
                          .and(gender.is_in(["m", "f"])
                           .minus(gender.eq("f").minus(Person::name.rx(r"^A"))))
                          .and(bio.with(bio_filter_7c())))
@@ -863,7 +865,7 @@ fn q18a() -> impl Drive<R: Row> {
           .and(title))
 }
 
-// Conjunct/diff tree (∧ = Prod, - = Diff) — consumed via `member` only, so
+// Conjunct/diff tree (built with `.and` for Prod, `.minus` for Diff) — consumed via `member` only, so
 // the value type stays opaque (`impl Query<D = Id<Info>> + Probe`).
 fn gf_18b() -> impl Query<D = Id<Info>> + Probe {
     Info::ty.eq("genres")

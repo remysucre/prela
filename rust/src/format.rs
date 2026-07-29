@@ -1,11 +1,9 @@
-// Cache format v2 — the shared spec between the writer (`regen`, which
-// includes this file via `#[path]`) and the reader (src/cache.rs). The
-// cache stores FINAL physical layouts: 0-based ids with `NO_ID` holes
+// The binary cache format — the shared spec between the writer (`regen`,
+// which includes this file via `#[path]`) and the reader (src/cache.rs).
+// The cache stores FINAL physical layouts: 0-based ids with `NO_ID` holes
 // baked in, dates pre-parsed to yyyymmdd i64, strings as offsets+bytes,
 // multi-valued columns as CSR. Loading is mmap + header check + bulk
-// copy/slice — no per-pair work. (Format v1 — the Julia-era 1-based
-// (i64, i64) pair streams — is gone; see the julia-engine branch for the
-// historic implementation.)
+// copy/slice — no per-pair work.
 //
 // Every `<Entity>_<field>.bin` file is:
 //
@@ -19,23 +17,24 @@
 // All integers little-endian; the payload starts 8-byte aligned (mmaps are
 // page-aligned). Kinds:
 //
-//   0  DENSE_I64   payload = [n × i64]                              m = 0
+//   0  DENSE_I64   payload = [n many i64]                            m = 0
 //                  one value per id; also id/FK columns (stored as the
 //                  0-based id words with NO_ID = !0u64 in the holes) and
 //                  dates (pre-parsed yyyymmdd)
-//   1  DENSE_F64   payload = [n × f64]                              m = 0
-//   2  DENSE_STR   payload = [(n+1) × u32 offsets][m bytes]         m = total bytes
+//   1  DENSE_F64   payload = [n many f64]                            m = 0
+//   2  DENSE_STR   payload = [(n+1) many u32 offsets][m bytes]       m = total bytes
 //                  string i = bytes[off[i]..off[i+1]]; holes are empty
-//   3  CSR_WORDS   payload = [(n+1) × u32 offsets][pad to 8][m × 8-byte words]
+//   3  CSR_WORDS   payload = [(n+1) many u32 offsets][pad to 8][m many 8-byte words]
 //                  m = total values; row i = values[off[i]..off[i+1]]
 //                  (words are 0-based ids or raw i64s — caller's type)
-//   4  CSR_STR     payload = [(n+1) × u32 row-offsets]
-//                            [(m+1) × u32 byte-offsets][bytes]      m = total strings
+//   4  CSR_STR     payload = [(n+1) many u32 row-offsets]
+//                            [(m+1) many u32 byte-offsets][bytes]    m = total strings
 //                  row i = strings off[i]..off[i+1]; string j =
 //                  bytes[boff[j]..boff[j+1]]
 //
-// A v1 file starts with its u64 pair count, which can never collide with
-// the magic — stale caches fail loudly at the magic check.
+// A stale pair-stream cache from an earlier format starts with its u64 pair
+// count, which can never collide with the magic — it fails loudly at the
+// magic check rather than being silently misread.
 
 pub const MAGIC: [u8; 8] = *b"prela2\0\0";
 pub const HEADER_LEN: usize = 32;
@@ -68,14 +67,14 @@ pub fn header(kind: u32, n: u64, m: u64) -> [u8; HEADER_LEN] {
     h
 }
 
-/// Parse + validate a v2 header. Loud failure on anything unexpected: an
-/// old 1-based v1 cache silently read as v2 would be an off-by-one
+/// Parse + validate the header. Loud failure on anything unexpected: an
+/// old-format cache silently read under this layout would be an off-by-one
 /// disaster, so a bad magic aborts with the regen instruction.
 #[allow(dead_code)] // reader side (prela binary only)
 pub fn parse_header(bytes: &[u8], expect_kind: u32, what: &str) -> (usize, usize) {
     if bytes.len() < HEADER_LEN || bytes[0..8] != MAGIC {
         panic!(
-            "{what}: not a cache-format-v2 file (stale v1 cache?) — \
+            "{what}: not a valid prela cache file (stale format?) — \
              rerun `regen job` / `regen tpch`"
         );
     }

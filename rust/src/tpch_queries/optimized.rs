@@ -357,7 +357,7 @@ fn q21_note(slot: u32, s: Id<Supplier>) -> u32 {
 // `select` into `Bitset` instead of `with` to restrict to SA suppliers.
 // The fold state is bit-packed (see `q21_note`): `orders` is a *sparse*
 // universe — 6M slots for 1.5M live orders at SF=1 — so the `dense_fold`
-// array is 6M × size_of::<S>() regardless of how many orders exist. At the
+// array is 6M x size_of::<S>() regardless of how many orders exist. At the
 // natural 48-byte tuple that is a 288 MB array to zero and stream; at 8
 // bytes it is 48 MB.
 // The scan leads with the SAUDI ARABIA supplier bitset instead of the date

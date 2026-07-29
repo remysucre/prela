@@ -1,13 +1,12 @@
-// Cache-format-v2 readers, consumed by the `schema!`-generated loaders
+// Cache readers, consumed by the `schema!`-generated loaders
 // (src/job_schema.rs, src/tpch_schema.rs). The format is specified in src/format.rs and
 // produced by the `regen` binary (`cargo run --release --features regen
 // --bin regen -- {job|tpch} ...`), which absorbs ALL load-time
 // transformation: ids are stored 0-based with `NO_ID` holes baked in,
 // dates pre-parsed to yyyymmdd i64, strings laid out as offsets+bytes,
 // multi columns as CSR. Loading is mmap + header check + bulk copy/slice.
-// (The v1 pair-stream format and its load-time shift/scatter/bucketing —
-// inherited from the retired Julia engine, julia-engine branch — are gone;
-// a v1 file fails the magic check loudly.)
+// (An old pair-stream format with load-time shift/scatter/bucketing is
+// gone; a stale file in that format fails the magic check loudly.)
 //
 // Strings and CSR payloads are returned as `&'static` borrows — the mmap
 // is leaked, so the bytes live for the program. No per-string allocation.
@@ -34,7 +33,7 @@ fn mmap_static(path: &Path) -> &'static [u8] {
     &**leaked
 }
 
-/// mmap `<dir>/<name>.bin`, validate the v2 header against `kind`, return
+/// mmap `<dir>/<name>.bin`, validate the header against `kind`, return
 /// (n, m, full bytes). The `schema!` macro builds `name` with `stringify!`
 /// — field names are filenames, verbatim.
 fn open_in(dir: &Path, name: &str, kind: u32) -> (usize, usize, &'static [u8]) {
@@ -231,7 +230,7 @@ mod tests {
 
     #[test]
     fn csr_words_round_trip() {
-        // rows: 0 → [5, 6], 1 → [], 2 → [9]
+        // rows: 0 -> [5, 6], 1 -> [], 2 -> [9]
         let mut payload = Vec::new();
         for off in [0u32, 2, 2, 3] {
             payload.extend_from_slice(&off.to_le_bytes());
@@ -251,13 +250,13 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "stale v1 cache")]
-    fn v1_file_fails_loudly() {
-        // a v1 file starts with its u64 pair count — no magic
+    #[should_panic(expected = "stale format")]
+    fn old_format_file_fails_loudly() {
+        // an old-format file starts with its u64 pair count — no magic
         let mut payload = Vec::new();
         payload.extend_from_slice(&3u64.to_le_bytes());
         payload.extend_from_slice(&[0u8; 48]);
-        let p = write_file("v1.bin", [0u8; HEADER_LEN], &[]);
+        let p = write_file("old_format.bin", [0u8; HEADER_LEN], &[]);
         std::fs::write(&p, &payload).unwrap();
         open_at(&p, KIND_DENSE_I64);
     }

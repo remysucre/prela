@@ -1,6 +1,6 @@
-// TPC-H queries, in two variants (originally ported from the julia-engine branch):
+// TPC-H queries, in two variants:
 //
-//   idiomatic — direct algebraic ports of the Julia queries
+//   idiomatic — direct algebraic ports of the reference queries
 //   optimized — same algebra, hand-encoding the plans a stats-driven
 //               optimizer (DuckDB's) would pick
 //

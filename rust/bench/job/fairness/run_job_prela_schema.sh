@@ -65,7 +65,7 @@ fi
 
 # ---- rewrite queries + verify result parity ----
 # (emits BOTH sets: queries_canon is canonical modulo the semantics-neutral
-# `at` → `att` alias rename — AT is reserved in duckdb 1.5.3)
+# `at` -> `att` alias rename — AT is reserved in duckdb 1.5.3)
 python3 $SCRIPT_DIR/rewrite_job_prela_schema.py $QDIR $WORK/queries_canon $WORK/queries_prela
 
 fail=0

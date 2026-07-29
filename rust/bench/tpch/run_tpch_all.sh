@@ -8,7 +8,7 @@
 # measured, while ratios captured together hold. Refreshing one side alone produces a plot whose ratios mean nothing.
 # If you only want to re-time prela, re-run this anyway.
 #
-# Each rep runs duckdb → idiomatic → optimized; the best (lowest warm total)
+# Each rep runs duckdb -> idiomatic -> optimized; the best (lowest warm total)
 # rep per variant is what gets written, so a burst of background load costs a
 # rep rather than corrupting the capture.
 #

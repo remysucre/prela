@@ -1,4 +1,4 @@
-// Regenerate the binary cache (format v2 — see src/format.rs) from parquet:
+// Regenerate the binary cache (see src/format.rs for the layout) from parquet:
 //
 //   cargo run --release --features regen --bin regen -- job  [../../jobdata/parquet] [../cache]
 //   cargo run --release --features regen --bin regen -- tpch [../cache/tpch] [../cache]
@@ -7,19 +7,17 @@
 // here, FK holes are filled with NO_ID, dates are parsed to yyyymmdd i64,
 // strings are laid out as offsets+bytes, and multi-valued columns are
 // built into CSR — the engine loaders (src/cache.rs) just mmap and bulk
-// copy/slice. (The v1 pair-stream format, inherited from the retired
-// Julia engine — julia-engine branch — is gone.)
+// copy/slice.
 //
 // TPC-H expects clean DuckDB-exported parquet: all-BIGINT integer columns,
 // DOUBLE for money, VARCHAR for strings (dates pre-formatted as ISO
 // yyyy-mm-dd). It runs per-field passes through parquet (column
 // projection) and writes each dense column immediately. JOB reads the
-// imdb parquet export as-is (INT32 ids, nullable columns), reproducing
-// the pair semantics of the retired Julia loader (julia-engine branch,
-// JOB.jl `load_all!`): one pass per source table buffers every derived
-// column's pairs in RAM; once all tables are read, the entity universe
-// sizes are computed (the same max-id formulas the v1 runtime loader
-// used) and each column is finalized to its dense/CSR layout and written.
+// imdb parquet export as-is (INT32 ids, nullable columns): one pass per
+// source table buffers every derived column's pairs in RAM; once all
+// tables are read, the entity universe sizes are computed from the max id
+// seen per entity, and each column is finalized to its dense/CSR layout
+// and written.
 
 use prela::format::*;
 
@@ -100,7 +98,7 @@ fn write_u32s(f: &mut BufWriter<File>, vals: &[u32]) {
     f.write_all(bytes).unwrap();
 }
 
-/// Zero-pad from the end of a (n+1)×u32 offsets section to the 8-aligned
+/// Zero-pad from the end of a (n+1)-many-u32 offsets section to the 8-aligned
 /// start of a CSR words payload.
 fn pad_after_offsets(f: &mut BufWriter<File>, n: usize) {
     let end = HEADER_LEN + (n + 1) * 4;
@@ -110,11 +108,9 @@ fn pad_after_offsets(f: &mut BufWriter<File>, n: usize) {
 // ===== column buffers ====================================================
 // Pairs are buffered with INTERNAL (0-based) u32 keys; values are 8-byte
 // words — a 0-based id, a raw i64 bit pattern, or an f64 bit pattern
-// (the finalize call's kind says which). The finalizers reproduce the v1
-// runtime loader's semantics exactly: dense scatter is last-write-wins
-// and panics on a key outside the universe (v1 `VecRel::from_pairs`);
-// CSR drops out-of-universe keys and keeps per-key stream order
-// (v1 `MultiRel::from_pairs`).
+// (the finalize call's kind says which). Dense scatter is last-write-wins
+// and panics on a key outside the universe; CSR drops out-of-universe keys
+// and keeps per-key stream order.
 
 fn internal_key(k: i64) -> u32 {
     debug_assert!((0..u32::MAX as i64).contains(&k), "key {k} out of u32 range");
@@ -351,13 +347,13 @@ fn str_col<'a>(batch: &'a RecordBatch, pos: usize) -> StrCol<'a> {
 // ======================== TPC-H ========================
 //
 // All columns are dense; every parquet row contributes a pair (NULL
-// strings become "", matching the v1 writer). Key spaces: suppkey /
+// strings become ""). Key spaces: suppkey /
 // custkey / partkey / orderkey / synthetic ps_id / l_id are 1-based in
 // the parquet (internal = raw − 1); regionkey / nationkey are 0-based
 // (internal = raw). The orderkey space is sparse — the dense scatter
 // fills the holes (NO_ID for FKs, 0/"" otherwise).
 
-/// "YYYY-MM-DD" → packed i64 YYYYMMDD (numeric compare preserves lexical
+/// "YYYY-MM-DD" -> packed i64 YYYYMMDD (numeric compare preserves lexical
 /// order). The runtime never parses dates — only this regen path does.
 fn parse_yyyymmdd(s: &str) -> i64 {
     if s.is_empty() {
@@ -371,7 +367,7 @@ fn parse_yyyymmdd(s: &str) -> i64 {
         + d(8) * 10 + d(9)
 }
 
-/// What a TPC-H value column holds → how it becomes an 8-byte word.
+/// What a TPC-H value column holds and how it becomes an 8-byte word.
 enum TVal {
     Id { delta: i64 }, // FK: internal id = raw + delta
     I64,
@@ -535,26 +531,25 @@ fn run_tpch(parquet_dir: &Path, cache_dir: &Path) {
 
 // ======================== JOB ========================
 //
-// Pair semantics preserved from the retired Julia loader (julia-engine
-// branch, JOB.jl `load_all!`):
+// Pair semantics:
 //
 //   - pairs are emitted in parquet row order;
 //   - a pair is skipped iff its key or its value is NULL (per-column
 //     independence: a cast_info row with a NULL note still contributes to
 //     the other cast columns);
-//   - Company name/country come from a company_name lookup Dict
+//   - Company name/country come from a company_name lookup table
 //     (last-write-wins on duplicate keys; lookup misses skip the pair);
 //   - ids are 1-based in the parquet; the −1 shift to internal ids
 //     happens HERE (push sites), not at engine load time;
-//   - entity universe sizes use the same max-id formulas the v1 runtime
-//     loader used, so dense hole-filling and CSR out-of-range dropping
-//     reproduce the v1 in-memory state bit-for-bit.
+//   - entity universe sizes are the max id seen per entity, so dense
+//     hole-filling and CSR out-of-range dropping are consistent with that
+//     sizing.
 
 /// All JOB column buffers, filled by the table passes below and written
 /// out once the universe sizes are known.
 #[derive(Default)]
 struct Job {
-    // title → Movie
+    // title -> Movie
     movie_title: Option<ColS>,
     movie_kind: Option<ColW>,
     movie_production_year: Option<ColW>,
@@ -570,22 +565,22 @@ struct Job {
     infotype_info: Option<ColS>,
     linktype_link: Option<ColS>,
     companytype_kind: Option<ColS>,
-    // movie_companies → Company
+    // movie_companies -> Company
     movie_company: Option<ColW>,
     company_name: Option<ColS>,
     company_country: Option<ColS>,
     company_note: Option<ColS>,
     company_type: Option<ColW>,
-    // movie_info → Info
+    // movie_info -> Info
     movie_info: Option<ColW>,
     info_info: Option<ColS>,
     info_type: Option<ColW>,
     info_note: Option<ColS>,
-    // movie_info_idx → Data
+    // movie_info_idx -> Data
     movie_data: Option<ColW>,
     data_data: Option<ColS>,
     data_type: Option<ColW>,
-    // movie_link → MovieLink
+    // movie_link -> MovieLink
     movie_link: Option<ColW>,
     movie_linked_by: Option<ColW>,
     movielink_target: Option<ColW>,
@@ -595,7 +590,7 @@ struct Job {
     akatitle_title: Option<ColS>,
     person_aka: Option<ColW>,
     akaname_name: Option<ColS>,
-    // name → Person
+    // name -> Person
     person_name: Option<ColS>,
     person_gender: Option<ColS>,
     person_name_pcode: Option<ColS>,
@@ -603,12 +598,12 @@ struct Job {
     movie_complete_cast: Option<ColW>,
     completecast_subject: Option<ColW>,
     completecast_status: Option<ColW>,
-    // person_info → PersonInfo
+    // person_info -> PersonInfo
     person_info: Option<ColW>,
     personinfo_type: Option<ColW>,
     personinfo_info: Option<ColS>,
     personinfo_note: Option<ColS>,
-    // cast_info → Cast
+    // cast_info -> Cast
     movie_cast: Option<ColW>,
     cast_person: Option<ColW>,
     cast_character: Option<ColW>,
@@ -616,7 +611,7 @@ struct Job {
     cast_note: Option<ColS>,
 }
 
-/// Two int columns (1-based ids) → ColW of internal-id pairs. Pair
+/// Two int columns (1-based ids) -> ColW of internal-id pairs. Pair
 /// emitted iff both values are non-NULL.
 fn job_ids(parquet: &Path, key_idx: usize, val_idx: usize) -> ColW {
     let (reader, pos) = open_cols(parquet, &[key_idx, val_idx]);
@@ -634,7 +629,7 @@ fn job_ids(parquet: &Path, key_idx: usize, val_idx: usize) -> ColW {
     w
 }
 
-/// Int key column (1-based id) + string column → ColS. Same rule.
+/// Int key column (1-based id) + string column -> ColS. Same rule.
 fn job_strs(parquet: &Path, key_idx: usize, val_idx: usize) -> ColS {
     let (reader, pos) = open_cols(parquet, &[key_idx, val_idx]);
     let mut w = ColS::new();
@@ -704,7 +699,7 @@ fn read_job(parquet_dir: &Path) -> Job {
         j.movie_keyword = Some(job_ids(&p("movie_keyword"), 1, 2));
     });
 
-    // ---- company_name + movie_companies → Company ----
+    // ---- company_name + movie_companies -> Company ----
     // Company entities are movie_companies rows, with name/country joined
     // from company_name via id lookup (miss ⇒ skip the pair).
     eprintln!("company");
@@ -757,7 +752,7 @@ fn read_job(parquet_dir: &Path) -> Job {
         j.company_note = Some(co_note);
     });
 
-    // ---- movie_info → Info: id, movie_id, info_type_id, info, note ----
+    // ---- movie_info -> Info: id, movie_id, info_type_id, info, note ----
     eprintln!("movie_info");
     t!({
         let (reader, pos) = open_cols(&p("movie_info"), &[0, 1, 2, 3, 4]);
@@ -787,7 +782,7 @@ fn read_job(parquet_dir: &Path) -> Job {
         j.info_note = Some(info_note);
     });
 
-    // ---- movie_info_idx → Data: id, movie_id, info_type_id, info ----
+    // ---- movie_info_idx -> Data: id, movie_id, info_type_id, info ----
     eprintln!("movie_info_idx");
     t!({
         let (reader, pos) = open_cols(&p("movie_info_idx"), &[0, 1, 2, 3]);
@@ -813,7 +808,7 @@ fn read_job(parquet_dir: &Path) -> Job {
         j.data_data = Some(data_text);
     });
 
-    // ---- movie_link → MovieLink: id, movie_id, linked_movie_id, link_type_id ----
+    // ---- movie_link -> MovieLink: id, movie_id, linked_movie_id, link_type_id ----
     eprintln!("movie_link");
     t!({
         let (reader, pos) = open_cols(&p("movie_link"), &[0, 1, 2, 3]);
@@ -892,7 +887,7 @@ fn read_job(parquet_dir: &Path) -> Job {
         j.completecast_status = Some(cc_status);
     });
 
-    // ---- person_info → PersonInfo: id, person_id, info_type_id, info, note ----
+    // ---- person_info -> PersonInfo: id, person_id, info_type_id, info, note ----
     eprintln!("person_info");
     t!({
         let (reader, pos) = open_cols(&p("person_info"), &[0, 1, 2, 3, 4]);
@@ -924,7 +919,7 @@ fn read_job(parquet_dir: &Path) -> Job {
 
     // ---- cast_info (Cast) — the big one (~36M rows) ----
     // Columns: id, person_id, movie_id, person_role_id, note, nr_order, role_id(6).
-    // (v1 also wrote a Cast_movie file; no loader ever read it — dropped.)
+    // (Cast_movie is not written — no loader ever reads it.)
     eprintln!("cast_info");
     t!({
         let (reader, pos) = open_cols(&p("cast_info"), &[0, 1, 2, 3, 4, 6]);
@@ -974,7 +969,7 @@ fn run_job(parquet_dir: &Path, cache_dir: &Path) {
         ($f:ident) => { j.$f.take().unwrap() };
     }
 
-    // ---- entity sizes (same max-id formulas as the v1 runtime loader) ----
+    // ---- entity sizes (max id seen per entity) ----
     eprintln!("universe sizes");
     let n_movie = j.movie_title.as_ref().unwrap().n_from_keys()
         .max(j.movielink_target.as_ref().unwrap().n_from_vals());
@@ -1096,7 +1091,7 @@ fn run_job(parquet_dir: &Path, cache_dir: &Path) {
         take!(compcasttype_kind).write_dense(&o("CompCastType_text"), n_ccktype);
     });
 
-    // v1 leftovers that v2 never reads (Cast_movie was write-only even in v1)
+    // clean up a stale Cast_movie.bin from an older cache dir — no loader reads it
     let _ = std::fs::remove_file(cache_dir.join("Cast_movie.bin"));
 
     verify_manifest(cache_dir, &written.into_inner(), prela::job_schema::MANIFEST, "job");
