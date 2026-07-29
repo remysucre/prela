@@ -1,5 +1,5 @@
 use prela::engine::IntoQuery;
-use prela::{Entry, job_schema, queries, tpch, tpch_schema};
+use prela::{Entry, job_queries, job_schema, tpch_queries, tpch_schema};
 
 /// Cache directory the suites mmap from — `../cache` by default, overridable
 /// with `PRELA_CACHE` (e.g. to point at a different scale factor's cache).
@@ -58,7 +58,7 @@ fn run_job() {
               t.elapsed().as_secs_f32(),
               job_schema::movie.iq().n, job_schema::persons.iq().n);
 
-    let qs = queries::all_queries();
+    let qs = job_queries::all_queries();
     eprintln!("{} queries registered", qs.len());
 
     run_suite(&qs,
@@ -84,8 +84,8 @@ fn run_tpch() {
     // QS=idiomatic|optimized (default optimized)
     let variant = std::env::var("QS").unwrap_or_else(|_| "optimized".to_string());
     let qs = match variant.as_str() {
-        "idiomatic" => tpch::idiomatic::queries(),
-        "optimized" => tpch::optimized::queries(),
+        "idiomatic" => tpch_queries::idiomatic::queries(),
+        "optimized" => tpch_queries::optimized::queries(),
         other => panic!("unknown QS variant: {other:?} (use idiomatic|optimized)"),
     };
     eprintln!("{} TPC-H queries registered ({} variant)", qs.len(), variant);

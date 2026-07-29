@@ -65,8 +65,8 @@ writes against it (field names are cache filenames, verbatim).
 // queries: <range from queries.jl>
 use crate::engine::*;
 use crate::job_schema::*;
-use crate::queries::helpers::{min_row, Row};
-use crate::queries::sets::*;
+use crate::job_queries::helpers::{min_row, Row};
+use crate::job_queries::sets::*;
 
 pub const ENTRIES: &[super::Entry] = &[
     ("2a", "'Doc'", || min_row(q2a())),
