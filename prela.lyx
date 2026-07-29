@@ -40,7 +40,7 @@
     sensitive=true,
     string=[d]{"},
     morekeywords={
-       with, and, s, eq, select, gt, lt, filt, reduce, fold, inv, group_by, rx, map, gather, drive, probe, for, in, len
+       with, and, s, eq, select, gt, lt, filt, reduce, fold, inv, group_by, rx, map, gather, drive, probe, for, in, len, drv, prb
     }
 }
 
@@ -65,7 +65,7 @@
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta}
 \end_preamble
-\options format=sigconf, review=false, screen=true
+\options format=sigconf, review=true, screen=true
 \use_default_options false
 \begin_modules
 InStar
@@ -472,16 +472,12 @@ literal "false"
 ,
  whose SQL formulation spans 23 clauses,
  11 of which are used to specify join conditions.
- Figure
-\begin_inset space \thinspace{}
-\end_inset
-
-
+ 
 \begin_inset CommandInset ref
-LatexCommand ref
+LatexCommand formatted
 reference "fig:JOB-query-16b"
 plural "false"
-caps "false"
+caps "true"
 noprefix "false"
 nolink "false"
 tuple "list"
@@ -620,13 +616,9 @@ cast.s(person).s(alias).s(text)
 \end_layout
 
 \begin_layout Standard
-The reader may be surprised to learn that the query in Figure
-\begin_inset space \thinspace{}
-\end_inset
-
-
+The reader may be surprised to learn that the query in 
 \begin_inset CommandInset ref
-LatexCommand ref
+LatexCommand formatted
 reference "fig:JOB-query-16b"
 plural "false"
 caps "false"
@@ -903,7 +895,7 @@ textsf{TAR}};
 node[draw=none,
  node font=
 \backslash
-footnotesize] (node8) at (-2.4,0.66) {optimize};
+footnotesize] (node8) at (-2.4,0.75) {optimize (future work)};
 \end_layout
 
 \begin_layout Plain Layout
@@ -960,7 +952,7 @@ Conventional database abstractions (top route) v.s.
 \noun on
 TAR
 \noun default
- (bottom route).
+ (bottom route)
 \end_layout
 
 \end_inset
@@ -980,7 +972,7 @@ In summary,
 LatexCommand formatted
 reference "fig:compare-abstractions"
 plural "false"
-caps "true"
+caps "false"
 noprefix "false"
 nolink "false"
 tuple "list"
@@ -1428,13 +1420,9 @@ literal "false"
  Their proposal lead to several design points strikingly similar to those taken by Prela.
  For example,
  they also support implicit joins without specifying join conditions,
- as well as multi-hop join/access syntax similar to the last line of Figure
-\begin_inset space \thinspace{}
-\end_inset
-
-
+ as well as multi-hop join/access syntax similar to the last line of 
 \begin_inset CommandInset ref
-LatexCommand ref
+LatexCommand formatted
 reference "fig:JOB-query-16b"
 plural "false"
 caps "false"
@@ -1522,16 +1510,12 @@ The Prela Language
 This section defines the data model,
  syntax,
  and semantics of the Prela query language.
- Table
-\begin_inset space \thinspace{}
-\end_inset
-
-
+ 
 \begin_inset CommandInset ref
-LatexCommand ref
+LatexCommand formatted
 reference "tab:Relational-operators-in"
 plural "false"
-caps "false"
+caps "true"
 noprefix "false"
 nolink "false"
 tuple "list"
@@ -2217,16 +2201,12 @@ binary
 
  binary relations,
  each mapping the row number to the corresponding column entry.
- Figure
-\begin_inset space \thinspace{}
-\end_inset
-
-
+ 
 \begin_inset CommandInset ref
-LatexCommand ref
+LatexCommand formatted
 reference "fig:Decomposition-of-a"
 plural "false"
-caps "false"
+caps "true"
 noprefix "false"
 nolink "false"
 tuple "list"
@@ -2306,13 +2286,9 @@ Decomposing a wide table into many binary tables may appear expensive:
  since one column of each binary relation simply contains the row number,
  that column need not be explicitly stored,
  and each binary relation can be represented by a vector!
- In Section
-\begin_inset space \thinspace{}
-\end_inset
-
-
+ In 
 \begin_inset CommandInset ref
-LatexCommand ref
+LatexCommand formatted
 reference "sec:Implementation"
 plural "false"
 caps "false"
@@ -2372,7 +2348,7 @@ name "tab:Relational-operators-in"
 
 
 \begin_inset Tabular
-<lyxtabular version="3" rows="9" columns="3">
+<lyxtabular version="3" rows="10" columns="3">
 <features borderColor="default" oddRowsColor="default" evenRowsColor="default" tabularvalignment="middle">
 <column alignment="left" valignment="top" color="default">
 <column alignment="left" valignment="top" color="default">
@@ -2663,7 +2639,7 @@ r.with(t)
 \begin_layout Plain Layout
 
 \noun on
-aggregate
+map
 \end_layout
 
 \end_inset
@@ -2677,18 +2653,7 @@ inline true
 status open
 
 \begin_layout Plain Layout
-r.reduce(sum)
-\end_layout
-
-\end_inset
-
- / 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-r.fold(+)
+r.map(f)
 \end_layout
 
 \end_inset
@@ -2702,7 +2667,105 @@ r.fold(+)
 \begin_inset Text
 
 \begin_layout Plain Layout
-\begin_inset Formula $\gamma_{r.1,\text{sum}(r.2)}(r)$
+\begin_inset Formula $\pi_{r.1,f(r.2)}(r)$
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row color="default">
+<cell alignment="center" valignment="top" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+
+\noun on
+gather
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" leftline="true" rightline="true" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+r.gather(t)
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" color="default" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+
+\emph on
+nested compose
+\emph default
+
+\begin_inset Foot
+status collapsed
+
+\begin_layout Plain Layout
+Nested compose is not expressible in standard relational algebra;
+ formally,
+ the semantics of 
+\begin_inset listings
+lstparams "basicstyle={\footnotesize\ttfamily}"
+inline true
+status open
+
+\begin_layout Plain Layout
+r.gather(t)
+\end_layout
+
+\end_inset
+
+ is 
+\begin_inset Formula $\left\{ (x,\ddot{\bigcup}_{y\in r[x]}t[y])\mid x\in r.1\right\} $
+\end_inset
+
+ where 
+\begin_inset Formula $\ddot{\bigcup}$
+\end_inset
+
+ is the 
+\emph on
+bag union
+\emph default
+ and 
+\begin_inset Formula $r[x]$
+\end_inset
+
+ is the bag of 
+\begin_inset Formula $y$
+\end_inset
+
+ such that 
+\begin_inset Formula $(x,y)\in r$
+\end_inset
+
+ (similar for 
+\begin_inset Formula $t[y]$
+\end_inset
+
+).
+ 
+\end_layout
+
 \end_inset
 
 
@@ -3019,13 +3082,9 @@ z
 \end_inset
 
 s.
- Using our example in Figure
-\begin_inset space \thinspace{}
-\end_inset
-
-
+ Using our example in 
 \begin_inset CommandInset ref
-LatexCommand ref
+LatexCommand formatted
 reference "fig:Decomposition-of-a"
 plural "false"
 caps "false"
@@ -3574,13 +3633,9 @@ movie_company
  the company ID,
  name,
  and country,
- each of which becomes a binary relation in Prela as shown on the right of Figure
-\begin_inset space \thinspace{}
-\end_inset
-
-
+ each of which becomes a binary relation in Prela as shown on the right of 
 \begin_inset CommandInset ref
-LatexCommand ref
+LatexCommand formatted
 reference "fig:Left:-decomposed-"
 plural "false"
 caps "false"
@@ -3704,13 +3759,9 @@ movie's company's country
 \end_inset
 
 .
- This is also what happened on the last line of Figure
-\begin_inset space \thinspace{}
-\end_inset
-
-
+ This is also what happened on the last line of 
 \begin_inset CommandInset ref
-LatexCommand ref
+LatexCommand formatted
 reference "fig:JOB-query-16b"
 plural "false"
 caps "false"
@@ -3742,7 +3793,7 @@ throws away
  it does not make sense to aggregate over them.
  So dropping the keys after the join is not a real sacrifice.
  On the other hand,
- it is true that 
+ it is true that the original 
 \noun on
 TAR
 \noun default
@@ -3879,7 +3930,9 @@ inline true
 status open
 
 \begin_layout Plain Layout
-SELECT * FROM movie
+SELECT title,
+ year,
+ keyword FROM movie
 \end_layout
 
 \end_inset
@@ -3889,13 +3942,9 @@ SELECT * FROM movie
 \end_layout
 
 \begin_layout Standard
-The next Prela operator exercised by Figure
-\begin_inset space \thinspace{}
-\end_inset
-
-
+The next Prela operator exercised by 
 \begin_inset CommandInset ref
-LatexCommand ref
+LatexCommand formatted
 reference "fig:JOB-query-16b"
 plural "false"
 caps "false"
@@ -4081,7 +4130,7 @@ status open
 \end_inset
 
  operator joins the filtered relations,
- keeping only American movies with character name in the title.
+ keeping only American movies with character name in their titles.
  
 \end_layout
 
@@ -4172,91 +4221,6 @@ status open
 ,
  because the semijoin ignores the second column of its right-hand-side.
  
-\begin_inset Note Note
-status open
-
-\begin_layout Plain Layout
-Prela supports generalized projection with 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-r.map(f)
-\end_layout
-
-\end_inset
-
- which maps the function 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-f
-\end_layout
-
-\end_inset
-
- to each value in the second column of 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-r
-\end_layout
-
-\end_inset
-
-.
- Semantically,
- 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.map()
-\end_layout
-
-\end_inset
-
- is equivalent to 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.select()
-\end_layout
-
-\end_inset
-
- if we think of 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-f
-\end_layout
-
-\end_inset
-
- as a infinite binary relation —
- in fact,
- 
-\noun on
-TAR
-\noun default
- does not require relations to be finite.
- 
-\end_layout
-
-\end_inset
-
-
 \end_layout
 
 \begin_layout Standard
@@ -4370,7 +4334,7 @@ movie.group_by(keyword)
 \begin_inset Caption Standard
 
 \begin_layout Plain Layout
-Grouping and aggregation in SQL and Prela.
+Grouping and aggregation in SQL and Prela
 \begin_inset CommandInset label
 LatexCommand label
 name "fig:Grouping-and-aggregation"
@@ -4624,9 +4588,9 @@ TAR
 \noun default
 :
  the 
-\noun on
+\emph on
 inverse
-\noun default
+\emph default
  
 \begin_inset listings
 inline true
@@ -4679,13 +4643,9 @@ t.inv().with(r.inv())
 
  in relational algebra.
  For example,
- the first line of the Prela query in Figure
-\begin_inset space \thinspace{}
-\end_inset
-
-
+ the first line of the Prela query in 
 \begin_inset CommandInset ref
-LatexCommand ref
+LatexCommand formatted
 reference "fig:Grouping-and-aggregation"
 plural "false"
 caps "false"
@@ -4780,19 +4740,14 @@ min
 
  to find the earliest year associated with each keyword.
  Finally,
- the last line of the Prela query in Figure
-\begin_inset space \thinspace{}
-\end_inset
+ the last line 
+\begin_inset listings
+inline true
+status open
 
-
-\begin_inset CommandInset ref
-LatexCommand ref
-reference "fig:Grouping-and-aggregation"
-plural "false"
-caps "false"
-noprefix "false"
-nolink "false"
-tuple "list"
+\begin_layout Plain Layout
+.gt(1950)
+\end_layout
 
 \end_inset
 
@@ -4808,19 +4763,7 @@ HAVING
 
 \end_inset
 
- clause in the SQL query,
- simply by filtering with the 
-\begin_inset listings
-inline true
-status open
-
-\begin_layout Plain Layout
-.gt
-\end_layout
-
-\end_inset
-
- predicate.
+ clause in the SQL query.
  Grouping by multiple columns can be achieved with the help of 
 \begin_inset listings
 inline true
@@ -4855,13 +4798,9 @@ Discussion
 \end_layout
 
 \begin_layout Standard
-Looking back at the example in Figure
-\begin_inset space \thinspace{}
-\end_inset
-
-
+Looking back at the example in 
 \begin_inset CommandInset ref
-LatexCommand ref
+LatexCommand formatted
 reference "fig:JOB-query-16b"
 plural "false"
 caps "false"
@@ -4998,16 +4937,15 @@ alias
 \noun on
 TAR
 \noun default
- and Prela is the focus on binary relations,
- which closely models both attributes and relationships 
+ and Prela is the focus on binary relations which closely model both attributes and relationships 
 \emph on
 à la
 \emph default
  Entity/Relationship.
  Modern business logic usually start life as an E/R diagram,
- and the application code —
- commonly written in some object-oriented language —
- naturally mirrors the E/R model.
+ and the application code—
+commonly written in some object-oriented language—
+naturally mirrors the E/R model.
  Built with a set of compositional operators,
  Prela queries blend into the surrounding application,
  obviating the need for ORMs.
@@ -5026,23 +4964,19 @@ name "sec:Implementation"
 \end_layout
 
 \begin_layout Standard
-Section
-\begin_inset space \thinspace{}
-\end_inset
-
-
+In 
 \begin_inset CommandInset ref
-LatexCommand ref
+LatexCommand formatted
 reference "subsec:Data-Model"
 plural "false"
-caps "false"
+caps "true"
 noprefix "false"
 nolink "false"
 tuple "list"
 
 \end_inset
 
- discussed how the apparent storage overhead of binary relations is eliminated by columnar storage.
+ we explained how the apparent storage overhead of binary relations is eliminated by columnar storage.
  It may appear a computational overhead remains,
  when we need to 
 \emph on
@@ -5067,8 +5001,8 @@ SELECT ID,
 \end_inset
 
 It outputs the ID,
- production year,
- and title of each movie.
+ title,
+ and keyword of each movie.
  In a conventional database the query requires only a simple scan over the 
 \begin_inset listings
 inline true
@@ -5094,9 +5028,7 @@ status open
 
 \begin_layout Plain Layout
 for i in 0..n:
- print(movie[i],
- year[i],
- title[i])
+ print(movie[i],title[i],keyword[i])
 \end_layout
 
 \end_inset
@@ -5164,7 +5096,7 @@ literal "false"
 \end_inset
 
 .
- Iterators incur overheads like method calls and other bookkeeping operations,
+ Iterators incur overhead like method calls and other bookkeeping operations,
  and two standard remedies are vectorization and query compilation
 \begin_inset space \thinspace{}
 \end_inset
@@ -5235,7 +5167,7 @@ lhs.and(rhs).probe(x,
 \end_layout
 
 \begin_layout Plain Layout
-col.drive(k) = for i in 0..col.len():
+col.drive(k) = for i in 0..col.len:
  k(i,
  col[i])
 \end_layout
@@ -5281,7 +5213,7 @@ status open
 \end_inset
 
 ,
- and columns.
+ and columns
 \end_layout
 
 \end_inset
@@ -5419,7 +5351,7 @@ movie.s(title).probe(3,
 
 \end_inset
 
- prints the title of the movie with id 3.
+ prints the title of the movie with ID 3.
  Since every combinator receives and returns binary relations,
  
 \begin_inset listings
@@ -5444,16 +5376,12 @@ status open
 \end_inset
 
  are well-defined for all Prela queries.
- Figure
-\begin_inset space \thinspace{}
-\end_inset
-
-
+ 
 \begin_inset CommandInset ref
-LatexCommand ref
+LatexCommand formatted
 reference "fig:CPS-protocol"
 plural "false"
-caps "false"
+caps "true"
 noprefix "false"
 nolink "false"
 tuple "list"
@@ -5534,12 +5462,132 @@ inline false
 status open
 
 \begin_layout Plain Layout
-movie.select(title.and(year)).drive(k)
+movie.select(title.and(keyword)).drive(k)
 \end_layout
 
 \end_inset
 
-Expanding 
+To save space we will abbreviate 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+movie
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+title
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+keyword
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.drive
+\end_layout
+
+\end_inset
+
+,
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.probe
+\end_layout
+
+\end_inset
+
+ with 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+m
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+t
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+w
+\end_layout
+
+\end_inset
+
+,
+ 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.drv
+\end_layout
+
+\end_inset
+
+,
+ and 
+\begin_inset listings
+inline true
+status open
+
+\begin_layout Plain Layout
+.prb
+\end_layout
+
+\end_inset
+
+,
+ respectively.
+ Expanding 
 \begin_inset listings
 inline true
 status open
@@ -5561,7 +5609,7 @@ status open
 
 \end_inset
 
- drives its LHS and probes its RHS:
+ drives its left-hand-side and probes its right-hand-side:
 \end_layout
 
 \begin_layout Standard
@@ -5571,15 +5619,15 @@ inline false
 status open
 
 \begin_layout Plain Layout
-m.drive(|x,
- y| t.and(w).probe(y,
+m.drv(|x,
+ y| t.and(w).prb(y,
  |z| k(x,
  z)))
 \end_layout
 
 \end_inset
 
-As the 
+As 
 \begin_inset listings
 inline true
 status open
@@ -5601,9 +5649,9 @@ inline false
 status open
 
 \begin_layout Plain Layout
-for i in 0..len(m):
- t.and(w).probe(i,
- |z| k(i,
+for i in 0..m.len:
+ t.and(w).prb(i,
+ |z| k(m[i],
  z))
 \end_layout
 
@@ -5630,13 +5678,13 @@ inline false
 status open
 
 \begin_layout Plain Layout
-for i in 0..len(m):
+for i in 0..m.len:
 \end_layout
 
 \begin_layout Plain Layout
-    t.probe(i,
- |y| w.probe(i,
- |z| k(i,
+    t.prb(i,
+ |y| w.prb(i,
+ |z| k(m[i],
  (y,
  z))))
 \end_layout
@@ -5675,8 +5723,8 @@ inline false
 status open
 
 \begin_layout Plain Layout
-for i in 0..len(m):
- k(i,
+for i in 0..m.len:
+ k(m[i],
  (t[i],
  w[i]))
 \end_layout
@@ -5735,7 +5783,7 @@ The main motivation for implementing Prela in continuation-passing style is to d
  On one hand,
  relying on the Rust compiler has unacceptably high latency for queries that must be compiled on-the-fly;
  on the other hand,
- it is well-known that data warehouses repeatedly execute the same query over gradually-changing data,
+ data warehouses repeatedly execute the same query over gradually-changing data,
  which can amortize the compilation cost
 \begin_inset space \thinspace{}
 \end_inset
@@ -5750,13 +5798,9 @@ literal "false"
 
 .
  Another advantage of embedding Prela in Rust is to allow arbitrary Rust code to be used as UDFs,
- as described in Section
-\begin_inset space \thinspace{}
-\end_inset
-
-
+ as described in 
 \begin_inset CommandInset ref
-LatexCommand ref
+LatexCommand formatted
 reference "subsec:Grouping-and-Aggregation"
 plural "false"
 caps "false"
@@ -5767,7 +5811,7 @@ tuple "list"
 \end_inset
 
 .
- We pose as a challenge to future research to match Prela's flexibility and run time performance,
+ We pose a challenge to future research to match Prela's flexibility and run time performance,
  while incurring much lower compilation overhead.
  
 \end_layout
@@ -5795,6 +5839,25 @@ tuple "list"
  Clarity is subjective,
  and measuring conciseness in lines of code only tells part of the story.
  We therefore invite the reader to compare Prela queries to their SQL counterparts to judge for themselves.
+\begin_inset Foot
+status open
+
+\begin_layout Plain Layout
+The source code for Prela and example queries are available at 
+\begin_inset Flex URL
+status open
+
+\begin_layout Plain Layout
+https://prela-lang.org
+\end_layout
+
+\end_inset
+
+.
+\end_layout
+
+\end_inset
+
  Nevertheless,
  we share some 
 \begin_inset Quotes eld
@@ -5835,7 +5898,7 @@ literal "false"
  it takes Prela ~300 lines to express all 22 queries,
  whereas the SQL queries span ~600 lines.
  Prela achieves more savings on JOB because the queries there join together many tables,
- and the implicit/structural joins in Prela avoids spelling out all the join conditions,
+ and the implicit/structural joins in Prela avoids spelling out the join conditions,
  as demonstrated in 
 \begin_inset CommandInset ref
 LatexCommand formatted
@@ -5855,7 +5918,7 @@ tuple "list"
 \begin_layout Standard
 Does the brevity of Prela queries sacrifice their performance?
  To answer this question,
- we benchmark Prela DuckDB v1.5.3 on JOB and TPC-H.
+ we benchmark Prela against DuckDB v1.5.3 on JOB and TPC-H.
  Care must be taken to interpret our results.
  On one hand,
  Prela is an early prototype and has not implemented the myriad of optimizations found in mature systems;
@@ -5878,7 +5941,7 @@ TAR
 \end_layout
 
 \begin_layout Standard
-All experiments run on an M5 MacBook Air with 32 GiB of RAM.
+All experiments run on an M2 MacBook Air with 16 GiB of RAM.
  Data is pre-loaded into memory.
  Since Prela is currently single-threaded,
  we also run DuckDB on a single thread for fairness.
@@ -5917,21 +5980,25 @@ status open
 \begin_inset Caption Standard
 
 \begin_layout Plain Layout
-JOB results.
- x-axis:
- DuckDB time.
- y-axis:
- Prela time.
- Dashed line:
- parity.
-\end_layout
-
-\end_inset
-
-
 \begin_inset CommandInset label
 LatexCommand label
 name "fig:perf_plot"
+
+\end_inset
+
+Performance comparison of Prela and DuckDB:
+ each data point represents a query,
+ where the 
+\begin_inset Formula $x$
+\end_inset
+
+-coordinate is DuckDB's run time,
+ and the 
+\begin_inset Formula $y$
+\end_inset
+
+-coordinate is Prela's run time
+\end_layout
 
 \end_inset
 
@@ -5944,9 +6011,9 @@ name "fig:perf_plot"
 \end_layout
 
 \begin_layout Standard
-Summaries of the results are collected in Figure 
+Summaries of the results are collected in 
 \begin_inset CommandInset ref
-LatexCommand ref
+LatexCommand formatted
 reference "fig:perf_plot"
 plural "false"
 caps "false"
@@ -5965,11 +6032,11 @@ tuple "list"
  speedup over DuckDB's 38.82s.
  Prela's advantage is mainly due to data representation:
  because JOB's primary keys are contiguous integers,
- the ID to row mapping degenerates to the identity;
+ the ID to row mapping degenerates to the identity after sorting;
  instead of materializing the relation,
- we represent this mapping as the identity function which is optimized away during compilation.
+ we represent this mapping with the identity function which is optimized away during compilation.
  And because each column is stored as a vector indexed by the row number,
- joins degrade to simple array accesses which are very fast.
+ joins degenerate to fast array accesses.
  We tried to port the same optimizations back to DuckDB but were not successful.
  The only user-accessible index provided by DuckDB is the hashing-based adaptive radix tree
 \begin_inset space \thinspace{}
@@ -5995,13 +6062,12 @@ idiomatic
 \emph default
  queries which are written in the most natural way without regard to performance.
  These queries run in 1.13s,
- only 1.11
+ which is 1.11
 \begin_inset Formula $\times$
 \end_inset
 
  faster than DuckDB's 1.26s.
- Fortunately,
- it is easy to improve the performance of the Prela queries.
+ It is easy to further improve the performance of the Prela queries.
  By directly rewriting the queries,
  we were able to speed them up by reordering joins,
  introducing materialization points,
@@ -6011,7 +6077,7 @@ idiomatic
 \begin_inset Formula $\times$
 \end_inset
 
- faster than DuckDB overall.
+ faster than DuckDB.
  
 \end_layout
 
