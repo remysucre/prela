@@ -5,27 +5,30 @@
 # same parquet — canonical schema, and "prela schema" with the merged
 # movie_companies — rewrite the affected queries, verify all 113 results
 # are byte-identical across the two, then time both suites with the same
-# protocol as run_job_duck.sh (per-query session, threads=1, cold+warm).
+# protocol as the JOB capture (per-query session, threads=1, cold+warm).
 #
-# Writes data/job_prela_schema.txt (per-query timings for both schemas).
+# Writes data/job_prela_schema.txt here in fairness/ (per-query timings for
+# both schemas). Query names come from the benchmark proper, ../data/.
 # Captured result on the baseline machine (2026-07-04, duckdb 1.5.3):
 # canonical 15.44 s warm total, prela schema 15.97 s — the denormalized
-# schema is a net LOSS for DuckDB (see benchmarking.md).
+# schema is a net LOSS for DuckDB.
 #
 # Env knobs (defaults shown):
 #   DUCKDB=duckdb
-#   PQDIR=~/projects/jobdata/parquet
-#   QDIR=~/projects/join-order-benchmark
+#   PQDIR=<repo>/data/imdb/parquet      — from get_imdb.sh
+#   QDIR=<repo>/../join-order-benchmark — from get_imdb.sh (JOB_REPO_DIR)
 #   WORK=/tmp/ddb_bench/prela_schema
 
 set -e
-DUCKDB=${DUCKDB:-duckdb}
-PQDIR=${PQDIR:-$HOME/projects/jobdata/parquet}
-QDIR=${QDIR:-$HOME/projects/join-order-benchmark}
-WORK=${WORK:-/tmp/ddb_bench/prela_schema}
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-QNAMES=$SCRIPT_DIR/data/job_qnames.txt
+REPO=$(cd "$SCRIPT_DIR/../../../.." && pwd)
+DUCKDB=${DUCKDB:-duckdb}
+PQDIR=${PQDIR:-$REPO/data/imdb/parquet}
+QDIR=${QDIR:-$REPO/../join-order-benchmark}
+WORK=${WORK:-/tmp/ddb_bench/prela_schema}
+QNAMES=$SCRIPT_DIR/../data/job_qnames.txt
 OUT=$SCRIPT_DIR/data/job_prela_schema.txt
+mkdir -p "$SCRIPT_DIR/data"
 mkdir -p $WORK
 
 TABLES="aka_name aka_title cast_info char_name comp_cast_type company_type
@@ -62,7 +65,7 @@ fi
 
 # ---- rewrite queries + verify result parity ----
 # (emits BOTH sets: queries_canon is canonical modulo the semantics-neutral
-# `at` → `att` alias rename — AT is reserved in duckdb 1.5.3)
+# `at` -> `att` alias rename — AT is reserved in duckdb 1.5.3)
 python3 $SCRIPT_DIR/rewrite_job_prela_schema.py $QDIR $WORK/queries_canon $WORK/queries_prela
 
 fail=0

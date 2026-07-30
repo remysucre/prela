@@ -1,0 +1,50 @@
+load: 2.09s  (li n=6001215, ord n=6000000, ps n=800000)
+22 TPC-H queries registered (idiomatic variant)
+--- run 1 ---
+1     ok      0.1346s
+2     ok      0.0353s
+3     ok      0.0232s
+4     ok      0.1086s
+5     ok      0.0173s
+6     ok      0.0121s
+7     ok      0.0216s
+8     ok      0.0260s
+9     ok      0.0743s
+10    ok      0.0338s
+11    ok      0.0036s
+12    ok      0.1183s
+13    ok      0.2110s
+14    ok      0.0118s
+15    ok      0.0087s
+16    ok      0.0231s
+17    ok      0.0521s
+18    ok      0.1310s
+19    ok      0.2536s
+20    ok      0.0366s
+21    ok      0.4602s
+22    ok      0.0255s
+run 1: 22/22 ok  total 1.82s
+--- run 2 ---
+1     ok      0.1134s
+2     ok      0.0163s
+3     ok      0.0246s
+4     ok      0.0812s
+5     ok      0.0148s
+6     ok      0.0121s
+7     ok      0.0219s
+8     ok      0.0231s
+9     ok      0.0603s
+10    ok      0.0262s
+11    ok      0.0036s
+12    ok      0.0496s
+13    ok      0.0469s
+14    ok      0.0117s
+15    ok      0.0085s
+16    ok      0.0198s
+17    ok      0.0494s
+18    ok      0.0624s
+19    ok      0.0384s
+20    ok      0.0320s
+21    ok      0.4592s
+22    ok      0.0165s
+run 2: 22/22 ok  total 1.19s

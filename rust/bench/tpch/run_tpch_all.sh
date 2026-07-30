@@ -4,12 +4,11 @@
 # then the chart.
 #
 # Why one script rather than three: absolute times on this hardware vary far
-# more between sessions (tens of percent — thermals, AC power, background
-# load) than the differences being measured, while ratios captured together
-# hold. Refreshing one side alone produces a plot whose ratios mean nothing.
+# more between sessions (tens of percent) than the differences being
+# measured, while ratios captured together hold. Refreshing one side alone produces a plot whose ratios mean nothing.
 # If you only want to re-time prela, re-run this anyway.
 #
-# Each rep runs duckdb → idiomatic → optimized; the best (lowest warm total)
+# Each rep runs duckdb -> idiomatic -> optimized; the best (lowest warm total)
 # rep per variant is what gets written, so a burst of background load costs a
 # rep rather than corrupting the capture.
 #
@@ -19,36 +18,29 @@
 # the checked-in oracles are SF=1 answers, so nothing else verifies anyway.
 # Other scales belong in a sweep script that rebuilds the cache per scale.
 #
-# Recorded but not gated: power state. Low Power Mode slows DuckDB ~2.5x here
-# and does not hit both engines equally, so a capture taken under it invents a
-# ratio rather than being uniformly slow. The header prints it — check it
-# before trusting a ratio against a capture from another session.
-#
 # Env knobs (defaults shown):
 #   REPS=3   THREADS=1   DUCKDB=duckdb
-#   PRELA_CACHE=<repo>/cache      — binary cache the suites mmap
-#   PLOT=1                        — regenerate tpch_scatter.png afterwards
+#   PRELA_CACHE=<repo>/data/cache — binary cache the suites mmap
+#   PLOT=1                        — regenerate tpch_scatter.pdf afterwards
 #   PYTHON=python3                — needs matplotlib; see the note below
-#   MAXLOAD=2.5                   — refuse to start above this 1-min load
 
 set -e
 BENCH=$(cd "$(dirname "$0")" && pwd)
-REPO=$(cd "$BENCH/../.." && pwd)
+REPO=$(cd "$BENCH/../../.." && pwd)
 REPS=${REPS:-3}
 SF=1
 THREADS=${THREADS:-1}
+DUCKDB=${DUCKDB:-duckdb}
 PLOT=${PLOT:-1}
 PYTHON=${PYTHON:-python3}
-MAXLOAD=${MAXLOAD:-2.5}
-CACHE=${PRELA_CACHE:-$REPO/cache}
+CACHE=${PRELA_CACHE:-$REPO/data/cache}
 DATA=$BENCH/data
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-# The suites mmap a *TPC-H* binary cache. The default ../cache in this checkout
-# holds the JOB tables, so without PRELA_CACHE the run panics several minutes
-# in, inside a rep, on a missing .bin. Check up front and say what to do.
+# The suites mmap a *TPC-H* binary cache. Check up front and say what to do,
+# rather than panicking several minutes in, inside a rep, on a missing .bin.
 missing=""
 for f in Region_name Lineitem_order Order_status Supplier_nation; do
     [ -f "$CACHE/$f.bin" ] || missing="$missing $f.bin"
@@ -58,23 +50,15 @@ if [ -n "$missing" ]; then
     echo "  missing:$missing" >&2
     echo "" >&2
     echo "Point PRELA_CACHE at a TPC-H cache, e.g." >&2
-    echo "  PRELA_CACHE=/path/to/prela/cache $0" >&2
-    echo "or build one from cache/tpch/*.parquet (see benchmarking.md):" >&2
-    echo "  cd $REPO/rust && cargo run --release --features regen --bin regen -- tpch ../cache/tpch ../cache" >&2
-    exit 1
-fi
-
-LOAD1=$(uptime | sed 's/.*load averages*: //' | awk '{print $1}' | tr -d ,)
-if [ "$(echo "$LOAD1 > $MAXLOAD" | bc -l)" = 1 ]; then
-    echo "refusing to capture at load $LOAD1 (> MAXLOAD=$MAXLOAD)" >&2
+    echo "  PRELA_CACHE=/path/to/prela/data/cache $0" >&2
+    echo "or build one:" >&2
+    echo "  ./setup_tpch.sh   (from rust/bench/)" >&2
     exit 1
 fi
 
 echo "=== TPC-H capture: sf=$SF threads=$THREADS reps=$REPS ==="
-echo "duckdb:  $(${DUCKDB:-duckdb} --version)"
+echo "duckdb:  $($DUCKDB --version)"
 echo "prela:   $(git -C "$REPO" rev-parse --short HEAD) $(git -C "$REPO" diff --quiet || echo '(dirty)')"
-echo "power:   $(pmset -g ps | head -1 | sed -n "s/.*drawing from '\(.*\)'.*/\1/p"), lowpowermode=$(pmset -g | awk '/lowpowermode/ {print $2}')"
-echo "load:    $(uptime | sed 's/.*load averages*: //')"
 echo "cache:   $CACHE"
 
 cd "$REPO/rust"
@@ -95,10 +79,56 @@ duck_total() {
          END { printf "%.4f", t }' "$1"
 }
 
+# The 22 canonical queries from duckdb's own tpch extension, one file each.
+# Every one is a single statement (q15 uses a CTE, not a view), which is what
+# makes the two-timings-per-query pairing reliable.
+for n in $(seq 1 22); do
+    $DUCKDB -noheader -list \
+        -c "LOAD tpch; SELECT query FROM tpch_queries() WHERE query_nr=$n;" \
+        > "$TMP/q$n.sql"
+    [ -s "$TMP/q$n.sql" ] || { echo "empty SQL for Q$n" >&2; exit 1; }
+done
+
+# Timed against native dbgen tables, not the parquet cache: reading parquet
+# would time arrow decoding instead of execution. One session builds the
+# tables then runs each query twice; the warm one is what plot_tpch.py keeps.
+# `.bail on` aborts on the first error — an errored query would otherwise time
+# as ~0s and silently flatter the baseline. $1 = output file.
+capture_duck() {
+    out=$1
+    {
+        echo ".bail on"
+        echo "INSTALL tpch; LOAD tpch;"
+        echo "SET threads=$THREADS;"
+        echo "CALL dbgen(sf=$SF);"
+        echo ".mode list"
+        echo ".headers off"
+        echo ".timer on"
+        for n in $(seq 1 22); do
+            echo ".read $TMP/q$n.sql"
+            echo ".read $TMP/q$n.sql"
+        done
+    } > "$TMP/run.sql"
+
+    # Run first, filter second — piping straight into grep would hide a
+    # non-zero duckdb exit behind grep's. Keep only the timings: the result
+    # rows run to ~40k lines (q16 alone returns thousands) and this is checked in.
+    $DUCKDB < "$TMP/run.sql" > "$TMP/raw.txt"
+    grep '^Run Time' "$TMP/raw.txt" > "$out" || true
+
+    # Exactly two timings per query, or plot_tpch.py's positional parse
+    # (timer_lines[1::2]) silently attributes times to the wrong queries.
+    got=$(grep -c '^Run Time' "$out" || true)
+    if [ "$got" -ne 44 ]; then
+        echo "expected 44 'Run Time' lines, got $got" >&2
+        exit 1
+    fi
+}
+
 for rep in $(seq 1 "$REPS"); do
     echo "--- rep $rep/$REPS ---"
 
-    OUT=$TMP/duckdb_st.$rep.txt THREADS=$THREADS "$BENCH/run_tpch_duck.sh" > /dev/null
+    capture_duck "$TMP/duckdb_st.$rep.txt"
     echo "  duckdb     $(duck_total "$TMP/duckdb_st.$rep.txt")s"
 
     for qs in idiomatic optimized; do
@@ -140,6 +170,6 @@ if [ "$PLOT" = 1 ]; then
         (cd "$BENCH" && uv run --with matplotlib --python 3.13 python plot_tpch.py)
     else
         echo "note: no matplotlib and no uv — chart not regenerated." >&2
-        echo "      install either, then: cd rust/bench && ./plot_tpch.py" >&2
+        echo "      install either, then: cd rust/bench/tpch && ./plot_tpch.py" >&2
     fi
 fi

@@ -80,7 +80,9 @@ def main():
     ax.legend(loc="upper left", fontsize=11, framealpha=0)
 
     plt.tight_layout()
-    out_path = Path(__file__).resolve().parent / "tpch_scatter.pdf"
+    # The paper references rust/bench/tpch_scatter.pdf, so the chart lands in
+    # bench/ alongside job_scatter.pdf rather than inside this subdir.
+    out_path = Path(__file__).resolve().parent.parent / "tpch_scatter.pdf"
     plt.savefig(out_path)
     print(f"saved {out_path}")
 
