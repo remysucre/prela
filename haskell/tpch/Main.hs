@@ -18,23 +18,44 @@ import System.Exit (exitFailure)
 import System.FilePath ((</>))
 import System.IO (hSetBuffering, stdout, BufferMode (LineBuffering))
 
-import TPCH.Queries (inlineOracles, queries)
-import TPCH.Schema (lineitem_n, loadTPCH)
+import TPCH.Queries (inlineOracles)
+import qualified TPCH.Queries as Push
+import qualified TPCH.Schema as Push
+import qualified TPCH.Staged as Staged
+import qualified TPCH.StagedSchema as Staged
 
+-- | Which engine to run. @PRELA_ENGINE=staged@ picks the staged pull engine in
+-- "TPCH.Staged"; anything else is the push engine, which is still the one with
+-- all 22 queries. The two are checked against the same oracles, so a query that
+-- has been ported has to agree with DuckDB and, by construction, with its push
+-- twin.
 main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
   args <- getArgs
   cacheDir <- fromMaybe "../cache" <$> lookupEnv "PRELA_CACHE"
+  rounds <- maybe 2 read <$> lookupEnv "ROUNDS"
+  engine <- lookupEnv "PRELA_ENGINE"
+  case engine of
+    Just "staged" ->
+      run args rounds Staged.queries
+          (timed (Staged.loadTPCHS cacheDir >>= \r -> Staged.lineitem_n r `seq` return r))
+          cacheDir
+    _ ->
+      run args rounds Push.queries
+          (timed (Push.loadTPCH cacheDir >>= \r -> Push.lineitem_n r `seq` return r))
+          cacheDir
+
+run :: [String] -> Int -> [(String, a -> String)] -> IO (Double, a) -> String -> IO ()
+run args rounds queries load cacheDir = do
   let picked | null args = queries
              | otherwise = [ q | q@(n, _) <- queries, n `elem` args ]
   unless (length picked == max (length args) (length picked)) $
     putStrLn "warning: some names on the command line are not query names"
-  rounds <- maybe 2 read <$> lookupEnv "ROUNDS"
-  (loadT, s) <- timed (loadTPCH cacheDir >>= \r -> lineitem_n r `seq` return r)
+  (loadT, s) <- load
   putStrLn ("load " ++ secs loadT ++ "  from " ++ cacheDir)
   wants <- mapM (oracle . fst) picked
-  oks <- forM [1 .. rounds :: Int] $ \round_ -> do
+  oks <- forM [1 .. rounds] $ \round_ -> do
     putStrLn ("--- run " ++ show round_ ++ " ---")
     (totalT, results) <- timed (forM (zip picked wants) (check s))
     let ok = length (filter id results)
@@ -43,8 +64,8 @@ main = do
     return ok
   unless (all (== length picked) oks) exitFailure
   where
-    check s ((name, run), want) = do
-      (dt, got) <- timed (let g = run s in length g `seq` return g)
+    check s ((name, q), want) = do
+      (dt, got) <- timed (let g = q s in length g `seq` return g)
       if got == want
         then putStrLn (pad 4 ("Q" ++ name) ++ " ok   " ++ secs dt) >> return True
         else do

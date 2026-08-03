@@ -14,6 +14,10 @@ library
                     , Prela.Materialize
                     , Prela.Cache
                     , Prela.Schema
+                    , Prela.Staged.Stream
+                    , Prela.Staged.Ops
+                    , Prela.Staged.Predicate
+                    , Prela.Staged.Materialize
     hs-source-dirs:   src
     build-depends:    base >=4.14, containers, array, bytestring, regex-tdfa
                     , vector, mmap, template-haskell, hashable
@@ -23,17 +27,17 @@ library
 test-suite prela-test
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
-    other-modules:    TinySchema
+    other-modules:    TinySchema, TinyStaged, StagedQueries
     hs-source-dirs:   test
     build-depends:    base >=4.14, prela, bytestring, containers, directory
-                    , filepath
+                    , filepath, template-haskell, vector
     default-language: Haskell2010
     ghc-options:      -Wall
 
 executable prela-demo
     main-is:          Demo.hs
     hs-source-dirs:   app
-    build-depends:    base >=4.14, prela, bytestring
+    build-depends:    base >=4.14, prela, bytestring, template-haskell, vector
     default-language: Haskell2010
     ghc-options:      -Wall
 
@@ -42,10 +46,14 @@ executable prela-demo
 -- ../benchmarking.md.
 executable prela-tpch
     main-is:          Main.hs
-    other-modules:    TPCH.Schema
+    other-modules:    TPCH.Decl
+                    , TPCH.Schema
                     , TPCH.Queries
+                    , TPCH.StagedSchema
+                    , TPCH.StagedQueries
+                    , TPCH.Staged
     hs-source-dirs:   tpch
     build-depends:    base >=4.14, prela, bytestring, containers, directory
-                    , filepath
+                    , filepath, template-haskell, vector
     default-language: Haskell2010
     ghc-options:      -Wall -O2

@@ -14,6 +14,10 @@
 -- neither of which typechecking says anything about.
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
+-- Every module that splices a staged query needs this; see the note at the top
+-- of "TPCH.Staged" for what full laziness does to a generated loop.
+{-# OPTIONS_GHC -fno-full-laziness #-}
 module Main where
 
 import Control.Exception (ErrorCall, evaluate, try)
@@ -29,7 +33,10 @@ import System.FilePath ((</>))
 
 import Prela
 import Prela.Cache
+import Prela.Staged.Stream (lam1)
+import StagedQueries (schemaQueriesS)
 import qualified TinySchema as Sch
+import TinyStaged (TinyS, loadTinyS)
 
 data E
 data T
@@ -96,6 +103,13 @@ schemaQueries s = (sequels, recent, undated, tv, best)
     tv = values (compose (restrict movie (eq "tv series" (compose kind kindText))) title)
 
     best = foldAll max 0 (compose movie rating)
+
+-- The staged twin of `schemaQueries`, one splice. `lam1` emits the lambda, so
+-- the record binder is introduced by the generator and the splice is allowed to
+-- name it; writing @stagedQueries s = $$(schemaQueriesS [|| s ||])@ instead is
+-- the stage restriction, and it does not compile.
+stagedQueries :: TinyS -> ([ByteString], Int, [ByteString], [ByteString], Double)
+stagedQueries = $$(lam1 schemaQueriesS)
 
 main :: IO ()
 main = do
@@ -304,13 +318,25 @@ main = do
   check "range is half-open" (values (range 1979 1986 (compose (Sch.movie s) (Sch.year s))))
     [1979]
 
-  check "schema: queries" (schemaQueries s)
-    ( ["Aliens", "Alien 3"]   -- keyword "sequel"
-    , 2                       -- year > 1980
-    , ["Solaris"]             -- no year at all
-    , ["Solaris"]             -- kind is "tv series", reached through the FK
-    , 8.5                     -- highest rating
-    )
+  let expected = ( ["Aliens", "Alien 3"]   -- keyword "sequel"
+                 , 2                       -- year > 1980
+                 , ["Solaris"]             -- no year at all
+                 , ["Solaris"]             -- kind is "tv series", reached through the FK
+                 , 8.5                     -- highest rating
+                 )
+  check "schema: queries" (schemaQueries s) expected
+
+  -- The same five queries through the staged engine, off the same files. Two
+  -- things are being checked at once: that the generated accessors read the
+  -- columns they claim to, and that the operators agree with the push engine
+  -- they are replacing.
+  --
+  -- `stagedQueries` is a splice rather than a call. `StagedQueries.schemaQueriesS`
+  -- returns the CODE of the five queries, and the lambda it is wrapped in is the
+  -- generated one, from `lam1` — a splice cannot name a binder from the module it
+  -- sits in, so the generator has to introduce it.
+  sS <- loadTinyS sdir
+  check "staged schema: queries" (stagedQueries sS) expected
 
   n <- readIORef fails
   if n == 0

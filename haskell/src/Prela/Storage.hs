@@ -16,6 +16,7 @@ import Control.Monad.ST (ST)
 import Data.Array (accumArray, elems)
 import Data.Bits (shiftR, xor, (.&.))
 import Data.Hashable (Hashable, hash, hashWithSalt)
+import Data.Array.Base (unsafeAt)
 import Data.Array.ST (STUArray, newArray, writeArray, runSTUArray)
 import Data.Array.Unboxed (UArray)
 import qualified Data.Array.Unboxed as U
@@ -398,3 +399,34 @@ newSlots = UMV.replicate
 
 newBits :: Int -> Bool -> ST s (STUArray s Int Bool)
 newBits n v = newArray (0, n - 1) v
+
+--------------------------------------------------------------------------------
+-- Accessors the staged leaves splice
+--------------------------------------------------------------------------------
+
+-- The staged engine emits leaf bodies as CODE, so everything a leaf reads has to
+-- be a top-level name it can mention by reference. These three are the bit-mask
+-- reads that "Prela.Staged.Ops" needs, factored out of the leaves that used to
+-- write them inline.
+
+-- | Test a mask bit. UNCHECKED, like `atStore` and for the same reason: every
+-- caller is a leaf that has already range-tested its key.
+atBit :: UArray Int Bool -> Int -> Bool
+atBit = unsafeAt
+{-# INLINE atBit #-}
+
+-- | How many bits a mask covers.
+bitsLen :: UArray Int Bool -> Int
+bitsLen bs = case U.bounds bs of (lo, hi) -> hi - lo + 1
+{-# INLINE bitsLen #-}
+
+-- | Is this id inside a universe of the given size?
+idInRange :: Int -> Id e -> Bool
+idInRange n (Id i) = 0 <= i && i < n
+{-# INLINE idInRange #-}
+
+-- | Is this id's bit set? Range-checked, since a probed id is untrusted.
+bitsMember :: Bits e -> Id e -> Bool
+bitsMember (Bits bs) (Id i) = case U.bounds bs of
+                            (lo, hi) -> lo <= i && i <= hi && unsafeAt bs (i - lo)
+{-# INLINE bitsMember #-}

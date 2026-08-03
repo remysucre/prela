@@ -2,83 +2,70 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## What Prela is
+## What Prela is, and what this branch is
 
-Prela is a research-prototype embedded query language based on Tarski's Algebra of Relations. Queries are built from *relation combinators* — overloaded Julia operators that take and produce binary relations. The implementation is a shallow embedding: a Prela query *is* a Julia expression, and there is no query optimizer — the query as written *is* the plan.
+Prela is a research-prototype embedded query language based on Tarski's Algebra of Relations. Queries are built from relation combinators; the implementation is a shallow embedding with no query optimizer — the query as written *is* the plan.
 
-`main` carries only the Julia implementation (`julia/`). Experimental Rust and Zig ports live on separate branches (`git checkout rust`); the `rust/` and `zig/` dirs are gitignored here. README references to `rust/bench/*` scripts mean files on the `rust` branch, not `main`.
+Each implementation lives on its own branch: `main` carries the Julia reference implementation (`julia/`), and the `rust` branch carries the Rust port. **This branch (`haskell`) carries the Haskell port in `haskell/`** — there is no `julia/` directory here, and README references to `julia/*` or `rust/bench/*` mean files on those branches. The concept docs `LANGUAGE.md` (operator semantics) also live on `main`.
 
-## Data model (read before touching queries)
+## Data model
 
-Everything is a relation of arity ≤ 2, thought of as a multi-valued function `D → R`. A k-column SQL table is "shredded" into k binary relations, one per column, each keyed by a phantom-typed entity ID (`ID{E} where E <: Entity`). The PK column itself is the identity relation (the entity *universe*). There are **no NULLs / no 3VL** — a missing value is simply an absent pair, so SQL `IS NULL` becomes set difference (`- r`).
+Everything is a binary relation — a set of (x, y) pairs read as a multi-valued function `d -> r`. A k-column SQL table is "shredded" into k binary relations, one per column, each keyed by a phantom-typed entity id (`Id e` where `e` is an empty tag type like `data Movie`). The PK column is the identity relation (the entity *universe*). There are no NULLs / no 3VL — a missing value is an absent pair, so `IS NULL` becomes set difference (`diff`).
 
-Schemas are declared with macros (see `julia/JOB.jl` for the canonical example):
-- `@declare A B C …` forward-declares entity types (needed for cyclic FK refs).
-- `@entity E begin field :: T … end` declares E's fields. `f :: T` is a 1:1 function; `f :: Multi{T}` is multi-valued. `f :: ID{Other}` is a foreign key. The first field is the *primary field* unless otherwise designated.
-- `@expose E` makes E's fields bare-name accessible (`title`, `keyword`, …). A polymorphic field shared by two entities must stay qualified (`Movie.info` vs `Info.info`).
+## Architecture: modes and the tagless encoding
 
-## The operators
+A relation is used in exactly two ways, and which one applies is a property of the relation's *position* in the query, not of the relation: **drive** (enumerate every pair — the outer-loop role, the left of a composition) and **probe** (given a key, produce its values — the inner role; `probeAny` is its short-circuiting cousin, membership is `probeAny` with a constant-true test).
 
-Full semantics live in `LANGUAGE.md`; precedence/paren rules in `julia/STYLE.md` (read it before writing or editing query expressions — Julia's operator precedence makes parens load-bearing). Quick reference:
+The port encodes this tagless-final, not as a GADT/plan tree (MODES.md records why, plus the two rejected designs — read it before proposing an encoding change):
 
-- `→` composition/join (also field navigation: `movie → Movie.info → Info.note`)
-- `∧` intersection / AND (an **alias of `×`**); `∨` membership union / OR (probe-only, never enumerated)
-- `×` product — pairs same-domain columns into a tuple value (`x→y` and `x→z` ⇒ `x→(y,z)`)
-- `:` restriction/filter (`a : b` keeps rows of `a` whose value is a member of `b`)
-- `-` set difference; predicates `== != < > <= >=`, `in`, regex `~` / negated `≁`
-- `'` (postfix adjoint) inverse; `←` left-compose (`r ← s` ≡ `r' → s`)
-- `▷` group-by-key fold (`q ▷ (op, init)`; 3-tuple `(op, init, n)` opts into dense-array grouping; single fn = buffered reduce); `⊵` no-group fold; `↦` per-row map; `unwrap` escapes a `⊵` result to a scalar
-- `materialize(q)` / `!q` forces a leg once for reuse; `bitset(q, n)` precomputes dense membership. **Prela is non-materialized by default** — a subexpression used twice is re-evaluated twice unless wrapped.
+- `Prela.Mode` — the two mode records: `Drv d r` (just `drive`) and `Prb d r` (`probe` + `probeAny`).
+- `Prela.Ops` — `class Mode q` with **exactly those two records as its only instances**. Leaves (`universe`, `column`, `fromIndex`, …) are class methods, so a leaf is mode-polymorphic and instantiates at whatever its position demands. Mode-free operators (`compose`, `prod`, `restrict`, `diff`, `filt`, `mapv`) take `q` and return `q`; the right-hand side of every binary operator is concretely `Prb` because that side is probed regardless. A query names no mode anywhere — the signature at the top (`Drv …` vs `Prb …` vs `Mode q => q …`) picks it and it flows down.
+- `Prela.Predicate` — comparison sugar over `filt`: `eq ne gt lt ge le isIn between range rx nrx`.
+- `Prela.Stream` — mode-*fixed* operators that still fuse: `invStream` (drive-only inverse), `leftCompose`, `groupBy`, `union`, `disj` (OR — membership only, value type `()`), `foldAll`, and the strict state monad `Acc` that folds thread accumulators through.
+- `Prela.Materialize` — the deliberate pipeline breakers: `index`, `materialize`, `inv` (indexed inverse), `fold` (grouped, open-addressed table), `bufFold`, `countDistinct`, `foldDense`/`foldDenseOuter` (dense-array grouping by entity id), `bitset`. Each consumes a `Drv`, builds real storage once, and hands back something mode-polymorphic. Prela is non-materialized by default — a subexpression used twice re-evaluates twice unless one of these wraps it.
+- `Prela.Storage` — `Id`, the physical column layouts (`Col`, `SparseCol`, `MultiCol`), and the `Elem` class that gives each element type its flat layout. The types *are* the on-disk layouts.
+- `Prela.Cache` — mmap reader/writer for cache format v2 (one `<Entity>_<field>.bin` per column), byte-compatible with the Rust port; spec is `rust/src/format.rs` on the `rust` branch. `noId` is `-1` on purpose (matches the on-disk hole word); sparse-entity validity masks are derived at load, not stored. See CACHE.md.
+- `Prela.Schema` — Template Haskell `declareSchema`: from one declaration it generates the tag types, a record of loaded columns, a loader, and **top-level accessor functions** taking the record. Accessors must stay top-level functions, not record fields — a relation stored in a record field defeats specialization and costs ~250 B/row (measured in `design/SchemaProbe.hs`).
 
-Predicate elision: comparing an entity-typed expression to a scalar auto-traverses to the primary field (`keyword == "sequel"` ≡ `keyword → Keyword.keyword == "sequel"`).
+`import Prela` re-exports everything except Cache and Schema, which only a dataset loader imports.
 
-## Architecture: how a query executes
+## Fusion is the whole bet — invariants
 
-The core is `julia/Prela.jl` (~1300 lines). The pipeline is:
+The entire point is that an operator chain fuses into one unboxed loop with no per-row allocation, matching columnar-engine speed. This regresses **silently** (no type error, no warning), so read FUSION.md before touching `Prela.Ops` or `Prela.Storage`, and re-verify with `design/CoreProbe.hs` after adding operators or storage kinds (its header has the exact ghc invocation; grep the dump for `Prb`, `$fMonad`, `MutVar#`, `((), I#` — all four must be absent). The rules:
 
-1. **Build** — operators construct a typed query tree where `Query{D,R}` nodes carry the *entire plan in their type parameters* (`Compose`, `Filter`, `Prod`, `Restrict`, `Fold`, `Inv`, `LeftCompose`, …). Nothing runs at build time.
-2. **`prepare(plan, Driven())`** — treat this as *compilation*. It rewrites the tree top-down so each node knows its access mode (`Driven` vs `Probed`) at the type level, and lowers mode-polymorphic nodes into concrete single-mode forms (e.g. `Inv` → `InvStream` when driven / `InvIndexed` when probed; `Materialized` → `MatStream`/`MatProbed`; `Fold` → an eagerly-built `FoldP` cache). Memo-free and type-stable.
-3. **Execute via the CPS protocol** — four functions fuse the whole tree into one loop nest through Julia's monomorphization + inlining:
-   - `drive(q, k)` — call `k(x, y)` for every pair
-   - `probe(q, x, k)` — call `k(y)` for every `y` related to key `x`
-   - `probe_any(q, x, k)` — like probe but short-circuits (Bool threaded through returns, allocation-free); `member(q, x)` = `probe_any(q, x, _->true)`
-   - `drivekeys(q, k)` — emit each domain key
-
-This continuation-passing style is the central trick: combinators compose by passing continuations, so a multi-operator query fuses into a single streaming pass with **no materialized intermediates** — recovering columnar execution from algebra-style queries. When editing the executor, the invariant is that drive/probe/probe_any carry *no per-row format branch*: the node type *is* the physical layout.
-
-**Leaf storage** (sealed once after load by `seal_entities!`, dispatched on declared multiplicity + data density): `VecRel` (dense 1:1 column store), `SparseRel` (1:1 with gaps + presence `BitVector`), `MultiRel` (dense forward index for multi-valued). A `Universe{E}` stores just `n` and iterates a range. Leaves start as mutable `Staging` (filled at load) and `seal_entities!` rebinds each to its immutable sealed form — `Staging` is deliberately *not* a `Query`, so an unsealed leaf cannot run.
-
-Performance notes baked into the code (preserve when refactoring): `Prod` drive/probe/member are `@eval`'d per-arity (1–8) to avoid recursive-closure tuple allocations; `@inbounds` on the hot leaf loops; dense `Vector{Vector}` indexes for entity-keyed relations instead of hashing. The whole point is matching DuckDB's single-thread speed without a vectorized/compiled engine, so allocation in hot paths is a regression.
+- A leaf constructor must reach WHNF without forcing its storage: match the `Col`/`Store` *inside* the returned lambdas, never on the left of the `=`. Otherwise the record is a thunk GHC won't duplicate into the loop. No pragma recovers this.
+- Never carry a per-row accumulator in an `STRef` — thread it through `Acc` so GHC unboxes it as a loop argument. (`ST` is fine for build-once caches like `fold`'s table.)
+- Every `Mode` method and streaming operator carries `INLINE`; that is what makes fusion survive module boundaries. Both `Mode` instances must stay in `Prela.Ops` — as orphans their unfoldings would not reliably reach use sites.
+- Materialized relations must be bound *monomorphically* (`Drv`/`Prb`, or the record type) — a mode-polymorphic binding is re-elaborated per use and would build its index twice.
 
 ## Common commands
 
-All commands run from `julia/`. Requires Julia 1.11+.
+All from `haskell/`. Toolchain: GHC 9.10, cabal 3.x.
 
 ```bash
-# First-time JOB setup: ingest raw CSVs/parquet, write binary cache to ../cache/*.bin (~30s once, ~2s mmap after)
-julia --project=. -e 'include("JOB.jl")'
+cabal build all
+cabal test                    # cache round-trips + schema layer (test/Spec.hs, TinySchema)
+cabal run prela-demo          # tiny in-memory dataset exercising the core
 
-# Run all 113 JOB queries (parallel via @threads; use -tN for threads), check each against its recorded reference
-julia --project=. -e 'include("JOB.jl"); include("queries.jl"); runall()'
+# TPC-H: all 22 queries checked against recorded DuckDB oracles (../oracles/tpch,
+# shared with the Rust port). Needs a binary cache built by the Rust `regen` tool
+# (rust branch) — see benchmarking.md.
+cabal run prela-tpch                  # cache at ../cache; ROUNDS=n, PRELA_CACHE=dir env overrides
+cabal run prela-tpch -- 1 6 14        # just those queries
 
-# TPC-H (after generating cache/tpch/*.parquet via DuckDB — see benchmarking.md)
-julia --project=. -e 'include("TPCH.jl"); include("tpch_queries_idiomatic.jl")'   # auto-runs runall_tpch()
-# (or tpch_queries_optimized.jl for the hand-tuned variants)
-
-# Interactive REPL with Revise auto-reload on edits to Prela.jl — the dev loop
-julia --project=. -i -e 'include("start.jl")'
-# then in the REPL: include("JOB.jl"); includet("queries.jl")  (includet = re-run on edit)
-
-# Single-thread warm benchmark (what the plot scripts consume)
-julia --project=. -t1 bench.jl job                > bench/data/julia_job.txt
-QS=idiomatic julia --project=. -t1 bench.jl tpch  > bench/data/julia_tpch_idiomatic.txt
-
-# Regenerate comparison plots (reads bench/data/, writes PNGs alongside)
-cd bench && python3 plot_job.py && python3 plot_tpch.py
+# Fusion check (see design/CoreProbe.hs header for the full flags):
+cabal exec -- ghc -O2 -isrc -fforce-recomp design/CoreProbe.hs \
+  -outputdir /tmp/coreprobe -o /tmp/coreprobe/probe -ddump-simpl -dsuppress-all -ddump-to-file
 ```
 
-There is no separate lint/test suite: correctness *is* the `runall()` / `runall_tpch()` reference check (`N/113 queries match reference`). To check a single query during development, run it in the REPL workflow above, or temporarily narrow the `_Q` registry. Data lives in `../jobdata/parquet/` (JOB) and `../cache/tpch/*.parquet` (TPC-H); the binary `../cache/` is gitignored and regenerated on a miss. Full dataset setup (including the DuckDB `dbgen` invocation for TPC-H) is in `benchmarking.md`.
+There is no separate lint/test suite beyond this: correctness for the query layer *is* the oracle check (`22/22 match reference`). To check one query during development, pass its number to `prela-tpch`. `design/*.hs` are standalone measurement probes and design prototypes, not part of the build; they document their own invocations and results in their headers.
 
-## Adding or editing queries
+## Writing queries
 
-Queries register via `_q(thunk, name, oracle)` into the `_Q` vector and are checked by min-tuple against the `oracle` reference string. Idiomatic style (per `queries.jl` header): root movie-queries at `movie`, cast-queries at `cast`; fuse each filter onto the column it constrains so intermediates stay small. When a query expression doesn't parse the way you expect, the cause is almost always operator precedence — consult `julia/STYLE.md`, which documents exactly where parens are required (around comparison predicates inside `∧` chains, around `→`/`:` conjuncts) and where they are redundant.
+`tpch/TPCH/Queries.hs` is the canonical style. Conventions:
+
+- A query takes the loaded schema record `s` and reaches columns via generated accessors (`quantity s`, `liOrder s`); a module wanting bare names rebinds them in a `where` with signatures (free at runtime).
+- Shared subqueries get `Mode q => q d r` signatures so they work driven or probed; the top-level binding is concretely `Drv`/`Prb`.
+- `collect` is the boundary: above it fused algebra, below it a plain list. Sorting and formatting (SQL ORDER BY) happen after `collect`, on the few rows that survive.
+- Field names clashing across entities are renamed at declaration with `` `as` `` (entity prefix + field: `supplierName`, `liPart`); unique names keep their bare spelling.
+- Oracle quirk: Q9's reference is patched for two one-cent float-summation-order rows (see `tpch/Main.hs`); the Rust port does the same.

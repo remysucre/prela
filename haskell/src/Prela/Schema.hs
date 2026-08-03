@@ -75,15 +75,19 @@ module Prela.Schema
   , Ent, entity, sparseEntity
     -- * The generator
   , declareSchema
+  , declareStagedSchema
+  , fieldCode
   ) where
 
 import Data.ByteString (ByteString)
 import Data.Char (toLower)
 import Data.List (intercalate)
 import Language.Haskell.TH
+import Language.Haskell.TH.Syntax (ModName (..), Module (..), PkgName (..), mkNameG_fld)
 
 import Prela.Cache
 import Prela.Ops
+import qualified Prela.Staged.Ops as S
 import Prela.Storage
 
 --------------------------------------------------------------------------------
@@ -161,10 +165,33 @@ sparseEntity n u fs = Ent n u fs True
 -- Generation
 --------------------------------------------------------------------------------
 
+-- Which engine the accessors target. Everything else a schema generates — the
+-- tag types, the record, the loader — is the same either way, because none of it
+-- mentions a relation.
+data Flavour = Push | Staged
+
 -- | Splice a schema. The name given becomes the record type, its constructor,
 -- and the `load`-prefixed loader.
 declareSchema :: String -> [Ent] -> Q [Dec]
-declareSchema sname ents
+declareSchema = declareWith Push
+
+-- | The same schema, with accessors for the staged engine in
+-- "Prela.Staged.Ops". The difference is only in the accessors, and it is the
+-- difference staging makes everywhere: an accessor takes the CODE of the record
+-- rather than the record.
+--
+-- @
+-- title ::           Mode  q =>       Tiny -> q (Id Movie) ByteString
+-- title :: 'S.SMode' q => CodeQ Tiny -> q (Id Movie) ByteString
+-- @
+--
+-- A query gets that @CodeQ Tiny@ from `Prela.Staged.Stream.lam1`, which is what
+-- introduces a binder the splice is allowed to name.
+declareStagedSchema :: String -> [Ent] -> Q [Dec]
+declareStagedSchema = declareWith Staged
+
+declareWith :: Flavour -> String -> [Ent] -> Q [Dec]
+declareWith flav sname ents
   | null ents = fail "declareSchema: no entities"
   | any (null . eFields) ents =
       fail "declareSchema: every entity needs at least one field to size its universe"
@@ -186,7 +213,7 @@ declareSchema sname ents
       tags <- mapM tagDec ents
       recd <- recDec recN ents
       ldr  <- loaderDecs recN ents
-      accs <- concat <$> mapM (accessorDecs recN) ents
+      accs <- concat <$> mapM (accessorDecs flav recN) ents
       return (tags ++ [recd] ++ ldr ++ accs)
   where
     claimed = [ (eUniv e, "the " ++ eName e ++ " universe") | e <- ents ]
@@ -254,33 +281,97 @@ loaderDecs recN ents = do
         lv <- if eSparse e then (: []) <$> [| validityBits $(varE v0) |] else return []
         return (n : lv ++ map (VarE . snd) fvs)
 
-accessorDecs :: Name -> Ent -> Q [Dec]
-accessorDecs recN e = do
+accessorDecs :: Flavour -> Name -> Ent -> Q [Dec]
+accessorDecs flav recN e = do
   u <- universeAcc
   fs <- concat <$> mapM fieldAcc (eFields e)
   return (u ++ fs)
   where
     tag = conT (mkName (eName e))
+
+    -- The record argument, and how a record field is read out of it. Push reads
+    -- it directly; staged emits code that will read it later.
+    argT t = case flav of
+      Push   -> t
+      Staged -> [t| CodeQ $t |]
+    get s fld = case flav of
+      Push   -> [| $(varE fld) $(varE s) |]
+      Staged -> do
+        -- The record field's ORIGINAL name, package and module and all. See
+        -- `fieldCode` for why the bare string will not do.
+        Module (PkgName p) (ModName m) <- thisModule
+        [| fieldCode p m $(litE (stringL (nameBase recN)))
+                     $(litE (stringL (nameBase fld))) $(varE s) |]
+
     universeAcc = do
       s <- newName "s"
       let n = mkName (eUniv e)
-      sig <- sigD n [t| forall q. Mode q => $(conT recN) -> q (Id $tag) (Id $tag) |]
-      let n' = [| $(varE (countFieldName e)) $(varE s) |]
-          body | eSparse e = [| sparseUniverse ($(varE (liveFieldName e)) $(varE s)) $n' |]
-               | otherwise = [| universe $n' |]
+          n' = get s (countFieldName e)
+          live = get s (liveFieldName e)
+      sig <- case flav of
+        Push   -> sigD n [t| forall q. Mode    q => $(argT (conT recN)) -> q (Id $tag) (Id $tag) |]
+        Staged -> sigD n [t| forall q. S.SMode q => $(argT (conT recN)) -> q (Id $tag) (Id $tag) |]
+      let body = case (flav, eSparse e) of
+            (Push,   True)  -> [| sparseUniverse   $live $n' |]
+            (Push,   False) -> [| universe              $n' |]
+            (Staged, True)  -> [| S.sparseUniverse $live $n' |]
+            (Staged, False) -> [| S.universe            $n' |]
       fun <- funD n [clause [varP s] (normalB body) []]
       inl <- pragInlD n Inline FunLike AllPhases
       return [sig, fun, inl]
+
     fieldAcc f = do
       s <- newName "s"
       let n = mkName (fAs f)
-          get = [| $(varE (colFieldName e f)) $(varE s) |]
-      sig <- sigD n [t| forall q. Mode q => $(conT recN) -> q (Id $tag) $(elemType (fTy f)) |]
-      fun <- funD n [clause [varP s]
-                            (normalB (if fMany f then [| multiColumn $get |]
-                                                 else [| column $get |])) []]
+          c = get s (colFieldName e f)
+      sig <- case flav of
+        Push   -> sigD n [t| forall q. Mode    q => $(argT (conT recN)) -> q (Id $tag) $(elemType (fTy f)) |]
+        Staged -> sigD n [t| forall q. S.SMode q => $(argT (conT recN)) -> q (Id $tag) $(elemType (fTy f)) |]
+      let body = case (flav, fMany f) of
+            (Push,   True)  -> [| multiColumn   $c |]
+            (Push,   False) -> [| column        $c |]
+            (Staged, True)  -> [| S.multiColumn $c |]
+            (Staged, False) -> [| S.column      $c |]
+      fun <- funD n [clause [varP s] (normalB body) []]
       inl <- pragInlD n Inline FunLike AllPhases
       return [sig, fun, inl]
+
+-- | Read one record field, in code: given the package, module, record type and
+-- name of a selector, @fieldCode … \"movie_year\" s@ is the staged spelling of
+-- @movie_year s@. Every staged accessor is built out of this.
+--
+-- This is a wart, and it is worth being precise about which part. Untyped
+-- Template Haskell, which is what `declareSchema` is written in, has no way to
+-- build a TYPED quote: there is no @Exp@ constructor for @[|| … ||]@. So the
+-- generated body cannot say @[|| movie_year $$s ||]@ directly. It builds the
+-- untyped expression instead, which it already knows how to do, and then asserts
+-- the type with `unsafeCodeCoerce`. The assertion is the wart — nothing checks
+-- that the field really has the type the accessor's signature claims.
+--
+-- What limits the damage is that both halves come from the same declaration.
+-- The record field and the accessor signature are generated from one `Field`, a
+-- few lines apart, so a mismatch would be a bug in this module rather than in a
+-- schema someone wrote. And it still surfaces: the coerced code is spliced into
+-- a query, and the splice is typechecked like any other expression.
+--
+-- The package and module arguments are not decoration. The obvious version of
+-- this takes the field name alone and calls `mkName`, but a `mkName` name is
+-- resolved wherever it ends up, and where it ends up is the QUERY module. So it
+-- would compile only if the query happened to import the schema's record fields
+-- unqualified, which is exactly what a query has no reason to do. Worse, when
+-- they are not in scope GHC 9.10 does not report it: it panics with @unfilled
+-- unbound-variable evidence@. `mkNameG_fld` names the selector where it actually
+-- lives, and `thisModule` at the schema splice is what knows where that is.
+--
+-- It has to be `mkNameG_fld` and not the `mkNameG_v` that a top-level function
+-- would use. Since GHC 9.10 a record selector lives in its own namespace, tagged
+-- with the record type it belongs to, and looking one up as an ordinary variable
+-- fails with @Can\'t find interface-file declaration@ even though the name is
+-- right there in the interface file. That is the reason for the record-type
+-- argument.
+fieldCode :: String -> String -> String -> String -> CodeQ s -> CodeQ a
+fieldCode pkg modu rec fld s =
+  unsafeCodeCoerce (appE (varE (mkNameG_fld pkg modu rec fld)) (unTypeCode s))
 
 --------------------------------------------------------------------------------
 -- Names and types
