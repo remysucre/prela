@@ -2,19 +2,19 @@
 
 -- | Operators whose mode is fixed, but which still stream.
 --
--- These are the first half of what the `Mode` class in "Prela.Ops" cannot hold,
--- and keeping them out of it is the point of the design rather than a gap in it.
--- Each either demands a driven input or produces a fixed mode, so its type says
--- where in a query it may appear and a misuse is a type error rather than a
--- runtime surprise. What they all share is that nothing is stored: they are still
--- closures over their inputs, and they fuse. The ones that DO stop the pipeline
--- and hold data are in "Prela.Materialize".
-module Prela.Stream where
+-- These are the first half of what the `Mode` class in "Prela.Push.Ops" cannot
+-- hold, and keeping them out of it is the point of the design rather than a gap
+-- in it. Each either demands a driven input or produces a fixed mode, so its
+-- type says where in a query it may appear and a misuse is a type error rather
+-- than a runtime surprise. What they all share is that nothing is stored: they
+-- are still closures over their inputs, and they fuse. The ones that DO stop
+-- the pipeline and hold data are in "Prela.Push.Materialize".
+module Prela.Push.Stream where
 
 import Control.Monad (when)
 
-import Prela.Mode
-import Prela.Ops
+import Prela.Push.Mode
+import Prela.Push.Ops
 
 -- | Flip a relation's direction. Driven, that is free: stream the pairs and
 -- swap each one. It has NO probed form — probing an inverse means building a
@@ -121,7 +121,7 @@ instance Monad (Acc s) where
 
 -- | No-group fold (`q ⊵ (op, init)`, already unwrapped): ignore the keys, fold
 -- every value into one accumulator, return the bare scalar. This one is in this
--- module rather than "Prela.Materialize" because it stores nothing: it is a
+-- module rather than "Prela.Push.Materialize" because it stores nothing: it is a
 -- streaming pass whose only state is the accumulator, and the whole query fuses
 -- into it.
 foldAll :: (s -> r -> s) -> s -> Drv d r -> s

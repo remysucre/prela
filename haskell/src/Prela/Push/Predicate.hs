@@ -2,18 +2,19 @@
 
 -- | Comparison and regex sugar.
 --
--- None of these is a new node: each is `filt` from "Prela.Ops" with a fixed
--- closure, matching Rust, where `.eq(v)` builds `Filter { p: |x| x == v }`. They
--- get a module of their own because they are the surface syntax rather than the
--- machinery — adding a predicate should not mean touching the executor.
+-- None of these is a new node: each is `filt` from "Prela.Push.Ops" with a
+-- fixed closure, matching Rust, where `.eq(v)` builds `Filter { p: |x| x == v
+-- }`. They get a module of their own because they are the surface syntax
+-- rather than the machinery — adding a predicate should not mean touching the
+-- executor.
 --
 -- The value being tested is on the left of the comparison and the argument `v` on
 -- the right, as in the Prela surface `year > 1980`.
-module Prela.Predicate where
+module Prela.Push.Predicate where
 
 import Text.Regex.TDFA (Regex, RegexLike, makeRegex, matchTest)
 
-import Prela.Ops
+import Prela.Push.Ops
 
 eq, ne :: (Mode q, Eq r) => r -> q d r -> q d r
 eq v = filt (== v)

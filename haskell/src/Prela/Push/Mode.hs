@@ -15,10 +15,10 @@
 -- driven while the filter and `title` are probed — same query, both modes.
 --
 -- This module is only the two records. What makes a query able to sit in either
--- of them without saying so is the `Mode` class in "Prela.Ops", which has these
--- two types as its only instances; MODES.md explains why it is built that way
--- and what the two rejected alternatives were.
-module Prela.Mode where
+-- of them without saying so is the `Mode` class in "Prela.Push.Ops", which has
+-- these two types as its only instances; MODES.md explains why it is built
+-- that way and what the two rejected alternatives were.
+module Prela.Push.Mode where
 
 -- | Enumerate: run the action on every (x, y) pair.
 --

@@ -21,10 +21,10 @@ module StagedProbeGen
 
 import Language.Haskell.TH (CodeQ)
 
-import Prela.Staged.Materialize
-import Prela.Staged.Ops
-import Prela.Staged.Predicate
-import Prela.Staged.Stream
+import Prela.PullStaged.Materialize
+import Prela.PullStaged.Ops
+import Prela.PullStaged.Predicate
+import Prela.PullStaged.Stream
 import Prela.Storage
 
 -- | The exact query design/CoreProbe.hs uses, so the two Core dumps can be put
@@ -40,7 +40,7 @@ countRecent n yearCol = foldAll (\a _ -> [|| $$a + 1 ||]) [|| 0 ||] recent
     year :: SMode q => q (Id e) Int
     year = column yearCol
 
-    recent :: SStream (Id e) Int
+    recent :: Drive (Id e) Int
     recent = compose (restrict movie (gt [|| 1980 ||] year)) year
 
 -- | A grouped fold read back at BOTH modes, which is what @withFold@ exists for.
@@ -50,14 +50,14 @@ countRecent n yearCol = foldAll (\a _ -> [|| $$a + 1 ||]) [|| 0 ||] recent
 countPerYear :: forall e. CodeQ Int -> CodeQ (Col e Int) -> CodeQ ([(Int, Int)], Bool)
 countPerYear n yearCol =
   withFold (\a _ -> [|| $$a + (1 :: Int) ||]) [|| 0 ||] grouped $ \perYear ->
-    [|| ( $$(collect (perYear :: SStream Int Int))
-        , $$(anyOf (at (perYear :: Cursor Int Int) [|| 1985 ||])) ) ||]
+    [|| ( $$(collect (perYear :: Drive Int Int))
+        , $$(anyOf (at (perYear :: Probe Int Int) [|| 1985 ||])) ) ||]
   where
     year :: SMode q => q (Id e) Int
     year = column yearCol
 
     -- Re-key the movie universe by each movie's year: (year, movie id).
-    grouped :: SStream Int (Id e)
+    grouped :: Drive Int (Id e)
     grouped = groupBy (universe n) year
 
 -- | Early exit, which is not expressible against the push engine at all: @drive@
@@ -72,5 +72,5 @@ firstTen n yearCol = limit [|| 10 ||] recent
     year :: SMode q => q (Id e) Int
     year = column yearCol
 
-    recent :: SStream (Id e) Int
+    recent :: Drive (Id e) Int
     recent = compose (restrict movie (gt [|| 2020 ||] year)) year

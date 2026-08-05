@@ -105,7 +105,7 @@ column v = SDrv $ \f z ->
 -- The range guard is not defensive, it is the semantics. A probed key is
 -- untrusted: a foreign key column has holes, and `Prela.Cache` spells a hole
 -- @noId = -1@. The answer for a hole is NO VALUES, not a crash and not a wild
--- read, which is why "Prela.Ops" writes @when (0 <= i && i < n)@ around every
+-- read, which is why "Prela.Push.Ops" writes @when (0 <= i && i < n)@ around every
 -- probed leaf. Bounds-checked indexing alone would not give that — it would
 -- throw where the engine yields nothing.
 --

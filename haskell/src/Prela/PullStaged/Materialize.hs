@@ -12,14 +12,14 @@
 -- and Prela is non-materialized by default, so making that visible in the import
 -- list is the point.
 --
--- Two things changed from "Prela.Materialize", and both are consequences of the
+-- Two things changed from "Prela.Push.Materialize", and both are consequences of the
 -- engine rather than improvements bolted on.
 --
 -- THE @STRef@ IS GONE. The push version says why it needed one, at its line 63:
 -- @drive@'s callback returns @m ()@, so a table under construction had nowhere to
 -- live but a mutable cell, at a pointer read per input row. Under pull the
 -- consumer generates the loop, so the table is a loop argument — see @sfoldST@ in
--- "Prela.Staged.Stream". FUSION.md's rule about never carrying a per-row
+-- "Prela.PullStaged.Stream". FUSION.md's rule about never carrying a per-row
 -- accumulator in an `STRef` is not a rule you can break any more.
 --
 -- THE SHAPE IS A CONTINUATION, not a return. This is the one rule of staging:
@@ -37,7 +37,7 @@
 -- mode-polymorphic materialized binding builds its index twice; under this shape
 -- it cannot, because what is polymorphic is the leaf wrapper and what is shared
 -- is the storage underneath it.
-module Prela.Staged.Materialize
+module Prela.PullStaged.Materialize
   ( withMaterialize
   , withInv
   , withFold
@@ -67,8 +67,8 @@ import qualified Data.Vector.Unboxed as UV
 import qualified Data.Vector.Unboxed.Mutable as UMV
 import Language.Haskell.TH (CodeQ)
 
-import Prela.Staged.Ops
-import Prela.Staged.Stream
+import Prela.PullStaged.Ops
+import Prela.PullStaged.Stream
 import Prela.Storage
 
 --------------------------------------------------------------------------------
@@ -80,12 +80,12 @@ import Prela.Storage
 -- Each group comes out in reverse drive order, because @insertWith (++)@ conses.
 -- `withBufFold` is the only thing that cares and it reverses; nothing else has
 -- ever promised an order.
-index :: Ord d => SStream d r -> CodeQ (Map d [r])
+index :: Ord d => Drive d r -> CodeQ (Map d [r])
 index = sfold (\m d r -> [|| Map.insertWith (++) $$d [$$r] $$m ||]) [|| Map.empty ||]
 
 -- | Force a leg once so reuse is free. Same pairs, now backed by the index.
 withMaterialize :: Ord d
-                => SStream d r
+                => Drive d r
                 -> ((forall q. SMode q => q d r) -> CodeQ w) -> CodeQ w
 withMaterialize s k =
   [|| let !m = $$(index s) in $$(k (fromIndex [|| m ||])) ||]
@@ -94,7 +94,7 @@ withMaterialize s k =
 -- mode because the work has already been paid for. `invStream` alone is free but
 -- driven only; this is what makes an inverse probeable.
 withInv :: Ord r
-        => SStream d r
+        => Drive d r
         -> ((forall q. SMode q => q r d) -> CodeQ w) -> CodeQ w
 withInv s k = withMaterialize (invStream s) k
 
@@ -108,7 +108,7 @@ withInv s k = withMaterialize (invStream s) k
 -- `withFold` unless the reducer genuinely cannot be written that way. The list
 -- each group is handed is in drive order.
 withBufFold :: Ord d
-            => (CodeQ [r] -> CodeQ t) -> SStream d r
+            => (CodeQ [r] -> CodeQ t) -> Drive d r
             -> ((forall q. SMode q => q d t) -> CodeQ w) -> CodeQ w
 withBufFold f s k =
   [|| let !m = Map.map (\xs -> $$(f [|| reverse xs ||])) $$(index s)
@@ -126,7 +126,7 @@ withBufFold f s k =
 -- @op@ is a generation-time function, so the reducer is emitted into the insert
 -- rather than called through a closure.
 withFold :: (Hashable d, Key d, UV.Unbox t)
-         => (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t -> SStream d r
+         => (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t -> Drive d r
          -> ((forall q. SMode q => q d t) -> CodeQ w) -> CodeQ w
 withFold op ini s k =
   [|| let !tbl = $$(buildTable op ini s) in $$(k (fromTable [|| tbl ||])) ||]
@@ -136,7 +136,7 @@ withFold op ini s k =
 -- Exposed because `withCountDistinct` needs two of them back to back, and
 -- because a materializer written outside this module will want it.
 buildTable :: (Hashable d, Key d, UV.Unbox t)
-           => (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t -> SStream d r
+           => (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t -> Drive d r
            -> CodeQ (Table d t)
 buildTable op ini s =
   [|| runST (do
@@ -295,17 +295,17 @@ growTable (MTable mask cnt hs ks vsc) ini = do
 -- first — @dd@ is in scope for the inner splice, and the inner `buildTable`
 -- generates a loop over its slots.
 withCountDistinct :: forall d r w. (Hashable d, Key d, Hashable r, Key r)
-                  => SStream d r
+                  => Drive d r
                   -> ((forall q. SMode q => q d Int) -> CodeQ w) -> CodeQ w
 withCountDistinct s k =
   [|| let !dd = $$(buildTable (\_ _ -> [|| () ||]) [|| () ||] pairs)
       in $$(withFold (\n _ -> [|| $$n + (1 :: Int) ||]) [|| 0 ||]
                      (distinct [|| dd ||]) k) ||]
   where
-    pairs :: SStream (d, r) ()
+    pairs :: Drive (d, r) ()
     pairs = mapvS (\_ -> [|| () ||]) (mapkVS (\d r -> [|| ($$d, $$r) ||]) s)
 
-    distinct :: CodeQ (Table (d, r) ()) -> SStream d ()
+    distinct :: CodeQ (Table (d, r) ()) -> Drive d ()
     distinct t = mapkS (\p -> [|| fst $$p ||]) (fromTable t)
 
 --------------------------------------------------------------------------------
@@ -319,7 +319,7 @@ withCountDistinct s k =
 -- rather than growing the store.
 withDense :: UV.Unbox t
           => CodeQ Int -> (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t
-          -> SStream (Id e) r
+          -> Drive (Id e) r
           -> ((forall q. SMode q => q (Id e) t) -> CodeQ w) -> CodeQ w
 withDense n op ini s k =
   [|| let !dn = $$(buildDense n op ini [|| False ||] s)
@@ -331,7 +331,7 @@ withDense n op ini s k =
 -- that do not exist.
 withDenseOuter :: UV.Unbox t
                => CodeQ Int -> (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t
-               -> SStream (Id e) r
+               -> Drive (Id e) r
                -> ((forall q. SMode q => q (Id e) t) -> CodeQ w) -> CodeQ w
 withDenseOuter n op ini s k =
   [|| let !dn = $$(buildDense n op ini [|| True ||] s)
@@ -347,7 +347,7 @@ withDenseOuter n op ini s k =
 -- changes is in the two arrays, which are bound once, outside it.
 buildDense :: UV.Unbox t
            => CodeQ Int -> (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t -> CodeQ Bool
-           -> SStream (Id e) r -> CodeQ (Dense e t)
+           -> Drive (Id e) r -> CodeQ (Dense e t)
 buildDense n op ini pre s =
   [|| runST (do
         let !cap = $$n
@@ -374,7 +374,7 @@ buildDense n op ini pre s =
 -- EXISTS that used to need a precomputed bitset can now just be probed. Keep this
 -- for the case where the same membership is asked millions of times; use `anyOf`
 -- where it is asked once per outer row and the inner relation is small.
-withBits :: CodeQ Int -> SStream d (Id e)
+withBits :: CodeQ Int -> Drive d (Id e)
          -> ((forall q. SMode q => q (Id e) (Id e)) -> CodeQ w) -> CodeQ w
 withBits n s k =
   [|| let !bs = Bits (runSTUArray (do

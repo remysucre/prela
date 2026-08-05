@@ -5,7 +5,7 @@
 -- type, and the handful of column shapes those layouts are arranged into.
 --
 -- Nothing here executes anything. Storage is built once, and the leaves in
--- "Prela.Ops" are VIEWS of it. That separation matters for a reason peculiar to
+-- "Prela.Push.Ops" are VIEWS of it. That separation matters for a reason peculiar to
 -- this design: a leaf is mode-polymorphic, and a polymorphic binding is
 -- re-elaborated at each instantiation, so a column built inside a leaf would be
 -- built twice for a column used in both modes.
@@ -73,7 +73,7 @@ noId = Id (-1)
 -- one uniform column type cannot serve both an Int column and a string column.
 --
 -- This class is the way out: an associated DATA family, so each element type
--- names its own physical layout while the leaves in "Prela.Ops" see one
+-- names its own physical layout while the leaves in "Prela.Push.Ops" see one
 -- interface.
 --
 -- The layouts chosen here are deliberately the ON-DISK layouts of the cache
@@ -255,7 +255,7 @@ instance (Key a, Key b) => Key (a, b) where
 --------------------------------------------------------------------------------
 
 -- These are three separate types rather than one type with a shape field, for
--- the same reason the sparse universe is a separate leaf in "Prela.Ops":
+-- the same reason the sparse universe is a separate leaf in "Prela.Push.Ops":
 -- dispatch happens once at compile time, so a dense column's loop carries no
 -- branch testing whether it might have been sparse.
 
@@ -304,7 +304,7 @@ mkMultiCol n prs = MultiCol n (packV (scanl (+) 0 (map (fromIntegral . length) b
 --------------------------------------------------------------------------------
 
 -- The two shapes above are loaded from data; these two are produced by the
--- materializing operators in "Prela.Materialize" and then read back as leaves,
+-- materializing operators in "Prela.Push.Materialize" and then read back as leaves,
 -- which is why they live here with the rest of the storage rather than there.
 
 -- One reduced value per key over a dense key space `0 .. n-1`: what a grouped
@@ -406,7 +406,7 @@ newBits n v = newArray (0, n - 1) v
 
 -- The staged engine emits leaf bodies as CODE, so everything a leaf reads has to
 -- be a top-level name it can mention by reference. These three are the bit-mask
--- reads that "Prela.Staged.Ops" needs, factored out of the leaves that used to
+-- reads that "Prela.PullStaged.Ops" needs, factored out of the leaves that used to
 -- write them inline.
 
 -- | Test a mask bit. UNCHECKED, like `atStore` and for the same reason: every

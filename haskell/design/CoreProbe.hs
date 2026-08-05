@@ -18,10 +18,10 @@
 -- allocation per row, no Mode dictionary, no Prb record, no intermediate.
 --
 -- Two things had to be fixed to get there, both recorded in FUSION.md:
---   * `column` (Prela.Ops) must not match its Col on the left of the `=`, or the
+--   * `column` (Prela.Push.Ops) must not match its Col on the left of the `=`, or the
 --     Prb is a thunk and GHC calls the probe through a shared record field per
 --     row.
---   * `foldAll` (Prela.Stream) must thread its accumulator through a state
+--   * `foldAll` (Prela.Push.Stream) must thread its accumulator through a state
 --     monad, not an STRef, or every row does a readMutVar/writeMutVar on a
 --     boxed Int.
 --

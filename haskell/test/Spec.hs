@@ -33,7 +33,7 @@ import System.FilePath ((</>))
 
 import Prela
 import Prela.Cache
-import Prela.Staged.Stream (lam1)
+import Prela.PullStaged.Stream (lam1)
 import StagedQueries (schemaQueriesS)
 import qualified TinySchema as Sch
 import TinyStaged (TinyS, loadTinyS)

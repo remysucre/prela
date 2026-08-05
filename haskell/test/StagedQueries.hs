@@ -28,9 +28,9 @@ module StagedQueries (schemaQueriesS) where
 import Data.ByteString (ByteString)
 import Language.Haskell.TH (CodeQ)
 
-import Prela.Staged.Ops
-import Prela.Staged.Predicate
-import Prela.Staged.Stream
+import Prela.PullStaged.Ops
+import Prela.PullStaged.Predicate
+import Prela.PullStaged.Stream
 import Prela.Storage (Id)
 
 import qualified TinyStaged as Sch
@@ -63,7 +63,7 @@ schemaQueriesS s = [|| ( $$(values sequels)
     kindText :: SMode q => q (Id Sch.Kind) ByteString
     kindText = Sch.kindText s
 
-    sequels :: SStream (Id Sch.Movie) ByteString
+    sequels :: Drive (Id Sch.Movie) ByteString
     sequels = compose (restrict movie (eq [|| "sequel" ||] (compose keyword keywordText)))
                       title
 
@@ -71,10 +71,10 @@ schemaQueriesS s = [|| ( $$(values sequels)
     recent = foldAll (\n _ -> [|| $$n + 1 ||]) [|| 0 ||]
                      (compose (restrict movie (gt [|| 1980 ||] year)) year)
 
-    undated :: SStream (Id Sch.Movie) ByteString
+    undated :: Drive (Id Sch.Movie) ByteString
     undated = compose (diff movie year) title
 
-    tv :: SStream (Id Sch.Movie) ByteString
+    tv :: Drive (Id Sch.Movie) ByteString
     tv = compose (restrict movie (eq [|| "tv series" ||] (compose kind kindText))) title
 
     best :: CodeQ Double

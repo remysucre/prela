@@ -41,7 +41,7 @@
 -- introduce the binder inside the quote instead.
 module TPCH.Staged (queries) where
 
-import Prela.Staged.Stream (lam1)
+import Prela.PullStaged.Stream (lam1)
 
 import TPCH.StagedQueries
 import TPCH.StagedSchema (TPCHS)

@@ -109,7 +109,7 @@ data Producer d r = forall s. Producer
 --
 -- The inner side is an `SStream`, not a `Producer`, because it has to be closed
 -- under nesting: a PROBED composition is itself nested iteration, which is what
--- @probe a x (\\y -> probe b y k)@ in "Prela.Ops" says.
+-- @probe a x (\\y -> probe b y k)@ in "Prela.Push.Ops" says.
 --
 -- The continuation takes the outer KEY as well as the outer value. `compose`
 -- ignores the key and `prod` ignores the value, but both are needed — `prod`
@@ -181,7 +181,7 @@ colCursor v = Cursor $ \key -> Lin Producer
 -- The range guard is not defensive, it is the semantics. A probed key is
 -- untrusted: a foreign key column has holes, and "Prela.Cache" spells a hole
 -- @noId = -1@. The answer for a hole is NO VALUES, not a crash and not a wild
--- read, which is why "Prela.Ops" writes @when (0 <= i && i < n)@ around every
+-- read, which is why "Prela.Push.Ops" writes @when (0 <= i && i < n)@ around every
 -- probed leaf. Bounds-checked indexing alone would not give that — it would
 -- throw where the engine yields nothing. An out-of-range key gets the empty
 -- range @(0, 0)@ here, which is that answer.

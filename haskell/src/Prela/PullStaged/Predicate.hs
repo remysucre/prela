@@ -4,7 +4,7 @@
 
 -- | Comparison and regex sugar.
 --
--- None of these is a new node: each is `filt` from "Prela.Staged.Ops" with a
+-- None of these is a new node: each is `filt` from "Prela.PullStaged.Ops" with a
 -- fixed closure. They get a module of their own because they are the surface
 -- syntax rather than the machinery — adding a predicate should not mean touching
 -- the executor.
@@ -18,12 +18,12 @@
 -- @liftTyped@, which would read better at the use site but would not accept a
 -- bound computed from the query's own arguments — and TPC-H's bounds are dates
 -- and strings built in the query, so that restriction would bite.
-module Prela.Staged.Predicate where
+module Prela.PullStaged.Predicate where
 
 import Language.Haskell.TH (CodeQ)
 import Text.Regex.TDFA (Regex, RegexLike, makeRegex, matchTest)
 
-import Prela.Staged.Ops
+import Prela.PullStaged.Ops
 
 eq, ne :: (SMode q, Eq r) => CodeQ r -> q d r -> q d r
 eq v = filt (\x -> [|| $$x == $$v ||])
@@ -51,7 +51,7 @@ range   lo hi = filt (\x -> [|| let !v = $$x in v >= $$lo && v <  $$hi ||])
 -- a reference to it.
 --
 -- This is the same continuation shape the materializers in
--- "Prela.Staged.Materialize" use, and for the same reason. Writing
+-- "Prela.PullStaged.Materialize" use, and for the same reason. Writing
 -- @rx :: String -> q d s -> q d s@ and splicing @makeRegex re@ straight into the
 -- per-row test would put the compile INSIDE the loop, since a `CodeQ` used once
 -- per row is code that runs once per row. GHC used to rescue that by floating

@@ -11,7 +11,7 @@
 -- The caches they build (`Dense`, `Bits`, and a plain `Map`) live in
 -- "Prela.Storage" beside the loaded columns, because the leaves that read them
 -- back are ordinary leaves — a fold's result composes and probes like a column.
-module Prela.Materialize where
+module Prela.Push.Materialize where
 
 import Control.Monad (forM_, when)
 import Control.Monad.ST (ST, runST)
@@ -24,10 +24,10 @@ import Data.STRef (STRef, modifySTRef', newSTRef, readSTRef, writeSTRef)
 import qualified Data.Vector.Unboxed as UV
 import qualified Data.Vector.Unboxed.Mutable as UMV
 
-import Prela.Mode
-import Prela.Ops
+import Prela.Push.Mode
+import Prela.Push.Ops
+import Prela.Push.Stream (invStream)
 import Prela.Storage
-import Prela.Stream (invStream)
 
 -- | Drive a relation once and bucket its pairs by key. This is where a query
 -- stops being pure closures and holds real data.

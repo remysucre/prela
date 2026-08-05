@@ -86,8 +86,8 @@ import Language.Haskell.TH
 import Language.Haskell.TH.Syntax (ModName (..), Module (..), PkgName (..), mkNameG_fld)
 
 import Prela.Cache
-import Prela.Ops
-import qualified Prela.Staged.Ops as S
+import Prela.Push.Ops
+import qualified Prela.PullStaged.Ops as S
 import Prela.Storage
 
 --------------------------------------------------------------------------------
@@ -176,7 +176,7 @@ declareSchema :: String -> [Ent] -> Q [Dec]
 declareSchema = declareWith Push
 
 -- | The same schema, with accessors for the staged engine in
--- "Prela.Staged.Ops". The difference is only in the accessors, and it is the
+-- "Prela.PullStaged.Ops". The difference is only in the accessors, and it is the
 -- difference staging makes everywhere: an accessor takes the CODE of the record
 -- rather than the record.
 --
@@ -185,7 +185,7 @@ declareSchema = declareWith Push
 -- title :: 'S.SMode' q => CodeQ Tiny -> q (Id Movie) ByteString
 -- @
 --
--- A query gets that @CodeQ Tiny@ from `Prela.Staged.Stream.lam1`, which is what
+-- A query gets that @CodeQ Tiny@ from `Prela.PullStaged.Stream.lam1`, which is what
 -- introduces a binder the splice is allowed to name.
 declareStagedSchema :: String -> [Ent] -> Q [Dec]
 declareStagedSchema = declareWith Staged

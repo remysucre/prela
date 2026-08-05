@@ -61,7 +61,7 @@
 -- operator Prela uses most. Adopting it means also adopting typed Template
 -- Haskell. If all that is actually wanted is a merge join, the cheap route is a
 -- pipeline-breaking operator that drives both sides into sorted buffers and
--- merges them — the same shape as `index` and `fold` in Prela.Materialize —
+-- merges them — the same shape as `index` and `fold` in Prela.Push.Materialize —
 -- which needs no change to the representation at all.
 --
 -- The staged version is design/Staged.hs, and it does fuse. Read that first; the

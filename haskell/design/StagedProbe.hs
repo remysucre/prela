@@ -1,7 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 
 -- | Not part of the build. The staged engine's answer to design/CoreProbe.hs:
--- the same query, through "Prela.Staged.Ops" instead of "Prela.Ops", checked for
+-- the same query, through "Prela.PullStaged.Ops" instead of "Prela.Push.Ops", checked for
 -- the same one-loop shape.
 --
 --   cd haskell && mkdir -p /tmp/stagedprobe && cabal exec -- \
@@ -18,7 +18,7 @@
 --
 -- `countRecent` is the comparison against push. `countPerYear` is the one that
 -- can fail in a new way: its table has to be built once and read at two modes,
--- and if the continuation shape in "Prela.Staged.Materialize" is wrong it will
+-- and if the continuation shape in "Prela.PullStaged.Materialize" is wrong it will
 -- quietly be built twice. `firstTen` is the thing push cannot do at all.
 --
 -- IT PASSES. All five markers are zero, and so are `atStore`, `insertTable` and
@@ -47,7 +47,7 @@
 -- and the final freeze.
 --
 -- That 47 KB started at 40 MB, which is 40 bytes per INPUT row, and the fix is
--- recorded at `MTable` in "Prela.Staged.Materialize": the fold's accumulator was
+-- recorded at `MTable` in "Prela.PullStaged.Materialize": the fold's accumulator was
 -- a `(table, count)` tuple, rebuilt every step. Moving the count into a one-slot
 -- mutable vector makes the accumulator the same pointer every iteration.
 --

@@ -3,23 +3,24 @@
 -- | The mode class: every leaf, and every operator whose mode is free.
 --
 -- This is the heart of the port. `Mode` has exactly two instances — the two
--- records from "Prela.Mode" — and everything in the class is written once per
--- mode and then never mentions a mode again. A query built from these names is
--- polymorphic in `q`, so the signature at the top of a query picks the mode and
--- it flows down through the whole expression.
+-- records from "Prela.Push.Mode" — and everything in the class is written once
+-- per mode and then never mentions a mode again. A query built from these names
+-- is polymorphic in `q`, so the signature at the top of a query picks the mode
+-- and it flows down through the whole expression.
 --
 -- The class holds what it does for one reason, visible in every signature below:
 -- the RIGHT-hand argument of a binary operator is concretely `Prb`, because that
 -- side is probed whatever mode the result is in. Only the result mode varies, so
 -- only the result mode is the class parameter. The operators that cannot obey
 -- that — the ones demanding a driven input, or producing a fixed mode — are
--- deliberately outside the class, in "Prela.Stream" and "Prela.Materialize".
+-- deliberately outside the class, in "Prela.Push.Stream" and
+-- "Prela.Push.Materialize".
 --
 -- Both instances are here rather than in modules of their own, because splitting
 -- them out would make them orphan instances, and an orphan's unfoldings are not
 -- reliably available at the use site. Everything in this module depends on being
 -- inlined into the caller's loop, so that is not a trade worth making.
-module Prela.Ops where
+module Prela.Push.Ops where
 
 import Control.Monad (when)
 import Data.Array.Base (unsafeAt)
@@ -30,7 +31,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Unboxed as UV
 
-import Prela.Mode
+import Prela.Push.Mode
 import Prela.Storage
 
 class Mode q where
