@@ -67,6 +67,7 @@ import qualified Data.Vector.Unboxed as UV
 import qualified Data.Vector.Unboxed.Mutable as UMV
 import Language.Haskell.TH (CodeQ)
 
+import Prela.Id
 import Prela.PullStaged.Ops
 import Prela.PullStaged.Stream
 import Prela.Storage

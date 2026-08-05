@@ -86,6 +86,7 @@ import Language.Haskell.TH
 import Language.Haskell.TH.Syntax (ModName (..), Module (..), PkgName (..), mkNameG_fld)
 
 import Prela.Cache
+import Prela.Id
 import Prela.Push.Ops
 import qualified Prela.PullStaged.Ops as S
 import Prela.Storage

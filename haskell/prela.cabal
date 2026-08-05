@@ -6,6 +6,7 @@ build-type:         Simple
 
 library
     exposed-modules:  Prela
+                    , Prela.Id
                     , Prela.Push.Mode
                     , Prela.Storage
                     , Prela.Push.Ops
@@ -19,7 +20,6 @@ library
                     , Prela.PullStaged.Predicate
                     , Prela.PullStaged.Materialize
                     , Prela.Pull
-                    , Prela.Pull.Id
                     , Prela.Pull.Stream
                     , Prela.Pull.Ops
                     , Prela.Pull.Predicate

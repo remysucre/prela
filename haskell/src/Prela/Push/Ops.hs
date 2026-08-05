@@ -31,6 +31,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Unboxed as UV
 
+import Prela.Id
 import Prela.Push.Mode
 import Prela.Storage
 

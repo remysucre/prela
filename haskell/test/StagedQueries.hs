@@ -31,7 +31,7 @@ import Language.Haskell.TH (CodeQ)
 import Prela.PullStaged.Ops
 import Prela.PullStaged.Predicate
 import Prela.PullStaged.Stream
-import Prela.Storage (Id)
+import Prela.Id (Id)
 
 import qualified TinyStaged as Sch
 

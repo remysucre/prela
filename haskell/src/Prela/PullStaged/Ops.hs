@@ -30,6 +30,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Unboxed as UV
 import Language.Haskell.TH (CodeQ)
 
+import Prela.Id
 import Prela.PullStaged.Stream
 import Prela.Storage
 

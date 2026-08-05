@@ -23,7 +23,7 @@ module Prela.Pull.Ops
   , disj
   ) where
 
-import Prela.Pull.Id
+import Prela.Id
 import Prela.Pull.Stream
 
 class Mode q where

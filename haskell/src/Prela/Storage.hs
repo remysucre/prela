@@ -1,8 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
 
--- | What a relation is made of: entity ids, the physical layout of each element
--- type, and the handful of column shapes those layouts are arranged into.
+-- | Physical element layouts and the column shapes built from them.
 --
 -- Nothing here executes anything. Storage is built once, and the leaves in
 -- "Prela.Push.Ops" are VIEWS of it. That separation matters for a reason peculiar to
@@ -15,7 +14,7 @@ import Control.Monad (when)
 import Control.Monad.ST (ST)
 import Data.Array (accumArray, elems)
 import Data.Bits (shiftR, xor, (.&.))
-import Data.Hashable (Hashable, hash, hashWithSalt)
+import Data.Hashable (Hashable, hash)
 import Data.Array.Base (unsafeAt)
 import Data.Array.ST (STUArray, newArray, writeArray, runSTUArray)
 import Data.Array.Unboxed (UArray)
@@ -31,36 +30,7 @@ import qualified Data.Vector.Unboxed as UV
 import qualified Data.Vector.Unboxed.Mutable as UMV
 import Data.Word (Word32)
 
---------------------------------------------------------------------------------
--- Entity ids
---------------------------------------------------------------------------------
-
--- An entity id. Under the hood a 0-based Int, but the phantom tag e (Movie,
--- Keyword, …) rides along in the type and never appears in a value, so
--- `Id Movie` and `Id Keyword` are the same bits and do not unify: composing a
--- Movie-keyed relation onto a Person-keyed one is a compile error, not a
--- silent wrong answer. Erased at runtime, so the safety is free.
-newtype Id e = Id Int deriving (Eq, Ord, Show)
-
--- Ids are the commonest fold key, so hashing one has to cost nothing. The
--- phantom tag plays no part: two ids of different entities that hash alike can
--- never meet, since they cannot inhabit the same relation to begin with.
-instance Hashable (Id e) where
-  hashWithSalt s (Id i) = hashWithSalt s i
-  {-# INLINE hashWithSalt #-}
-
--- | The missing-id sentinel — a foreign key that points at nothing. The value is
--- not arbitrary: it fails every `0 <= i && i < n` range check, so a hole probes
--- to nothing without any branch of its own, which is why Prela can claim there
--- are no NULLs and still store fixed-width id columns.
---
--- It is @-1@ rather than `maxBound` so that it is bit-for-bit the all-ones hole
--- word the cache writes (see "Prela.Cache"), read back as a signed machine word.
--- A loaded column and a hand-built one then hold the same bits, which they must,
--- since nothing downstream knows where a column came from. Same trick as the
--- Rust port's `NO_ID`, which is `usize::MAX` for the same reason read unsigned.
-noId :: Id e
-noId = Id (-1)
+import Prela.Id
 
 --------------------------------------------------------------------------------
 -- How element types are physically stored

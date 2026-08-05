@@ -24,6 +24,7 @@ import Data.STRef (STRef, modifySTRef', newSTRef, readSTRef, writeSTRef)
 import qualified Data.Vector.Unboxed as UV
 import qualified Data.Vector.Unboxed.Mutable as UMV
 
+import Prela.Id
 import Prela.Push.Mode
 import Prela.Push.Ops
 import Prela.Push.Stream (invStream)

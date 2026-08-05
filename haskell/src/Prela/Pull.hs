@@ -15,14 +15,14 @@
 -- "Prela.Schema" — a dataset here is just the plain Haskell values a query is
 -- written against, the way "app/PullDemo.hs" builds one.
 module Prela.Pull
-  ( module Prela.Pull.Id
+  ( module Prela.Id
   , module Prela.Pull.Ops
   , module Prela.Pull.Predicate
   , module Prela.Pull.Stream
   , module Prela.Pull.Materialize
   ) where
 
-import Prela.Pull.Id
+import Prela.Id
 import Prela.Pull.Materialize
 import Prela.Pull.Ops
 import Prela.Pull.Predicate

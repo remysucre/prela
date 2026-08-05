@@ -21,7 +21,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
-import Prela.Pull.Id
+import Prela.Id
 import Prela.Pull.Ops
 import Prela.Pull.Stream
 

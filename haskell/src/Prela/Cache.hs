@@ -66,6 +66,7 @@ import System.IO.MMap (mmapFileByteString)
 
 -- Only the storage layer: a cache file is data, and the reader has no business
 -- knowing there is an executor above it.
+import Prela.Id
 import Prela.Storage
 
 --------------------------------------------------------------------------------

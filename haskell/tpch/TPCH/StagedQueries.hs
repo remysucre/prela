@@ -43,7 +43,7 @@ import Prela.PullStaged.Materialize
 import Prela.PullStaged.Ops
 import Prela.PullStaged.Predicate
 import Prela.PullStaged.Stream
-import Prela.Storage (Id (..))
+import Prela.Id (Id (..))
 
 import TPCH.StagedSchema
 

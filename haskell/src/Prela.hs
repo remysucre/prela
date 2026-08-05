@@ -47,7 +47,8 @@
 -- records what the executor's shape depends on and must be read before editing
 -- "Prela.Push.Ops" or "Prela.Storage".
 module Prela
-  ( module Prela.Push.Mode
+  ( module Prela.Id
+  , module Prela.Push.Mode
   , module Prela.Storage
   , module Prela.Push.Ops
   , module Prela.Push.Predicate
@@ -55,6 +56,7 @@ module Prela
   , module Prela.Push.Materialize
   ) where
 
+import Prela.Id
 import Prela.Push.Materialize
 import Prela.Push.Mode
 import Prela.Push.Ops
