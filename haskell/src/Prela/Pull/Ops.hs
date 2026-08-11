@@ -1,7 +1,7 @@
 -- | The `Mode` class, without staging.
 --
 -- Same shape as "Prela.PullStaged.Ops": one class, exactly two instances
--- (`Drive` and `Probe`), and a query mentions no mode — the signature at the
+-- (`Stream` and `Lookup`), and a query mentions no mode — the signature at the
 -- top picks one. What is different is the leaves. The staged and base ports
 -- have nine of them, one per physical column layout ("Prela.Storage"'s
 -- `Col`, `SparseCol`, `MultiCol`, `Table`, `Dense`, `Bits`, plus two flavors
@@ -32,17 +32,17 @@ class Mode q where
 
   -- Chain two relations through a shared middle value: `r : d -> e` and
   -- `s : e -> f` give `d -> f`.
-  compose  :: q d e -> Probe e f -> q d f
+  compose  :: q d e -> Lookup e f -> q d f
 
   -- Pair two relations sharing a domain: for each key, take both values.
-  prod     :: q d u -> Probe d v -> q d (u, v)
+  prod     :: q d u -> Lookup d v -> q d (u, v)
 
   -- Keep each row whose value is a member of the second relation.
-  restrict :: q d r -> Probe r e -> q d r
+  restrict :: q d r -> Lookup r e -> q d r
 
   -- Keep each row whose key is absent from the second relation. This is
   -- SQL's IS NULL: a missing value is an absent pair.
-  diff     :: q d r -> Probe d e -> q d r
+  diff     :: q d r -> Lookup d e -> q d r
 
   -- Keep each row whose value passes a test.
   filt     :: (r -> Bool) -> q d r -> q d r
@@ -50,7 +50,7 @@ class Mode q where
   -- Replace each value, leaving the key alone.
   mapv     :: (r -> s) -> q d r -> q d s
 
-instance Mode Drive where
+instance Mode Stream where
   fromPairs xs = Lin (pairProd xs)
 
   compose  a b = Bind a (\d e -> mapkS (const d) (at b e))
@@ -60,15 +60,15 @@ instance Mode Drive where
   filt     t a = filtS t a
   mapv     f a = mapvS f a
 
-instance Mode Probe where
-  fromPairs xs = Probe (\d -> Lin (listProd [ r | (d', r) <- xs, d' == d ]))
+instance Mode Lookup where
+  fromPairs xs = Lookup (\d -> Lin (listProd [ r | (d', r) <- xs, d' == d ]))
 
-  compose  a b = Probe (\x -> Bind (at a x) (\_ e -> at b e))
-  prod     a b = Probe (\x -> Bind (at a x) (\_ u -> mapvS (\v -> (u, v)) (at b x)))
-  restrict a b = Probe (\x -> filtS (\r -> anyOf (at b r)) (at a x))
-  diff     a b = Probe (\x -> whenS (not (anyOf (at b x))) (at a x))
-  filt     t a = Probe (\x -> filtS t (at a x))
-  mapv     f a = Probe (\x -> mapvS f (at a x))
+  compose  a b = Lookup (\x -> Bind (at a x) (\_ e -> at b e))
+  prod     a b = Lookup (\x -> Bind (at a x) (\_ u -> mapvS (\v -> (u, v)) (at b x)))
+  restrict a b = Lookup (\x -> filtS (\r -> anyOf (at b r)) (at a x))
+  diff     a b = Lookup (\x -> whenS (not (anyOf (at b x))) (at a x))
+  filt     t a = Lookup (\x -> filtS t (at a x))
+  mapv     f a = Lookup (\x -> mapvS f (at a x))
 
 --------------------------------------------------------------------------------
 -- Leaves, as plain functions over `fromPairs`
@@ -100,21 +100,21 @@ multiColumn vs = fromPairs [ (Id i, r) | (i, rs) <- zip [0 ..] vs, r <- rs ]
 -- Fixed-mode operators
 --------------------------------------------------------------------------------
 
--- | Re-key each row of a driven relation by probing a second relation on its
--- value, and drop the original key. SQL's GROUP BY.
-groupBy :: Drive d r -> Probe r k -> Drive k r
+-- | Re-key each row of a stream by looking up a second relation at its value,
+-- and drop the original key. SQL's GROUP BY.
+groupBy :: Stream d r -> Lookup r k -> Stream k r
 groupBy s key = Bind s (\_ x -> mapvS (const x) (byValue (at key x)))
 
--- | `compose`, but with the driven side probed instead — used when the first
--- leg is naturally probed and only the second is driven.
-leftCompose :: Drive d e -> Probe d f -> Drive e f
+-- | Re-key the first stream by its values, then look up the second relation at
+-- each original key. This is left composition.
+leftCompose :: Stream d e -> Lookup d f -> Stream e f
 leftCompose a b = compose (invStream a) b
 
--- | The concatenation of two driven relations. SQL's UNION ALL (Prela has no
+-- | Concatenate two streams. SQL's UNION ALL (Prela has no
 -- deduplicating union — the algebra's `union` already means disjoint sum).
-union :: Drive d r -> Drive d r -> Drive d r
+union :: Stream d r -> Stream d r -> Stream d r
 union = catS
 
 -- | OR over two membership tests: is `x` in `a` or `b`.
-disj :: Probe d u -> Probe d v -> Probe d ()
-disj a b = Probe (\x -> guardS (anyOf (at a x) || anyOf (at b x)))
+disj :: Lookup d u -> Lookup d v -> Lookup d ()
+disj a b = Lookup (\x -> guardS (anyOf (at a x) || anyOf (at b x)))

@@ -7,20 +7,20 @@
 -- | The operators that stop the pipeline.
 --
 -- Everything else in the port emits a loop. These are the exceptions: each one
--- drives its input once into real storage and hands back something that reads
--- the storage. A query that names something from here is a query that allocates,
--- and Prela is non-materialized by default, so making that visible in the import
--- list is the point.
+-- consumes its input stream once into real storage and hands back something that
+-- reads the storage. A query that names something from here is a query that
+-- allocates, and Prela is non-materialized by default, so making that visible in
+-- the import list is the point.
 --
 -- Two things changed from "Prela.Push.Materialize", and both are consequences of the
 -- engine rather than improvements bolted on.
 --
--- THE @STRef@ IS GONE. The push version says why it needed one, at its line 63:
--- @drive@'s callback returns @m ()@, so a table under construction had nowhere to
--- live but a mutable cell, at a pointer read per input row. Under pull the
--- consumer generates the loop, so the table is a loop argument — see @sfoldST@ in
--- "Prela.PullStaged.Stream". FUSION.md's rule about never carrying a per-row
--- accumulator in an `STRef` is not a rule you can break any more.
+-- THE @STRef@ IS GONE. The push version's enumeration callback returns @m ()@,
+-- so a table under construction had nowhere to live but a mutable cell, at a
+-- pointer read per input row. Under pull the consumer generates the loop, so the
+-- table is a loop argument — see @sfoldST@ in "Prela.PullStaged.Stream".
+-- FUSION.md's rule about never carrying a per-row accumulator in an `STRef` is
+-- not a rule you can break any more.
 --
 -- THE SHAPE IS A CONTINUATION, not a return. This is the one rule of staging:
 -- a `CodeQ` used twice is code emitted twice. @fold q@ returning a relation
@@ -31,8 +31,9 @@
 -- > withFold plus [|| 0 ||] revenue $ \total ->
 -- >   [|| ($$(collect (compose (universe n) total)), $$(count total)) ||]
 --
--- @total@ arrives polymorphic in the mode, so the body may drive it, probe it, or
--- both, and every use reads the same runtime binding. That is strymonas's
+-- @total@ arrives polymorphic in the mode, so the body may enumerate it, look up
+-- values by key, or both, and every use reads the same runtime binding. That is
+-- strymonas's
 -- @genlet@ cut down to the one shape Prela needs. MODES.md:235 warns that a
 -- mode-polymorphic materialized binding builds its index twice; under this shape
 -- it cannot, because what is polymorphic is the leaf wrapper and what is shared
@@ -76,26 +77,26 @@ import Prela.Storage
 -- Map-backed
 --------------------------------------------------------------------------------
 
--- | Drive a stream once and bucket its pairs by key.
+-- | Consume a stream once and bucket its pairs by key.
 --
--- Each group comes out in reverse drive order, because @insertWith (++)@ conses.
+-- Each group comes out in reverse stream order, because @insertWith (++)@ conses.
 -- `withBufFold` is the only thing that cares and it reverses; nothing else has
 -- ever promised an order.
-index :: Ord d => Drive d r -> CodeQ (Map d [r])
+index :: Ord d => Stream d r -> CodeQ (Map d [r])
 index = sfold (\m d r -> [|| Map.insertWith (++) $$d [$$r] $$m ||]) [|| Map.empty ||]
 
 -- | Force a leg once so reuse is free. Same pairs, now backed by the index.
 withMaterialize :: Ord d
-                => Drive d r
+                => Stream d r
                 -> ((forall q. SMode q => q d r) -> CodeQ w) -> CodeQ w
 withMaterialize s k =
   [|| let !m = $$(index s) in $$(k (fromIndex [|| m ||])) ||]
 
--- | The probed inverse: index the flipped pairs, and the result serves either
--- mode because the work has already been paid for. `invStream` alone is free but
--- driven only; this is what makes an inverse probeable.
+-- | A materialized inverse: index the flipped pairs so the result supports both
+-- enumeration and keyed access. `invStream` alone is free but only supports
+-- enumeration.
 withInv :: Ord r
-        => Drive d r
+        => Stream d r
         -> ((forall q. SMode q => q r d) -> CodeQ w) -> CodeQ w
 withInv s k = withMaterialize (invStream s) k
 
@@ -107,9 +108,9 @@ withInv s k = withMaterialize (invStream s) k
 -- It costs strictly more than `withFold`, since every value is retained until the
 -- group is complete rather than collapsing into an accumulator, so reach for
 -- `withFold` unless the reducer genuinely cannot be written that way. The list
--- each group is handed is in drive order.
+-- each group is handed is in stream order.
 withBufFold :: Ord d
-            => (CodeQ [r] -> CodeQ t) -> Drive d r
+            => (CodeQ [r] -> CodeQ t) -> Stream d r
             -> ((forall q. SMode q => q d t) -> CodeQ w) -> CodeQ w
 withBufFold f s k =
   [|| let !m = Map.map (\xs -> $$(f [|| reverse xs ||])) $$(index s)
@@ -119,25 +120,26 @@ withBufFold f s k =
 -- The open-addressed table
 --------------------------------------------------------------------------------
 
--- | Group by key and reduce each group. A fold cannot stream — reducing a group
--- means seeing the whole group — so it drives once into a cache, but the cache
--- holds ONE value per key. @withFold (\n _ -> [|| $$n + 1 ||]) [|| 0 ||]@ is
+-- | Group by key and reduce each group. A fold cannot emit groups as it reads
+-- them because reducing a group means seeing the whole group, so it consumes
+-- the input once into a cache. The cache holds ONE value per key.
+-- @withFold (\n _ -> [|| $$n + 1 ||]) [|| 0 ||]@ is
 -- COUNT. What comes back is an ordinary relation and composes like one.
 --
 -- @op@ is a generation-time function, so the reducer is emitted into the insert
 -- rather than called through a closure.
 withFold :: (Hashable d, Key d, UV.Unbox t)
-         => (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t -> Drive d r
+         => (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t -> Stream d r
          -> ((forall q. SMode q => q d t) -> CodeQ w) -> CodeQ w
 withFold op ini s k =
   [|| let !tbl = $$(buildTable op ini s) in $$(k (fromTable [|| tbl ||])) ||]
 
--- | Drive once, reducing into an open-addressed table.
+-- | Consume the stream once, reducing into an open-addressed table.
 --
 -- Exposed because `withCountDistinct` needs two of them back to back, and
 -- because a materializer written outside this module will want it.
 buildTable :: (Hashable d, Key d, UV.Unbox t)
-           => (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t -> Drive d r
+           => (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t -> Stream d r
            -> CodeQ (Table d t)
 buildTable op ini s =
   [|| runST (do
@@ -184,7 +186,7 @@ buildTable op ini s =
 -- by side: `MKeys` for @((Id Order, Int), Int)@ is @MPairKeys (MPairKeys _ _) _@,
 -- a record holding a record, which GHC unboxed two levels deep and then rebuilt
 -- to reach the insert. The rebuild was hoisted above the branch, so it ran on
--- every driven row whether or not that row survived the filter: 24 bytes for each
+-- every input row whether or not that row survived the filter: 24 bytes for each
 -- of the 6M lineitems Q3 scans, 148 MB, to fill a table of 11,620 groups. The
 -- hash vector was the same thing one size down, an @MVector@ rebuilt on every
 -- fresh key, which is Q18's 1.5M orders at 32 bytes each.
@@ -292,21 +294,21 @@ growTable (MTable mask cnt hs ks vsc) ini = do
 -- taken and nothing happens. @Unbox ()@ stores no bytes, so that accumulator is
 -- free. Then re-key what survived to @d@ alone and count with an ordinary fold.
 --
--- The two builds are nested rather than sequenced, because the second drives the
--- first — @dd@ is in scope for the inner splice, and the inner `buildTable`
--- generates a loop over its slots.
+-- The two builds are nested rather than sequenced, because the second enumerates
+-- the first table — @dd@ is in scope for the inner splice, and the inner
+-- `buildTable` generates a loop over its slots.
 withCountDistinct :: forall d r w. (Hashable d, Key d, Hashable r, Key r)
-                  => Drive d r
+                  => Stream d r
                   -> ((forall q. SMode q => q d Int) -> CodeQ w) -> CodeQ w
 withCountDistinct s k =
   [|| let !dd = $$(buildTable (\_ _ -> [|| () ||]) [|| () ||] pairs)
       in $$(withFold (\n _ -> [|| $$n + (1 :: Int) ||]) [|| 0 ||]
                      (distinct [|| dd ||]) k) ||]
   where
-    pairs :: Drive (d, r) ()
+    pairs :: Stream (d, r) ()
     pairs = mapvS (\_ -> [|| () ||]) (mapkVS (\d r -> [|| ($$d, $$r) ||]) s)
 
-    distinct :: CodeQ (Table (d, r) ()) -> Drive d ()
+    distinct :: CodeQ (Table (d, r) ()) -> Stream d ()
     distinct t = mapkS (\p -> [|| fst $$p ||]) (fromTable t)
 
 --------------------------------------------------------------------------------
@@ -316,11 +318,11 @@ withCountDistinct s k =
 -- | The dense-array grouped fold: the same thing as `withFold`, opted into a
 -- different physical cache. When the keys are entity ids over a known @0 .. n-1@
 -- the per-key slot can be an array index instead of a table entry, which removes
--- a hash and a probe from every reduce step. Keys outside the range are dropped
--- rather than growing the store.
+-- a hash and collision-chain search from every reduce step. Keys outside the
+-- range are dropped rather than growing the store.
 withDense :: UV.Unbox t
           => CodeQ Int -> (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t
-          -> Drive (Id e) r
+          -> Stream (Id e) r
           -> ((forall q. SMode q => q (Id e) t) -> CodeQ w) -> CodeQ w
 withDense n op ini s k =
   [|| let !dn = $$(buildDense n op ini [|| False ||] s)
@@ -332,7 +334,7 @@ withDense n op ini s k =
 -- that do not exist.
 withDenseOuter :: UV.Unbox t
                => CodeQ Int -> (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t
-               -> Drive (Id e) r
+               -> Stream (Id e) r
                -> ((forall q. SMode q => q (Id e) t) -> CodeQ w) -> CodeQ w
 withDenseOuter n op ini s k =
   [|| let !dn = $$(buildDense n op ini [|| True ||] s)
@@ -348,7 +350,7 @@ withDenseOuter n op ini s k =
 -- changes is in the two arrays, which are bound once, outside it.
 buildDense :: UV.Unbox t
            => CodeQ Int -> (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t -> CodeQ Bool
-           -> Drive (Id e) r -> CodeQ (Dense e t)
+           -> Stream (Id e) r -> CodeQ (Dense e t)
 buildDense n op ini pre s =
   [|| runST (do
         let !cap = $$n
@@ -365,17 +367,18 @@ buildDense n op ini pre s =
                    [|| () ||] s)
         Dense cap <$> UV.freeze vals <*> freeze seen) ||]
 
--- | Precompute dense membership: drive a relation, set a bit at each VALUE it
+-- | Precompute dense membership: consume a stream, set a bit at each VALUE it
 -- emits, and hand back the identity relation on those ids. This is the one
 -- materializer that exists purely for speed — it is semantically the same as
 -- restricting against the relation's values, but a bit test beats re-running a
--- subquery, so it pays off on a filter probed many times.
+-- subquery, so it pays off when the same filter is checked many times.
 --
 -- Under pull it is also the one with a rival. `anyOf` short-circuits, so an
--- EXISTS that used to need a precomputed bitset can now just be probed. Keep this
--- for the case where the same membership is asked millions of times; use `anyOf`
--- where it is asked once per outer row and the inner relation is small.
-withBits :: CodeQ Int -> Drive d (Id e)
+-- EXISTS that used to need a precomputed bitset can now inspect the keyed stream
+-- directly. Keep this for the case where the same membership is looked up
+-- millions of times; use `anyOf` where it is asked once per outer row and the
+-- inner relation is small.
+withBits :: CodeQ Int -> Stream d (Id e)
          -> ((forall q. SMode q => q (Id e) (Id e)) -> CodeQ w) -> CodeQ w
 withBits n s k =
   [|| let !bs = Bits (runSTUArray (do

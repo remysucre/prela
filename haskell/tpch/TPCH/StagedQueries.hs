@@ -94,9 +94,9 @@ key1 (Id i) = show (i + 1)
 q1 :: CodeQ TPCHS -> CodeQ String
 q1 s = withFold step [|| (0, 0, 0, 0, 0, 0) ||] grouped $ \tbl ->
          [|| joinLines (map fmt1 (sortOn fst
-               $$(collect (tbl :: Drive (ByteString, ByteString) Q1Acc)))) ||]
+               $$(collect (tbl :: Stream (ByteString, ByteString) Q1Acc)))) ||]
   where
-    grouped :: Drive (ByteString, ByteString) (((Double, Double), Double), Double)
+    grouped :: Stream (ByteString, ByteString) (((Double, Double), Double), Double)
     grouped =
       compose (groupBy (restrict (lineitem s) (le [|| 19980902 ||] (shipdate s)))
                        (prod (returnflag s) (lineStatus s)))
@@ -124,15 +124,15 @@ fmt1 ((rf, ls), (qty, ext, di, dp, chg, n)) =
 --------------------------------------------------------------------------------
 
 -- @euPs@ is mentioned twice and is NOT materialized, so it emits two scans of
--- partsupp. That is what the push version did as well: a `Drv` binding used
--- twice is driven twice, and Prela materializes only when asked.
+-- partsupp. That is what the push version did as well: an unmaterialized stream
+-- used twice is enumerated twice, and Prela materializes only when asked.
 q2 :: CodeQ TPCHS -> CodeQ String
 q2 s = withFold (\a c -> [|| if $$c < $$a then $$c else $$a ||]) [|| 1 / 0 ||]
                 (compose (groupBy euPs (psPart s)) (supplycost s)) $ \minPerPart ->
-  let costIsMin :: Probe (Id PartSupp) (Double, Double)
+  let costIsMin :: Lookup (Id PartSupp) (Double, Double)
       costIsMin = filt (\p -> [|| case $$p of (c, m) -> c == m ||])
                        (prod (supplycost s) (compose (psPart s) minPerPart))
-      result :: Drive (Id PartSupp) Q2Row
+      result :: Stream (Id PartSupp) Q2Row
       result = compose (restrict euPs (prod partOk costIsMin)) payload
   in [|| joinLines (map fmt2 (take 100 (sortBy cmp2 (map (flat2 . snd)
            $$(collect result))))) ||]
@@ -190,9 +190,9 @@ q3 :: CodeQ TPCHS -> CodeQ String
 q3 s = withFold (\a v -> [|| case $$v of (e, dc) -> $$a + e * (1 - dc) ||]) [|| 0 ||]
                 grouped $ \revenue ->
   [|| joinLines (map fmt3 (take 10 (sortBy cmp3
-        $$(collect (revenue :: Drive ((Id Order, Int), Int) Double))))) ||]
+        $$(collect (revenue :: Stream ((Id Order, Int), Int) Double))))) ||]
   where
-    grouped :: Drive ((Id Order, Int), Int) (Double, Double)
+    grouped :: Stream ((Id Order, Int), Int) (Double, Double)
     grouped =
       compose (groupBy (restrict (lineitem s)
                          (prod (prod (gt [|| 19950315 ||] (shipdate s))
@@ -229,7 +229,7 @@ q4 s =
                        lateOrder)
              (priority s)) $ \counts ->
     [|| joinLines (map fmt4 (sortOn fst
-          $$(collect (counts :: Drive ByteString Int)))) ||]
+          $$(collect (counts :: Stream ByteString Int)))) ||]
 
 fmt4 :: (ByteString, Int) -> String
 fmt4 (p, n) = row [bs p, show n]
@@ -240,22 +240,22 @@ fmt4 (p, n) = row [bs p, show n]
 
 -- The group key carries the work: a lineitem maps to its supplier's nation name,
 -- with the ASIA restriction and the customer-nation equality pushed into the key
--- itself. A row whose key probe yields nothing drops out, so the key doubles as
--- the filter and only the date window rides on the receiver.
+-- itself. A row whose keyed lookup yields nothing drops out, so the key doubles
+-- as the filter and only the date window rides on the receiver.
 q5 :: CodeQ TPCHS -> CodeQ String
 q5 s = withFold (\a v -> [|| case $$v of (e, dc) -> $$a + e * (1 - dc) ||]) [|| 0 ||]
                 grouped $ \result ->
   [|| joinLines (map fmt5 (sortBy (\a b -> comparing snd b a)
-        $$(collect (result :: Drive ByteString Double)))) ||]
+        $$(collect (result :: Stream ByteString Double)))) ||]
   where
-    grouped :: Drive ByteString (Double, Double)
+    grouped :: Stream ByteString (Double, Double)
     grouped =
       compose (groupBy (restrict (lineitem s)
                          (range [|| 19940101 ||] [|| 19950101 ||]
                                 (compose (liOrder s) (date s))))
                        (compose sameNation (nationName s)))
               (prod (extendedprice s) (discount s))
-    sameNation :: Probe (Id Lineitem) (Id Nation)
+    sameNation :: Lookup (Id Lineitem) (Id Nation)
     sameNation = mapv (\p -> [|| fst $$p ||])
       (filt (\p -> [|| case $$p of (a, b) -> a == b ||])
         (prod (restrict (compose (liSupplier s) (supplierNation s))
@@ -273,7 +273,7 @@ q6 :: CodeQ TPCHS -> CodeQ String
 q6 s = [|| f2 $$(foldAll (\a v -> [|| case $$v of (e, dc) -> $$a + e * dc ||])
                          [|| 0 ||] rows) ||]
   where
-    rows :: Drive (Id Lineitem) (Double, Double)
+    rows :: Stream (Id Lineitem) (Double, Double)
     rows = compose (restrict (lineitem s)
                      (prod (prod (range [|| 19940101 ||] [|| 19950101 ||] (shipdate s))
                                  (between [|| 0.05 ||] [|| 0.07 ||] (discount s)))
@@ -288,9 +288,9 @@ q7 :: CodeQ TPCHS -> CodeQ String
 q7 s = withFold (\a v -> [|| case $$v of (e, dc) -> $$a + e * (1 - dc) ||]) [|| 0 ||]
                 grouped $ \result ->
   [|| joinLines (map fmt7 (sortBy cmp7
-        $$(collect (result :: Drive (Int, (ByteString, ByteString)) Double)))) ||]
+        $$(collect (result :: Stream (Int, (ByteString, ByteString)) Double)))) ||]
   where
-    grouped :: Drive (Int, (ByteString, ByteString)) (Double, Double)
+    grouped :: Stream (Int, (ByteString, ByteString)) (Double, Double)
     grouped =
       compose (groupBy (lineitem s)
                        (prod (mapv (\v -> [|| $$v `div` 10000 ||])
@@ -324,9 +324,9 @@ q8 :: CodeQ TPCHS -> CodeQ String
 q8 s = withFold step [|| (0, 0) ||] grouped $ \tbl ->
   [|| joinLines (map fmt8 (sortOn fst
         $$(collect (mapv (\p -> [|| case $$p of (b, t) -> b / t ||])
-                         (tbl :: Drive Int (Double, Double)))))) ||]
+                         (tbl :: Stream Int (Double, Double)))))) ||]
   where
-    grouped :: Drive Int ((Double, Double), ByteString)
+    grouped :: Stream Int ((Double, Double), ByteString)
     grouped =
       compose (groupBy (restrict (lineitem s)
                          (eq [|| "ECONOMY ANODIZED STEEL" ||] (compose (liPart s) (ty s))))
@@ -362,14 +362,14 @@ fmt8 (y, v) = row [show y, f2 v]
 -- `withMaterialize` takes the rest of the query as an argument, so @scM@ is a
 -- reference to one runtime binding no matter how many times it appears, and the
 -- warning has nothing left to warn about. Mentioning @costPerLi@ twice does emit
--- the probe twice, which is right: that is two lookups into one shared index,
+-- the lookup twice, which is right: that is two searches of one shared index,
 -- exactly what the push version did.
 q9 :: CodeQ TPCHS -> CodeQ String
 q9 s = withMaterialize sc $ \scM ->
-  let costPerLi :: Probe (Id Lineitem) Double
+  let costPerLi :: Lookup (Id Lineitem) Double
       costPerLi = compose (prod (liPart s) (liSupplier s)) scM
 
-      grouped :: Drive (ByteString, Int) (((Double, Double), Double), Double)
+      grouped :: Stream (ByteString, Int) (((Double, Double), Double), Double)
       grouped =
         compose (groupBy (restrict (lineitem s) costPerLi)
                          (prod (compose (compose (liSupplier s) (supplierNation s))
@@ -379,9 +379,9 @@ q9 s = withMaterialize sc $ \scM ->
                 (prod (prod (prod costPerLi (extendedprice s)) (discount s)) (quantity s))
   in withFold step [|| 0 ||] grouped $ \result ->
        [|| joinLines (map fmt9 (sortBy cmp9
-             $$(collect (result :: Drive (ByteString, Int) Double)))) ||]
+             $$(collect (result :: Stream (ByteString, Int) Double)))) ||]
   where
-    sc :: Drive (Id Part, Id Supplier) Double
+    sc :: Stream (Id Part, Id Supplier) Double
     sc = compose (groupBy (partsupp s)
                           (prod (restrict (psPart s)
                                   (filt (\v -> [|| BS.isInfixOf "green" $$v ||]) (partName s)))
@@ -404,9 +404,9 @@ q10 :: CodeQ TPCHS -> CodeQ String
 q10 s = withFold (\a v -> [|| case $$v of (e, dc) -> $$a + e * (1 - dc) ||]) [|| 0 ||]
                  grouped $ \revenue ->
   [|| joinLines (map fmt10 (take 20 (sortBy cmp10
-        $$(collect (prod (revenue :: Drive (Id Customer) Double) custCols))))) ||]
+        $$(collect (prod (revenue :: Stream (Id Customer) Double) custCols))))) ||]
   where
-    grouped :: Drive (Id Customer) (Double, Double)
+    grouped :: Stream (Id Customer) (Double, Double)
     grouped =
       compose (groupBy (restrict (lineitem s)
                          (prod (eq [|| "R" ||] (returnflag s))
@@ -443,11 +443,11 @@ q11 :: CodeQ TPCHS -> CodeQ String
 q11 s = withFold (\a v -> [|| case $$v of (c, q) -> $$a + c * fromIntegral q ||])
                  [|| 0 ||] grouped $ \valuePerPart ->
   [|| let !threshold = 0.0001 * $$(foldAll (\a v -> [|| $$a + $$v ||]) [|| 0 ||]
-                                           (valuePerPart :: Drive (Id Part) Double))
+                                           (valuePerPart :: Stream (Id Part) Double))
       in joinLines (map fmt11 (sortBy (\a b -> comparing snd b a)
-           $$(collect (gt [|| threshold ||] (valuePerPart :: Drive (Id Part) Double))))) ||]
+           $$(collect (gt [|| threshold ||] (valuePerPart :: Stream (Id Part) Double))))) ||]
   where
-    grouped :: Drive (Id Part) (Double, Int)
+    grouped :: Stream (Id Part) (Double, Int)
     grouped =
       compose (groupBy (restrict (partsupp s)
                          (eq [|| "GERMANY" ||]
@@ -466,9 +466,9 @@ fmt11 (p, v) = row [key1 p, f2 v]
 q12 :: CodeQ TPCHS -> CodeQ String
 q12 s = withFold step [|| (0, 0) ||] grouped $ \result ->
   [|| joinLines (map fmt12 (sortOn fst
-        $$(collect (result :: Drive ByteString (Int, Int))))) ||]
+        $$(collect (result :: Stream ByteString (Int, Int))))) ||]
   where
-    grouped :: Drive ByteString ByteString
+    grouped :: Stream ByteString ByteString
     grouped =
       compose (groupBy (restrict (lineitem s)
                          (prod (prod (isIn [|| ["MAIL", "SHIP"] ||] (shipmode s))
@@ -498,16 +498,16 @@ fmt12 (m, (h, l)) = row [bs m, show h, show l]
 -- with no validity guard of its own.
 --
 -- The second fold reads `invStream` rather than the push version's `inv`. Both
--- flip the pairs; `inv` also builds an index so the result can be probed, and
--- nothing here probes it, so the drive-only one is the honest choice.
+-- flip the pairs; `inv` also builds an index for keyed access, which nothing
+-- here needs, so the enumeration-only form is the honest choice.
 q13 :: CodeQ TPCHS -> CodeQ String
 q13 s = withRegex "special.*requests" $ \re ->
   withDenseOuter [|| customer_n $$s ||] (\a _ -> [|| $$a + (1 :: Int) ||]) [|| 0 ||]
           (groupBy (restrict (orders s) (nrx re (orderComment s)))
                    (orderCustomer s)) $ \countPerCust ->
   withFold (\a _ -> [|| $$a + (1 :: Int) ||]) [|| 0 ||]
-           (invStream (countPerCust :: Drive (Id Customer) Int)) $ \dist ->
-    [|| joinLines (map fmt13 (sortBy cmp13 $$(collect (dist :: Drive Int Int)))) ||]
+           (invStream (countPerCust :: Stream (Id Customer) Int)) $ \dist ->
+    [|| joinLines (map fmt13 (sortBy cmp13 $$(collect (dist :: Stream Int Int)))) ||]
 
 cmp13 :: (Int, Int) -> (Int, Int) -> Ordering
 cmp13 (k1, v1) (k2, v2) = compare v2 v1 <> compare k2 k1
@@ -523,7 +523,7 @@ q14 :: CodeQ TPCHS -> CodeQ String
 q14 s = [|| case $$(foldAll step [|| (0, 0) ||] rows) of
               (promo, total) -> f2 (100 * promo / total) ||]
   where
-    rows :: Drive (Id Lineitem) ((Double, Double), ByteString)
+    rows :: Stream (Id Lineitem) ((Double, Double), ByteString)
     rows = compose (restrict (lineitem s)
                      (range [|| 19950901 ||] [|| 19951001 ||] (shipdate s)))
                    (prod (prod (extendedprice s) (discount s))
@@ -542,13 +542,13 @@ q15 :: CodeQ TPCHS -> CodeQ String
 q15 s = withFold (\a v -> [|| case $$v of (e, dc) -> $$a + e * (1 - dc) ||]) [|| 0 ||]
                  grouped $ \revenue ->
   [|| let !maxRev = $$(foldAll (\a v -> [|| max $$a $$v ||]) [|| 0 ||]
-                               (revenue :: Drive (Id Supplier) Double))
+                               (revenue :: Stream (Id Supplier) Double))
       in joinLines (map fmt15 (sortOn fst
-           $$(collect (prod (eq [|| maxRev ||] (revenue :: Drive (Id Supplier) Double))
+           $$(collect (prod (eq [|| maxRev ||] (revenue :: Stream (Id Supplier) Double))
                             (prod (prod (supplierName s) (supplierAddress s))
                                   (supplierPhone s)))))) ||]
   where
-    grouped :: Drive (Id Supplier) (Double, Double)
+    grouped :: Stream (Id Supplier) (Double, Double)
     grouped =
       compose (groupBy (restrict (lineitem s)
                          (range [|| 19960101 ||] [|| 19960401 ||] (shipdate s)))
@@ -567,7 +567,7 @@ q16 :: CodeQ TPCHS -> CodeQ String
 q16 s = withRegex "Customer.*Complaints" $ \re ->
   withCountDistinct (grouped re) $ \counts ->
     [|| joinLines (map fmt16 (sortBy cmp16
-          $$(collect (counts :: Drive ((ByteString, ByteString), Int) Int)))) ||]
+          $$(collect (counts :: Stream ((ByteString, ByteString), Int) Int)))) ||]
   where
     -- No signature, because writing one would mean naming `Regex` and so taking a
     -- dependency on regex-tdfa in a module that otherwise has no use for it.
@@ -595,12 +595,12 @@ fmt16 (((b, t), sz), c) = row [bs b, bs t, show sz, show c]
 q17 :: CodeQ TPCHS -> CodeQ String
 q17 s =
   -- The correlated 0.2 * avg(quantity) per part, built once so the cross-column
-  -- comparison below is a probe and not a re-fold per row.
+  -- comparison below is a keyed lookup and not a re-fold per row.
   withFold (\acc q -> [|| case ($$acc, $$q) of
                             ((!sm, !n), v) -> (sm + v, n + (1 :: Int)) ||])
            [|| (0, 0) ||]
            (compose (groupBy (lineitem s) (liPart s)) (quantity s)) $ \avgTbl ->
-  let tpp :: Probe (Id Part) Double
+  let tpp :: Lookup (Id Part) Double
       tpp = mapv (\p -> [|| case $$p of (sm, n) -> 0.2 * sm / fromIntegral n ||]) avgTbl
       qtyOk = filt (\p -> [|| case $$p of (q, t) -> q < t ||])
                    (prod (quantity s) (compose (liPart s) tpp))
@@ -620,7 +620,7 @@ q18 :: CodeQ TPCHS -> CodeQ String
 q18 s = withFold (\a v -> [|| $$a + $$v ||]) [|| 0 ||]
                  (compose (groupBy (lineitem s) (liOrder s)) (quantity s)) $ \sumQ ->
   [|| joinLines (map fmt18 (take 100 (sortBy cmp18
-        $$(collect (prod (gt [|| 300 ||] (sumQ :: Drive (Id Order) Double))
+        $$(collect (prod (gt [|| 300 ||] (sumQ :: Stream (Id Order) Double))
                          (prod (prod (totalprice s) (date s))
                                (prod (compose (orderCustomer s) (customerName s))
                                      (orderCustomer s)))))))) ||]
@@ -643,7 +643,7 @@ q19 :: CodeQ TPCHS -> CodeQ String
 q19 s = [|| f2 $$(foldAll (\a v -> [|| case $$v of (e, dc) -> $$a + e * (1 - dc) ||])
                           [|| 0 ||] rows) ||]
   where
-    rows :: Drive (Id Lineitem) (Double, Double)
+    rows :: Stream (Id Lineitem) (Double, Double)
     rows = compose (restrict (lineitem s) (prod (prod shipOk instructOk) branches))
                    (prod (extendedprice s) (discount s))
     shipOk     = isIn [|| ["AIR", "AIR REG"] ||] (shipmode s)
@@ -689,7 +689,7 @@ q20 s =
                                  threshold))))
              (psSupplier s)) $ \qualSupps ->
     [|| joinLines (map fmt20 (sortOn fst (map snd
-          $$(collect (compose (restrict (qualSupps :: Drive (Id Supplier) (Id Supplier))
+          $$(collect (compose (restrict (qualSupps :: Stream (Id Supplier) (Id Supplier))
                                 (eq [|| "CANADA" ||]
                                     (compose (supplierNation s) (nationName s))))
                               (prod (supplierName s) (supplierAddress s))))))) ||]
@@ -714,25 +714,25 @@ q21 s =
   withCountDistinct (compose (groupBy (lineitem s) (liOrder s)) (liSupplier s)) $ \allSupp ->
   withCountDistinct (compose (groupBy late (liOrder s)) (liSupplier s)) $ \lateSupp ->
     let -- The order has more than one supplier across all its lines …
-        multiSupp :: Probe (Id Order) Int
+        multiSupp :: Lookup (Id Order) Int
         multiSupp = gt [|| 1 ||] allSupp
         -- … but exactly one across its late ones.
-        onlyLate :: Probe (Id Order) Int
+        onlyLate :: Lookup (Id Order) Int
         onlyLate = eq [|| 1 ||] lateSupp
-        orderOk :: Probe (Id Lineitem) (Id Order)
+        orderOk :: Lookup (Id Lineitem) (Id Order)
         orderOk = restrict (liOrder s)
                     (prod (prod (eq [|| "F" ||] (orderStatus s)) multiSupp) onlyLate)
     in withFold (\a _ -> [|| $$a + (1 :: Int) ||]) [|| 0 ||]
                 (groupBy (restrict late (prod natOk orderOk)) (liSupplier s)) $ \tally ->
          [|| joinLines (map fmt21 (take 100 (sortBy cmp21
-               $$(collect (prod (tally :: Drive (Id Supplier) Int)
+               $$(collect (prod (tally :: Stream (Id Supplier) Int)
                                 (supplierName s)))))) ||]
   where
     late :: SMode q => q (Id Lineitem) (Id Lineitem)
     late = restrict (lineitem s)
              (filt (\v -> [|| case $$v of (c, r) -> c < r ||])
                    (prod (commitdate s) (receiptdate s)))
-    natOk :: Probe (Id Lineitem) ByteString
+    natOk :: Lookup (Id Lineitem) ByteString
     natOk = eq [|| "SAUDI ARABIA" ||]
               (compose (compose (liSupplier s) (supplierNation s)) (nationName s))
 
@@ -770,9 +770,9 @@ q22 s = withBits [|| customer_n $$s ||] (orderCustomer s) $ \hasOrders ->
                               (customerAcctbal s))
                      (\counts ->
                         [|| joinLines (map fmt22 (sortOn fst
-                              $$(collect (counts :: Drive ByteString (Int, Double))))) ||])) ||]
+                              $$(collect (counts :: Stream ByteString (Int, Double))))) ||])) ||]
   where
-    prefix :: Probe (Id Customer) ByteString
+    prefix :: Lookup (Id Customer) ByteString
     prefix = mapv (\v -> [|| BS.take 2 $$v ||]) (customerPhone s)
     prefixOk :: SMode q => q (Id Customer) (Id Customer)
     prefixOk = restrict (customer s)

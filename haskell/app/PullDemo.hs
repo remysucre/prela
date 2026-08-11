@@ -33,7 +33,7 @@ ratingCol :: [Maybe Int]
 ratingCol = [Just 9, Nothing, Just 8, Just 7]
 
 -- A foreign key with holes: `noId` is out of range for any table, so it
--- fails the bounds check that every probe already does.
+-- fails the bounds check performed by every `Lookup` leaf.
 sequelOfCol :: [Id Movie]
 sequelOfCol = [noId, Id 0, noId, noId]
 
@@ -51,7 +51,7 @@ keywordTextCol = ["sequel", "space", "pixar"]
 movie :: Mode q => q (Id Movie) (Id Movie)
 movie = universe 4
 
--- A universe with gaps, as if row 1 had been deleted: driving it skips the
+-- A universe with gaps, as if row 1 had been deleted: enumerating it skips the
 -- hole, so nothing downstream ever sees a dead id.
 liveKeyword :: Mode q => q (Id Keyword) (Id Keyword)
 liveKeyword = sparseUniverse [Id 0, Id 2]
@@ -84,15 +84,15 @@ keywordOf = multiColumn keywordOfCol
 --------------------------------------------------------------------------------
 
 -- movie → title
-allTitles :: Drive (Id Movie) String
+allTitles :: Stream (Id Movie) String
 allTitles = compose movie title
 
 -- movie : (year > 1980) → title
-recentTitles :: Drive (Id Movie) String
+recentTitles :: Stream (Id Movie) String
 recentTitles = compose (restrict movie (gt 1980 year)) title
 
--- The same expression, probed. Only the signature differs.
-recentTitleOf :: Probe (Id Movie) String
+-- The same expression, accessed through `Lookup`. Only the signature differs.
+recentTitleOf :: Lookup (Id Movie) String
 recentTitleOf = compose (restrict movie (gt 1980 year)) title
 
 -- A named subquery left mode-free, so it can be used on either side below.
@@ -100,40 +100,40 @@ recent :: Mode q => q (Id Movie) (Id Movie)
 recent = restrict movie (gt 1980 year)
 
 -- movie → (title × year)
-titleAndYear :: Drive (Id Movie) (String, Int)
+titleAndYear :: Stream (Id Movie) (String, Int)
 titleAndYear = compose movie (prod title year)
 
 -- movie → rating: three rows, not four.
-ratings :: Drive (Id Movie) Int
+ratings :: Stream (Id Movie) Int
 ratings = compose movie rating
 
 -- movie - rating → title: the IS NULL query, as a set difference.
-unrated :: Drive (Id Movie) String
+unrated :: Stream (Id Movie) String
 unrated = compose (diff movie rating) title
 
 -- sequelOf → title: each movie's predecessor. Only movie 1 has one; the
--- other three hold `noId` and probe to nothing.
-predecessors :: Drive (Id Movie) String
+-- other three hold `noId`, so their keyed lookups return nothing.
+predecessors :: Stream (Id Movie) String
 predecessors = compose sequelOf title
 
 -- Navigation: movie → keyword → Keyword.text.
-movieKeyword :: Drive (Id Movie) String
+movieKeyword :: Stream (Id Movie) String
 movieKeyword = compose keywordOf keywordText
 
 -- movie - keywordOf → title: movies with NO keyword.
-unkeyworded :: Drive (Id Movie) String
+unkeyworded :: Stream (Id Movie) String
 unkeyworded = compose (diff movie keywordOf) title
 
--- keywordOf' → title: invert the FK, probe by keyword id, get titles.
-titlesForKeyword :: Probe (Id Keyword) String
+-- keywordOf' → title: invert the FK, look up by keyword id, get titles.
+titlesForKeyword :: Lookup (Id Keyword) String
 titlesForKeyword = compose (inv keywordOf) title
 
 -- Count movies per franchise: invert franchise, then fold each group with +1.
-franchiseCounts :: Drive String Int
+franchiseCounts :: Stream String Int
 franchiseCounts = fold (\n _ -> n + 1) (0 :: Int) (invStream franchise)
 
 -- Each movie's decade.
-decades :: Drive (Id Movie) Int
+decades :: Stream (Id Movie) Int
 decades = compose movie (mapv (\y -> y `div` 10 * 10) year)
 
 -- Whole-column MIN, escaping to a scalar.
@@ -141,54 +141,54 @@ earliest :: Int
 earliest = foldAll min maxBound (compose movie year)
 
 -- title ~ "^Alien" and its negation.
-alienTitles, nonAlienTitles :: Drive (Id Movie) String
+alienTitles, nonAlienTitles :: Stream (Id Movie) String
 alienTitles    = rx  "^Alien" (compose movie title)
 nonAlienTitles = nrx "^Alien" (compose movie title)
 
 -- movie : ((year > 1980) ∨ keywordOf) → title.
-recentOrKeyworded :: Drive (Id Movie) String
+recentOrKeyworded :: Stream (Id Movie) String
 recentOrKeyworded = compose (restrict movie (disj (gt 1980 year) keywordOf)) title
 
--- Two driven relations concatenated. Movie 2 appears via both legs, because
+-- Two streams concatenated. Movie 2 appears via both legs, because
 -- union does not de-duplicate.
-recentOrUnkeyworded :: Drive (Id Movie) String
+recentOrUnkeyworded :: Stream (Id Movie) String
 recentOrUnkeyworded = union recentTitles unkeyworded
 
 -- franchise ← year: rekey by franchise, then pick up each movie's year.
-franchiseYears :: Drive String Int
+franchiseYears :: Stream String Int
 franchiseYears = leftCompose franchise year
 
 -- Movies per keyword, cached in a 3-slot array rather than a Map. Keyword 1
 -- ("space") is attached to nothing, so it does not appear.
-keywordCounts :: Drive (Id Keyword) Int
+keywordCounts :: Stream (Id Keyword) Int
 keywordCounts = foldDense 3 (\n _ -> n + 1) (0 :: Int) (invStream keywordOf)
 
 -- The same fold as a left-outer aggregate: keyword 1 now emits its seed, 0.
-keywordCountsOuter :: Drive (Id Keyword) Int
+keywordCountsOuter :: Stream (Id Keyword) Int
 keywordCountsOuter = foldDenseOuter 3 (\n _ -> n + 1) (0 :: Int) (invStream keywordOf)
 
 -- bitset(keywordOf, 3) → Keyword.keyword: which keywords are actually used.
-usedKeywords :: Drive (Id Keyword) String
+usedKeywords :: Stream (Id Keyword) String
 usedKeywords = compose (bitset 3 keywordOf) keywordText
 
 -- liveKeyword → Keyword.keyword: the surviving rows of a table with holes.
-liveKeywordText :: Drive (Id Keyword) String
+liveKeywordText :: Stream (Id Keyword) String
 liveKeywordText = compose liveKeyword keywordText
 
 --------------------------------------------------------------------------------
 -- Running queries
 --------------------------------------------------------------------------------
 
--- `drive`/`probe`/`member` from "Prela.Push.Mode", rebuilt on `collect`/`at`/`anyOf`
--- since a pull stream is consumed by a fold, not a callback. Local to this
--- demo, not part of "Prela.Pull"'s API.
-driveEach :: Drive d r -> (d -> r -> IO ()) -> IO ()
+-- Small display helpers built on `collect`, `at`, and `anyOf`. A pull stream is
+-- consumed by a fold rather than by the callback protocol used in "Prela.Push".
+-- These are local to the demo, not part of "Prela.Pull"'s API.
+driveEach :: Stream d r -> (d -> r -> IO ()) -> IO ()
 driveEach s f = mapM_ (uncurry f) (collect s)
 
-probeEach :: Probe d r -> d -> (r -> IO ()) -> IO ()
+probeEach :: Lookup d r -> d -> (r -> IO ()) -> IO ()
 probeEach p k f = mapM_ (f . snd) (collect (at p k))
 
-member :: Probe d r -> d -> Bool
+member :: Lookup d r -> d -> Bool
 member p k = anyOf (at p k)
 
 main :: IO ()
@@ -197,10 +197,10 @@ main = do
   driveEach allTitles $ \m t -> putStrLn ("  " ++ show m ++ " -> " ++ t)
   putStrLn "after 1980:"
   driveEach recentTitles $ \m t -> putStrLn ("  " ++ show m ++ " -> " ++ t)
-  putStrLn "after 1980, probed for movie 2:"
+  putStrLn "after 1980, looked up for movie 2:"
   probeEach recentTitleOf (Id 2) $ \t -> putStrLn ("  " ++ t)
   putStrLn "is movie 0 recent? (member on the mode-free subquery)"
-  print (member (recent :: Probe (Id Movie) (Id Movie)) (Id 0))
+  print (member (recent :: Lookup (Id Movie) (Id Movie)) (Id 0))
   putStrLn "title x year:"
   driveEach titleAndYear $ \m (t, y) -> putStrLn ("  " ++ show m ++ " -> " ++ t ++ " (" ++ show y ++ ")")
   putStrLn "ratings (sparse column, movie 1 has none):"

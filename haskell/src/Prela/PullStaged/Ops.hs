@@ -5,13 +5,13 @@
 
 -- | Leaves and operators that work in either query position.
 --
--- `SMode` has two instances: `Drive` for enumeration and `Probe` for keyed
+-- `SMode` has two instances: `Stream` for enumeration and `Lookup` for keyed
 -- access. A query remains polymorphic until its result type selects an instance.
--- Binary operators take a concrete `Probe` on the right because that side is
+-- Binary operators take a concrete `Lookup` on the right because that side is
 -- always accessed by key.
 --
--- Pull consumers handle early termination, so these instances do not need a
--- second implementation corresponding to the push engine's `probeAny`.
+-- Pull consumers handle early termination, so keyed access does not need a
+-- separate early-exit operation like the push engine has.
 module Prela.PullStaged.Ops
   ( SMode (..)
     -- * Fixed-mode operators
@@ -40,8 +40,8 @@ import Prela.Storage
 class SMode q where
   -- Leaves.
   universe       :: CodeQ Int -> q (Id e) (Id e)
-  -- Driving skips holes. Probing only checks the id range because probed ids
-  -- come from live rows.
+  -- Stream enumeration skips holes. Lookup only checks the id range because
+  -- supplied ids come from live rows.
   sparseUniverse :: CodeQ (Bits e) -> CodeQ Int -> q (Id e) (Id e)
   column         :: Elem r => CodeQ (Col e r) -> q (Id e) r
   sparseColumn   :: Elem r => CodeQ (SparseCol e r) -> q (Id e) r
@@ -49,31 +49,31 @@ class SMode q where
   fromIndex      :: Ord d => CodeQ (Map d [r]) -> q d r
   fromCache      :: Ord d => CodeQ (Map d s) -> q d s
   fromDense      :: UV.Unbox t => CodeQ (Dense e t) -> q (Id e) t
-  -- Drive order is hash-table slot order and is therefore unspecified.
+  -- Enumeration order is hash-table slot order and is therefore unspecified.
   fromTable      :: (Hashable d, Key d, UV.Unbox t) => CodeQ (Table d t) -> q d t
   fromBits       :: CodeQ (Bits e) -> q (Id e) (Id e)
 
   -- Chain two relations through a shared middle value: `r : d -> e` and
   -- `s : e -> f` give `d -> f`. Also field navigation.
-  compose  :: q d e -> Probe e f -> q d f
+  compose  :: q d e -> Lookup e f -> q d f
 
   -- Pair two relations sharing a DOMAIN: for each key, take both values.
-  prod     :: q d u -> Probe d v -> q d (u, v)
+  prod     :: q d u -> Lookup d v -> q d (u, v)
 
   -- Keep rows whose value has at least one match in the second relation.
-  restrict :: q d r -> Probe r e -> q d r
+  restrict :: q d r -> Lookup r e -> q d r
 
   -- Keep rows whose key has no match in the second relation.
-  diff     :: q d r -> Probe d e -> q d r
+  diff     :: q d r -> Lookup d e -> q d r
 
   filt     :: (CodeQ r -> CodeQ Bool) -> q d r -> q d r
   mapv     :: (CodeQ r -> CodeQ s) -> q d r -> q d s
 
 --------------------------------------------------------------------------------
--- Driven
+-- Enumeration
 --------------------------------------------------------------------------------
 
-instance SMode Drive where
+instance SMode Stream where
   universe n       = Lin (universeProd n)
   column c         = Lin (columnProd c)
   -- The mask determines the iteration extent.
@@ -168,15 +168,15 @@ instance SMode Drive where
   mapv     f a = mapvS f a
 
 --------------------------------------------------------------------------------
--- Probed
+-- Keyed access
 --------------------------------------------------------------------------------
 
--- Probed leaves range-check keys because foreign-key holes use @noId = -1@.
+-- Lookup leaves range-check keys because foreign-key holes use @noId = -1@.
 -- Invalid keys produce an empty stream. Storage access itself remains unchecked.
-instance SMode Probe where
-  universe n = Probe $ \x -> mapvS (\_ -> x) (guardS [|| idInRange $$n $$x ||])
-  sparseUniverse _ n = Probe $ \x -> mapvS (\_ -> x) (guardS [|| idInRange $$n $$x ||])
-  column c = Probe $ \x -> Lin Producer
+instance SMode Lookup where
+  universe n = Lookup $ \x -> mapvS (\_ -> x) (guardS [|| idInRange $$n $$x ||])
+  sparseUniverse _ n = Lookup $ \x -> mapvS (\_ -> x) (guardS [|| idInRange $$n $$x ||])
+  column c = Lookup $ \x -> Lin Producer
     { source       = c
     , initialState = \_ -> [|| True ||]
     , next         = \e s yield _skip done ->
@@ -186,7 +186,7 @@ instance SMode Probe where
                          $$(yield [|| () ||] [|| atStore _st i ||] [|| False ||])
                      | otherwise -> $$done ||]
     }
-  sparseColumn c = Probe $ \x -> Lin Producer
+  sparseColumn c = Lookup $ \x -> Lin Producer
     { source       = c
     , initialState = \_ -> [|| True ||]
     , next         = \e s yield _skip done ->
@@ -198,7 +198,7 @@ instance SMode Probe where
     }
   -- The row's extent is read once, in `initialState`, rather than on every step. An
   -- out-of-range key gets the empty range (0, 0), which is the no-values answer.
-  multiColumn c = Probe $ \x -> Lin Producer
+  multiColumn c = Lookup $ \x -> Lin Producer
     { source       = c
     , initialState = \e -> [|| case $$e of
                           MultiCol n offs _ -> case $$x of
@@ -211,7 +211,7 @@ instance SMode Probe where
                          | otherwise -> $$(yield [|| () ||] [|| atStore _st j ||]
                                                  [|| (j + 1, end) ||]) ||]
     }
-  fromDense c = Probe $ \x -> Lin Producer
+  fromDense c = Lookup $ \x -> Lin Producer
     { source       = c
     , initialState = \_ -> [|| True ||]
     , next         = \e s yield _skip done ->
@@ -221,7 +221,7 @@ instance SMode Probe where
                          $$(yield [|| () ||] [|| _vals UV.! i ||] [|| False ||])
                      | otherwise -> $$done ||]
     }
-  fromTable t = Probe $ \x -> Lin Producer
+  fromTable t = Lookup $ \x -> Lin Producer
     { source       = t
     , initialState = \e -> [|| tableSlot $$e $$x ||]
     , next         = \e s yield _skip done ->
@@ -230,22 +230,22 @@ instance SMode Probe where
                 | $$s >= 0  -> $$(yield [|| () ||] [|| _vs UV.! $$s ||] [|| -1 ||])
                 | otherwise -> $$done ||]
     }
-  fromBits b = Probe $ \x -> mapvS (\_ -> x) (guardS [|| bitsMember $$b $$x ||])
-  fromIndex m = Probe $ \x -> Lin (listProd [|| Map.findWithDefault [] $$x $$m ||])
-  fromCache m = Probe $ \x -> Lin (maybeProd [|| Map.lookup $$x $$m ||])
+  fromBits b = Lookup $ \x -> mapvS (\_ -> x) (guardS [|| bitsMember $$b $$x ||])
+  fromIndex m = Lookup $ \x -> Lin (listProd [|| Map.findWithDefault [] $$x $$m ||])
+  fromCache m = Lookup $ \x -> Lin (maybeProd [|| Map.lookup $$x $$m ||])
 
-  compose  a b = Probe $ \x -> Bind (at a x) (\_ e -> at b e)
-  prod     a b = Probe $ \x ->
+  compose  a b = Lookup $ \x -> Bind (at a x) (\_ e -> at b e)
+  prod     a b = Lookup $ \x ->
                    Bind (at a x)
                         (\_ u -> mapvS (\v -> [|| let !p = $$u
                                                       !q = $$v
                                                   in (p, q) ||]) (at b x))
-  restrict a b = Probe $ \x -> filtS (\r -> anyOf (at b r)) (at a x)
-  -- The test is on the KEY, so it is decided once for the whole probe rather
-  -- than per row, which is what `whenS` is for.
-  diff     a b = Probe $ \x -> whenS [|| not $$(anyOf (at b x)) ||] (at a x)
-  filt     t a = Probe $ \x -> filtS t (at a x)
-  mapv     f a = Probe $ \x -> mapvS f (at a x)
+  restrict a b = Lookup $ \x -> filtS (\r -> anyOf (at b r)) (at a x)
+  -- The test is on the KEY, so it is decided once for the whole lookup rather
+  -- than per returned row, which is what `whenS` is for.
+  diff     a b = Lookup $ \x -> whenS [|| not $$(anyOf (at b x)) ||] (at a x)
+  filt     t a = Lookup $ \x -> filtS t (at a x)
+  mapv     f a = Lookup $ \x -> mapvS f (at a x)
 
 --------------------------------------------------------------------------------
 -- Fixed-mode operators
@@ -255,26 +255,26 @@ instance SMode Probe where
 -- (group key, value), which is exactly what a grouped fold wants, so
 -- @withFold op ini (groupBy q key)@ is Prela's GROUP BY over a non-key column.
 --
--- Driven only, and free: one extra probe per row with nothing stored. Its second
--- argument is probed at the VALUE rather than the key, which is what makes it
--- different from `compose`.
+-- Enumeration only, and free: one extra keyed lookup per row with nothing
+-- stored. Its second argument is looked up at the VALUE rather than the key,
+-- which is what makes it different from `compose`.
 --
 -- One sharp edge, shared with the Rust port: grouping by a foreign key with
 -- holes puts every hole in a group of its own, keyed by `noId`, rather than
 -- dropping those rows. Restrict first if that group is unwanted.
-groupBy :: Drive d r -> Probe r k -> Drive k r
+groupBy :: Stream d r -> Lookup r k -> Stream k r
 groupBy s key = Bind s (\_ x -> mapvS (\_ -> x) (byValue (at key x)))
 
 -- | Left-compose, defined as @r <- s@ ≡ @r' -> s@: rekey the first relation by
--- its own value, then chain the second onto it. Driven only, since `invStream`
--- is.
-leftCompose :: Drive d e -> Probe d f -> Drive e f
+-- its own value, then chain the second onto it. Enumeration only, since
+-- `invStream` is.
+leftCompose :: Stream d e -> Lookup d f -> Stream e f
 leftCompose a b = compose (invStream a) b
 
--- | One relation and then the other. Driven only: probing a union would have to
--- probe both sides and de-duplicate, and what queries actually want from OR is
--- membership, which is `disj`.
-union :: Drive d r -> Drive d r -> Drive d r
+-- | One relation and then the other. Enumeration only: keyed access to a union
+-- would have to search both sides and de-duplicate, and what queries actually
+-- want from OR is membership, which is `disj`.
+union :: Stream d r -> Stream d r -> Stream d r
 union = catS
 
 -- | Membership union, the OR of two filters. Never enumerated: only whether a
@@ -282,10 +282,11 @@ union = catS
 -- not a placeholder, it is the constraint made visible — you cannot navigate
 -- through an OR or read a value out of one, and the type says so.
 --
--- Under push this needed its own `Prb` record with both fields written out. Here
--- it is two `anyOf`s and a `guardS`, and the short-circuit is `anyOf`'s.
-disj :: Probe d u -> Probe d v -> Probe d ()
-disj a b = Probe $ \x -> guardS [|| $$(anyOf (at a x)) || $$(anyOf (at b x)) ||]
+-- The push executor needed a separate keyed-access record with both operations
+-- written out. Here it is two `anyOf`s and a `guardS`, and the short-circuit is
+-- `anyOf`'s.
+disj :: Lookup d u -> Lookup d v -> Lookup d ()
+disj a b = Lookup $ \x -> guardS [|| $$(anyOf (at a x)) || $$(anyOf (at b x)) ||]
 
 --------------------------------------------------------------------------------
 -- Producer-level leaves

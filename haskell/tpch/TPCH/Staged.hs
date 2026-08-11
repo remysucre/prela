@@ -9,11 +9,12 @@
 -- splices a query needs it. Full laziness hoists a binding out of the smallest
 -- scope that mentions it, and hoisting past a binder means the binding can no
 -- longer be a `case`, so it becomes a thunk. In a generated query the thing that
--- gets hoisted is a column read. Q1 probes its four value columns inside the
--- scope of the group key it just computed, none of those reads mention the key,
--- so GHC lifted all four to the top of the row body as thunks — four allocations
--- a row, plus their bounds tests, plus everything downstream that then had to
--- stay boxed. It measured 4.45 GB for one Q1; with the flag it is 0.64 GB.
+-- gets hoisted is a column read. Q1 performs keyed access to its four value
+-- columns inside the scope of the group key it just computed. None of those
+-- reads mention the key, so GHC lifted all four to the top of the row body as
+-- thunks — four allocations a row, plus their bounds tests, plus everything
+-- downstream that then had to stay boxed. It measured 4.45 GB for one Q1; with
+-- the flag it is 0.64 GB.
 --
 -- Bang patterns do not help. A strict binding is a `case`, and the float is
 -- allowed to rewrite a `case` into a `let` precisely when it crosses a binder.

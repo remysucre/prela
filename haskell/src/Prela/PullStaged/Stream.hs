@@ -17,8 +17,8 @@
 module Prela.PullStaged.Stream
   ( -- * Representation
     Producer (..)
-  , Drive (..)
-  , Probe (..)
+  , Stream (..)
+  , Lookup (..)
     -- * Mode-free operators
   , mapvS
   , mapkS
@@ -95,24 +95,24 @@ data Producer k v = forall st src. Producer
           -> CodeQ a                                     -- ^ Emit one step.
   }
 
--- | A relation in driven position.
+-- | A generated stream that enumerates relation pairs.
 --
 -- `Lin` is one producer, `Bind` is flat-map, and `Cat` concatenates streams.
 -- `Bind` passes both the outer key and value because different operators use
--- different sides. The consumer, not `Drive`, runs the generated loop.
-data Drive k v
+-- different sides. The consumer, not `Stream`, runs the generated loop.
+data Stream k v
   = Lin (Producer k v) -- ^ One (flat) producer.
   | forall k' v'. Bind
-      (Drive k' v')
-      (CodeQ k' -> CodeQ v' -> Drive k v) -- ^ Run an inner stream for each outer row.
-  | Cat (Drive k v) (Drive k v) -- ^ Run two streams in sequence.
+      (Stream k' v')
+      (CodeQ k' -> CodeQ v' -> Stream k v) -- ^ Run an inner stream for each outer row.
+  | Cat (Stream k v) (Stream k v) -- ^ Run two streams in sequence.
 
--- | A relation in probed position.
+-- | Generated keyed access to a relation.
 --
 -- Applying a key returns a pull stream of matching values. The stream key is
 -- `()` because the supplied key is already known. Consumers such as `anyOf`
--- provide short-circuiting, so `Probe` needs no `probeAny` operation.
-newtype Probe k v = Probe { at :: CodeQ k -> Drive () v }
+-- provide short-circuiting, so `Lookup` needs no `probeAny` operation.
+newtype Lookup k v = Lookup { at :: CodeQ k -> Stream () v }
 
 --------------------------------------------------------------------------------
 -- Mode-free operators
@@ -122,16 +122,16 @@ newtype Probe k v = Probe { at :: CodeQ k -> Drive () v }
 --
 -- Only `Producer`s can be zipped because lockstep needs direct access to both
 -- states. After `linear`, that capability is intentionally unavailable.
-linear :: Producer d r -> Drive d r
+linear :: Producer d r -> Stream d r
 linear = Lin
 {-# INLINE linear #-}
 
-mapvS :: (CodeQ r -> CodeQ r') -> Drive d r -> Drive d r'
+mapvS :: (CodeQ r -> CodeQ r') -> Stream d r -> Stream d r'
 mapvS h (Lin p)    = Lin (mapvP h p)
 mapvS h (Bind o g) = Bind o (\x e -> mapvS h (g x e))
 mapvS h (Cat a b)  = Cat (mapvS h a) (mapvS h b)
 
-mapkS :: (CodeQ d -> CodeQ d') -> Drive d r -> Drive d' r
+mapkS :: (CodeQ d -> CodeQ d') -> Stream d r -> Stream d' r
 mapkS h (Lin p)    = Lin (mapkP h p)
 mapkS h (Bind o g) = Bind o (\x e -> mapkS h (g x e))
 mapkS h (Cat a b)  = Cat (mapkS h a) (mapkS h b)
@@ -139,36 +139,36 @@ mapkS h (Cat a b)  = Cat (mapkS h a) (mapkS h b)
 -- | A key-map with the value in scope as well. `byValue` is the special case
 -- that throws the old key away; this is the general one, and it is what builds
 -- the @(key, value)@ pairs that @withCountDistinct@ deduplicates.
-mapkVS :: (CodeQ d -> CodeQ r -> CodeQ d') -> Drive d r -> Drive d' r
+mapkVS :: (CodeQ d -> CodeQ r -> CodeQ d') -> Stream d r -> Stream d' r
 mapkVS h (Lin p)    = Lin (mapkVP h p)
 mapkVS h (Bind o g) = Bind o (\x e -> mapkVS h (g x e))
 mapkVS h (Cat a b)  = Cat (mapkVS h a) (mapkVS h b)
 
--- | Set each row's key to its own value. `groupBy` is this plus a probe.
-byValue :: Drive d r -> Drive r r
+-- | Set each row's key to its own value. `groupBy` adds a keyed lookup.
+byValue :: Stream d r -> Stream r r
 byValue (Lin p)    = Lin (byValueP p)
 byValue (Bind o g) = Bind o (\x e -> byValue (g x e))
 byValue (Cat a b)  = Cat (byValue a) (byValue b)
 
--- | Swap key and value. Driven only, and free. There is no probed form: probing
--- an inverse means building a reverse index, which is
+-- | Swap key and value. Enumeration only, and free. There is no `Lookup` form:
+-- keyed access to an inverse requires building a reverse index, which is
 -- "Prela.PullStaged.Materialize"'s @withInv@.
-invStream :: Drive d r -> Drive r d
+invStream :: Stream d r -> Stream r d
 invStream (Lin p)    = Lin (swapP p)
 invStream (Bind o g) = Bind o (\x e -> invStream (g x e))
 invStream (Cat a b)  = Cat (invStream a) (invStream b)
 
-filtS :: (CodeQ r -> CodeQ Bool) -> Drive d r -> Drive d r
+filtS :: (CodeQ r -> CodeQ Bool) -> Stream d r -> Stream d r
 filtS t = filtKV (\_ r -> t r)
 
 -- | A filter with the key in scope as well as the value.
-filtKV :: (CodeQ d -> CodeQ r -> CodeQ Bool) -> Drive d r -> Drive d r
+filtKV :: (CodeQ d -> CodeQ r -> CodeQ Bool) -> Stream d r -> Stream d r
 filtKV t (Lin p)    = Lin (filtPKV t p)
 filtKV t (Bind o g) = Bind o (\x e -> filtKV t (g x e))
 filtKV t (Cat a b)  = Cat (filtKV t a) (filtKV t b)
 
 -- | One row of `()` if the test passes, none if it does not.
-guardS :: CodeQ Bool -> Drive () ()
+guardS :: CodeQ Bool -> Stream () ()
 guardS c = Lin Producer
   { source       = [|| () ||]
   , initialState = \_ -> [|| True ||]
@@ -177,13 +177,13 @@ guardS c = Lin Producer
   }
 
 -- | Run a stream only if a generation-time-emitted test passes at runtime. Used
--- by `diff` in probed position, where the test is on the key and so is decided
--- once for the whole stream rather than per row.
-whenS :: CodeQ Bool -> Drive d r -> Drive d r
+-- by the `Lookup` implementation of `diff`, where the test is on the supplied
+-- key and so is decided once for the whole stream rather than per row.
+whenS :: CodeQ Bool -> Stream d r -> Stream d r
 whenS c s = Bind (guardS c) (\_ _ -> s)
 
 -- | One stream and then the other. Prela's union.
-catS :: Drive d r -> Drive d r -> Drive d r
+catS :: Stream d r -> Stream d r -> Stream d r
 catS = Cat
 
 --------------------------------------------------------------------------------
@@ -253,7 +253,7 @@ filtPKV t (Producer env i step) = Producer
 -- `design/StagedPullMain.hs`.
 sfoldWhile :: (CodeQ acc -> CodeQ Bool)
            -> (CodeQ acc -> CodeQ d -> CodeQ r -> CodeQ acc)
-           -> CodeQ acc -> Drive d r -> CodeQ acc
+           -> CodeQ acc -> Stream d r -> CodeQ acc
 sfoldWhile p f z (Lin q) = foldWhileP p f z q
 sfoldWhile p f z (Bind o g) =
   sfoldWhile p
@@ -279,7 +279,7 @@ foldWhileP p f z (Producer env i step) =
 
 -- | Fold to exhaustion.
 sfold :: (CodeQ acc -> CodeQ d -> CodeQ r -> CodeQ acc)
-      -> CodeQ acc -> Drive d r -> CodeQ acc
+      -> CodeQ acc -> Stream d r -> CodeQ acc
 sfold = sfoldWhile (\_ -> [|| True ||])
 
 -- | Fold with an effectful `ST` step.
@@ -287,7 +287,7 @@ sfold = sfoldWhile (\_ -> [|| True ||])
 -- Materializers use this to thread mutable construction state directly through
 -- the generated loop. The strict bind prevents a chain of deferred updates.
 sfoldST :: (CodeQ acc -> CodeQ d -> CodeQ r -> CodeQ (ST s acc))
-        -> CodeQ acc -> Drive d r -> CodeQ (ST s acc)
+        -> CodeQ acc -> Stream d r -> CodeQ (ST s acc)
 sfoldST f z (Lin q) = foldSTP f z q
 sfoldST f z (Bind o g) =
   sfoldST
@@ -310,22 +310,22 @@ foldSTP f z (Producer env i step) =
 
 -- | The no-group fold: ignore the keys and reduce every value into one scalar.
 foldAll :: (CodeQ acc -> CodeQ r -> CodeQ acc)
-        -> CodeQ acc -> Drive d r -> CodeQ acc
+        -> CodeQ acc -> Stream d r -> CodeQ acc
 foldAll op = sfold (\acc _ v -> op acc v)
 
-count :: Drive d r -> CodeQ Int
+count :: Stream d r -> CodeQ Int
 count = sfold (\acc _ _ -> [|| $$acc + 1 ||]) [|| 0 ||]
 
 -- | Test whether a stream produces a row, stopping at the first one.
-anyOf :: Drive d r -> CodeQ Bool
+anyOf :: Stream d r -> CodeQ Bool
 anyOf = sfoldWhile (\a -> [|| not $$a ||]) (\_ _ _ -> [|| True ||]) [|| False ||]
 
 -- | Materialize a stream as a list.
-collect :: Drive d r -> CodeQ [(d, r)]
+collect :: Stream d r -> CodeQ [(d, r)]
 collect s = [|| reverse $$(sfold (\a d r -> [|| ($$d, $$r) : $$a ||]) [|| [] ||] s) ||]
 
 -- | Collect at most the first @n@ rows.
-limit :: CodeQ Int -> Drive d r -> CodeQ [(d, r)]
+limit :: CodeQ Int -> Stream d r -> CodeQ [(d, r)]
 limit n s =
   [|| reverse (fst $$(sfoldWhile (\a -> [|| snd $$a < $$n ||])
                                  (\a d r -> [|| case $$a of
@@ -339,7 +339,7 @@ limit n s =
 -- | Advance two flat producers together without buffering.
 --
 -- If one side skips, the other retains its old state and repeats that pure step.
--- Keys come from the left. Nested `Drive`s cannot be zipped because this
+-- Keys come from the left. Nested `Stream`s cannot be zipped because this
 -- function requires direct access to both producer states.
 zipWithP :: (CodeQ a -> CodeQ b -> CodeQ c)
          -> Producer d a -> Producer e b -> Producer d c

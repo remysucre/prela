@@ -22,7 +22,7 @@
 --
 -- And the @where@ preamble that buys back the bare spelling of each leaf works
 -- exactly as it did before, signatures and all, for exactly the same reason:
--- `movie` is driven in one query and probed in another.
+-- `movie` is enumerated in one query and accessed through `Lookup` in another.
 module StagedQueries (schemaQueriesS) where
 
 import Data.ByteString (ByteString)
@@ -63,7 +63,7 @@ schemaQueriesS s = [|| ( $$(values sequels)
     kindText :: SMode q => q (Id Sch.Kind) ByteString
     kindText = Sch.kindText s
 
-    sequels :: Drive (Id Sch.Movie) ByteString
+    sequels :: Stream (Id Sch.Movie) ByteString
     sequels = compose (restrict movie (eq [|| "sequel" ||] (compose keyword keywordText)))
                       title
 
@@ -71,10 +71,10 @@ schemaQueriesS s = [|| ( $$(values sequels)
     recent = foldAll (\n _ -> [|| $$n + 1 ||]) [|| 0 ||]
                      (compose (restrict movie (gt [|| 1980 ||] year)) year)
 
-    undated :: Drive (Id Sch.Movie) ByteString
+    undated :: Stream (Id Sch.Movie) ByteString
     undated = compose (diff movie year) title
 
-    tv :: Drive (Id Sch.Movie) ByteString
+    tv :: Stream (Id Sch.Movie) ByteString
     tv = compose (restrict movie (eq [|| "tv series" ||] (compose kind kindText))) title
 
     best :: CodeQ Double
