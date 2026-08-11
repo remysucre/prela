@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE RankNTypes #-}
 
@@ -227,7 +228,7 @@ sfoldWhile p f z (Cat a b)  = sfoldWhile p f (sfoldWhile p f z a) b
 foldWhileP :: (acc -> Bool) -> (acc -> d -> r -> acc) -> acc -> Producer d r -> acc
 foldWhileP p f z (Producer env i step) = go (i env) z
   where
-    go s acc
+    go s !acc
       | not (p acc) = acc
       | otherwise   = step env s (\d r s' -> go s' (f acc d r)) (`go` acc) acc
 

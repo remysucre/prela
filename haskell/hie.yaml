@@ -3,7 +3,7 @@ cradle:
     - path: "./src"
       component: "lib:prela"
     - path: "./app"
-      component: "exe:prela-demo"
+      component: "exe:prela-demo-pull"
     - path: "./tpch"
       component: "exe:prela-tpch"
     - path: "./test"

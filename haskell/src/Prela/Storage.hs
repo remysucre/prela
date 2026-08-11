@@ -3,9 +3,9 @@
 
 -- | Physical element layouts and the column shapes built from them.
 --
--- Nothing here executes anything. Storage is built once, and the leaves in
--- "Prela.Push.Ops" are VIEWS of it. That separation matters for a reason peculiar to
--- this design: a leaf is mode-polymorphic, and a polymorphic binding is
+-- Nothing here executes anything. Storage is built once, and the staged leaves
+-- are views of it. That separation matters because a leaf is mode-polymorphic,
+-- and a polymorphic binding is
 -- re-elaborated at each instantiation, so a column built inside a leaf would be
 -- built twice for a column used in both modes.
 module Prela.Storage where
@@ -15,13 +15,11 @@ import Control.Monad.ST (ST)
 import Data.Array (accumArray, elems)
 import Data.Bits (shiftR, xor, (.&.))
 import Data.Hashable (Hashable, hash)
-import Data.Array.Base (unsafeAt)
 import Data.Array.ST (STUArray, newArray, writeArray, runSTUArray)
 import Data.Array.Unboxed (UArray)
 import qualified Data.Array.Unboxed as U
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Unsafe as BSU
 import Data.Maybe (isJust)
 import qualified Data.Vector as BV
 import qualified Data.Vector.Mutable as BMV
@@ -43,22 +41,13 @@ import Prela.Id
 -- one uniform column type cannot serve both an Int column and a string column.
 --
 -- This class is the way out: an associated DATA family, so each element type
--- names its own physical layout while the leaves in "Prela.Push.Ops" see one
+-- names its own physical layout while the staged leaves see one
 -- interface.
 --
--- The layouts chosen here are deliberately the ON-DISK layouts of the cache
--- format (see "Prela.Cache"): 8-byte words for numbers and ids, 4-byte offsets
--- plus one packed buffer for strings. That is what lets loading be a VIEW of a
--- memory-mapped file rather than a conversion of it — `Storable` vectors are a
--- pointer, an offset and a length, so a column can point straight into the
--- mapping the way the Rust port's `&'static str` does. The difference is that
--- Rust has to leak the mmap to get a `'static` lifetime, whereas here the
--- vectors hold the mapping's finalizer and it is released when the last column
--- referring to it is collected.
---
--- `atStore` is UNCHECKED. Every caller is a leaf that has already done its own
--- range test, and doing it twice is exactly the kind of per-row cost this whole
--- design exists to avoid.
+-- The layouts closely follow the on-disk cache format (see "Prela.Cache"):
+-- 8-byte words for numbers, and 4-byte offsets plus one packed buffer for
+-- strings. Loading validates and copies those bytes into managed stores.
+-- Element access uses the vector and bytestring libraries' checked operations.
 class Elem r where
   data Store r
   packStore :: [r] -> Store r
@@ -73,14 +62,14 @@ packV = V.fromList
 
 -- Offsets are 32-bit, as on disk. Widening to an index is a zero-extend.
 off32 :: V.Vector Word32 -> Int -> Int
-off32 v i = fromIntegral (V.unsafeIndex v i)
+off32 v i = fromIntegral (v V.! i)
 {-# INLINE off32 #-}
 
 instance Elem Int where
   newtype Store Int = IntStore (V.Vector Int)
   packStore = IntStore . packV
   storeLen (IntStore a) = V.length a
-  atStore (IntStore a) i = V.unsafeIndex a i
+  atStore (IntStore a) i = a V.! i
   {-# INLINE storeLen #-}
   {-# INLINE atStore #-}
 
@@ -88,23 +77,22 @@ instance Elem Double where
   newtype Store Double = DblStore (V.Vector Double)
   packStore = DblStore . packV
   storeLen (DblStore a) = V.length a
-  atStore (DblStore a) i = V.unsafeIndex a i
+  atStore (DblStore a) i = a V.! i
   {-# INLINE storeLen #-}
   {-# INLINE atStore #-}
 
--- An id column is a word array reinterpreted, which is what makes a foreign key
--- as cheap to store as a number. The Rust port gets this from
--- `#[repr(transparent)]`; here the newtype is erased, so it is the same bits.
+-- In-memory ids stay boxed so their private constructor is never bypassed by a
+-- representation cast.
 instance Elem (Id e) where
-  newtype Store (Id e) = IdStore (V.Vector Int)
-  packStore = IdStore . packV . map (\(Id i) -> i)
-  storeLen (IdStore a) = V.length a
-  atStore (IdStore a) i = Id (V.unsafeIndex a i)
+  newtype Store (Id e) = IdStore (BV.Vector (Id e))
+  packStore = IdStore . BV.fromList
+  storeLen (IdStore a) = BV.length a
+  atStore (IdStore a) i = a BV.! i
   {-# INLINE storeLen #-}
   {-# INLINE atStore #-}
 
--- One concatenated buffer plus n+1 offsets. `unsafeTake`/`unsafeDrop` are
--- pointer arithmetic on the shared buffer, so reading a string copies nothing.
+-- One concatenated buffer plus n+1 validated offsets. Slicing shares the
+-- underlying buffer, so reading a string copies nothing.
 instance Elem ByteString where
   data Store ByteString = BsStore !(V.Vector Word32) !ByteString
   packStore vs = BsStore (packV (scanl (+) 0 (map (fromIntegral . BS.length) vs)))
@@ -112,7 +100,7 @@ instance Elem ByteString where
   storeLen (BsStore offs _) = V.length offs - 1
   atStore (BsStore offs buf) i =
     case (off32 offs i, off32 offs (i + 1)) of
-      (o, o') -> BSU.unsafeTake (o' - o) (BSU.unsafeDrop o buf)
+      (o, o') -> BS.take (o' - o) (BS.drop o buf)
   {-# INLINE storeLen #-}
   {-# INLINE atStore #-}
 
@@ -166,13 +154,13 @@ instance Key Int where
 -- The tag is erased, so an id column of keys is an `Int` array, exactly as the
 -- `Elem` instance for ids is.
 instance Key (Id e) where
-  newtype MKeys s (Id e) = MIdKeys (UMV.MVector s Int)
-  newtype Keys (Id e)    = IdKeys (UV.Vector Int)
-  newKeys n                       = MIdKeys <$> UMV.new n
-  readKey (MIdKeys v) i           = Id <$> UMV.read v i
-  writeKey (MIdKeys v) i (Id x)   = UMV.write v i x
-  freezeKeys (MIdKeys v)          = IdKeys <$> UV.freeze v
-  indexKey (IdKeys v) i           = Id (v UV.! i)
+  newtype MKeys s (Id e) = MIdKeys (BMV.MVector s (Id e))
+  newtype Keys (Id e)    = IdKeys (BV.Vector (Id e))
+  newKeys n                     = MIdKeys <$> BMV.new n
+  readKey (MIdKeys v) i         = BMV.read v i
+  writeKey (MIdKeys v) i x      = BMV.write v i x
+  freezeKeys (MIdKeys v)        = IdKeys <$> BV.freeze v
+  indexKey (IdKeys v) i         = v BV.! i
   {-# INLINE newKeys #-}
   {-# INLINE readKey #-}
   {-# INLINE writeKey #-}
@@ -225,7 +213,7 @@ instance (Key a, Key b) => Key (a, b) where
 --------------------------------------------------------------------------------
 
 -- These are three separate types rather than one type with a shape field, for
--- the same reason the sparse universe is a separate leaf in "Prela.Push.Ops":
+-- the same reason a sparse universe carries a separate live-row mask:
 -- dispatch happens once at compile time, so a dense column's loop carries no
 -- branch testing whether it might have been sparse.
 
@@ -240,17 +228,21 @@ mkCol vs = Col (storeLen s) s where s = packStore vs
 colLen :: Col e r -> Int
 colLen (Col n _) = n
 
--- | 1:1 with holes: the values array stays full width, and a presence bit per
--- key says which slots are real. For an id-valued column `noId` in the holes
--- would do the same job for free, but a scalar column has no spare value — a
--- missing year is not year 0 — so the mask is what keeps "absent" from becoming
--- a wrong answer. Julia carries the same presence bitvector for this reason.
-data SparseCol e r = SparseCol !Int !(Store r) !(UArray Int Bool)
+-- | 1:1 with holes. Absence is represented explicitly as 'Nothing'; it can
+-- never masquerade as an identifier or scalar value.
+newtype SparseCol e r = SparseCol (BV.Vector (Maybe r))
 
--- | `fill` occupies the holes and is never read; only its width matters.
-mkSparseCol :: Elem r => r -> [Maybe r] -> SparseCol e r
-mkSparseCol fill ms =
-  SparseCol (length ms) (packStore (map (maybe fill id) ms)) (packU (map isJust ms))
+mkSparseCol :: [Maybe r] -> SparseCol e r
+mkSparseCol = SparseCol . BV.fromList
+
+sparseColLen :: SparseCol e r -> Int
+sparseColLen (SparseCol values) = BV.length values
+
+sparseAt :: SparseCol e r -> Int -> Maybe r
+sparseAt (SparseCol values) i = values BV.! i
+
+sparseMask :: SparseCol e r -> [Bool]
+sparseMask (SparseCol values) = map isJust (BV.toList values)
 
 -- | Multi-valued, stored CSR: key i owns `values[offsets[i] .. offsets[i+1]-1]`,
 -- and a key with no values is simply an empty range, so partial and multi-valued
@@ -274,7 +266,7 @@ mkMultiCol n prs = MultiCol n (packV (scanl (+) 0 (map (fromIntegral . length) b
 --------------------------------------------------------------------------------
 
 -- The two shapes above are loaded from data; these two are produced by the
--- materializing operators in "Prela.Push.Materialize" and then read back as leaves,
+-- materializing operators in "Prela.PullStaged.Materialize" and read back as leaves,
 -- which is why they live here with the rest of the storage rather than there.
 
 -- One reduced value per key over a dense key space `0 .. n-1`: what a grouped
@@ -355,12 +347,16 @@ tableSlot (Table mask hs ks _) d = go (fromIntegral h .&. mask)
 newtype Bits e = Bits (UArray Int Bool)
 
 -- | A membership set over `0 .. n-1` from the ids that are present. Ids outside
--- the range are dropped, `noId` among them.
+-- the range are dropped.
 mkBits :: Int -> [Id e] -> Bits e
 mkBits n ids = Bits (runSTUArray (do
   bs <- newBits n False
-  mapM_ (\(Id i) -> when (0 <= i && i < n) (writeArray bs i True)) ids
+  mapM_ (\x -> let i = idIndex x
+                in when (i < n) (writeArray bs i True)) ids
   return bs))
+
+mkBitsFromMask :: [Bool] -> Bits e
+mkBitsFromMask = Bits . packU
 
 -- Typed wrappers so the two stores above are built in one pass over the input.
 -- `freeze` alone leaves the mutable type ambiguous; these pin it.
@@ -379,10 +375,10 @@ newBits n v = newArray (0, n - 1) v
 -- reads that "Prela.PullStaged.Ops" needs, factored out of the leaves that used to
 -- write them inline.
 
--- | Test a mask bit. UNCHECKED, like `atStore` and for the same reason: every
--- caller is a leaf that has already range-tested its key.
+-- | Test a mask bit. Callers establish the range first; the array operation is
+-- checked as a final guard.
 atBit :: UArray Int Bool -> Int -> Bool
-atBit = unsafeAt
+atBit bs i = bs U.! i
 {-# INLINE atBit #-}
 
 -- | How many bits a mask covers.
@@ -392,11 +388,13 @@ bitsLen bs = case U.bounds bs of (lo, hi) -> hi - lo + 1
 
 -- | Is this id inside a universe of the given size?
 idInRange :: Int -> Id e -> Bool
-idInRange n (Id i) = 0 <= i && i < n
+idInRange n x = idIndex x < n
 {-# INLINE idInRange #-}
 
 -- | Is this id's bit set? Range-checked, since a probed id is untrusted.
 bitsMember :: Bits e -> Id e -> Bool
-bitsMember (Bits bs) (Id i) = case U.bounds bs of
-                            (lo, hi) -> lo <= i && i <= hi && unsafeAt bs (i - lo)
+bitsMember (Bits bs) x = case U.bounds bs of
+                          (lo, hi) -> lo <= i && i <= hi && bs U.! i
+  where
+    i = idIndex x
 {-# INLINE bitsMember #-}

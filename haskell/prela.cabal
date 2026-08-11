@@ -5,16 +5,11 @@ synopsis:           Prela — Tarski algebra-of-relations query language, Haskel
 build-type:         Simple
 
 library
-    exposed-modules:  Prela
-                    , Prela.Id
-                    , Prela.Push.Mode
+    exposed-modules:  Prela.Id
                     , Prela.Storage
-                    , Prela.Push.Ops
-                    , Prela.Push.Predicate
-                    , Prela.Push.Stream
-                    , Prela.Push.Materialize
                     , Prela.Cache
                     , Prela.Schema
+                    , Prela.PullStaged
                     , Prela.PullStaged.Stream
                     , Prela.PullStaged.Ops
                     , Prela.PullStaged.Predicate
@@ -26,24 +21,17 @@ library
                     , Prela.Pull.Materialize
     hs-source-dirs:   src
     build-depends:    base >=4.14, containers, array, bytestring, regex-tdfa
-                    , vector, mmap, template-haskell, hashable
+                    , vector, template-haskell, hashable, filepath
     default-language: Haskell2010
     ghc-options:      -Wall
 
 test-suite prela-test
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
-    other-modules:    TinySchema, TinyStaged, StagedQueries
+    other-modules:    TinyStaged, StagedQueries
     hs-source-dirs:   test
     build-depends:    base >=4.14, prela, bytestring, containers, directory
                     , filepath, template-haskell, vector
-    default-language: Haskell2010
-    ghc-options:      -Wall
-
-executable prela-demo
-    main-is:          Demo.hs
-    hs-source-dirs:   app
-    build-depends:    base >=4.14, prela, bytestring, template-haskell, vector
     default-language: Haskell2010
     ghc-options:      -Wall
 
@@ -60,8 +48,7 @@ executable prela-demo-pull
 executable prela-tpch
     main-is:          Main.hs
     other-modules:    TPCH.Decl
-                    , TPCH.Schema
-                    , TPCH.Queries
+                    , TPCH.Oracles
                     , TPCH.StagedSchema
                     , TPCH.StagedQueries
                     , TPCH.Staged

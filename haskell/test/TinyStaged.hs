@@ -1,15 +1,10 @@
+{-# LANGUAGE DeriveLift #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
 
--- | The same schema as TinySchema.hs, spliced for the staged engine.
---
--- It has to be a separate module because the two flavours generate the same
--- accessor names. When the push engine goes away this file replaces
--- TinySchema.hs and the record type goes back to being called @Tiny@.
---
--- Everything except the accessors is identical: the tag types, the record, and
--- `loadTinyS` are generated from the same code, because none of them mentions a
--- relation.
+-- | A small schema used to exercise the staged pull engine.
 module TinyStaged where
 
 import Prela.Schema

@@ -4,19 +4,17 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 
--- | The 22 TPC-H queries again, on the staged engine. Ported one at a time from
--- "TPCH.Queries", which stays the reference for what each query means.
+-- | The 22 TPC-H queries on the staged pull engine.
 --
 -- Read three differences before the queries, because they explain the shape of
 -- every module in the staged half of the port.
 --
 -- A query here is a GENERATOR. `q6` does not compute a string, it returns the
 -- CODE of something that will, and "TPCH.Staged" is what splices those into real
--- functions. So `q6` has type @CodeQ TPCHS -> CodeQ String@ where the push one
--- had @TPCH -> String@, and the schema arrives as the code of the record rather
--- than the record.
+-- functions. Thus `q6` has type @CodeQ TPCHS -> CodeQ String@, and the schema
+-- arrives as the code of the record rather than the record.
 --
--- Every materializer takes the rest of the query as an argument. Push wrote
+-- Every materializer takes the rest of the query as an argument. Instead of
 -- @let t = fold …@ and used @t@; here it is @withFold … $ \\t -> …@, and the
 -- reason is the one rule of staging: a `CodeQ` used twice is code emitted twice,
 -- so a materializer that RETURNED its table would rebuild it at every mention.
@@ -26,7 +24,7 @@
 -- And the formatting helpers live in this module rather than beside the splices.
 -- A quote may name a top level binding of its OWN module — that is ordinary
 -- cross-stage persistence — but a splice may not name a binding of the module it
--- sits in. So @f2@ and friends have to be here, on the generator side, and
+-- sits in. So @f2@ and friends live here, on the generator side, and
 -- "TPCH.Staged" holds nothing but splices.
 module TPCH.StagedQueries
   ( q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11
@@ -43,7 +41,7 @@ import Prela.PullStaged.Materialize
 import Prela.PullStaged.Ops
 import Prela.PullStaged.Predicate
 import Prela.PullStaged.Stream
-import Prela.Id (Id (..))
+import Prela.Id (Id, idIndex, universeSize)
 
 import TPCH.StagedSchema
 
@@ -51,8 +49,8 @@ import TPCH.StagedSchema
 -- Leaving the algebra
 --------------------------------------------------------------------------------
 
--- These are the same functions "TPCH.Queries" has, unchanged and unstaged: they
--- run below `collect`, on the handful of rows a query returns, so there is
+-- These helpers remain unstaged: they run below `collect`, on the handful of
+-- rows a query returns, so there is
 -- nothing for staging to do to them. They are emitted by name into the generated
 -- code and called at run time like any other function.
 
@@ -85,7 +83,7 @@ bs = BS.unpack
 -- Natural keys in the TPC-H source data are 1-based; internal ids are 0-based,
 -- so the +1 is an output detail and appears nowhere else.
 key1 :: Id e -> String
-key1 (Id i) = show (i + 1)
+key1 identifier = show (idIndex identifier + 1)
 
 --------------------------------------------------------------------------------
 -- Q1 — pricing summary report
@@ -110,7 +108,7 @@ q1 s = withFold step [|| (0, 0, 0, 0, 0, 0) ||] grouped $ \tbl ->
 
 -- The accumulator needs a name because `withFold` demands `UV.Unbox` on it, and
 -- a bare six-tuple has no such instance. This is the one place staging asks for
--- something the push engine did not.
+-- something ordinary generated loops cannot infer implicitly.
 type Q1Acc = (Double, Double, Double, Double, Double, Int)
 
 fmt1 :: ((ByteString, ByteString), Q1Acc) -> String
@@ -124,7 +122,7 @@ fmt1 ((rf, ls), (qty, ext, di, dp, chg, n)) =
 --------------------------------------------------------------------------------
 
 -- @euPs@ is mentioned twice and is NOT materialized, so it emits two scans of
--- partsupp. That is what the push version did as well: an unmaterialized stream
+-- partsupp. An unmaterialized stream
 -- used twice is enumerated twice, and Prela materializes only when asked.
 q2 :: CodeQ TPCHS -> CodeQ String
 q2 s = withFold (\a c -> [|| if $$c < $$a then $$c else $$a ||]) [|| 1 / 0 ||]
@@ -218,7 +216,7 @@ q4 :: CodeQ TPCHS -> CodeQ String
 q4 s =
   -- Orders with at least one late line, precomputed as a bitset so the EXISTS is
   -- a bit test per order rather than a re-scan.
-  withBits [|| order_n $$s ||]
+  withBits [|| universeSize (order_universe $$s) ||]
     (compose (restrict (lineitem s)
                (filt (\p -> [|| case $$p of (c, r) -> c < r ||])
                      (prod (commitdate s) (receiptdate s))))
@@ -363,7 +361,7 @@ fmt8 (y, v) = row [show y, f2 v]
 -- reference to one runtime binding no matter how many times it appears, and the
 -- warning has nothing left to warn about. Mentioning @costPerLi@ twice does emit
 -- the lookup twice, which is right: that is two searches of one shared index,
--- exactly what the push version did.
+-- exactly the required correlated lookup.
 q9 :: CodeQ TPCHS -> CodeQ String
 q9 s = withMaterialize sc $ \scM ->
   let costPerLi :: Lookup (Id Lineitem) Double
@@ -497,12 +495,13 @@ fmt12 (m, (h, l)) = row [bs m, show h, show l]
 -- it already skips the orderkey gaps, so the group key is the bare foreign key
 -- with no validity guard of its own.
 --
--- The second fold reads `invStream` rather than the push version's `inv`. Both
+-- The second fold reads `invStream`. Both
 -- flip the pairs; `inv` also builds an index for keyed access, which nothing
 -- here needs, so the enumeration-only form is the honest choice.
 q13 :: CodeQ TPCHS -> CodeQ String
 q13 s = withRegex "special.*requests" $ \re ->
-  withDenseOuter [|| customer_n $$s ||] (\a _ -> [|| $$a + (1 :: Int) ||]) [|| 0 ||]
+  withDenseOuter [|| universeSize (customer_universe $$s) ||]
+                 (\a _ -> [|| $$a + (1 :: Int) ||]) [|| 0 ||]
           (groupBy (restrict (orders s) (nrx re (orderComment s)))
                    (orderCustomer s)) $ \countPerCust ->
   withFold (\a _ -> [|| $$a + (1 :: Int) ||]) [|| 0 ||]
@@ -680,7 +679,7 @@ q20 s =
   in
   -- The qualifying suppliers as a driveable set, so the CANADA filter runs over
   -- those rather than over the whole supplier universe.
-  withBits [|| supplier_n $$s ||]
+  withBits [|| universeSize (supplier_universe $$s) ||]
     (compose (restrict (partsupp s)
                (prod (filt (\v -> [|| BS.isPrefixOf "forest" $$v ||])
                            (compose (psPart s) (partName s)))
@@ -708,7 +707,7 @@ fmt20 (nm, addr) = row [bs nm, bs addr]
 --
 -- @late@ stays polymorphic and is mentioned three times. That emits three loops
 -- over lineitem, and it is meant to: Prela does not materialize unless asked, and
--- the push version re-drove it three times for the same reason.
+-- it is re-enumerated three times for the same reason.
 q21 :: CodeQ TPCHS -> CodeQ String
 q21 s =
   withCountDistinct (compose (groupBy (lineitem s) (liOrder s)) (liSupplier s)) $ \allSupp ->
@@ -752,7 +751,7 @@ fmt21 (_, (c, nm)) = row [bs nm, show c]
 -- of the query used as a bound in another, and the splice that needs it sits
 -- inside that @let@'s scope.
 q22 :: CodeQ TPCHS -> CodeQ String
-q22 s = withBits [|| customer_n $$s ||] (orderCustomer s) $ \hasOrders ->
+q22 s = withBits [|| universeSize (customer_universe $$s) ||] (orderCustomer s) $ \hasOrders ->
   [|| let (sumP, cntP) = $$(foldAll
                              (\acc v -> [|| case $$acc of
                                               (!a, !n) -> (a + $$v, n + (1 :: Int)) ||])

@@ -1,7 +1,7 @@
 -- | The operators that stop the pipeline, without staging. Same set as
 -- "Prela.PullStaged.Materialize", built directly on `Data.Map`/`Data.Set` rather
 -- than a mutable open-addressed table or a dense array — those exist in the
--- other two ports purely for speed, and this module does not have that job.
+-- staged executor purely for speed, and this module does not have that job.
 -- Staged's `with...`-continuation shape (`withFold`, `withMaterialize`, …) is
 -- gone too: it only existed to avoid duplicating a `CodeQ` by using it twice,
 -- and there is no `CodeQ` here to duplicate, so these just return a value.
@@ -27,7 +27,7 @@ import Prela.Pull.Stream
 
 -- | Consume a relation and bucket its pairs by key, preserving stream order.
 index :: Ord d => Stream d r -> Map d [r]
-index = sfold (\m d r -> Map.insertWith (flip (++)) d [r] m) Map.empty
+index = Map.map reverse . sfold (\m d r -> Map.insertWith (++) d [r] m) Map.empty
 
 -- | Force a leg once so reuse is free (in spirit; nothing here memoizes).
 materialize :: (Mode q, Eq d) => Stream d r -> q d r
@@ -56,17 +56,19 @@ countDistinct = bufFold (Set.size . Set.fromList)
 -- plus a range check, since there is no array to opt into.
 foldDense :: Mode q => Int -> (acc -> r -> acc) -> acc -> Stream (Id e) r -> q (Id e) acc
 foldDense n op ini s =
-  fromPairs [ (Id i, foldl' op ini rs) | (Id i, rs) <- Map.toList (index s), 0 <= i, i < n ]
+  fromPairs [ (d, foldl' op ini rs) | (d, rs) <- Map.toList (index s), idIndex d < n ]
 
 -- | Like `foldDense`, but every key in `0 .. n - 1` emits, seeded with `ini`
 -- where nothing matched — the left-outer-join aggregate.
 foldDenseOuter :: Mode q => Int -> (acc -> r -> acc) -> acc -> Stream (Id e) r -> q (Id e) acc
 foldDenseOuter n op ini s =
-  fromPairs [ (Id i, foldl' op ini (Map.findWithDefault [] (Id i) grouped)) | i <- [0 .. n - 1] ]
-  where grouped = index s
+  fromPairs [ (d, foldl' op ini (Map.findWithDefault [] d grouped)) | d <- denseIds n ]
+  where
+    grouped = index s
+    denseIds size = maybe [] universeIds (denseUniverse size)
 
 -- | Consume a relation and note every distinct value it emits, within
 -- `0 .. n - 1`: the identity relation on ids actually used.
 bitset :: Mode q => Int -> Stream d (Id e) -> q (Id e) (Id e)
-bitset n s = fromPairs [ (Id i, Id i) | Id i <- Set.toList seen, 0 <= i, i < n ]
+bitset n s = fromPairs [ (d, d) | d <- Set.toList seen, idIndex d < n ]
   where seen = Set.fromList (map snd (collect s))

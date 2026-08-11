@@ -7,8 +7,7 @@
 --
 -- The interesting part is the shape of the module rather than the queries. This
 -- is a GENERATOR: `schemaQueriesS` does not run a query, it builds the code of
--- one, and something else splices it. Under the push engine there was no such
--- split — the query was an ordinary function and Spec.hs called it.
+-- one, and something else splices it.
 --
 -- Three things follow from the split, and they are the three things every staged
 -- query module will have.

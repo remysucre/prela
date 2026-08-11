@@ -11,7 +11,7 @@
 -- always accessed by key.
 --
 -- Pull consumers handle early termination, so keyed access does not need a
--- separate early-exit operation like the push engine has.
+-- separate early-exit operation.
 module Prela.PullStaged.Ops
   ( SMode (..)
     -- * Fixed-mode operators
@@ -22,6 +22,7 @@ module Prela.PullStaged.Ops
     -- * Producer-level leaves, for lockstep
   , universeProd
   , columnProd
+  , resolveId
   ) where
 
 import Data.Hashable (Hashable)
@@ -39,12 +40,9 @@ import Prela.Storage
 -- binder unused in generated code.
 class SMode q where
   -- Leaves.
-  universe       :: CodeQ Int -> q (Id e) (Id e)
-  -- Stream enumeration skips holes. Lookup only checks the id range because
-  -- supplied ids come from live rows.
-  sparseUniverse :: CodeQ (Bits e) -> CodeQ Int -> q (Id e) (Id e)
+  universe       :: CodeQ (Universe e) -> q (Id e) (Id e)
   column         :: Elem r => CodeQ (Col e r) -> q (Id e) r
-  sparseColumn   :: Elem r => CodeQ (SparseCol e r) -> q (Id e) r
+  sparseColumn   :: CodeQ (SparseCol e r) -> q (Id e) r
   multiColumn    :: Elem r => CodeQ (MultiCol e r) -> q (Id e) r
   fromIndex      :: Ord d => CodeQ (Map d [r]) -> q d r
   fromCache      :: Ord d => CodeQ (Map d s) -> q d s
@@ -74,30 +72,19 @@ class SMode q where
 --------------------------------------------------------------------------------
 
 instance SMode Stream where
-  universe n       = Lin (universeProd n)
+  universe u       = Lin (universeProd u)
   column c         = Lin (columnProd c)
-  -- The mask determines the iteration extent.
-  sparseUniverse b _ = Lin Producer
-    { source       = b
-    , initialState = \_ -> [|| 0 :: Int ||]
-    , next         = \e s yield skip done ->
-        [|| case $$e of
-              Bits bs ->
-                if $$s >= bitsLen bs then $$done
-                else if atBit bs $$s
-                       then $$(yield [|| Id $$s ||] [|| Id $$s ||] [|| $$s + 1 ||])
-                       else $$(skip [|| $$s + 1 ||]) ||]
-    }
   sparseColumn c = Lin Producer
     { source       = c
     , initialState = \_ -> [|| 0 :: Int ||]
     , next         = \e s yield skip done ->
-        [|| case $$e of
-              SparseCol n _st pres ->
-                if $$s >= n then $$done
-                else if atBit pres $$s
-                       then $$(yield [|| Id $$s ||] [|| atStore _st $$s ||] [|| $$s + 1 ||])
-                       else $$(skip [|| $$s + 1 ||]) ||]
+        [|| if $$s >= sparseColLen $$e then $$done
+            else case sparseAt $$e $$s of
+                   Nothing -> $$(skip [|| $$s + 1 ||])
+                   Just value ->
+                     case boundedId (sparseColLen $$e) $$s of
+                       Just d  -> $$(yield [|| d ||] [|| value ||] [|| $$s + 1 ||])
+                       Nothing -> $$(skip [|| $$s + 1 ||]) ||]
     }
   -- Keep this flat so it remains zippable. State is @(key, cursor, rowEnd)@;
   -- `skip` advances to the next row.
@@ -108,8 +95,10 @@ instance SMode Stream where
         [|| case $$e of
               MultiCol n offs _st -> case $$s of
                 (i, j, end)
-                  | j < end   -> $$(yield [|| Id i ||] [|| atStore _st j ||]
-                                          [|| (i, j + 1, end) ||])
+                  | j < end   -> case boundedId n i of
+                                   Just d  -> $$(yield [|| d ||] [|| atStore _st j ||]
+                                                       [|| (i, j + 1, end) ||])
+                                   Nothing -> $$(skip [|| (i, j + 1, end) ||])
                   | i + 1 >= n -> $$done
                   | otherwise ->
                       let !i' = i + 1
@@ -123,7 +112,10 @@ instance SMode Stream where
               Dense n _vals seen ->
                 if $$s >= n then $$done
                 else if atBit seen $$s
-                       then $$(yield [|| Id $$s ||] [|| _vals UV.! $$s ||] [|| $$s + 1 ||])
+                       then case boundedId n $$s of
+                              Just d  -> $$(yield [|| d ||] [|| _vals UV.! $$s ||]
+                                                  [|| $$s + 1 ||])
+                              Nothing -> $$(skip [|| $$s + 1 ||])
                        else $$(skip [|| $$s + 1 ||]) ||]
     }
   fromTable t = Lin Producer
@@ -146,7 +138,9 @@ instance SMode Stream where
               Bits bs ->
                 if $$s >= bitsLen bs then $$done
                 else if atBit bs $$s
-                       then $$(yield [|| Id $$s ||] [|| Id $$s ||] [|| $$s + 1 ||])
+                       then case boundedId (bitsLen bs) $$s of
+                              Just d  -> $$(yield [|| d ||] [|| d ||] [|| $$s + 1 ||])
+                              Nothing -> $$(skip [|| $$s + 1 ||])
                        else $$(skip [|| $$s + 1 ||]) ||]
     }
   fromIndex m =
@@ -156,8 +150,7 @@ instance SMode Stream where
 
   compose  a b = Bind a (\d e -> mapkS (\_ -> d) (at b e))
   -- Strict component bindings keep column reads from crossing the inner loop as
-  -- boxed thunks. They work with the strict binding in `sfoldWhile`; see
-  -- `design/StagedPullMain.hs`.
+  -- boxed thunks. They work with the strict binding in `sfoldWhile`.
   prod     a b = Bind a (\d u -> mapkS (\_ -> d)
                                    (mapvS (\v -> [|| let !x = $$u
                                                          !y = $$v
@@ -171,39 +164,41 @@ instance SMode Stream where
 -- Keyed access
 --------------------------------------------------------------------------------
 
--- Lookup leaves range-check keys because foreign-key holes use @noId = -1@.
--- Invalid keys produce an empty stream. Storage access itself remains unchecked.
+-- Lookup leaves validate keys before reading storage. Invalid keys produce an
+-- empty stream.
 instance SMode Lookup where
-  universe n = Lookup $ \x -> mapvS (\_ -> x) (guardS [|| idInRange $$n $$x ||])
-  sparseUniverse _ n = Lookup $ \x -> mapvS (\_ -> x) (guardS [|| idInRange $$n $$x ||])
+  universe u = Lookup $ \x -> mapvS (\_ -> x) (guardS [|| containsId $$u $$x ||])
   column c = Lookup $ \x -> Lin Producer
     { source       = c
     , initialState = \_ -> [|| True ||]
     , next         = \e s yield _skip done ->
         [|| case $$e of
-              Col n _st -> case $$x of
-                Id i | $$s && 0 <= i && i < n ->
-                         $$(yield [|| () ||] [|| atStore _st i ||] [|| False ||])
-                     | otherwise -> $$done ||]
+              Col n _st ->
+                let i = idIndex $$x
+                in if $$s && i < n
+                     then $$(yield [|| () ||] [|| atStore _st i ||] [|| False ||])
+                     else $$done ||]
     }
   sparseColumn c = Lookup $ \x -> Lin Producer
     { source       = c
     , initialState = \_ -> [|| True ||]
     , next         = \e s yield _skip done ->
-        [|| case $$e of
-              SparseCol n _st pres -> case $$x of
-                Id i | $$s && 0 <= i && i < n && atBit pres i ->
-                         $$(yield [|| () ||] [|| atStore _st i ||] [|| False ||])
-                     | otherwise -> $$done ||]
+        [|| let i = idIndex $$x
+            in if $$s && i < sparseColLen $$e
+                 then case sparseAt $$e i of
+                        Just value -> $$(yield [|| () ||] [|| value ||] [|| False ||])
+                        Nothing    -> $$done
+                 else $$done ||]
     }
   -- The row's extent is read once, in `initialState`, rather than on every step. An
   -- out-of-range key gets the empty range (0, 0), which is the no-values answer.
   multiColumn c = Lookup $ \x -> Lin Producer
     { source       = c
     , initialState = \e -> [|| case $$e of
-                          MultiCol n offs _ -> case $$x of
-                            Id i | 0 <= i && i < n -> (off32 offs i, off32 offs (i + 1))
-                                 | otherwise       -> (0, 0) ||]
+                          MultiCol n offs _ ->
+                            let i = idIndex $$x
+                            in if i < n then (off32 offs i, off32 offs (i + 1))
+                                        else (0, 0) ||]
     , next = \e s yield _skip done ->
         [|| case $$e of
               MultiCol _ _ _st -> case $$s of
@@ -216,10 +211,11 @@ instance SMode Lookup where
     , initialState = \_ -> [|| True ||]
     , next         = \e s yield _skip done ->
         [|| case $$e of
-              Dense n _vals seen -> case $$x of
-                Id i | $$s && 0 <= i && i < n && atBit seen i ->
-                         $$(yield [|| () ||] [|| _vals UV.! i ||] [|| False ||])
-                     | otherwise -> $$done ||]
+              Dense n _vals seen ->
+                let i = idIndex $$x
+                in if $$s && i < n && atBit seen i
+                     then $$(yield [|| () ||] [|| _vals UV.! i ||] [|| False ||])
+                     else $$done ||]
     }
   fromTable t = Lookup $ \x -> Lin Producer
     { source       = t
@@ -259,9 +255,6 @@ instance SMode Lookup where
 -- stored. Its second argument is looked up at the VALUE rather than the key,
 -- which is what makes it different from `compose`.
 --
--- One sharp edge, shared with the Rust port: grouping by a foreign key with
--- holes puts every hole in a group of its own, keyed by `noId`, rather than
--- dropping those rows. Restrict first if that group is unwanted.
 groupBy :: Stream d r -> Lookup r k -> Stream k r
 groupBy s key = Bind s (\_ x -> mapvS (\_ -> x) (byValue (at key x)))
 
@@ -282,11 +275,15 @@ union = catS
 -- not a placeholder, it is the constraint made visible — you cannot navigate
 -- through an OR or read a value out of one, and the type says so.
 --
--- The push executor needed a separate keyed-access record with both operations
--- written out. Here it is two `anyOf`s and a `guardS`, and the short-circuit is
--- `anyOf`'s.
+-- This is two `anyOf`s and a `guardS`; short-circuiting follows directly from
+-- the pull consumer.
 disj :: Lookup d u -> Lookup d v -> Lookup d ()
 disj a b = Lookup $ \x -> guardS [|| $$(anyOf (at a x)) || $$(anyOf (at b x)) ||]
+
+-- | Resolve a stored non-negative index through its target entity universe.
+-- Missing, out-of-range, and dead identifiers all produce no value.
+resolveId :: CodeQ (Universe e) -> Lookup Int (Id e)
+resolveId domain = Lookup $ \index -> Lin (maybeProd [|| lookupId $$domain $$index ||])
 
 --------------------------------------------------------------------------------
 -- Producer-level leaves
@@ -295,11 +292,17 @@ disj a b = Lookup $ \x -> guardS [|| $$(anyOf (at a x)) || $$(anyOf (at b x)) ||
 -- The two leaves worth zipping. Everything else reaches lockstep by being
 -- materialized first, which is the honest cost of the linearity restriction.
 
-universeProd :: CodeQ Int -> Producer (Id e) (Id e)
-universeProd n = indexedProd n
-  (\size -> size)
-  (\_ i -> [|| Id $$i ||])
-  (\_ i -> [|| Id $$i ||])
+universeProd :: CodeQ (Universe e) -> Producer (Id e) (Id e)
+universeProd u = Producer
+  { source       = u
+  , initialState = \_ -> [|| 0 :: Int ||]
+  , next         = \domain index yield skip done ->
+      [|| if $$index >= universeSize $$domain
+            then $$done
+            else case lookupId $$domain $$index of
+                   Just d  -> $$(yield [|| d ||] [|| d ||] [|| $$index + 1 ||])
+                   Nothing -> $$(skip [|| $$index + 1 ||]) ||]
+  }
 
 columnProd :: Elem r => CodeQ (Col e r) -> Producer (Id e) r
 columnProd c = Producer
@@ -310,24 +313,10 @@ columnProd c = Producer
             Col size store
               | $$index >= size -> $$done
               | otherwise ->
-                  $$(yield [|| Id $$index ||] [|| atStore store $$index ||]
-                           [|| $$index + 1 ||]) ||]
-  }
-
--- A flat producer whose state is an index in @[0, size)@.
-indexedProd :: CodeQ source
-            -> (CodeQ source -> CodeQ Int)
-            -> (CodeQ source -> CodeQ Int -> CodeQ key)
-            -> (CodeQ source -> CodeQ Int -> CodeQ value)
-            -> Producer key value
-indexedProd src size keyAt valueAt = Producer
-  { source       = src
-  , initialState = \_ -> [|| 0 :: Int ||]
-  , next         = \bound index yield _skip done ->
-      [|| if $$index >= $$(size bound)
-            then $$done
-            else $$(yield (keyAt bound index) (valueAt bound index)
-                          [|| $$index + 1 ||]) ||]
+                  case boundedId size $$index of
+                    Just d  -> $$(yield [|| d ||] [|| atStore store $$index ||]
+                                        [|| $$index + 1 ||])
+                    Nothing -> $$done ||]
   }
 
 --------------------------------------------------------------------------------

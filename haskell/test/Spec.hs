@@ -1,344 +1,171 @@
--- | Two sets of tests.
---
--- First, round trips for the cache reader: write a file of each kind, map it
--- back, and check that driving the resulting column gives the pairs that went
--- in. These mirror the Rust port's cache tests, which is deliberate — the two
--- readers consume the same bytes, so a disagreement about the format is a bug in
--- one of them and the tests are the only place that shows up until there is a
--- real cache on disk to read.
---
--- Then the schema layer, using the declaration in TinySchema: write a cache
--- named the way the generated loader expects, load it, and ask questions through
--- the generated accessors. That covers the two things a generator can plausibly
--- get wrong, the filenames it reads and the sizes it gives the universes,
--- neither of which typechecking says anything about.
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
--- Every module that splices a staged query needs this; see the note at the top
--- of "TPCH.Staged" for what full laziness does to a generated loop.
 {-# OPTIONS_GHC -fno-full-laziness #-}
+
 module Main where
 
-import Control.Exception (ErrorCall, evaluate, try)
+import Control.Exception (IOException, try)
 import Control.Monad (unless)
 import Data.ByteString (ByteString)
-import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString as BS
 import Data.IORef (modifyIORef', newIORef, readIORef)
-import Data.List (sort)
-import qualified Data.Map.Strict as Map
+import Data.Maybe (isNothing)
 import System.Directory (createDirectoryIfMissing, getTemporaryDirectory)
 import System.Exit (exitFailure)
 import System.FilePath ((</>))
 
-import Prela
 import Prela.Cache
+import Prela.Id
+import qualified Prela.Pull as P
 import Prela.PullStaged.Stream (lam1)
+import Prela.Storage
 import StagedQueries (schemaQueriesS)
-import qualified TinySchema as Sch
-import TinyStaged (TinyS, loadTinyS)
+import TinyStaged (TinyS, link_universe, loadTinyS)
 
 data E
 data T
 
--- Collect every pair a driven relation emits, in order.
-pairs :: Drv d r -> IO [(d, r)]
-pairs q = do
-  ref <- newIORef []
-  drive q (\x y -> modifyIORef' ref ((x, y) :))
-  reverse <$> readIORef ref
-
--- A driven relation straight from a list, for testing an operator on input that
--- no schema has to exist for.
-fromPairs :: [(d, r)] -> Drv d r
-fromPairs ps = Drv (\k -> mapM_ (uncurry k) ps)
-
--- The same thing without IO, for the queries below. `foldAll` threads its
--- accumulator through the fused loop, so no ref is needed.
-values :: Drv d r -> [r]
-values q = reverse (foldAll (\acc y -> y : acc) [] q)
-
--- A stand-in for a query module, written the way Prela.Schema's doc recommends:
--- one function taking the record, and a `where` preamble that buys back the bare
--- spelling of each leaf. `Sch.title s` becomes `title`, which is what a query
--- against JOB will want when it mentions thirty of them.
---
--- The signatures on those bindings are load bearing rather than decorative. The
--- storage layer needs TypeFamilies, which turns on MonoLocalBinds, so without a
--- signature GHC pins each name to whichever mode it is first used at — and
--- `movie` below is driven while `year` is probed, in the same expression.
-schemaQueries :: Sch.Tiny -> ([ByteString], Int, [ByteString], [ByteString], Double)
-schemaQueries s = (sequels, recent, undated, tv, best)
-  where
-    movie :: Mode q => q (Id Sch.Movie) (Id Sch.Movie)
-    movie = Sch.movie s
-    title :: Mode q => q (Id Sch.Movie) ByteString
-    title = Sch.title s
-    year :: Mode q => q (Id Sch.Movie) Int
-    year = Sch.year s
-    rating :: Mode q => q (Id Sch.Movie) Double
-    rating = Sch.rating s
-    keyword :: Mode q => q (Id Sch.Movie) (Id Sch.Keyword)
-    keyword = Sch.keyword s
-    keywordText :: Mode q => q (Id Sch.Keyword) ByteString
-    keywordText = Sch.keywordText s
-    kind :: Mode q => q (Id Sch.Movie) (Id Sch.Kind)
-    kind = Sch.kind s
-    kindText :: Mode q => q (Id Sch.Kind) ByteString
-    kindText = Sch.kindText s
-
-    -- movie : (keyword → keywordText == "sequel") → title
-    sequels = values (compose (restrict movie (eq "sequel" (compose keyword keywordText)))
-                             title)
-
-    -- movie : (year > 1980) → year  ⊵ count
-    recent = foldAll (\n _ -> n + 1) (0 :: Int) (compose (restrict movie (gt 1980 year)) year)
-
-    -- (movie - year) → title, which is SQL's `year IS NULL`: a movie with no
-    -- year is a key the CSR column has no values for.
-    undated = values (compose (diff movie year) title)
-
-    -- the same navigation as `sequels` but through a 1:1 foreign key, so this is
-    -- also the check that a hole in that column reaches nothing
-    tv = values (compose (restrict movie (eq "tv series" (compose kind kindText))) title)
-
-    best = foldAll max 0 (compose movie rating)
-
--- The staged twin of `schemaQueries`, one splice. `lam1` emits the lambda, so
--- the record binder is introduced by the generator and the splice is allowed to
--- name it; writing @stagedQueries s = $$(schemaQueriesS [|| s ||])@ instead is
--- the stage restriction, and it does not compile.
 stagedQueries :: TinyS -> ([ByteString], Int, [ByteString], [ByteString], Double)
 stagedQueries = $$(lam1 schemaQueriesS)
 
 main :: IO ()
 main = do
-  tmp <- getTemporaryDirectory
-  let dir = tmp </> "prela-cache-test"
-  createDirectoryIfMissing True dir
-  fails <- newIORef (0 :: Int)
+  failures <- newIORef (0 :: Int)
   let check :: (Eq a, Show a) => String -> a -> a -> IO ()
-      check what got want = unless (got == want) $ do
-        putStrLn ("FAIL " ++ what ++ "\n  got  " ++ show got ++ "\n  want " ++ show want)
-        modifyIORef' fails (+ 1)
+      check label actual expected = unless (actual == expected) $ do
+        putStrLn ("FAIL " ++ label ++ "\n  got  " ++ show actual
+                  ++ "\n  want " ++ show expected)
+        modifyIORef' failures (+ 1)
 
-  -- dense integers, negatives included
+  testIdsAndPull check
+  testCacheAndStaging check
+
+  count <- readIORef failures
+  if count == 0
+    then putStrLn "all checks ok"
+    else putStrLn (show count ++ " failure(s)") >> exitFailure
+
+testIdsAndPull
+  :: (forall a. (Eq a, Show a) => String -> a -> a -> IO ())
+  -> IO ()
+testIdsAndPull check = do
+  movies <- requireUniverse "movies" 4
+  m0 <- requireId "movie 0" movies 0
+  m1 <- requireId "movie 1" movies 1
+  m2 <- requireId "movie 2" movies 2
+  m3 <- requireId "movie 3" movies 3
+
+  check "negative dense universe"
+    (isNothing (denseUniverse (-1) :: Maybe (Universe E))) True
+  check "out-of-range id" (lookupId movies 4) Nothing
+  check "negative id" (lookupId movies (-1)) Nothing
+  check "round-trip id index" (map idIndex (universeIds movies)) [0, 1, 2, 3]
+
+  let live = universeFromMask [True, False, True, False]
+  check "sparse universe enumeration" (universeIds live) [m0, m2]
+  check "sparse universe rejects dead id" (lookupId live 1) Nothing
+  check "sparse universe contains only live ids"
+    (map (containsId live) [m0, m1, m2, m3]) [True, False, True, False]
+
+  let movie :: P.Mode q => q (Id E) (Id E)
+      movie = P.universe movies
+      title :: P.Mode q => q (Id E) String
+      title = P.column ["Alien", "Aliens", "Solaris", "Alien 3"]
+      year :: P.Mode q => q (Id E) Int
+      year = P.multiColumn [[1979], [1986], [], [1992]]
+      predecessor :: P.Mode q => q (Id E) (Id E)
+      predecessor = P.sparseColumn [Nothing, Just m0, Nothing, Nothing]
+      recent :: P.Stream (Id E) String
+      recent = P.compose (P.restrict movie (P.gt 1980 year)) title
+      predecessors :: P.Stream (Id E) String
+      predecessors = P.compose predecessor title
+      sparseIdentity :: P.Lookup (Id E) (Id E)
+      sparseIdentity = P.universe live
+
+  check "plain pull query" (P.collect recent)
+    [(m1, "Aliens"), (m3, "Alien 3")]
+  check "missing foreign key is no pair" (P.collect predecessors)
+    [(m1, "Alien")]
+  check "sparse lookup agrees with enumeration"
+    (map (P.anyOf . P.at sparseIdentity) [m0, m1, m2, m3])
+    [True, False, True, False]
+
+testCacheAndStaging
+  :: (forall a. (Eq a, Show a) => String -> a -> a -> IO ())
+  -> IO ()
+testCacheAndStaging check = do
+  tmp <- getTemporaryDirectory
+  let dir = tmp </> "prela-safe-cache-test"
+      schemaDir = tmp </> "prela-safe-schema-test"
+  createDirectoryIfMissing True dir
+  createDirectoryIfMissing True schemaDir
+
   writeInts dir "ints" [7, 0, -3]
   ints <- loadInts dir "ints" :: IO (Col E Int)
-  got1 <- pairs (column ints)
-  check "dense ints" got1 [(Id 0, 7), (Id 1, 0), (Id 2, -3)]
+  check "integer cache" (columnValues ints) [7, 0, -3]
 
-  -- dense doubles
-  writeDoubles dir "dbls" [1.5, -0.25]
-  dbls <- loadDoubles dir "dbls" :: IO (Col E Double)
-  got2 <- pairs (column dbls)
-  check "dense doubles" got2 [(Id 0, 1.5), (Id 1, -0.25)]
+  writeDoubles dir "doubles" [1.5, -0.25]
+  doubles <- loadDoubles dir "doubles" :: IO (Col E Double)
+  check "double cache" (columnValues doubles) [1.5, -0.25]
 
-  -- dense ids: the holes must come back as noId, bit-for-bit, or a loaded FK
-  -- column and a hand-built one would disagree about what a hole is
-  writeIds dir "fk" [Nothing, Just (Id 0), Nothing, Just (Id 2)]
-  fk <- loadIds dir "fk" :: IO (Col E (Id T))
-  got3 <- pairs (column fk)
-  check "dense ids" got3
-    [(Id 0, noId), (Id 1, Id 0), (Id 2, noId), (Id 3, Id 2)]
+  target <- requireUniverse "cache target" 3
+  t0 <- requireId "target 0" target 0
+  t1 <- requireId "target 1" target 1
+  t2 <- requireId "target 2" target 2
+  writeIds dir "ids" [Nothing, Just t0, Nothing, Just t2]
+  ids <- loadIds dir "ids" :: IO (SparseCol E Int)
+  check "nullable id cache" (map (sparseAt ids) [0 .. 3])
+    [Nothing, Just 0, Nothing, Just 2]
 
-  -- ...and a hole must resolve to nothing when composed onto the target table,
-  -- with no presence bit anywhere: this is the whole point of the sentinel
-  writeStrs dir "label" ["zero", "one", "two"]
-  label <- loadStrs dir "label" :: IO (Col T ByteString)
-  got4 <- pairs (compose (column fk) (column label))
-  check "ids compose past holes" got4 [(Id 1, "zero"), (Id 3, "two")]
+  writeStrs dir "strings" ["ab", "", "c"]
+  strings <- loadStrs dir "strings" :: IO (Col E ByteString)
+  check "string cache" (columnValues strings) ["ab", "", "c"]
 
-  -- dense strings, with a hole as the empty string
-  writeStrs dir "strs" ["ab", "", "c"]
-  strs <- loadStrs dir "strs" :: IO (Col E ByteString)
-  got5 <- pairs (column strs)
-  check "dense strings" got5 [(Id 0, "ab"), (Id 1, ""), (Id 2, "c")]
+  wrongKind <- try (loadInts dir "strings") :: IO (Either IOException (Col E Int))
+  check "cache kind mismatch" (either (const True) (const False) wrongKind) True
+  BS.writeFile (dir </> "bad.bin") "not a cache"
+  badMagic <- try (loadStrs dir "bad") :: IO (Either IOException (Col E ByteString))
+  check "cache magic mismatch" (either (const True) (const False) badMagic) True
 
-  -- CSR words: an empty row in the middle, which is how the format spells both
-  -- "no value" and "many values"
-  writeMultiInts dir "csr" [[5, 6], [], [9]]
-  csr <- loadMultiInts dir "csr" :: IO (MultiCol E Int)
-  got6 <- pairs (multiColumn csr)
-  check "csr words" got6 [(Id 0, 5), (Id 0, 6), (Id 2, 9)]
+  -- The staged schema stores foreign indices as checked optional integers and
+  -- resolves them through the target universe inside generated code.
+  kindDomain <- requireUniverse "kinds" 2
+  kind0 <- requireId "kind 0" kindDomain 0
+  kind1 <- requireId "kind 1" kindDomain 1
+  keywordDomain <- requireUniverse "keywords" 2
+  keyword0 <- requireId "keyword 0" keywordDomain 0
+  keyword1 <- requireId "keyword 1" keywordDomain 1
+  movieDomain <- requireUniverse "schema movies" 4
+  movie0 <- requireId "schema movie 0" movieDomain 0
+  movie3 <- requireId "schema movie 3" movieDomain 3
 
-  -- an odd key count pushes the values past a 4-byte boundary, so this is the
-  -- test that the writer's pad and the reader's align8 agree
-  writeMultiIds dir "csrid" [[Id 1], [], [Id 0, Id 2], []]
-  csrid <- loadMultiIds dir "csrid" :: IO (MultiCol E (Id T))
-  got7 <- pairs (multiColumn csrid)
-  check "csr ids" got7 [(Id 0, Id 1), (Id 2, Id 0), (Id 2, Id 2)]
+  writeStrs      schemaDir "Movie_title"   ["Alien", "Aliens", "Solaris", "Alien 3"]
+  writeIds       schemaDir "Movie_kind"    [Just kind0, Just kind0, Just kind1, Nothing]
+  writeMultiInts schemaDir "Movie_year"    [[1979], [1986], [], [1992]]
+  writeMultiIds  schemaDir "Movie_keyword" [[keyword1], [keyword0, keyword1], [], [keyword0]]
+  writeDoubles   schemaDir "Movie_rating"  [8.5, 8.4, 8.0, 7.0]
+  writeStrs      schemaDir "Keyword_text"  ["sequel", "alien"]
+  writeStrs      schemaDir "Kind_text"     ["movie", "tv series"]
+  writeIds       schemaDir "Link_about"    [Just movie0, Nothing, Just movie3, Nothing]
+  writeStrs      schemaDir "Link_note"     ["first", "", "third", ""]
 
-  -- CSR strings: row offsets over string offsets over bytes
-  writeMultiStrs dir "csrstr" [["a", "bb"], [], ["c"]]
-  csrstr <- loadMultiStrs dir "csrstr" :: IO (MultiCol E ByteString)
-  got8 <- pairs (multiColumn csrstr)
-  check "csr strings" got8 [(Id 0, "a"), (Id 0, "bb"), (Id 2, "c")]
+  schema <- loadTinyS schemaDir
+  let expected = (["Aliens", "Alien 3"], 2, ["Solaris"], ["Solaris"], 8.5)
+  check "staged schema queries" (stagedQueries schema) expected
+  check "sparse schema universe" (map idIndex (universeIds (link_universe schema))) [0, 2]
+  check "dead schema id cannot be obtained" (lookupId (link_universe schema) 1) Nothing
 
-  -- a sparse universe derived from the holes in an FK column
-  let live = validityBits fk
-  got9 <- pairs (sparseUniverse live 4 :: Drv (Id E) (Id E))
-  check "validity bits" got9 [(Id 1, Id 1), (Id 3, Id 3)]
+  -- Keep all target ids used above live so the test also pins their provenance.
+  check "target ids retain their indices" (map idIndex [t0, t1, t2]) [0, 1, 2]
 
-  -- Probing that same universe consults only the range, NOT the mask, so id 0 —
-  -- a hole — is a member. The asymmetry with drive above is deliberate and is
-  -- inherited from the Rust port: a probe of a universe is only ever reached with
-  -- an id that came from a real column of that table, so a dead id cannot arrive,
-  -- and leaving the mask out keeps the probe down to one comparison. Pinned here
-  -- because it is the kind of thing a later "cleanup" would quietly change.
-  check "sparse universe probe is a range check only"
-    (map (member (sparseUniverse live 4 :: Prb (Id E) (Id E)) . Id) [0, 1, 3, 4])
-    [True, True, True, False]
+columnValues :: Elem a => Col e a -> [a]
+columnValues (Col n values) = map (atStore values) [0 .. n - 1]
 
-  -- a file of the wrong kind must fail loudly rather than reinterpret bytes
-  bad <- try (loadInts dir "strs" >>= evaluate) :: IO (Either ErrorCall (Col E Int))
-  check "kind mismatch is loud" (either (const True) (const False) bad) True
+requireUniverse :: String -> Int -> IO (Universe e)
+requireUniverse label size =
+  maybe (fail (label ++ ": invalid extent")) pure (denseUniverse size)
 
-  -- and so must a file that is not a v2 cache at all
-  writeFile (dir </> "notcache.bin") "definitely not a cache file"
-  bad2 <- try (loadStrs dir "notcache" >>= evaluate)
-            :: IO (Either ErrorCall (Col E ByteString))
-  check "bad magic is loud" (either (const True) (const False) bad2) True
-
-  ------------------------------------------------------------------------------
-  -- The schema layer
-  ------------------------------------------------------------------------------
-
-  -- Four movies. Movie 2 has no year and no keywords, movie 3's kind is a hole,
-  -- so the two ways of spelling "missing" both appear.
-  let sdir = tmp </> "prela-schema-test"
-  createDirectoryIfMissing True sdir
-  writeStrs      sdir "Movie_title"   ["Alien", "Aliens", "Solaris", "Alien 3"]
-  writeIds       sdir "Movie_kind"    [Just (Id 0), Just (Id 0), Just (Id 1), Nothing]
-  writeMultiInts sdir "Movie_year"    [[1979], [1986], [], [1992]]
-  writeMultiIds  sdir "Movie_keyword" [[Id 1], [Id 0, Id 1], [], [Id 0]]
-  writeDoubles   sdir "Movie_rating"  [8.5, 8.4, 8.0, 7.0]
-  writeStrs      sdir "Keyword_text"  ["sequel", "alien"]
-  writeStrs      sdir "Kind_text"     ["movie", "tv series"]
-  -- Four link ids, of which 1 and 3 are dead: their FK is a hole.
-  writeIds       sdir "Link_about"    [Just (Id 0), Nothing, Just (Id 3), Nothing]
-  writeStrs      sdir "Link_note"     ["first", "", "third", ""]
-  s <- Sch.loadTiny sdir
-
-  -- The loader read the right filenames, in the right kinds.
-  gotS1 <- pairs (Sch.title s)
-  check "schema: 1:1 string column" gotS1
-    [(Id 0, "Alien"), (Id 1, "Aliens"), (Id 2, "Solaris"), (Id 3, "Alien 3")]
-  gotS2 <- pairs (Sch.year s)
-  check "schema: multi-valued column" gotS2 [(Id 0, 1979), (Id 1, 1986), (Id 3, 1992)]
-
-  -- Each universe is sized from its entity's FIRST declared field, and nothing
-  -- else in the record says how big an id space is, so this is the check that the
-  -- generated `colLen` call picked the right column.
-  gotS3 <- pairs (Sch.movie s)
-  check "schema: universe from first column" gotS3 [(Id i, Id i) | i <- [0 .. 3]]
-  check "schema: universe sizes"
-    ( length (values (Sch.keywords s)), length (values (Sch.kinds s)) )
-    (2, 2)
-
-  -- Two entities both have a field named `text` on disk; `as` renamed the
-  -- accessors, and the record fields are prefixed by entity, so both survive.
-  gotS4 <- pairs (Sch.keywordText s)
-  check "schema: renamed accessors" gotS4 [(Id 0, "sequel"), (Id 1, "alien")]
-
-  -- A sparse entity's universe: the mask is derived from the holes in its first
-  -- field, so driving it skips the dead ids...
-  gotS5 <- pairs (Sch.links s)
-  check "schema: sparse universe drive" gotS5 [(Id 0, Id 0), (Id 2, Id 2)]
-
-  -- ...while probing it stays a plain range check, dead id and all. Same
-  -- asymmetry as the hand-built case above, now reached through the generator.
-  check "schema: sparse universe probe" (map (member (Sch.links s) . Id) [0, 1, 3, 4])
-    [True, True, True, False]
-
-  -- GROUP BY a non-key column: re-key the movies by their kind, then reduce.
-  --
-  -- Movie 3's kind is a hole, and it lands in a group of its OWN rather than
-  -- being dropped. That is not a bug and it is not special to `groupBy`: a hole
-  -- disappears when it is used as a KEY, because the range check then fails, and
-  -- here it is being used as a value. Rust's `group_by` does the same. Pinned
-  -- because the shape of the answer depends on it.
-  --
-  -- Sorted before comparing, here and below: a `fold` drives its hash table in
-  -- slot order, which is arbitrary and depends on the capacity it grew to. It
-  -- has never promised an order, and every query that wants one sorts.
-  let byKind = groupBy (Sch.movie s) (Sch.kind s)
-  gotG1 <- sort <$> pairs (fold (\n _ -> n + 1) (0 :: Int) byKind)
-  check "groupBy then fold, hole is its own group" gotG1 [(noId, 1), (Id 0, 2), (Id 1, 1)]
-
-  -- The idiom for excluding it: keep only the movies whose kind resolves to a
-  -- real kind. `compose (kind s) (kinds s)` is that test, and it is the ordinary
-  -- membership check rather than anything to do with grouping.
-  let byLiveKind = groupBy (restrict (Sch.movie s) (compose (Sch.kind s) (Sch.kinds s)))
-                           (Sch.kind s)
-  gotG2 <- sort <$> pairs (fold (\n _ -> n + 1) (0 :: Int) byLiveKind)
-  check "groupBy over resolvable keys only" gotG2 [(Id 0, 2), (Id 1, 1)]
-
-  -- The fold's table itself: enough distinct keys to force several rounds of
-  -- doubling from the starting capacity, so a key inserted before a rehash has
-  -- to survive being moved. Every key here shares its group with exactly two
-  -- rows, which makes a lost or conflated slot show up as a wrong count rather
-  -- than a missing row. String keys as well as ids, since those are the two
-  -- shapes the TPC-H folds actually use.
-  let manyRows = 5000 :: Int
-      tallied ks = Map.toList (Map.fromListWith (+) [(k, 1 :: Int) | k <- ks])
-      idKeys  = [Id (i `mod` 1500) | i <- [1 .. manyRows]]
-      strKeys = [BS8.pack (show (i `mod` 1500)) | i <- [1 .. manyRows]]
-  gotT1 <- sort <$> pairs (fold (\n _ -> n + 1) (0 :: Int) (fromPairs (zip idKeys [1 :: Int ..])))
-  check "fold table survives growth (id keys)" gotT1 (tallied idKeys)
-  gotT2 <- sort <$> pairs (fold (\n _ -> n + 1) (0 :: Int) (fromPairs (zip strKeys [1 :: Int ..])))
-  check "fold table survives growth (string keys)" gotT2 (tallied strKeys)
-
-  -- A compound key, which is stored as one flat array per leaf of the tuple
-  -- rather than as tuples. Nested and mixed on purpose: this is the shape Q3
-  -- groups by, and it is the case where a `Keys` built wrong would pair up
-  -- components from different rows and silently merge two groups into one.
-  let pairKeys = [ ((Id (i `mod` 37), i `mod` 11), BS8.pack (show (i `mod` 5)))
-                 | i <- [1 .. manyRows] ]
-  gotT3 <- sort <$> pairs (fold (\n _ -> n + 1) (0 :: Int)
-                                (fromPairs (zip pairKeys [1 :: Int ..])))
-  check "fold table with nested tuple keys" gotT3 (tallied pairKeys)
-
-  -- A key absent from the table must probe to nothing, which is the case that
-  -- exercises the empty-slot marker rather than the key comparison.
-  let tbl = fold (\n _ -> n + 1) (0 :: Int) (fromPairs (zip idKeys [1 :: Int ..]))
-  check "fold table probes miss cleanly"
-    (map (member tbl . Id) [0, 1499, 1500, -1]) [True, True, False, False]
-
-  -- The whole-group fold, and its main instance. Kind 1's movie has no keywords,
-  -- so that group has no rows at all and does not appear.
-  gotG3 <- pairs (bufFold id (compose byLiveKind (Sch.title s)))
-  check "bufFold keeps drive order" gotG3 [(Id 0, ["Alien", "Aliens"]), (Id 1, ["Solaris"])]
-  gotG4 <- pairs (countDistinct (compose byLiveKind (Sch.keyword s)))
-  check "countDistinct" gotG4 [(Id 0, 2 :: Int)]
-
-  -- Ranges: closed against half-open, on the same three years.
-  check "between is closed" (values (between 1979 1986 (compose (Sch.movie s) (Sch.year s))))
-    [1979, 1986]
-  check "range is half-open" (values (range 1979 1986 (compose (Sch.movie s) (Sch.year s))))
-    [1979]
-
-  let expected = ( ["Aliens", "Alien 3"]   -- keyword "sequel"
-                 , 2                       -- year > 1980
-                 , ["Solaris"]             -- no year at all
-                 , ["Solaris"]             -- kind is "tv series", reached through the FK
-                 , 8.5                     -- highest rating
-                 )
-  check "schema: queries" (schemaQueries s) expected
-
-  -- The same five queries through the staged engine, off the same files. Two
-  -- things are being checked at once: that the generated accessors read the
-  -- columns they claim to, and that the operators agree with the push engine
-  -- they are replacing.
-  --
-  -- `stagedQueries` is a splice rather than a call. `StagedQueries.schemaQueriesS`
-  -- returns the CODE of the five queries, and the lambda it is wrapped in is the
-  -- generated one, from `lam1` — a splice cannot name a binder from the module it
-  -- sits in, so the generator has to introduce it.
-  sS <- loadTinyS sdir
-  check "staged schema: queries" (stagedQueries sS) expected
-
-  n <- readIORef fails
-  if n == 0
-    then putStrLn "cache and schema: all checks ok"
-    else putStrLn (show n ++ " failure(s)") >> exitFailure
+requireId :: String -> Universe e -> Int -> IO (Id e)
+requireId label domain index =
+  maybe (fail (label ++ ": outside its universe")) pure (lookupId domain index)

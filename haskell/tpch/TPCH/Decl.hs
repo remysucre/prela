@@ -3,10 +3,8 @@
 -- (`prela/cache/Lineitem_quantity.bin` and so on), written by the Rust regen
 -- tool out of DuckDB parquet; see benchmarking.md for how to make one.
 --
--- It is a value rather than a splice so that both engines can splice the same
--- declaration: "TPCH.Schema" runs it through `declareSchema` and
--- "TPCH.StagedSchema" through `declareStagedSchema`. When the push engine goes
--- away this collapses back into one module.
+-- It is a value rather than an inline splice so the declaration and generated
+-- staged schema remain easy to inspect separately.
 --
 -- Two things about the declaration are worth reading before the queries.
 --

@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 
--- | Comparison and regex sugar, unchanged in spirit from "Prela.Push.Predicate":
+-- | Comparison and regex sugar for pull relations:
 -- each of these is `filt` with a fixed closure, not a new kind of node.
 module Prela.Pull.Predicate where
 

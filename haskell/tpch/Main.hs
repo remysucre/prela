@@ -5,8 +5,8 @@
 --   PRELA_CACHE=/somewhere cabal run prela-tpch
 --
 -- The oracles are the recorded DuckDB answers kept in ../oracles/tpch, shared
--- with the Rust port. Short ones are inlined in "TPCH.Queries"; the rest are
--- files named Q<n>.txt.
+-- with the Rust port. Short ones are in "TPCH.Oracles"; the rest are files
+-- named Q<n>.txt.
 module Main (main) where
 
 import Control.Monad (forM, unless)
@@ -18,33 +18,19 @@ import System.Exit (exitFailure)
 import System.FilePath ((</>))
 import System.IO (hSetBuffering, stdout, BufferMode (LineBuffering))
 
-import TPCH.Queries (inlineOracles)
-import qualified TPCH.Queries as Push
-import qualified TPCH.Schema as Push
+import TPCH.Oracles (inlineOracles)
 import qualified TPCH.Staged as Staged
 import qualified TPCH.StagedSchema as Staged
 
--- | Which engine to run. @PRELA_ENGINE=staged@ picks the staged pull engine in
--- "TPCH.Staged"; anything else is the push engine, which is still the one with
--- all 22 queries. The two are checked against the same oracles, so a query that
--- has been ported has to agree with DuckDB and, by construction, with its push
--- twin.
 main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
   args <- getArgs
   cacheDir <- fromMaybe "../cache" <$> lookupEnv "PRELA_CACHE"
   rounds <- maybe 2 read <$> lookupEnv "ROUNDS"
-  engine <- lookupEnv "PRELA_ENGINE"
-  case engine of
-    Just "staged" ->
-      run args rounds Staged.queries
-          (timed (Staged.loadTPCHS cacheDir >>= \r -> Staged.lineitem_n r `seq` return r))
-          cacheDir
-    _ ->
-      run args rounds Push.queries
-          (timed (Push.loadTPCH cacheDir >>= \r -> Push.lineitem_n r `seq` return r))
-          cacheDir
+  run args rounds Staged.queries
+      (timed (Staged.loadTPCHS cacheDir >>= \schema -> pure schema))
+      cacheDir
 
 run :: [String] -> Int -> [(String, a -> String)] -> IO (Double, a) -> String -> IO ()
 run args rounds queries load cacheDir = do

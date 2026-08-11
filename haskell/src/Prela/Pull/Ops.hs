@@ -13,7 +13,6 @@
 module Prela.Pull.Ops
   ( Mode (..)
   , universe
-  , sparseUniverse
   , column
   , sparseColumn
   , multiColumn
@@ -74,27 +73,25 @@ instance Mode Lookup where
 -- Leaves, as plain functions over `fromPairs`
 --------------------------------------------------------------------------------
 
--- | The identity relation on `Id 0 .. Id (n - 1)`: an entity's whole universe.
-universe :: Mode q => Int -> q (Id e) (Id e)
-universe n = fromPairs [ (Id i, Id i) | i <- [0 .. n - 1] ]
-
--- | The identity relation on an explicit set of ids — a universe with holes,
--- named by which ids survive rather than by a mask over a fixed size.
-sparseUniverse :: Mode q => [Id e] -> q (Id e) (Id e)
-sparseUniverse ids = fromPairs [ (i, i) | i <- ids ]
+-- | The identity relation on the live identifiers in an entity universe.
+universe :: Mode q => Universe e -> q (Id e) (Id e)
+universe u = fromPairs [ (i, i) | i <- universeIds u ]
 
 -- | A column: `vs !! i` is the value entity `Id i` holds.
 column :: Mode q => [r] -> q (Id e) r
-column vs = fromPairs (zip (map Id [0 ..]) vs)
+column vs = fromPairs (zip (denseIds (length vs)) vs)
 
 -- | A column with holes: `Nothing` is an entity with no value at all, not a
 -- value that happens to be absent.
 sparseColumn :: Mode q => [Maybe r] -> q (Id e) r
-sparseColumn vs = fromPairs [ (Id i, r) | (i, Just r) <- zip [0 ..] vs ]
+sparseColumn vs = fromPairs [ (i, r) | (i, Just r) <- zip (denseIds (length vs)) vs ]
 
 -- | A one-to-many column: entity `Id i` relates to every value in `vs !! i`.
 multiColumn :: Mode q => [[r]] -> q (Id e) r
-multiColumn vs = fromPairs [ (Id i, r) | (i, rs) <- zip [0 ..] vs, r <- rs ]
+multiColumn vs = fromPairs [ (i, r) | (i, rs) <- zip (denseIds (length vs)) vs, r <- rs ]
+
+denseIds :: Int -> [Id e]
+denseIds n = maybe [] universeIds (denseUniverse n)
 
 --------------------------------------------------------------------------------
 -- Fixed-mode operators

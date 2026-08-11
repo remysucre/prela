@@ -4,13 +4,10 @@
 -- generated code — and there is no physical storage, no fusion, and nothing
 -- to build against a cache.
 --
--- "Prela.Push" and "Prela.PullStaged" both exist to compile whole-relation
--- enumeration and keyed access into tight loops, and that goal shapes almost
--- everything about them: "Prela.Push.Mode"'s continuation-passing records,
--- "Prela.Storage"'s columnar layouts, and "Prela.PullStaged"'s explicit code
--- generation. None of that changes what a query MEANS. This module is what is
--- left after removing all of it — the initial spec the other two are answerable
--- to.
+-- "Prela.PullStaged" compiles whole-relation enumeration and keyed access into
+-- tight loops using explicit code generation. None of that changes what a
+-- query means. This module is the small, direct semantics that the staged
+-- implementation is answerable to.
 --
 -- Because there is no physical storage, there is also no on-disk cache and no
 -- "Prela.Schema" — a dataset here is just the plain Haskell values a query is

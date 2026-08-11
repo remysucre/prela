@@ -12,13 +12,11 @@
 -- allocates, and Prela is non-materialized by default, so making that visible in
 -- the import list is the point.
 --
--- Two things changed from "Prela.Push.Materialize", and both are consequences of the
--- engine rather than improvements bolted on.
+-- Two details follow directly from the pull representation.
 --
--- THE @STRef@ IS GONE. The push version's enumeration callback returns @m ()@,
--- so a table under construction had nowhere to live but a mutable cell, at a
--- pointer read per input row. Under pull the consumer generates the loop, so the
--- table is a loop argument — see @sfoldST@ in "Prela.PullStaged.Stream".
+-- THE ACCUMULATOR IS LOOP STATE. The consumer generates the loop, so a table
+-- under construction is a loop argument rather than a mutable reference — see
+-- @sfoldST@ in "Prela.PullStaged.Stream".
 -- FUSION.md's rule about never carrying a per-row accumulator in an `STRef` is
 -- not a rule you can break any more.
 --
@@ -343,8 +341,8 @@ withDenseOuter n op ini s k =
 -- The reduce step is `modify` rather than a read, an apply and a write, because
 -- that is the form that stays allocation-free: @op@ is applied to the slot's
 -- components and the result written straight back, with no accumulator built on
--- the heap in between. The bounds check `modify` does on top of the guard above
--- it measures as free, so this is not the unchecked `unsafeModify`.
+-- the heap in between. The vector library's checked update remains
+-- allocation-free on this guarded path.
 --
 -- The accumulator threaded through `sfoldST` is @()@: everything this loop
 -- changes is in the two arrays, which are bound once, outside it.
@@ -358,12 +356,13 @@ buildDense n op ini pre s =
         seen <- newBits cap $$pre
         () <- $$(sfoldST
                    (\acc d v ->
-                      [|| case $$d of
-                            Id i | 0 <= i && i < cap -> do
-                                     UMV.modify vals (\t -> $$(op [|| t ||] v)) i
-                                     writeArray seen i True
-                                     return $$acc
-                                 | otherwise -> return $$acc ||])
+                      [|| let i = idIndex $$d
+                          in if i < cap
+                               then do
+                                 UMV.modify vals (\t -> $$(op [|| t ||] v)) i
+                                 writeArray seen i True
+                                 return $$acc
+                               else return $$acc ||])
                    [|| () ||] s)
         Dense cap <$> UV.freeze vals <*> freeze seen) ||]
 
@@ -386,11 +385,12 @@ withBits n s k =
                         arr <- newBits cap False
                         () <- $$(sfoldST
                                    (\acc _ v ->
-                                      [|| case $$v of
-                                            Id i | 0 <= i && i < cap ->
-                                                     do writeArray arr i True
-                                                        return $$acc
-                                                 | otherwise -> return $$acc ||])
+                                      [|| let i = idIndex $$v
+                                          in if i < cap
+                                               then do
+                                                 writeArray arr i True
+                                                 return $$acc
+                                               else return $$acc ||])
                                    [|| () ||] s)
                         return arr))
       in $$(k (fromBits [|| bs ||])) ||]
