@@ -15,17 +15,9 @@ module Prela.PullStaged.Query
   , lit
   , int
   , pair
-  , tuple3
-  , tuple4
-  , tuple5
-  , tuple6
   , first
   , second
   , onPair
-  , onTuple3
-  , onTuple4
-  , onTuple5
-  , onTuple6
   , letScalar
   , ifThenElse
   , (.==.)
@@ -124,25 +116,10 @@ lit = Scalar . liftTyped
 int :: Int -> Scalar Int
 int value = Scalar [|| ($$(liftTyped value) :: Int) ||]
 
+-- | The sole generated product constructor. Larger products are nested binary
+-- pairs, matching the representation produced by relational 'O.prod'.
 pair :: Scalar a -> Scalar b -> Scalar (a, b)
 pair (Scalar a) (Scalar b) = Scalar [|| ($$a, $$b) ||]
-
-tuple3 :: Scalar a -> Scalar b -> Scalar c -> Scalar (a, b, c)
-tuple3 (Scalar a) (Scalar b) (Scalar c) = Scalar [|| ($$a, $$b, $$c) ||]
-
-tuple4 :: Scalar a -> Scalar b -> Scalar c -> Scalar d -> Scalar (a, b, c, d)
-tuple4 (Scalar a) (Scalar b) (Scalar c) (Scalar d) =
-  Scalar [|| ($$a, $$b, $$c, $$d) ||]
-
-tuple5 :: Scalar a -> Scalar b -> Scalar c -> Scalar d -> Scalar e
-       -> Scalar (a, b, c, d, e)
-tuple5 (Scalar a) (Scalar b) (Scalar c) (Scalar d) (Scalar e) =
-  Scalar [|| ($$a, $$b, $$c, $$d, $$e) ||]
-
-tuple6 :: Scalar a -> Scalar b -> Scalar c -> Scalar d -> Scalar e -> Scalar f
-       -> Scalar (a, b, c, d, e, f)
-tuple6 (Scalar a) (Scalar b) (Scalar c) (Scalar d) (Scalar e) (Scalar f) =
-  Scalar [|| ($$a, $$b, $$c, $$d, $$e, $$f) ||]
 
 first :: Scalar (a, b) -> Scalar a
 first (Scalar value) = Scalar [|| fst $$value ||]
@@ -150,43 +127,11 @@ first (Scalar value) = Scalar [|| fst $$value ||]
 second :: Scalar (a, b) -> Scalar b
 second (Scalar value) = Scalar [|| snd $$value ||]
 
+-- | Eliminate one generated binary product without exposing quotation syntax.
 onPair :: (Scalar a -> Scalar b -> Scalar c) -> Scalar (a, b) -> Scalar c
 onPair f (Scalar value) = Scalar
   [|| case $$value of
         (a, b) -> $$(scalarCode (f (Scalar [|| a ||]) (Scalar [|| b ||]))) ||]
-
-onTuple3 :: (Scalar a -> Scalar b -> Scalar c -> Scalar d)
-         -> Scalar (a, b, c) -> Scalar d
-onTuple3 f (Scalar value) = Scalar
-  [|| case $$value of
-        (a, b, c) -> $$(scalarCode
-          (f (Scalar [|| a ||]) (Scalar [|| b ||]) (Scalar [|| c ||]))) ||]
-
-onTuple4 :: (Scalar a -> Scalar b -> Scalar c -> Scalar d -> Scalar e)
-         -> Scalar (a, b, c, d) -> Scalar e
-onTuple4 f (Scalar value) = Scalar
-  [|| case $$value of
-        (a, b, c, d) -> $$(scalarCode
-          (f (Scalar [|| a ||]) (Scalar [|| b ||])
-             (Scalar [|| c ||]) (Scalar [|| d ||]))) ||]
-
-onTuple5 :: (Scalar a -> Scalar b -> Scalar c -> Scalar d -> Scalar e -> Scalar f)
-         -> Scalar (a, b, c, d, e) -> Scalar f
-onTuple5 f (Scalar value) = Scalar
-  [|| case $$value of
-        (a, b, c, d, e) -> $$(scalarCode
-          (f (Scalar [|| a ||]) (Scalar [|| b ||]) (Scalar [|| c ||])
-             (Scalar [|| d ||]) (Scalar [|| e ||]))) ||]
-
-onTuple6
-  :: (Scalar a -> Scalar b -> Scalar c -> Scalar d -> Scalar e -> Scalar f
-      -> Scalar g)
-  -> Scalar (a, b, c, d, e, f) -> Scalar g
-onTuple6 function (Scalar value) = Scalar
-  [|| case $$value of
-        (a, b, c, d, e, f) -> $$(scalarCode
-          (function (Scalar [|| a ||]) (Scalar [|| b ||]) (Scalar [|| c ||])
-                    (Scalar [|| d ||]) (Scalar [|| e ||]) (Scalar [|| f ||]))) ||]
 
 -- | Name a scalar expression once in generated code.
 letScalar :: Scalar a -> (Scalar a -> Scalar b) -> Scalar b

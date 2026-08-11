@@ -21,13 +21,20 @@ import qualified Prela.Pull as P
 import qualified Prela.PullStaged.Query as Q
 import Prela.Storage
 import StagedQueries (schemaQuery)
-import TinyStaged (TinyS, link_universe, loadTinyS)
+import TinyStaged (TinyS, link_universe, loadTinyS, loadTinySChecked)
 
 data E
 data T
 
+stagedQueryProduct
+  :: TinyS -> (((([ByteString], Int), [ByteString]), [ByteString]), Double)
+stagedQueryProduct = $$(Q.compile schemaQuery)
+
 stagedQueries :: TinyS -> ([ByteString], Int, [ByteString], [ByteString], Double)
-stagedQueries = $$(Q.compile schemaQuery)
+stagedQueries schema =
+  let ((((sequels, recent), undated), television), best) =
+        stagedQueryProduct schema
+  in (sequels, recent, undated, television, best)
 
 main :: IO ()
 main = do
@@ -102,31 +109,69 @@ testCacheAndStaging check = do
   createDirectoryIfMissing True schemaDir
 
   writeInts dir "ints" [7, 0, -3]
-  ints <- loadInts dir "ints" :: IO (Col E Int)
-  check "integer cache" (columnValues ints) [7, 0, -3]
+  ints <- loadIntsChecked dir "ints" :: IO (Col E Int)
+  intsFast <- loadInts dir "ints" :: IO (Col E Int)
+  check "integer cache" (colValues ints) [7, 0, -3]
+  check "fast integer cache" (colValues intsFast) (colValues ints)
+  check "integer column rejects negative rows" (colAt ints (-1)) Nothing
+  check "integer column rejects past-end rows" (colAt ints 3) Nothing
 
   writeDoubles dir "doubles" [1.5, -0.25]
-  doubles <- loadDoubles dir "doubles" :: IO (Col E Double)
-  check "double cache" (columnValues doubles) [1.5, -0.25]
+  doubles <- loadDoublesChecked dir "doubles" :: IO (Col E Double)
+  doublesFast <- loadDoubles dir "doubles" :: IO (Col E Double)
+  check "double cache" (colValues doubles) [1.5, -0.25]
+  check "fast double cache" (colValues doublesFast) (colValues doubles)
 
   target <- requireUniverse "cache target" 3
   t0 <- requireId "target 0" target 0
   t1 <- requireId "target 1" target 1
   t2 <- requireId "target 2" target 2
   writeIds dir "ids" [Nothing, Just t0, Nothing, Just t2]
-  ids <- loadIds dir "ids" :: IO (SparseCol E Int)
+  ids <- loadIdsChecked dir "ids" :: IO (SparseCol E Int)
+  idsFast <- loadIds dir "ids" :: IO (SparseCol E Int)
   check "nullable id cache" (map (sparseAt ids) [0 .. 3])
     [Nothing, Just 0, Nothing, Just 2]
+  check "fast nullable id cache" (map (sparseAt idsFast) [0 .. 3])
+    (map (sparseAt ids) [0 .. 3])
+  check "sparse column rejects negative rows" (sparseAt ids (-1)) Nothing
+  check "sparse column rejects past-end rows" (sparseAt ids 4) Nothing
 
   writeStrs dir "strings" ["ab", "", "c"]
-  strings <- loadStrs dir "strings" :: IO (Col E ByteString)
-  check "string cache" (columnValues strings) ["ab", "", "c"]
+  strings <- loadStrsChecked dir "strings" :: IO (Col E ByteString)
+  stringsFast <- loadStrs dir "strings" :: IO (Col E ByteString)
+  check "string cache" (colValues strings) ["ab", "", "c"]
+  check "fast string cache" (colValues stringsFast) (colValues strings)
 
-  wrongKind <- try (loadInts dir "strings") :: IO (Either IOException (Col E Int))
+  writeMultiInts dir "multi-ints" [[1, 2], [], [-3]]
+  multiInts <- loadMultiIntsChecked dir "multi-ints" :: IO (MultiCol E Int)
+  multiIntsFast <- loadMultiInts dir "multi-ints" :: IO (MultiCol E Int)
+  check "fast multi-integer cache" (multiColumnValues multiIntsFast)
+    (multiColumnValues multiInts)
+  check "multi column rejects negative rows" (multiAt multiInts (-1)) Nothing
+  check "multi column rejects past-end rows" (multiAt multiInts 3) Nothing
+
+  writeMultiIds dir "multi-ids" [[t0, t2], [], [t1]]
+  multiIds <- loadMultiIdsChecked dir "multi-ids" :: IO (MultiCol E Int)
+  multiIdsFast <- loadMultiIds dir "multi-ids" :: IO (MultiCol E Int)
+  check "fast multi-id cache" (multiColumnValues multiIdsFast)
+    (multiColumnValues multiIds)
+
+  writeMultiStrs dir "multi-strings" [["ab", ""], [], ["c"]]
+  multiStrings <- loadMultiStrsChecked dir "multi-strings" :: IO (MultiCol E ByteString)
+  multiStringsFast <- loadMultiStrs dir "multi-strings"
+    :: IO (MultiCol E ByteString)
+  check "fast multi-string cache" (multiColumnValues multiStringsFast)
+    (multiColumnValues multiStrings)
+
+  wrongKind <- try (loadIntsChecked dir "strings") :: IO (Either IOException (Col E Int))
   check "cache kind mismatch" (either (const True) (const False) wrongKind) True
   BS.writeFile (dir </> "bad.bin") "not a cache"
-  badMagic <- try (loadStrs dir "bad") :: IO (Either IOException (Col E ByteString))
+  badMagic <- try (loadStrsChecked dir "bad") :: IO (Either IOException (Col E ByteString))
   check "cache magic mismatch" (either (const True) (const False) badMagic) True
+  badMagicFast <- try (loadStrs dir "bad")
+    :: IO (Either IOException (Col E ByteString))
+  check "fast cache magic mismatch"
+    (either (const True) (const False) badMagicFast) True
 
   -- The staged schema stores foreign indices as checked optional integers and
   -- resolves them through the target universe inside generated code.
@@ -150,17 +195,21 @@ testCacheAndStaging check = do
   writeIds       schemaDir "Link_about"    [Just movie0, Nothing, Just movie3, Nothing]
   writeStrs      schemaDir "Link_note"     ["first", "", "third", ""]
 
-  schema <- loadTinyS schemaDir
+  schema <- loadTinySChecked schemaDir
+  fastSchema <- loadTinyS schemaDir
   let expected = (["Aliens", "Alien 3"], 2, ["Solaris"], ["Solaris"], 8.5)
   check "staged schema queries" (stagedQueries schema) expected
+  check "fast staged schema queries" (stagedQueries fastSchema) expected
   check "sparse schema universe" (map idIndex (universeIds (link_universe schema))) [0, 2]
+  check "fast sparse schema universe"
+    (map idIndex (universeIds (link_universe fastSchema))) [0, 2]
   check "dead schema id cannot be obtained" (lookupId (link_universe schema) 1) Nothing
 
   -- Keep all target ids used above live so the test also pins their provenance.
   check "target ids retain their indices" (map idIndex [t0, t1, t2]) [0, 1, 2]
 
-columnValues :: Elem a => Col e a -> [a]
-columnValues (Col n values) = map (atStore values) [0 .. n - 1]
+multiColumnValues :: Elem a => MultiCol e a -> [[a]]
+multiColumnValues = multiValues
 
 requireUniverse :: String -> Int -> IO (Universe e)
 requireUniverse label size =

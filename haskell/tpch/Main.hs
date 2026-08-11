@@ -3,6 +3,7 @@
 --   cabal run prela-tpch                 -- all 22, cache at ../cache
 --   cabal run prela-tpch -- 1 6 14       -- just those
 --   PRELA_CACHE=/somewhere cabal run prela-tpch
+--   PRELA_LOADER=fast cabal run prela-tpch -- trusted mmap loader
 --
 -- The oracles are the recorded DuckDB answers kept in ../oracles/tpch, shared
 -- with the Rust port. Short ones are in "TPCH.Oracles"; the rest are files
@@ -27,9 +28,15 @@ main = do
   hSetBuffering stdout LineBuffering
   args <- getArgs
   cacheDir <- fromMaybe "../cache" <$> lookupEnv "PRELA_CACHE"
+  loader <- fromMaybe "fast" <$> lookupEnv "PRELA_LOADER"
   rounds <- maybe 2 read <$> lookupEnv "ROUNDS"
+  loadSchema <- case loader of
+    "checked" -> pure Staged.loadTPCHSChecked
+    "fast"    -> pure Staged.loadTPCHS
+    other     -> putStrLn ("unknown PRELA_LOADER " ++ show other
+                           ++ "; expected checked or fast") >> exitFailure
   run args rounds Staged.queries
-      (timed (Staged.loadTPCHS cacheDir >>= \schema -> pure schema))
+      (timed (loadSchema cacheDir >>= \schema -> pure schema))
       cacheDir
 
 run :: [String] -> Int -> [(String, a -> String)] -> IO (Double, a) -> String -> IO ()

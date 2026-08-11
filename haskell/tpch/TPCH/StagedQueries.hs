@@ -82,7 +82,7 @@ q1 :: Q.Query TPCHS [((ByteString, ByteString), Q1Acc)]
 q1 = Q.query build
   where
     build s = do
-      tbl <- Q.groupFold step (Q.tuple6 0 0 0 0 0 0) grouped
+      tbl <- Q.groupFold step (q1Acc 0 0 0 0 0 (Q.int 0)) grouped
       pure (Q.collect (Q.stream tbl))
       where
         grouped :: Stream (ByteString, ByteString) (((Double, Double), Double), Double)
@@ -93,19 +93,38 @@ q1 = Q.query build
         step acc = Q.onPair $ \edc tx ->
           Q.onPair (\qe dc ->
             Q.onPair (\q e ->
-              Q.onTuple6 (\qty ext di dp chg n ->
+              onQ1Acc (\qty ext di dp chg n ->
                 Q.letScalar (e * (1 - dc)) $ \dpInc ->
                 Q.letScalar (dpInc * (1 + tx)) $ \chgInc ->
-                  Q.tuple6 (qty + q) (ext + e) (di + dc)
-                           (dp + dpInc) (chg + chgInc) (n + 1)) acc) qe) edc
+                  q1Acc (qty + q) (ext + e) (di + dc)
+                        (dp + dpInc) (chg + chgInc) (n + Q.int 1)) acc) qe) edc
 
--- The accumulator needs a name because `Q.groupFold` demands `UV.Unbox` on it, and
--- a bare six-tuple has no such instance. This is the one place staging asks for
--- something ordinary generated loops cannot infer implicitly.
-type Q1Acc = (Double, Double, Double, Double, Double, Int)
+-- Binary products are the sole product representation in the query DSL. These
+-- two local helpers give Q1's six-field accumulator meaningful order without
+-- adding tuple-arity operations to the generic API.
+type Q1Acc = (((((Double, Double), Double), Double), Double), Int)
+
+q1Acc
+  :: Q.Scalar Double -> Q.Scalar Double -> Q.Scalar Double
+  -> Q.Scalar Double -> Q.Scalar Double -> Q.Scalar Int -> Q.Scalar Q1Acc
+q1Acc qty ext di dp chg n =
+  Q.pair (Q.pair (Q.pair (Q.pair (Q.pair qty ext) di) dp) chg) n
+
+onQ1Acc
+  :: (Q.Scalar Double -> Q.Scalar Double -> Q.Scalar Double
+      -> Q.Scalar Double -> Q.Scalar Double -> Q.Scalar Int -> Q.Scalar a)
+  -> Q.Scalar Q1Acc -> Q.Scalar a
+onQ1Acc use = Q.onPair $ \qtyExtDiDpChg n ->
+  Q.onPair (\qtyExtDiDp chg ->
+    Q.onPair (\qtyExtDi dp ->
+      Q.onPair (\qtyExt di ->
+        Q.onPair (\qty ext -> use qty ext di dp chg n) qtyExt)
+        qtyExtDi)
+      qtyExtDiDp)
+    qtyExtDiDpChg
 
 fmt1 :: ((ByteString, ByteString), Q1Acc) -> String
-fmt1 ((rf, ls), (qty, ext, di, dp, chg, n)) =
+fmt1 ((rf, ls), (((((qty, ext), di), dp), chg), n)) =
   row [ bs rf, bs ls, f2 qty, f2 ext, f2 dp, f2 chg
       , f2 (qty / nf), f2 (ext / nf), f2 (di / nf), show n ]
   where nf = fromIntegral n

@@ -1,10 +1,10 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- | Checked reading and writing of cache-format-v2 column files.
+-- | Fast and checked reading, plus writing, of cache-format-v2 column files.
 --
--- The reader validates dimensions and offsets before constructing storage. It
--- copies numeric payloads into vectors instead of reinterpreting mmap memory, so
--- no unchecked pointer or indexing operations are required.
+-- Unsuffixed readers are the default trusted mmap path. The @Checked@ readers
+-- validate every offset and identifier and copy numeric payloads into managed
+-- storage. Both paths construct the same column types.
 module Prela.Cache
   ( loadInts
   , loadDoubles
@@ -13,6 +13,13 @@ module Prela.Cache
   , loadMultiInts
   , loadMultiIds
   , loadMultiStrs
+  , loadIntsChecked
+  , loadDoublesChecked
+  , loadIdsChecked
+  , loadStrsChecked
+  , loadMultiIntsChecked
+  , loadMultiIdsChecked
+  , loadMultiStrsChecked
   , validityBits
   , validityUniverse
   , writeInts
@@ -34,15 +41,20 @@ import Data.Bits (shiftL, (.|.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as B
+import qualified Data.ByteString.Internal as BSI
 import qualified Data.ByteString.Lazy as BL
 import Data.Int (Int64)
 import qualified Data.Vector.Storable as V
 import Data.Word (Word32, Word64)
+import Foreign.ForeignPtr (castForeignPtr)
+import Foreign.Storable (Storable, alignment, sizeOf)
+import GHC.ByteOrder (ByteOrder (LittleEndian), targetByteOrder)
 import GHC.Float (castWord64ToDouble)
 import System.FilePath ((</>))
+import System.IO.MMap (mmapFileByteString)
 
 import Prela.Id
-import Prela.Storage
+import Prela.Storage.Internal
 
 data Kind
   = DenseI64
@@ -74,10 +86,12 @@ align8 x = (x + 7) `div` 8 * 8
 cacheError :: FilePath -> String -> IO a
 cacheError path message = ioError (userError (path ++ ": " ++ message))
 
-open :: FilePath -> String -> Kind -> IO (FilePath, Int, Int, ByteString)
-open dir name expected = do
+openWith
+  :: (FilePath -> IO ByteString)
+  -> FilePath -> String -> Kind -> IO (FilePath, Int, Int, ByteString)
+openWith readBytes dir name expected = do
   let path = dir </> name ++ ".bin"
-  bytes <- BS.readFile path
+  bytes <- readBytes path
   unless (BS.length bytes >= headerLen && BS.take 8 bytes == magic) $
     cacheError path "not a cache-format-v2 file"
   let actual = fromIntegral (wordLE bytes 8 4) :: Word32
@@ -89,6 +103,16 @@ open dir name expected = do
   n <- countToInt path "primary count" (wordLE bytes 16 8)
   m <- countToInt path "secondary count" (wordLE bytes 24 8)
   pure (path, n, m, bytes)
+
+openChecked :: FilePath -> String -> Kind -> IO (FilePath, Int, Int, ByteString)
+openChecked = openWith BS.readFile
+
+openFast :: FilePath -> String -> Kind -> IO (FilePath, Int, Int, ByteString)
+openFast dir name expected = do
+  let path = dir </> name ++ ".bin"
+  unless (targetByteOrder == LittleEndian && sizeOf (0 :: Int) == 8) $
+    cacheError path "fast cache loading requires a little-endian 64-bit host"
+  openWith (\file -> mmapFileByteString file Nothing) dir name expected
 
 countToInt :: FilePath -> String -> Word64 -> IO Int
 countToInt path label value
@@ -132,17 +156,114 @@ validateOffsets path label limit offsets = do
   unless (fromIntegral (V.last offsets) == limit) $
     cacheError path (label ++ " final offset does not match its payload count")
 
+--------------------------------------------------------------------------------
+-- Trusted mmap readers (the default)
+--------------------------------------------------------------------------------
+
+successor :: FilePath -> String -> Int -> IO Int
+successor path label value
+  | value == maxBound = cacheError path (label ++ " is too large")
+  | otherwise = pure (value + 1)
+
+-- The full-file mmap begins on a page boundary and every typed cache section is
+-- 4- or 8-byte aligned. The vector retains the mapping's ForeignPtr, so it is
+-- unmapped when the loaded schema becomes unreachable rather than leaked.
+mappedVector
+  :: forall a. Storable a
+  => FilePath -> ByteString -> Int -> Int -> V.Vector a
+mappedVector path bytes byteOffset count
+  | totalOffset `mod` alignment (undefined :: a) /= 0 =
+      error (path ++ ": mapped cache payload is misaligned")
+  | otherwise =
+      V.unsafeFromForeignPtr (castForeignPtr backing) elementOffset count
+  where
+    (backing, baseOffset, _) = BSI.toForeignPtr bytes
+    totalOffset = baseOffset + byteOffset
+    elementOffset = totalOffset `div` sizeOf (undefined :: a)
+
 loadInts :: FilePath -> String -> IO (Col e Int)
 loadInts dir name = do
-  (path, n, m, bytes) <- open dir name DenseI64
+  (path, n, m, bytes) <- openFast dir name DenseI64
+  unless (m == 0) (cacheError path "dense integer secondary count must be zero")
+  end <- sliceEnd path bytes headerLen n 8
+  requireExactEnd path bytes end
+  pure (Col n (IntStore (mappedVector path bytes headerLen n)))
+
+loadDoubles :: FilePath -> String -> IO (Col e Double)
+loadDoubles dir name = do
+  (path, n, m, bytes) <- openFast dir name DenseF64
+  unless (m == 0) (cacheError path "dense double secondary count must be zero")
+  end <- sliceEnd path bytes headerLen n 8
+  requireExactEnd path bytes end
+  pure (Col n (DblStore (mappedVector path bytes headerLen n)))
+
+loadIds :: FilePath -> String -> IO (SparseCol e Int)
+loadIds dir name = do
+  (path, n, m, bytes) <- openFast dir name DenseI64
+  unless (m == 0) (cacheError path "dense id secondary count must be zero")
+  end <- sliceEnd path bytes headerLen n 8
+  requireExactEnd path bytes end
+  let values = mappedVector path bytes headerLen n :: V.Vector Word64
+  pure (SparseWordCol values)
+
+loadStrs :: FilePath -> String -> IO (Col e ByteString)
+loadStrs dir name = do
+  (path, n, byteCount, bytes) <- openFast dir name DenseStr
+  offsetCount <- successor path "string count" n
+  offsetEnd <- sliceEnd path bytes headerLen offsetCount 4
+  dataEnd <- sliceEnd path bytes offsetEnd byteCount 1
+  requireExactEnd path bytes dataEnd
+  let offsets = mappedVector path bytes headerLen offsetCount :: V.Vector Word32
+      payload = BS.take byteCount (BS.drop offsetEnd bytes)
+  pure (Col n (BsStore offsets payload))
+
+loadMultiInts :: FilePath -> String -> IO (MultiCol e Int)
+loadMultiInts = loadMultiWords
+
+loadMultiIds :: FilePath -> String -> IO (MultiCol e Int)
+loadMultiIds = loadMultiWords
+
+loadMultiWords :: FilePath -> String -> IO (MultiCol e Int)
+loadMultiWords dir name = do
+  (path, n, m, bytes) <- openFast dir name CsrWords
+  offsetCount <- successor path "row count" n
+  offsetsEnd <- sliceEnd path bytes headerLen offsetCount 4
+  let valuesAt = align8 offsetsEnd
+  when (valuesAt > BS.length bytes) $
+    cacheError path "aligned values offset lies past end of file"
+  valuesEnd <- sliceEnd path bytes valuesAt m 8
+  requireExactEnd path bytes valuesEnd
+  let offsets = mappedVector path bytes headerLen offsetCount :: V.Vector Word32
+      values = mappedVector path bytes valuesAt m :: V.Vector Int
+  pure (MultiCol n offsets (IntStore values))
+
+loadMultiStrs :: FilePath -> String -> IO (MultiCol e ByteString)
+loadMultiStrs dir name = do
+  (path, n, m, bytes) <- openFast dir name CsrStr
+  rowCount <- successor path "row count" n
+  stringCount <- successor path "string count" m
+  rowEnd <- sliceEnd path bytes headerLen rowCount 4
+  stringEnd <- sliceEnd path bytes rowEnd stringCount 4
+  let rowOffsets = mappedVector path bytes headerLen rowCount :: V.Vector Word32
+      stringOffsets = mappedVector path bytes rowEnd stringCount :: V.Vector Word32
+      payload = BS.drop stringEnd bytes
+  pure (MultiCol n rowOffsets (BsStore stringOffsets payload))
+
+--------------------------------------------------------------------------------
+-- Fully checked readers
+--------------------------------------------------------------------------------
+
+loadIntsChecked :: FilePath -> String -> IO (Col e Int)
+loadIntsChecked dir name = do
+  (path, n, m, bytes) <- openChecked dir name DenseI64
   unless (m == 0) (cacheError path "dense integer secondary count must be zero")
   end <- sliceEnd path bytes headerLen n 8
   requireExactEnd path bytes end
   pure (Col n (IntStore (ints64 bytes headerLen n)))
 
-loadDoubles :: FilePath -> String -> IO (Col e Double)
-loadDoubles dir name = do
-  (path, n, m, bytes) <- open dir name DenseF64
+loadDoublesChecked :: FilePath -> String -> IO (Col e Double)
+loadDoublesChecked dir name = do
+  (path, n, m, bytes) <- openChecked dir name DenseF64
   unless (m == 0) (cacheError path "dense double secondary count must be zero")
   end <- sliceEnd path bytes headerLen n 8
   requireExactEnd path bytes end
@@ -150,9 +271,9 @@ loadDoubles dir name = do
 
 -- | Load a nullable foreign-key column. The on-disk all-ones sentinel becomes
 -- absence in a sparse relation and is never represented as an 'Id'.
-loadIds :: FilePath -> String -> IO (SparseCol e Int)
-loadIds dir name = do
-  (path, n, m, bytes) <- open dir name DenseI64
+loadIdsChecked :: FilePath -> String -> IO (SparseCol e Int)
+loadIdsChecked dir name = do
+  (path, n, m, bytes) <- openChecked dir name DenseI64
   unless (m == 0) (cacheError path "dense id secondary count must be zero")
   end <- sliceEnd path bytes headerLen n 8
   requireExactEnd path bytes end
@@ -163,9 +284,9 @@ decodeOptionalIndex :: FilePath -> Word64 -> IO (Maybe Int)
 decodeOptionalIndex _ value | value == holeWord = pure Nothing
 decodeOptionalIndex path value = Just <$> countToInt path "identifier" value
 
-loadStrs :: FilePath -> String -> IO (Col e ByteString)
-loadStrs dir name = do
-  (path, n, byteCount, bytes) <- open dir name DenseStr
+loadStrsChecked :: FilePath -> String -> IO (Col e ByteString)
+loadStrsChecked dir name = do
+  (path, n, byteCount, bytes) <- openChecked dir name DenseStr
   offsetEnd <- sliceEnd path bytes headerLen (n + 1) 4
   dataEnd <- sliceEnd path bytes offsetEnd byteCount 1
   requireExactEnd path bytes dataEnd
@@ -174,25 +295,25 @@ loadStrs dir name = do
   validateOffsets path "string" byteCount offsets
   pure (Col n (BsStore offsets payload))
 
-loadMultiInts :: FilePath -> String -> IO (MultiCol e Int)
-loadMultiInts dir name = do
-  (n, offsets, values) <- csrWords dir name
+loadMultiIntsChecked :: FilePath -> String -> IO (MultiCol e Int)
+loadMultiIntsChecked dir name = do
+  (n, offsets, values) <- csrWordsChecked dir name
   pure (MultiCol n offsets (IntStore (V.map fromIntegral values)))
 
-loadMultiIds :: FilePath -> String -> IO (MultiCol e Int)
-loadMultiIds dir name = do
-  (path, n, offsets, values) <- csrWord64 dir name
+loadMultiIdsChecked :: FilePath -> String -> IO (MultiCol e Int)
+loadMultiIdsChecked dir name = do
+  (path, n, offsets, values) <- csrWord64Checked dir name
   identifiers <- traverse (countToInt path "identifier") (V.toList values)
   pure (MultiCol n offsets (packStore identifiers))
 
-csrWords :: FilePath -> String -> IO (Int, V.Vector Word32, V.Vector Int64)
-csrWords dir name = do
-  (_path, n, offsets, values) <- csrWord64 dir name
+csrWordsChecked :: FilePath -> String -> IO (Int, V.Vector Word32, V.Vector Int64)
+csrWordsChecked dir name = do
+  (_path, n, offsets, values) <- csrWord64Checked dir name
   pure (n, offsets, V.map fromIntegral values)
 
-csrWord64 :: FilePath -> String -> IO (FilePath, Int, V.Vector Word32, V.Vector Word64)
-csrWord64 dir name = do
-  (path, n, m, bytes) <- open dir name CsrWords
+csrWord64Checked :: FilePath -> String -> IO (FilePath, Int, V.Vector Word32, V.Vector Word64)
+csrWord64Checked dir name = do
+  (path, n, m, bytes) <- openChecked dir name CsrWords
   offsetsEnd <- sliceEnd path bytes headerLen (n + 1) 4
   let valuesAt = align8 offsetsEnd
   when (valuesAt > BS.length bytes) (cacheError path "aligned values offset lies past end of file")
@@ -202,9 +323,9 @@ csrWord64 dir name = do
   validateOffsets path "row" m offsets
   pure (path, n, offsets, words64 bytes valuesAt m)
 
-loadMultiStrs :: FilePath -> String -> IO (MultiCol e ByteString)
-loadMultiStrs dir name = do
-  (path, n, m, bytes) <- open dir name CsrStr
+loadMultiStrsChecked :: FilePath -> String -> IO (MultiCol e ByteString)
+loadMultiStrsChecked dir name = do
+  (path, n, m, bytes) <- openChecked dir name CsrStr
   rowEnd <- sliceEnd path bytes headerLen (n + 1) 4
   stringEnd <- sliceEnd path bytes rowEnd (m + 1) 4
   let rowOffsets = words32 bytes headerLen (n + 1)

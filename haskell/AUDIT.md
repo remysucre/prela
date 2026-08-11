@@ -40,15 +40,14 @@ Push backend and its obsolete design prototypes have been removed.
   missing references as absent pairs.
 - The unstaged `index` materializer now accumulates in linear time rather than
   appending to each group repeatedly.
+- `Prela.Storage` exposes abstract storage types, checked construction and safe
+  inspection only. Physical stores, cache-only constructors, key arrays, and
+  hash-table operations live in `Prela.Storage.Internal`.
+- Direct and staged `Stream`/`Lookup` types are abstract. Existential `Producer`
+  state and plan constructors live in their respective `.Internal` modules,
+  and mutable materializer helpers are no longer part of the public API.
 
 ## Remaining worthwhile improvements
-
-### Narrow the public storage surface
-
-`Prela.Storage` still exports representation constructors because generated
-schema code and low-level experiments use them. A cleaner package split would
-move constructors, hash-table internals, and producer machinery to `.Internal`
-modules while keeping checked smart constructors and query combinators public.
 
 ### Make dense materializers universe-directed
 
@@ -65,6 +64,8 @@ use `do` notation, and complete queries use `Q.query`/`Q.compile`. All 22 TPC-H
 builders are quote-free. They return typed rows or scalars; ordinary `renderN`
 functions perform result sorting, limiting, and formatting after compilation.
 Typed quotation remains confined to the façade and low-level executor modules.
+Generated products use only `pair`/`onPair`; larger products nest rather than
+expanding into an arity-specific family of tuple combinators.
 
 ### Automate performance contracts
 

@@ -19,9 +19,6 @@ module Prela.PullStaged.Ops
   , leftCompose
   , union
   , disj
-    -- * Producer-level leaves, for lockstep
-  , universeProd
-  , columnProd
   , resolveId
   ) where
 
@@ -32,8 +29,8 @@ import qualified Data.Vector.Unboxed as UV
 import Language.Haskell.TH (CodeQ)
 
 import Prela.Id
-import Prela.PullStaged.Stream
-import Prela.Storage
+import Prela.PullStaged.Stream.Internal
+import Prela.Storage.Internal
 
 -- Storage fields use leading underscores because consumers such as `count` may
 -- discard values. In that case staging removes the read and leaves the field

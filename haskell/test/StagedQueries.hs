@@ -14,8 +14,9 @@
 -- The schema argument is a generation-time reference, so a leaf like
 -- @Sch.title s@ describes a generated column read.
 --
--- Each `Q.collect` and `Q.foldAll` emits its own loop. `Q.tuple5` assembles the
--- five generated scalar results without exposing quotation syntax.
+-- Each `Q.collect` and `Q.foldAll` emits its own loop. Binary `Q.pair` is the
+-- sole generated product constructor, so larger products nest exactly like
+-- relational `prod` results.
 --
 -- And the @where@ preamble that buys back the bare spelling of each leaf works
 -- exactly as it did before, signatures and all, for exactly the same reason:
@@ -31,11 +32,14 @@ import Prela.Id (Id)
 import qualified TinyStaged as Sch
 
 schemaQuery :: Q.Query Sch.TinyS
-               ([ByteString], Int, [ByteString], [ByteString], Double)
+               (((([ByteString], Int), [ByteString]), [ByteString]), Double)
 schemaQuery = Q.query build
   where
     build s =
-      pure (Q.tuple5 (values sequels) recent (values undated) (values tv) best)
+      pure (Q.pair
+        (Q.pair (Q.pair (Q.pair (values sequels) recent) (values undated))
+                (values tv))
+        best)
       where
         values q = Q.mapList Q.second (Q.collect q)
 

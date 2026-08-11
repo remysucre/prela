@@ -23,7 +23,7 @@ module Prela.Pull.Ops
   ) where
 
 import Prela.Id
-import Prela.Pull.Stream
+import Prela.Pull.Stream.Internal
 
 class Mode q where
   -- | The one leaf. A relation is exactly the pairs it is built from.

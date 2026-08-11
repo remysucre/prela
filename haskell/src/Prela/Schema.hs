@@ -4,8 +4,8 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
 
--- | Generate staged schema storage, checked loaders, and query accessors from a
--- compact entity declaration.
+-- | Generate staged schema storage, default mmap and explicit checked loaders,
+-- and query accessors from a compact entity declaration.
 module Prela.Schema
   ( Ty, str, int, dbl, ref
   , Field, one, many, as
@@ -166,28 +166,37 @@ upperFirst [] = []
 
 loaderDeclarations :: Name -> [Ent] -> Q [Dec]
 loaderDeclarations recordName entities = do
-  directory <- newName "directory"
-  groups <- mapM binders entities
-  columnStatements <- sequence
-    [ bindS (varP value)
-        [| $(loadFunction field) $(varE directory)
-             $(litE (stringL (eName ent ++ "_" ++ fFile field))) |]
-    | (ent, _, fields) <- groups
-    , (field, value) <- fields
-    ]
-  universeStatements <- mapM universeStatement groups
-  let arguments = concat
-        [ VarE universeValue : map (VarE . snd) fields
-        | (_, universeValue, fields) <- groups
-        ]
-      constructor = foldl AppE (ConE recordName) arguments
-      body = doE (map pure (columnStatements ++ universeStatements)
-                  ++ [noBindS (appE [| pure |] (pure constructor))])
-      loaderName = mkName ("load" ++ nameBase recordName)
-  signature <- sigD loaderName [t| FilePath -> IO $(conT recordName) |]
-  function <- funD loaderName [clause [varP directory] (normalB body) []]
-  pure [signature, function]
+  let defaultName = mkName ("load" ++ nameBase recordName)
+      checkedName = mkName ("load" ++ nameBase recordName ++ "Checked")
+      fastName = mkName ("load" ++ nameBase recordName ++ "Fast")
+  defaultDeclarations <- makeLoader defaultName loadFunction
+  checkedDeclarations <- makeLoader checkedName loadCheckedFunction
+  fastSignature <- sigD fastName [t| FilePath -> IO $(conT recordName) |]
+  fastAlias <- valD (varP fastName) (normalB (varE defaultName)) []
+  pure (defaultDeclarations ++ checkedDeclarations ++ [fastSignature, fastAlias])
   where
+    makeLoader loaderName fieldLoader = do
+      directory <- newName "directory"
+      groups <- mapM binders entities
+      columnStatements <- sequence
+        [ bindS (varP value)
+            [| $(fieldLoader field) $(varE directory)
+                 $(litE (stringL (eName ent ++ "_" ++ fFile field))) |]
+        | (ent, _, fields) <- groups
+        , (field, value) <- fields
+        ]
+      universeStatements <- mapM universeStatement groups
+      let arguments = concat
+            [ VarE universeValue : map (VarE . snd) fields
+            | (_, universeValue, fields) <- groups
+            ]
+          constructor = foldl AppE (ConE recordName) arguments
+          body = doE (map pure (columnStatements ++ universeStatements)
+                      ++ [noBindS (appE [| pure |] (pure constructor))])
+      signature <- sigD loaderName [t| FilePath -> IO $(conT recordName) |]
+      function <- funD loaderName [clause [varP directory] (normalB body) []]
+      pure [signature, function]
+
     binders ent = do
       universeValue <- newName "universe"
       fields <- mapM (\field -> (,) field <$> newName "column") (eFields ent)
@@ -352,5 +361,17 @@ loadFunction field = case (fMany field, fTy field) of
   (True, TInt)     -> [| loadMultiInts |]
   (True, TStr)     -> [| loadMultiStrs |]
   (True, TRef _)   -> [| loadMultiIds |]
+  (True, TDouble)  ->
+    fail ("declareStagedSchema: no multi-valued float cache kind for " ++ show (fFile field))
+
+loadCheckedFunction :: Field -> Q Exp
+loadCheckedFunction field = case (fMany field, fTy field) of
+  (False, TInt)    -> [| loadIntsChecked |]
+  (False, TDouble) -> [| loadDoublesChecked |]
+  (False, TStr)    -> [| loadStrsChecked |]
+  (False, TRef _)  -> [| loadIdsChecked |]
+  (True, TInt)     -> [| loadMultiIntsChecked |]
+  (True, TStr)     -> [| loadMultiStrsChecked |]
+  (True, TRef _)   -> [| loadMultiIdsChecked |]
   (True, TDouble)  ->
     fail ("declareStagedSchema: no multi-valued float cache kind for " ++ show (fFile field))
