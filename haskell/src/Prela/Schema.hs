@@ -24,6 +24,7 @@ import Language.Haskell.TH.Syntax (Lift, liftTyped)
 import Prela.Cache
 import Prela.Id
 import qualified Prela.PullStaged.Ops as S
+import qualified Prela.PullStaged.Query as Q
 import Prela.Storage
 
 data Ty = TInt | TDouble | TStr | TRef String
@@ -89,6 +90,8 @@ declareStagedSchema schemaName entities
       pure (tags ++ [record] ++ projections ++ loader ++ accessors)
   where
     claimed = [ (eUniv ent, "the " ++ eName ent ++ " universe") | ent <- entities ]
+           ++ [ (extentAccessorName ent, "the " ++ eName ent ++ " extent")
+              | ent <- entities ]
            ++ [ (fAs field, eName ent ++ "." ++ fFile field)
               | ent <- entities, field <- eFields ent ]
     clashes = [ (name, owners)
@@ -226,8 +229,9 @@ checkedExtent entityName lengths = case lengths of
 accessorDeclarations :: Name -> Ent -> Q [Dec]
 accessorDeclarations recordName ent = do
   universeAccessor <- makeUniverseAccessor
+  extentAccessor <- makeExtentAccessor
   fieldAccessors <- concat <$> mapM makeFieldAccessor (eFields ent)
-  pure (universeAccessor ++ fieldAccessors)
+  pure (universeAccessor ++ extentAccessor ++ fieldAccessors)
   where
     tag = conT (mkName (eName ent))
     recordCode = [t| CodeQ $(conT recordName) |]
@@ -244,6 +248,16 @@ accessorDeclarations recordName ent = do
       signature <- sigD name
         [t| forall q. S.SMode q => $recordCode -> q (Id $tag) (Id $tag) |]
       function <- funD name [clause [varP record] (normalB [| S.universe $domain |]) []]
+      inlinePragma <- pragInlD name Inline FunLike AllPhases
+      pure [signature, function, inlinePragma]
+
+    makeExtentAccessor = do
+      record <- newName "schema"
+      let name = mkName (extentAccessorName ent)
+          domain = get record (universeFieldName ent)
+      signature <- sigD name [t| $recordCode -> Q.Scalar Int |]
+      function <- funD name
+        [clause [varP record] (normalB [| Q.extent $domain |]) []]
       inlinePragma <- pragInlD name Inline FunLike AllPhases
       pure [signature, function, inlinePragma]
 
@@ -289,6 +303,9 @@ universeFieldName = universeFieldNameByName . eName
 
 universeFieldNameByName :: String -> Name
 universeFieldNameByName entityName = mkName (lowerFirst entityName ++ "_universe")
+
+extentAccessorName :: Ent -> String
+extentAccessorName ent = lowerFirst (eName ent) ++ "Extent"
 
 lowerFirst :: String -> String
 lowerFirst (first : rest) = toLower first : rest

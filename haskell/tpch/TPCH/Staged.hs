@@ -21,54 +21,50 @@
 -- The flag is the fix, and it is the same one `vector` recommends for fused
 -- pipelines.
 --
--- @OverloadedStrings@ is here for a related reason. A literal inside a quote is
--- spliced back as a literal, so @[|| BS.isInfixOf "green" $$v ||]@ in Q9 lands
--- here still needing to mean a `ByteString`. Extensions that change what a piece
--- of syntax MEANS have to hold at both ends.
+-- @OverloadedStrings@ is here for a related reason. The façade emits string
+-- literals into this module, where they still need to mean `ByteString`.
 --
--- @FlexibleContexts@ is the same story one step further out. `withBits` emits a
+-- @FlexibleContexts@ is the same story one step further out. `Q.bitset` emits a
 -- loop whose inferred type mentions @MArray (STUArray s) Bool m@, and the
 -- inference happens at the SPLICE site, so the extension that permits such a
 -- constraint has to be on here rather than where the quote was written.
 --
--- Nothing but splices lives here, and that is forced rather than chosen: a
--- splice cannot name a binding of the module it sits in, so the generators and
--- the formatting they emit calls to have to be somewhere else. That somewhere is
--- "TPCH.StagedQueries".
+-- This module is the explicit boundary: each splice produces a function that
+-- computes typed rows, then an ordinary `renderN` function sorts, limits, and
+-- formats them. Query definitions themselves contain no quotation syntax.
 --
--- `lam1` is what supplies the schema argument. Writing @f s = $$(q6 [|| s ||])@
--- would be the natural thing and does not compile, because @s@ is a runtime
--- binder and the splice runs before it exists; `lam1` has the GENERATOR
--- introduce the binder inside the quote instead.
+-- `Q.compile` supplies the schema argument inside generated code. Query authors
+-- therefore write an ordinary @Q.query $ \s -> ...@ builder; the public surface
+-- keeps the binder-introduction trick inside the compiler.
 module TPCH.Staged (queries) where
 
-import Prela.PullStaged.Stream (lam1)
+import qualified Prela.PullStaged.Query as Q
 
 import TPCH.StagedQueries
 import TPCH.StagedSchema (TPCHS)
 
 queries :: [(String, TPCHS -> String)]
 queries =
-  [ ("1",  $$(lam1 q1))
-  , ("2",  $$(lam1 q2))
-  , ("3",  $$(lam1 q3))
-  , ("4",  $$(lam1 q4))
-  , ("5",  $$(lam1 q5))
-  , ("6",  $$(lam1 q6))
-  , ("7",  $$(lam1 q7))
-  , ("8",  $$(lam1 q8))
-  , ("9",  $$(lam1 q9))
-  , ("10", $$(lam1 q10))
-  , ("11", $$(lam1 q11))
-  , ("12", $$(lam1 q12))
-  , ("13", $$(lam1 q13))
-  , ("14", $$(lam1 q14))
-  , ("15", $$(lam1 q15))
-  , ("16", $$(lam1 q16))
-  , ("17", $$(lam1 q17))
-  , ("18", $$(lam1 q18))
-  , ("19", $$(lam1 q19))
-  , ("20", $$(lam1 q20))
-  , ("21", $$(lam1 q21))
-  , ("22", $$(lam1 q22))
+  [ ("1",  render1  . $$(Q.compile q1))
+  , ("2",  render2  . $$(Q.compile q2))
+  , ("3",  render3  . $$(Q.compile q3))
+  , ("4",  render4  . $$(Q.compile q4))
+  , ("5",  render5  . $$(Q.compile q5))
+  , ("6",  render6  . $$(Q.compile q6))
+  , ("7",  render7  . $$(Q.compile q7))
+  , ("8",  render8  . $$(Q.compile q8))
+  , ("9",  render9  . $$(Q.compile q9))
+  , ("10", render10 . $$(Q.compile q10))
+  , ("11", render11 . $$(Q.compile q11))
+  , ("12", render12 . $$(Q.compile q12))
+  , ("13", render13 . $$(Q.compile q13))
+  , ("14", render14 . $$(Q.compile q14))
+  , ("15", render15 . $$(Q.compile q15))
+  , ("16", render16 . $$(Q.compile q16))
+  , ("17", render17 . $$(Q.compile q17))
+  , ("18", render18 . $$(Q.compile q18))
+  , ("19", render19 . $$(Q.compile q19))
+  , ("20", render20 . $$(Q.compile q20))
+  , ("21", render21 . $$(Q.compile q21))
+  , ("22", render22 . $$(Q.compile q22))
   ]

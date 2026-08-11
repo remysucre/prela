@@ -58,10 +58,13 @@ size that the schema already knows.
 
 ### Reduce staging ceremony
 
-Staged queries still expose `CodeQ`, typed quotes, `lam1`, and
-continuation-shaped materializers. A small generation monad and staged-literal
-wrapper could preserve the current implementation while presenting a more
-ordinary query surface.
+Implemented. `Prela.PullStaged.Query` now provides `Scalar`, `Relation`, a pure
+generation monad, and `Query`. Predicates accept ordinary literals, scalar tuple
+destructuring and common byte operations remain inside the façade, materializers
+use `do` notation, and complete queries use `Q.query`/`Q.compile`. All 22 TPC-H
+builders are quote-free. They return typed rows or scalars; ordinary `renderN`
+functions perform result sorting, limiting, and formatting after compilation.
+Typed quotation remains confined to the façade and low-level executor modules.
 
 ### Automate performance contracts
 

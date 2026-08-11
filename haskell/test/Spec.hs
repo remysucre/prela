@@ -18,16 +18,16 @@ import System.FilePath ((</>))
 import Prela.Cache
 import Prela.Id
 import qualified Prela.Pull as P
-import Prela.PullStaged.Stream (lam1)
+import qualified Prela.PullStaged.Query as Q
 import Prela.Storage
-import StagedQueries (schemaQueriesS)
+import StagedQueries (schemaQuery)
 import TinyStaged (TinyS, link_universe, loadTinyS)
 
 data E
 data T
 
 stagedQueries :: TinyS -> ([ByteString], Int, [ByteString], [ByteString], Double)
-stagedQueries = $$(lam1 schemaQueriesS)
+stagedQueries = $$(Q.compile schemaQuery)
 
 main :: IO ()
 main = do
