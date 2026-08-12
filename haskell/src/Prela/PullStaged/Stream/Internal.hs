@@ -40,6 +40,7 @@ module Prela.PullStaged.Stream.Internal
   , anyOf
   , collect
   , limit
+  , fromList
     -- * Lockstep
   , zipWithP
   , mapvP
@@ -337,6 +338,21 @@ limit n s =
                                  (\a d r -> [|| case $$a of
                                                   (xs, k) -> (($$d, $$r) : xs, k + 1) ||])
                                  [|| ([], 0 :: Int) ||] s)) ||]
+
+-- | Re-enter the staged stream world from a list bound by a materializer.
+-- This is intentionally internal: ordinary plans should not turn pipelines
+-- into lists, but bounded operators such as top-k need to hand their small,
+-- already-materialized result to the rest of a query.
+fromList :: CodeQ [(d, r)] -> Stream d r
+fromList rows = Lin Producer
+  { source = rows
+  , initialState = \sourceRows -> sourceRows
+  , next = \_ remaining yield _skip done ->
+      [|| case $$remaining of
+            [] -> $$done
+            ((key, value) : rest) ->
+              $$(yield [|| key ||] [|| value ||] [|| rest ||]) ||]
+  }
 
 --------------------------------------------------------------------------------
 -- Lockstep

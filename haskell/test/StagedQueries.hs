@@ -21,7 +21,8 @@
 -- And the @where@ preamble that buys back the bare spelling of each leaf works
 -- exactly as it did before, signatures and all, for exactly the same reason:
 -- `movie` is enumerated in one query and accessed through `Lookup` in another.
-module StagedQueries (schemaQuery, dictionaryQuery) where
+module StagedQueries
+  ( schemaQuery, dictionaryQuery, topKQuery, referenceQuery, loadedReferenceQuery ) where
 
 import Data.ByteString (ByteString)
 import qualified Data.Vector as BV
@@ -93,3 +94,50 @@ dictionaryQuery = Q.query $ \s -> do
   counts <- Q.denseDistinctCount
     (Sch.movieExtent s) (Sch.keywordExtent s) grouped
   pure (Q.pair labels (Q.collect (Q.stream counts)))
+
+-- A bounded materializer must order retained rows, preserve their keys for
+-- downstream composition, and handle a zero-sized buffer without touching it.
+topKQuery
+  :: Q.Query Sch.TinyS
+       ([(Id Sch.Movie, Double)], [(Id Sch.Movie, Double)])
+topKQuery = Q.query $ \s -> do
+  let ratings :: Stream (Id Sch.Movie) Double
+      ratings = compose (Sch.movie s) (Sch.rating s)
+      descending leftKey leftRating rightKey rightRating =
+        Q.compare rightRating leftRating `Q.thenCompare`
+        Q.compare (Q.idIndex leftKey) (Q.idIndex rightKey)
+  best <- Q.topK 2 descending ratings
+  none <- Q.topK 0 descending ratings
+  pure (Q.pair (Q.collect best) (Q.collect none))
+
+-- The direct reference leaf must agree in its Stream and Lookup modes, and its
+-- checked boxed and trusted word-backed storage representations must have the
+-- same semantics for holes, invalid targets, and dead targets.
+referenceQuery
+  :: Q.Query Sch.RefFixture
+       ([(Id Sch.RefSource, Id Sch.RefTarget)],
+        [(Id Sch.RefSource, Id Sch.RefTarget)])
+referenceQuery = Q.query $ \fixture ->
+  let boxedDriven :: Stream (Id Sch.RefSource) (Id Sch.RefTarget)
+      boxedDriven = Sch.boxedReference fixture
+      boxedKeyed :: Lookup (Id Sch.RefSource) (Id Sch.RefTarget)
+      boxedKeyed = Sch.boxedReference fixture
+      sources :: Stream (Id Sch.RefSource) (Id Sch.RefSource)
+      sources = universe (Sch.refSourceDomain fixture)
+  in pure (Q.pair (Q.collect boxedDriven)
+                  (Q.collect (compose sources boxedKeyed)))
+
+-- Loaded schemas exercise boxed storage under the checked loader and
+-- word-backed storage under the trusted loader. Enumerating the reference leaf
+-- directly must agree with probing it from the source universe.
+loadedReferenceQuery
+  :: Q.Query Sch.TinyS
+       ([(Id Sch.Movie, Id Sch.Kind)], [(Id Sch.Movie, Id Sch.Kind)])
+loadedReferenceQuery = Q.query $ \schema ->
+  let driven :: Stream (Id Sch.Movie) (Id Sch.Kind)
+      driven = Sch.kind schema
+      keyed :: Lookup (Id Sch.Movie) (Id Sch.Kind)
+      keyed = Sch.kind schema
+      sources :: Stream (Id Sch.Movie) (Id Sch.Movie)
+      sources = Sch.movie schema
+  in pure (Q.pair (Q.collect driven) (Q.collect (compose sources keyed)))

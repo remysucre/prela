@@ -17,13 +17,16 @@ import System.Directory (createDirectoryIfMissing, getTemporaryDirectory)
 import System.Exit (exitFailure)
 import System.FilePath ((</>))
 
-import Prela.Cache
+import Prela.Cache hiding (Kind)
 import Prela.Id
 import qualified Prela.Pull as P
 import qualified Prela.PullStaged.Query as Q
 import Prela.Storage
-import StagedQueries (dictionaryQuery, schemaQuery)
-import TinyStaged (TinyS, link_universe, loadTinyS, loadTinySChecked)
+import StagedQueries
+  ( dictionaryQuery, loadedReferenceQuery, referenceQuery, schemaQuery, topKQuery )
+import TinyStaged
+  ( Kind, Movie, RefFixture, RefSource, RefTarget, TinyS, link_universe, loadTinyS
+  , loadTinySChecked, refFixture )
 
 data E
 data T
@@ -40,6 +43,19 @@ stagedQueries schema =
 
 stagedDictionary :: TinyS -> (BV.Vector ByteString, [(Int, Int)])
 stagedDictionary = $$(Q.compile dictionaryQuery)
+
+stagedTopK
+  :: TinyS -> ([(Id Movie, Double)], [(Id Movie, Double)])
+stagedTopK = $$(Q.compile topKQuery)
+
+stagedReferences
+  :: RefFixture
+  -> ([(Id RefSource, Id RefTarget)], [(Id RefSource, Id RefTarget)])
+stagedReferences = $$(Q.compile referenceQuery)
+
+stagedLoadedReferences
+  :: TinyS -> ([(Id Movie, Id Kind)], [(Id Movie, Id Kind)])
+stagedLoadedReferences = $$(Q.compile loadedReferenceQuery)
 
 main :: IO ()
 main = do
@@ -207,10 +223,31 @@ testCacheAndStaging check = do
   check "fast staged schema queries" (stagedQueries fastSchema) expected
   check "staged dictionary and dense distinct count"
     (stagedDictionary schema) (BV.fromList ["movie", "tv series"], [(0, 2)])
+  check "staged bounded top-k"
+    (let (best, none) = stagedTopK schema
+     in (map (\(movieId, rating) -> (idIndex movieId, rating)) best, none))
+    ([(0, 8.5), (1, 8.4)], [])
   check "sparse schema universe" (map idIndex (universeIds (link_universe schema))) [0, 2]
   check "fast sparse schema universe"
     (map idIndex (universeIds (link_universe fastSchema))) [0, 2]
   check "dead schema id cannot be obtained" (lookupId (link_universe schema) 1) Nothing
+
+  let (boxedDriven, boxedKeyed) = stagedReferences refFixture
+      indices = map (\(sourceId, targetId) ->
+                       (idIndex sourceId, idIndex targetId))
+      expectedReferences = [(0, 0), (2, 2)]
+  check "staged boxed reference scan/keyed parity and validation"
+    (indices boxedDriven, indices boxedKeyed)
+    (expectedReferences, expectedReferences)
+  let expectedLoadedReferences = [(0, 0), (1, 0), (2, 1)]
+  check "staged checked reference scan/keyed parity"
+    (let (driven, keyed) = stagedLoadedReferences schema
+     in (indices driven, indices keyed))
+    (expectedLoadedReferences, expectedLoadedReferences)
+  check "staged word-backed reference scan/keyed parity"
+    (let (driven, keyed) = stagedLoadedReferences fastSchema
+     in (indices driven, indices keyed))
+    (expectedLoadedReferences, expectedLoadedReferences)
 
   -- Keep all target ids used above live so the test also pins their provenance.
   check "target ids retain their indices" (map idIndex [t0, t1, t2]) [0, 1, 2]

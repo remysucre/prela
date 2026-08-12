@@ -147,32 +147,45 @@ render1 = joinLines . map fmt1 . sortOn fst
 
 -- Find the European suppliers offering each size-15 brass part at its lowest
 -- supply cost, then report the top 100 offers by account balance and name.
--- @euPs@ is mentioned twice and is NOT materialized, so it emits two scans of
--- partsupp. An unmaterialized stream
--- used twice is enumerated twice, and Prela materializes only when asked.
+-- Hoist both selective dimension predicates into bitsets. The two intentional
+-- partsupp scans then perform bounded id probes, and the minimum-cost fold only
+-- sees rows for qualifying parts rather than aggregating every European offer.
 q2 :: Q.Query TPCHS [(Id PartSupp, Q2Row)]
 q2 = Q.query build
   where
     build s = do
+      europeanSuppliers <- Q.bitset
+        (supplierExtent s)
+        (restrict (supplier s)
+          (Q.eq "EUROPE"
+            (compose (compose (supplierNation s) (nationRegion s))
+                     (regionName s))))
+      qualifyingParts <- Q.bitset
+        (partExtent s)
+        (restrict (part s)
+          (prod (Q.eq 15 (size s))
+                (Q.filterBy (Q.isSuffixOf "BRASS") (ty s))))
+      let eligiblePs :: SMode q => q (Id PartSupp) (Id PartSupp)
+          eligiblePs = restrict (partsupp s)
+            (prod (compose (psSupplier s) (Q.keyed europeanSuppliers))
+                  (compose (psPart s) (Q.keyed qualifyingParts)))
       minPerPart <- Q.denseFold (partExtent s)
         (\a c -> Q.ifThenElse (c Q..<. a) c a) (1 / 0)
-        (compose (groupBy euPs (psPart s)) (supplycost s))
+        (compose (groupBy eligiblePs (psPart s)) (supplycost s))
       let costIsMin :: Lookup (Id PartSupp) (Double, Double)
           costIsMin = Q.filterBy (Q.onPair (Q..==.))
                          (prod (supplycost s) (compose (psPart s) (Q.keyed minPerPart)))
-          result :: Stream (Id PartSupp) Q2Row
-          result = compose (restrict euPs (prod partOk costIsMin)) payload
-      pure (Q.collect result)
+          target = restrict eligiblePs costIsMin
+          ranked = prod target sortFields
+      best <- Q.topK 100 rank2 ranked
+      pure (Q.collect (compose (Q.mapValues Q.first best) payload))
       where
-        euPs :: SMode q => q (Id PartSupp) (Id PartSupp)
-        euPs = restrict (partsupp s)
-                 (Q.eq "EUROPE"
-                     (compose (compose (compose (psSupplier s) (supplierNation s))
-                                       (nationRegion s))
-                              (regionName s)))
-        partOk = restrict (psPart s)
-                   (prod (Q.eq 15 (size s))
-                         (Q.filterBy (Q.isSuffixOf "BRASS") (ty s)))
+        sortFields = prod
+          (prod (prod (compose (psSupplier s) (supplierAcctbal s))
+                           (compose (compose (psSupplier s) (supplierNation s))
+                                    (nationName s)))
+                      (compose (psSupplier s) (supplierName s)))
+          (psPart s)
         payload = prod (prod (compose (psSupplier s) suppCols) (psPart s))
                        (compose (psPart s) (mfgr s))
         suppCols = prod (prod (prod (prod (prod (supplierAcctbal s) (supplierName s))
@@ -184,6 +197,25 @@ q2 = Q.query build
 type Q2Row = (((((((Double, ByteString), ByteString), ByteString), ByteString)
               , ByteString), Id Part), ByteString)
 
+rank2
+  :: Q.Scalar (Id PartSupp)
+  -> Q.Scalar (Id PartSupp, (((Double, ByteString), ByteString), Id Part))
+  -> Q.Scalar (Id PartSupp)
+  -> Q.Scalar (Id PartSupp, (((Double, ByteString), ByteString), Id Part))
+  -> Q.Scalar Ordering
+rank2 _ left _ right =
+  let leftFields = Q.second left
+      rightFields = Q.second right
+      leftAccountNation = Q.first (Q.first leftFields)
+      rightAccountNation = Q.first (Q.first rightFields)
+  in Q.compare (Q.first rightAccountNation) (Q.first leftAccountNation)
+       `Q.thenCompare`
+     Q.compare (Q.second leftAccountNation) (Q.second rightAccountNation)
+       `Q.thenCompare`
+     Q.compare (Q.second (Q.first leftFields)) (Q.second (Q.first rightFields))
+       `Q.thenCompare`
+     Q.compare (Q.second leftFields) (Q.second rightFields)
+
 -- Flatten the nested pairs once, so the comparator and the formatter both read
 -- named components instead of unpicking a seven-deep tuple.
 flat2 :: Q2Row -> (Double, ByteString, ByteString, Id Part, ByteString
@@ -191,23 +223,13 @@ flat2 :: Q2Row -> (Double, ByteString, ByteString, Id Part, ByteString
 flat2 (((((((acct, sname), nat), addr), phone), comm), pk), mfg) =
   (acct, sname, nat, pk, mfg, addr, phone, comm)
 
-cmp2 :: (Double, ByteString, ByteString, Id Part, ByteString, ByteString, ByteString, ByteString)
-     -> (Double, ByteString, ByteString, Id Part, ByteString, ByteString, ByteString, ByteString)
-     -> Ordering
-cmp2 a b = comparing acct b a <> comparing nat a b
-                              <> comparing sname a b <> comparing pk a b
-  where acct  (x, _, _, _, _, _, _, _) = x
-        sname (_, x, _, _, _, _, _, _) = x
-        nat   (_, _, x, _, _, _, _, _) = x
-        pk    (_, _, _, x, _, _, _, _) = x
-
 fmt2 :: (Double, ByteString, ByteString, Id Part, ByteString, ByteString, ByteString, ByteString)
      -> String
 fmt2 (acct, sname, nat, pk, mfg, addr, phone, comm) =
   row [f2 acct, bs sname, bs nat, key1 pk, bs mfg, bs addr, bs phone, bs comm]
 
 render2 :: [(Id PartSupp, Q2Row)] -> String
-render2 = joinLines . map fmt2 . take 100 . sortBy cmp2 . map (flat2 . snd)
+render2 = joinLines . map fmt2 . map (flat2 . snd)
 
 --------------------------------------------------------------------------------
 -- Q3 — shipping priority
@@ -222,30 +244,36 @@ q3 :: Q.Query TPCHS [(((Id Order, Int), Int), Double)]
 q3 = Q.query build
   where
     build s = do
-      revenue <- Q.groupFold
-        (\a -> Q.onPair (\e dc -> a + e * (1 - dc))) 0 grouped
-      pure (Q.collect (Q.stream revenue))
-      where
-        grouped :: Stream ((Id Order, Int), Int) (Double, Double)
-        grouped =
-          compose (groupBy (restrict (lineitem s)
-                             (prod (prod (Q.gt 19950315 (shipdate s))
-                                         (Q.lt 19950315 (compose (liOrder s) (date s))))
-                                   (Q.eq "BUILDING"
+      let grouped :: Stream ((Id Order, Int), Int) (Double, Double)
+          grouped =
+            compose (groupBy (restrict (lineitem s)
+                               (prod (prod (Q.gt 19950315 (shipdate s))
+                                           (Q.lt 19950315
+                                             (compose (liOrder s) (date s))))
+                                     (Q.eq "BUILDING"
                                        (compose (compose (liOrder s) (orderCustomer s))
                                                 (mktsegment s)))))
-                           (prod (prod (liOrder s) (compose (liOrder s) (date s)))
-                                 (compose (liOrder s) (shippriority s))))
-                  (prod (extendedprice s) (discount s))
+                             (prod (prod (liOrder s) (compose (liOrder s) (date s)))
+                                   (compose (liOrder s) (shippriority s))))
+                    (prod (extendedprice s) (discount s))
+      revenue <- Q.groupFold
+        (\a -> Q.onPair (\e dc -> a + e * (1 - dc))) 0 grouped
+      best <- Q.topK 10 rank3 (Q.stream revenue)
+      pure (Q.collect best)
 
-cmp3 :: (((Id Order, Int), Int), Double) -> (((Id Order, Int), Int), Double) -> Ordering
-cmp3 (((_, d1), _), r1) (((_, d2), _), r2) = compare r2 r1 <> compare d1 d2
+rank3
+  :: Q.Scalar ((Id Order, Int), Int) -> Q.Scalar Double
+  -> Q.Scalar ((Id Order, Int), Int) -> Q.Scalar Double
+  -> Q.Scalar Ordering
+rank3 leftKey leftRevenue rightKey rightRevenue =
+  Q.compare rightRevenue leftRevenue `Q.thenCompare`
+  Q.compare (Q.second (Q.first leftKey)) (Q.second (Q.first rightKey))
 
 fmt3 :: (((Id Order, Int), Int), Double) -> String
 fmt3 (((o, d), sp), r) = row [key1 o, f2 r, fmtDate d, show sp]
 
 render3 :: [(((Id Order, Int), Int), Double)] -> String
-render3 = joinLines . map fmt3 . take 10 . sortBy cmp3
+render3 = joinLines . map fmt3
 
 --------------------------------------------------------------------------------
 -- Q4 — order priority checking
@@ -505,9 +533,12 @@ q10 :: Q.Query TPCHS [(Id Customer, Q10Row)]
 q10 = Q.query build
   where
     build s = do
-      revenue <- Q.groupFold
+      revenue <- Q.denseFold (customerExtent s)
         (\a -> Q.onPair (\e dc -> a + e * (1 - dc))) 0 grouped
-      pure (Q.collect (prod (Q.stream revenue) custCols))
+      best <- Q.topK 20
+        (\_ leftRevenue _ rightRevenue -> Q.compare rightRevenue leftRevenue)
+        (Q.stream revenue)
+      pure (Q.collect (prod best custCols))
       where
         grouped :: Stream (Id Customer) (Double, Double)
         grouped =
@@ -526,15 +557,12 @@ q10 = Q.query build
 type Q10Row = (Double, (((((ByteString, Double), ByteString), ByteString), ByteString)
               , ByteString))
 
-cmp10 :: (Id Customer, Q10Row) -> (Id Customer, Q10Row) -> Ordering
-cmp10 (_, (r1, _)) (_, (r2, _)) = compare r2 r1
-
 fmt10 :: (Id Customer, Q10Row) -> String
 fmt10 (c, (r, (((((nm, ab), nat), addr), phone), comm)))=
   row [key1 c, bs nm, f2 r, f2 ab, bs nat, bs addr, bs phone, bs comm]
 
 render10 :: [(Id Customer, Q10Row)] -> String
-render10 = joinLines . map fmt10 . take 20 . sortBy cmp10
+render10 = joinLines . map fmt10
 
 --------------------------------------------------------------------------------
 -- Q11 — important stock
@@ -583,13 +611,14 @@ q12 = Q.query build
         grouped :: Stream ByteString ByteString
         grouped =
           compose (groupBy (restrict (lineitem s)
-                             (prod (prod (Q.oneOf ["MAIL", "SHIP"] (shipmode s))
-                                         (Q.filterBy (Q.onPair $ \shc r ->
-                                            Q.onPair (\sh c ->
-                                              (sh Q..<. c) Q..&&. (c Q..<. r)) shc)
-                                           (prod (prod (shipdate s) (commitdate s))
-                                                 (receiptdate s))))
-                                   (Q.range 19940101 19950101 (receiptdate s))))
+                             (prod
+                               (prod (Q.range 19940101 19950101 (receiptdate s))
+                                     (Q.oneOf ["MAIL", "SHIP"] (shipmode s)))
+                               (Q.filterBy (Q.onPair $ \shc r ->
+                                  Q.onPair (\sh c ->
+                                    (sh Q..<. c) Q..&&. (c Q..<. r)) shc)
+                                 (prod (prod (shipdate s) (commitdate s))
+                                       (receiptdate s)))))
                            (shipmode s))
                   (compose (liOrder s) (priority s))
         step acc pr = Q.onPair (\h l ->
@@ -679,7 +708,7 @@ q15 :: Q.Query TPCHS
 q15 = Q.query build
   where
     build s = do
-      revenue <- Q.groupFold
+      revenue <- Q.denseFold (supplierExtent s)
         (\a -> Q.onPair (\e dc -> a + e * (1 - dc))) 0 grouped
       maxRev <- Q.share (Q.foldAll
         (\a v -> Q.ifThenElse (v Q..>. a) v a) 0
@@ -812,7 +841,16 @@ q18 = Q.query $ \s -> do
   -- groups and accumulating a large open-addressed table.
   sumQ <- Q.denseFold (orderExtent s) (+) 0
     (compose (groupBy (lineitem s) (liOrder s)) (quantity s))
-  let result = prod (Q.gt 300 (Q.stream sumQ))
+  let ranked = prod (Q.gt 300 (Q.stream sumQ))
+                    (prod (totalprice s) (date s))
+      rank18 _ left _ right =
+        let leftSort = Q.second left
+            rightSort = Q.second right
+        in Q.compare (Q.first rightSort) (Q.first leftSort) `Q.thenCompare`
+           Q.compare (Q.second leftSort) (Q.second rightSort)
+  best <- Q.topK 100 rank18 ranked
+  let bestOrders = Q.mapValues Q.first best
+      result = prod bestOrders
                     (prod (prod (totalprice s) (date s))
                           (prod (compose (orderCustomer s) (customerName s))
                                 (orderCustomer s)))
@@ -820,16 +858,12 @@ q18 = Q.query $ \s -> do
 
 type Q18Row = (Double, ((Double, Int), (ByteString, Id Customer)))
 
-cmp18 :: (Id Order, Q18Row) -> (Id Order, Q18Row) -> Ordering
-cmp18 (_, (_, ((tp1, d1), _))) (_, (_, ((tp2, d2), _))) =
-  compare tp2 tp1 <> compare d1 d2
-
 fmt18 :: (Id Order, Q18Row) -> String
 fmt18 (o, (sumQ, ((tp, d), (nm, c)))) =
   row [bs nm, key1 c, key1 o, fmtDate d, f2 tp, f2 sumQ]
 
 render18 :: [(Id Order, Q18Row)] -> String
-render18 = joinLines . map fmt18 . take 100 . sortBy cmp18
+render18 = joinLines . map fmt18
 
 --------------------------------------------------------------------------------
 -- Q19 — discounted revenue
@@ -875,10 +909,17 @@ render19 = f2
 -- greater than half the quantity of that part shipped in 1994.
 q20 :: Q.Query TPCHS [(Id Supplier, (ByteString, ByteString))]
 q20 = Q.query $ \s -> do
+  -- Forest-named parts are a tiny dimension subset. Hoist them before the
+  -- six-million-row shipment fold, so the compound-key aggregate never creates
+  -- entries for parts that the final partsupp predicate will reject.
+  forestParts <- Q.bitset
+    (partExtent s)
+    (restrict (part s) (Q.filterBy (Q.isPrefixOf "forest") (partName s)))
   -- Per (part, supplier), the quantity shipped in 1994.
   sumQty <- Q.groupFold (+) 0
     (compose (groupBy (restrict (lineitem s)
-                        (Q.range 19940101 19950101 (shipdate s)))
+                        (prod (Q.range 19940101 19950101 (shipdate s))
+                              (compose (liPart s) (Q.keyed forestParts))))
                       (prod (liPart s) (liSupplier s)))
              (quantity s))
   let threshold = Q.mapValues (0.5 *) $ compose
@@ -886,8 +927,7 @@ q20 = Q.query $ \s -> do
         (Q.keyed sumQty)
       candidates = compose
         (restrict (partsupp s)
-          (prod (Q.filterBy (Q.isPrefixOf "forest")
-                  (compose (psPart s) (partName s)))
+          (prod (compose (psPart s) (Q.keyed forestParts))
                 (Q.filterBy (Q.onPair (Q..>.))
                   (prod (Q.mapValues Q.fromIntegral (availqty s))
                         threshold))))
@@ -915,32 +955,37 @@ render20 = joinLines . map fmt20 . sortOn fst . map snd
 -- Rank Saudi Arabian suppliers by late lines on completed orders that involved
 -- another supplier but had no other supplier responsible for a late line.
 -- A distinct count is more information than either SQL existence test needs.
--- Track no supplier / one supplier / multiple suppliers as a signed integer:
--- zero is unseen, @supplier+1@ is exactly one, and its negation means multiple.
--- The pair holds that state for all lines and late lines together. Because
--- orders are an id-indexed domain, one dense fold performs this classification
--- in a single lineitem pass without global @(order, supplier)@ hash sets.
+-- For both all lines and late lines, track unseen / one supplier / multiple.
+-- Those two small states are packed into one `Int`, so the order-sized dense
+-- fold needs one unboxed vector rather than the two vectors of a pair. Because
+-- orders are an id-indexed domain, one lineitem pass performs the classification
+-- without global @(order, supplier)@ hash sets.
 q21 :: Q.Query TPCHS [(Id Supplier, (Int, ByteString))]
 q21 = Q.query build
   where
     build s = do
+      -- Candidate supplier ids occupy 1..supplierExtent. The next value is the
+      -- multiple-suppliers marker and `base` is one beyond every live state.
+      base <- Q.share (supplierExtent s + 2)
+      let multiple = base - 1
       supplierState <- Q.denseFold
-        (orderExtent s) updateState emptyOrderState observations
+        (orderExtent s) (updateState base multiple) 0 observations
       saudiSuppliers <- Q.bitset
         (supplierExtent s)
         (restrict (supplier s)
           (Q.eq "SAUDI ARABIA"
             (compose (supplierNation s) (nationName s))))
       let -- The order has more than one supplier across all its lines …
-          multiSupp :: Lookup (Id Order) (Int, Int)
+          multiSupp :: Lookup (Id Order) Int
           multiSupp = Q.filterBy
-            (Q.onPair $ \allSeen _lateSeen -> allSeen Q..<. 0)
+            (\packed -> (packed `Q.div` base) Q..==. multiple)
             (Q.keyed supplierState)
           -- … but exactly one across its late ones.
-          onlyLate :: Lookup (Id Order) (Int, Int)
+          onlyLate :: Lookup (Id Order) Int
           onlyLate = Q.filterBy
-            (Q.onPair $ \_allSeen lateSeen ->
-              lateSeen Q..>. 0)
+            (\packed ->
+              Q.letScalar (packed `Q.mod` base) $ \lateSeen ->
+                (lateSeen Q..>. 0) Q..&&. (lateSeen Q..<. multiple))
             (Q.keyed supplierState)
           orderOk :: Lookup (Id Lineitem) (Id Order)
           orderOk = restrict (liOrder s)
@@ -951,7 +996,14 @@ q21 = Q.query build
         (supplierExtent s) (\a _ -> a + 1) 0
         (groupBy (restrict late (prod saudiLine orderOk)) (liSupplier s))
       let result = prod (Q.stream tally) (supplierName s)
-      pure (Q.collect result)
+      best <- Q.topK 100
+        (\_ left _ right ->
+          Q.onPair (\leftCount leftName ->
+            Q.onPair (\rightCount rightName ->
+              Q.compare rightCount leftCount `Q.thenCompare`
+              Q.compare leftName rightName) right) left)
+        result
+      pure (Q.collect best)
       where
         observations
           :: Stream (Id Order) (Id Supplier, (Int, Int))
@@ -964,44 +1016,43 @@ q21 = Q.query build
                  (Q.filterBy (Q.onPair (Q..<.))
                    (prod (commitdate s) (receiptdate s)))
 
-    emptyOrderState :: Q.Scalar (Int, Int)
-    emptyOrderState = Q.pair 0 0
-
     observe
-      :: Q.Scalar Int -> Q.Scalar (Id Supplier) -> Q.Scalar Int
-    observe seen supplierId =
+      :: Q.Scalar Int
+      -> Q.Scalar Int -> Q.Scalar (Id Supplier) -> Q.Scalar Int
+    observe multiple seen supplierId =
       Q.letScalar (Q.idIndex supplierId + 1) $ \candidate ->
         Q.ifThenElse
           (seen Q..==. 0)
           candidate
           (Q.ifThenElse
-            ((seen Q..<. 0) Q..||. (seen Q..==. candidate))
+            ((seen Q..==. multiple) Q..||. (seen Q..==. candidate))
             seen
-            (negate seen))
+            multiple)
 
     updateState
-      :: Q.Scalar (Int, Int)
+      :: Q.Scalar Int
+      -> Q.Scalar Int
+      -> Q.Scalar Int
       -> Q.Scalar (Id Supplier, (Int, Int))
-      -> Q.Scalar (Int, Int)
-    updateState state observation =
-      Q.onPair (\allSeen lateSeen ->
-        Q.onPair (\supplierId dates ->
-          Q.onPair (\committed received ->
-            Q.pair
-              (observe allSeen supplierId)
-              (Q.ifThenElse
-                (committed Q..<. received)
-                (observe lateSeen supplierId)
-                lateSeen)) dates) observation) state
-
-cmp21 :: (Id Supplier, (Int, ByteString)) -> (Id Supplier, (Int, ByteString)) -> Ordering
-cmp21 (_, (c1, n1)) (_, (c2, n2)) = compare c2 c1 <> compare n1 n2
+      -> Q.Scalar Int
+    updateState base multiple state observation =
+      Q.letScalar (state `Q.div` base) $ \allSeen ->
+      Q.letScalar (state `Q.mod` base) $ \lateSeen ->
+      Q.onPair (\supplierId dates ->
+        Q.onPair (\committed received ->
+          Q.letScalar (observe multiple allSeen supplierId) $ \allSeen' ->
+          Q.letScalar
+            (Q.ifThenElse
+              (committed Q..<. received)
+              (observe multiple lateSeen supplierId)
+              lateSeen) $ \lateSeen' ->
+            allSeen' * base + lateSeen') dates) observation
 
 fmt21 :: (Id Supplier, (Int, ByteString)) -> String
 fmt21 (_, (c, nm)) = row [bs nm, show c]
 
 render21 :: [(Id Supplier, (Int, ByteString))] -> String
-render21 = joinLines . map fmt21 . take 100 . sortBy cmp21
+render21 = joinLines . map fmt21
 
 --------------------------------------------------------------------------------
 -- Q22 — global sales opportunity

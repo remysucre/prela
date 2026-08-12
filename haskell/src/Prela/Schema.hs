@@ -280,8 +280,11 @@ accessorDeclarations recordName ent = do
             | isReference field = [| S.sparseColumn $column |]
             | otherwise = [| S.column $column |]
           liveRows = [| S.compose (S.universe $sourceDomain) $rawLeaf |]
-          body = case fTy field of
-            TRef target ->
+          body = case (fMany field, fTy field) of
+            (False, TRef target) ->
+              let targetDomain = get record (universeFieldNameByName target)
+              in [| S.referenceColumn $sourceDomain $column $targetDomain |]
+            (True, TRef target) ->
               let targetDomain = get record (universeFieldNameByName target)
               in [| S.compose $liveRows (S.resolveId $targetDomain) |]
             _ -> liveRows

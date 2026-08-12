@@ -31,6 +31,7 @@ import qualified Data.Vector.Unboxed as UV
 import Language.Haskell.TH (CodeQ)
 
 import Prela.Id
+import qualified Prela.Id.Internal as IdInternal
 import Prela.PullStaged.Stream.Internal
 import Prela.Storage.Internal
 
@@ -42,6 +43,17 @@ class SMode q where
   universe       :: CodeQ (Universe e) -> q (Id e) (Id e)
   column         :: Elem r => CodeQ (Col e r) -> q (Id e) r
   sparseColumn   :: CodeQ (SparseCol e r) -> q (Id e) r
+  -- A declared one-valued reference is one physical leaf. Keeping its raw
+  -- nullable index and target validation in the same generated branch avoids
+  -- allocating @Maybe Int@ and @Maybe (Id target)@ for driven reads.
+  referenceColumn
+    :: CodeQ (Universe source)
+    -> CodeQ (SparseCol source Int)
+    -> CodeQ (Universe target)
+    -> q (Id source) (Id target)
+  referenceColumn sourceDomain raw targetDomain =
+    compose (compose (universe sourceDomain) (sparseColumn raw))
+            (resolveId targetDomain)
   multiColumn    :: Elem r => CodeQ (MultiCol e r) -> q (Id e) r
   fromIndex      :: Ord d => CodeQ (Map d [r]) -> q d r
   fromCache      :: Ord d => CodeQ (Map d s) -> q d s
@@ -83,6 +95,29 @@ streamLookup values = Lookup
   , probeAny = \key accept -> anyOf (filtS accept (values key))
   }
 
+-- | Read and validate one stored reference without constructing an optional
+-- intermediate. The boxed storage branch consumes its already-stored 'Maybe';
+-- the trusted word-backed branch is a raw load followed by sentinel and
+-- universe checks. 'Id' is a newtype, so the candidates erase after inlining.
+withReference
+  :: CodeQ (Universe source)
+  -> CodeQ (SparseCol source Int)
+  -> CodeQ (Universe target)
+  -> CodeQ (Id source)
+  -> (CodeQ (Id target) -> CodeQ result)
+  -> CodeQ result
+  -> CodeQ result
+withReference sourceDomain rawColumn targetDomain sourceId found missing =
+  [|| if containsId $$sourceDomain $$sourceId
+      then
+        let !sourceIndex = idIndex $$sourceId
+        in withSparseIntAt $$rawColumn sourceIndex $$missing (\targetIndex ->
+             let !targetId = IdInternal.Id targetIndex
+             in if containsId $$targetDomain targetId
+                  then $$(found [|| targetId ||])
+                  else $$missing)
+      else $$missing ||]
+
 --------------------------------------------------------------------------------
 -- Enumeration
 --------------------------------------------------------------------------------
@@ -101,6 +136,25 @@ instance SMode Stream where
                      case boundedId (sparseColLen $$e) $$s of
                        Just d  -> $$(yield [|| d ||] [|| value ||] [|| $$s + 1 ||])
                        Nothing -> $$(skip [|| $$s + 1 ||]) ||]
+    }
+  referenceColumn sourceDomain rawColumn targetDomain = Lin Producer
+    { source = [|| ($$sourceDomain, $$rawColumn, $$targetDomain) ||]
+    , initialState = \_ -> [|| 0 :: Int ||]
+    , next = \environment state yield skip done ->
+        [|| case $$environment of
+              (sourceUniverse, references, targetUniverse)
+                | $$state >= universeSize sourceUniverse
+                    || $$state >= sparseColLen references -> $$done
+                | otherwise ->
+                    let !sourceId = IdInternal.Id $$state
+                    in $$(withReference
+                            [|| sourceUniverse ||]
+                            [|| references ||]
+                            [|| targetUniverse ||]
+                            [|| sourceId ||]
+                            (\targetId ->
+                               yield [|| sourceId ||] targetId [|| $$state + 1 ||])
+                            (skip [|| $$state + 1 ||])) ||]
     }
   -- Keep this flat so it remains zippable. State is @(key, cursor, rowEnd)@;
   -- `skip` advances to the next row.
@@ -238,6 +292,27 @@ instance SMode Lookup where
                         Just value -> $$(accept [|| value ||])
                         Nothing    -> False
                  else False ||]
+    }
+  referenceColumn sourceDomain rawColumn targetDomain = Lookup
+    { at = \sourceId -> Lin Producer
+        { source = [|| ($$sourceDomain, $$rawColumn, $$targetDomain) ||]
+        , initialState = \_ -> [|| True ||]
+        , next = \environment active yield _skip done ->
+            [|| case $$environment of
+                  (sourceUniverse, references, targetUniverse) ->
+                    if $$active
+                      then $$(withReference
+                               [|| sourceUniverse ||]
+                               [|| references ||]
+                               [|| targetUniverse ||]
+                               sourceId
+                               (\targetId ->
+                                  yield [|| () ||] targetId [|| False ||])
+                               done)
+                      else $$done ||]
+        }
+    , probeAny = \sourceId accept ->
+        withReference sourceDomain rawColumn targetDomain sourceId accept [|| False ||]
     }
   -- The row's extent is read once, in `initialState`, rather than on every step. An
   -- out-of-range key gets the empty range (0, 0), which is the no-values answer.

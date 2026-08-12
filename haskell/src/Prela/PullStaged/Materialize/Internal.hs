@@ -43,6 +43,7 @@ import Control.Monad.ST (ST, runST)
 import Data.Array.ST (freeze, runSTUArray, writeArray)
 import Data.Bits ((.&.))
 import Data.Hashable (Hashable)
+import Data.List (sortBy)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as BV
@@ -55,6 +56,57 @@ import Prela.Id
 import Prela.PullStaged.Ops
 import Prela.PullStaged.Stream.Internal
 import Prela.Storage.Internal
+
+--------------------------------------------------------------------------------
+-- Bounded order
+--------------------------------------------------------------------------------
+
+-- | Retain only the best @n@ rows according to a generated comparator, then
+-- enumerate those rows in comparator order. The mutable buffer is bounded by
+-- @n@; candidates which cannot enter it never acquire a retained tuple. A
+-- linear worst-row search is deliberate: TPC-H limits are 10, 20, or 100, so it
+-- is cheaper and simpler than allocating a general-purpose heap structure.
+withTopK
+  :: CodeQ Int
+  -> (CodeQ (d, r) -> CodeQ (d, r) -> CodeQ Ordering)
+  -> Stream d r
+  -> (Stream d r -> CodeQ w)
+  -> CodeQ w
+withTopK requested compareRows rows continue =
+  [|| let !topRows = runST (do
+            let !capacity = max 0 $$requested
+                comparePair leftRow rightRow =
+                  $$(compareRows [|| leftRow ||] [|| rightRow ||])
+                findWorst buffer !rowCount =
+                  let go !cursor !worst
+                        | cursor >= rowCount = return worst
+                        | otherwise = do
+                            candidate <- BMV.unsafeRead buffer cursor
+                            incumbent <- BMV.unsafeRead buffer worst
+                            go (cursor + 1)
+                              (if comparePair candidate incumbent == GT
+                                 then cursor else worst)
+                  in go 1 0
+            buffer <- BMV.new capacity
+            kept <- $$(sfoldST
+              (\rowCount key value ->
+                [|| if $$rowCount < capacity
+                      then BMV.unsafeWrite buffer $$rowCount ($$key, $$value)
+                           >> return ($$rowCount + 1)
+                      else if capacity == 0
+                        then return $$rowCount
+                        else do
+                          worst <- findWorst buffer $$rowCount
+                          incumbent <- BMV.unsafeRead buffer worst
+                          if $$(compareRows [|| ($$key, $$value) ||]
+                                            [|| incumbent ||]) == LT
+                            then BMV.unsafeWrite buffer worst ($$key, $$value)
+                                   >> return $$rowCount
+                            else return $$rowCount ||])
+              [|| 0 :: Int ||] rows)
+            frozen <- BV.freeze (BMV.slice 0 kept buffer)
+            return (sortBy comparePair (BV.toList frozen)))
+      in $$(continue (fromList [|| topRows ||])) ||]
 
 --------------------------------------------------------------------------------
 -- Map-backed

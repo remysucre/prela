@@ -205,6 +205,62 @@ The following implementation improvements preserve the written plan:
 These are implementations of a fixed plan. They do not choose a different
 plan.
 
+## Idiomatic physical plans in the current TPC-H suite
+
+The current `TPCH.StagedQueries` module now follows a small set of explicit
+planning idioms. They are query-author choices, not compiler rewrites.
+
+### Hoist a selective dimension predicate before a large fact aggregate
+
+Q20 first builds a bitset of forest-named parts, then restricts the 1994
+lineitem fold with it. The `(part, supplier)` table consequently contains only
+groups the final partsupp predicate can use. At SF1 this reduced Q20 allocation
+from about 272 MB to 3.7 MB and warm time from about 222 ms to 41 ms.
+
+Q2 similarly precomputes eligible parts and European suppliers. Its minimum
+fold sees only qualifying partsupp rows instead of aggregating all European
+offers.
+
+This is not a universal rule. Equivalent hoists tried in Q3 and Q8 were slower
+than their existing fact-side short-circuit plans and were removed.
+
+### Use a dense fold when a validated id is already the slot
+
+Q10 and Q15 group by customer and supplier ids respectively. Their extents are
+known, so the queries explicitly choose `denseFold` instead of paying for hash
+keys and collision probes. Q21 likewise uses order and supplier extents for its
+two dense reductions.
+
+### Keep top-k inside the generated plan
+
+`Q.topK` is an explicit bounded materializer. It consumes a stream into a
+mutable buffer capped at `k`, orders the retained rows, and returns a stream so
+later projections can continue normally.
+
+Q2, Q10, and Q18 rank narrow rows first and attach wide strings only to winners.
+Q3 and Q21 also move their SQL limits out of the unstaged renderer. Renderers
+now format already ordered, already bounded results instead of collecting and
+sorting every candidate.
+
+### Put cheap/selective conjuncts first
+
+Products and restrictions probe left-to-right and short-circuit. Q12 tests its
+1994 receipt-date range before ship mode and the two cross-column date
+comparisons. This is visible in the written plan and approximately halved its
+warm SF1 time.
+
+### Pack bounded state when the alternatives are small
+
+Q21 needs unseen / one supplier / multiple suppliers for both all lines and
+late lines. Encoding both state machines into one `Int` halves the order-sized
+dense storage. Its query allocation fell from about 194 MB to 98 MB.
+
+Across all 22 queries these retained rewrites reduced post-reference-fix
+allocation from about 1.41 GB to 0.98 GB and warm SF1 runtime from about 2.61 s
+to 2.16--2.18 s. All queries continue to match their recorded oracles. Detailed
+measurements and the earlier leaf diagnosis are in
+[`STAGED_FOREIGN_KEY_ALLOCATION.md`](STAGED_FOREIGN_KEY_ALLOCATION.md).
+
 ## Proposed development sequence
 
 ### 1. Freeze the semantic reference
@@ -248,6 +304,13 @@ Use small staged tests for quick iteration:
 For the representative plans, compare generated structure, runtime allocation,
 and timings with the existing staged implementation. The target is the same
 physical plan and no measurable runtime regression.
+
+The first allocation audit found and fixed one concrete backend issue: driven
+traversal of word-backed foreign-key columns allocated about 32--33 bytes per
+successful read because optional values survived across nested producer
+continuations. Generated one-valued references now use a direct physical leaf.
+See [`STAGED_FOREIGN_KEY_ALLOCATION.md`](STAGED_FOREIGN_KEY_ALLOCATION.md) for
+the measurements, implementation, results, and regression tests.
 
 ### 7. Migrate queries gradually
 

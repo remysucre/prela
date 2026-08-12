@@ -21,6 +21,8 @@ module Prela.PullStaged.Query
   , onPair
   , letScalar
   , ifThenElse
+  , compare
+  , thenCompare
   , (.==.)
   , (./=.)
   , (.<.)
@@ -32,6 +34,7 @@ module Prela.PullStaged.Query
   , notS
   , fromIntegral
   , div
+  , mod
   , member
   , take
   , firstByte
@@ -60,6 +63,7 @@ module Prela.PullStaged.Query
   , denseFoldOuter
   , dictionary
   , bitset
+  , topK
   , regex
     -- * Predicates and value transforms
   , eq
@@ -96,7 +100,7 @@ import qualified Data.Vector as BV
 import qualified Data.Vector.Unboxed as UV
 import Language.Haskell.TH (CodeQ)
 import Language.Haskell.TH.Syntax (Lift, liftTyped)
-import Prelude hiding (div, fromIntegral, take)
+import Prelude hiding (compare, div, fromIntegral, mod, take)
 import qualified Prelude as Base
 import Text.Regex.TDFA (Regex, RegexLike)
 
@@ -153,6 +157,17 @@ ifThenElse :: Scalar Bool -> Scalar a -> Scalar a -> Scalar a
 ifThenElse (Scalar condition) (Scalar yes) (Scalar no) =
   Scalar [|| if $$condition then $$yes else $$no ||]
 
+compare :: Ord a => Scalar a -> Scalar a -> Scalar Ordering
+compare (Scalar left) (Scalar right) = Scalar [|| Base.compare $$left $$right ||]
+
+-- | Lexicographic comparator composition: consult the second comparison only
+-- when the first ties. Useful with 'topK' without exposing generated code.
+thenCompare :: Scalar Ordering -> Scalar Ordering -> Scalar Ordering
+thenCompare (Scalar firstOrdering) (Scalar secondOrdering) = Scalar
+  [|| case $$firstOrdering of
+        EQ -> $$secondOrdering
+        ordering -> ordering ||]
+
 infix 4 .==., ./=., .<., .<=., .>., .>=.
 infixr 3 .&&.
 infixr 2 .||.
@@ -180,6 +195,10 @@ fromIntegral (Scalar value) = Scalar [|| Base.fromIntegral $$value ||]
 div :: Integral a => Scalar a -> Scalar a -> Scalar a
 div (Scalar numerator) (Scalar denominator) =
   Scalar [|| $$numerator `Base.div` $$denominator ||]
+
+mod :: Integral a => Scalar a -> Scalar a -> Scalar a
+mod (Scalar numerator) (Scalar denominator) =
+  Scalar [|| $$numerator `Base.mod` $$denominator ||]
 
 member :: (Eq a, Lift a) => Scalar a -> [a] -> Scalar Bool
 member (Scalar value) choices =
@@ -392,6 +411,23 @@ dictionary (Scalar size) rows = Gen $ \continue ->
 bitset :: Scalar Int -> Stream d (Id e) -> Gen (Relation (Id e) (Id e))
 bitset (Scalar size) rows = Gen $ \continue ->
   M.withBits size rows (\relation -> continue (Relation relation))
+
+-- | Keep a bounded, ordered result inside generated code and pass its rows to
+-- subsequent relational operators. The comparator follows 'Data.List.sortBy':
+-- @LT@ means the left row ranks ahead of the right row.
+topK
+  :: Scalar Int
+  -> (Scalar d -> Scalar r -> Scalar d -> Scalar r -> Scalar Ordering)
+  -> Stream d r
+  -> Gen (Stream d r)
+topK (Scalar size) order rows = Gen $ \continue ->
+  M.withTopK size
+    (\leftRow rightRow ->
+      let left = Scalar leftRow
+          right = Scalar rightRow
+      in scalarCode
+           (order (first left) (second left) (first right) (second right)))
+    rows continue
 
 regex :: String -> Gen (Scalar Regex)
 regex expression = Gen $ \continue ->

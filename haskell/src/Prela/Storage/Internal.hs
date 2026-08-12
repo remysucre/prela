@@ -303,6 +303,27 @@ sparseAt (SparseWordCol values) i
     value = values V.! i
 {-# INLINE sparseAt #-}
 
+-- | Eliminate one integer-valued sparse cell without constructing a new
+-- 'Maybe'. This is the hot staged-reference path: the continuations inline into
+-- the generated row loop, while the representation-specific GADT match remains
+-- inside the storage module rather than imposing an extension on splice sites.
+-- Word values which cannot fit in an 'Int' are invalid references, just like
+-- the all-ones cache hole.
+withSparseIntAt :: SparseCol e Int -> Int -> result -> (Int -> result) -> result
+withSparseIntAt (SparseCol values) i missing found
+  | i < 0 || i >= BV.length values = missing
+  | otherwise = case values BV.! i of
+      Nothing    -> missing
+      Just value -> found value
+withSparseIntAt (SparseWordCol values) i missing found
+  | i < 0 || i >= V.length values          = missing
+  | value == maxBound                      = missing
+  | value > fromIntegral (maxBound :: Int) = missing
+  | otherwise                              = found (fromIntegral value)
+  where
+    value = values V.! i
+{-# INLINE withSparseIntAt #-}
+
 sparseMask :: SparseCol e r -> [Bool]
 sparseMask (SparseCol values) = map isJust (BV.toList values)
 sparseMask (SparseWordCol values) = map (/= maxBound) (V.toList values)

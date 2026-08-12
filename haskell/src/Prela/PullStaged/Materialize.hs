@@ -5,6 +5,7 @@
 -- "Prela.PullStaged.Materialize.Internal".
 module Prela.PullStaged.Materialize
   ( withMaterialize
+  , withTopK
   , withInv
   , withFold
   , withBufFold
