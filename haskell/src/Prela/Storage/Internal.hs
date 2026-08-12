@@ -30,6 +30,7 @@ import qualified Data.Vector.Unboxed.Mutable as UMV
 import Data.Word (Word32, Word64)
 
 import Prela.Id
+import qualified Prela.Id.Internal as IdInternal
 
 --------------------------------------------------------------------------------
 -- How element types are physically stored
@@ -136,51 +137,70 @@ class Eq d => Key d where
   data MKeys s d
   data Keys d
   newKeys    :: Int -> ST s (MKeys s d)
-  readKey    :: MKeys s d -> Int -> ST s d
+  matchesKey :: MKeys s d -> Int -> d -> ST s Bool
   writeKey   :: MKeys s d -> Int -> d -> ST s ()
+  copyKey    :: MKeys s d -> Int -> MKeys s d -> Int -> ST s ()
   freezeKeys :: MKeys s d -> ST s (Keys d)
   indexKey   :: Keys d -> Int -> d
+  matchesFrozenKey :: Keys d -> Int -> d -> Bool
 
 instance Key Int where
   newtype MKeys s Int = MIntKeys (UMV.MVector s Int)
   newtype Keys Int    = IntKeys (UV.Vector Int)
   newKeys n                 = MIntKeys <$> UMV.new n
-  readKey (MIntKeys v) i    = UMV.read v i
+  matchesKey (MIntKeys v) i x = (== x) <$> UMV.read v i
   writeKey (MIntKeys v) i x = UMV.write v i x
+  copyKey (MIntKeys source) i (MIntKeys target) j =
+    UMV.read source i >>= UMV.write target j
   freezeKeys (MIntKeys v)   = IntKeys <$> UV.freeze v
   indexKey (IntKeys v) i    = v UV.! i
+  matchesFrozenKey (IntKeys v) i x = v UV.! i == x
   {-# INLINE newKeys #-}
-  {-# INLINE readKey #-}
+  {-# INLINE matchesKey #-}
   {-# INLINE writeKey #-}
+  {-# INLINE copyKey #-}
   {-# INLINE indexKey #-}
+  {-# INLINE matchesFrozenKey #-}
 
--- The tag is erased, so an id column of keys is an `Int` array, exactly as the
--- `Elem` instance for ids is.
+-- The tag is erased, so an id table key is stored as an unboxed `Int`. Rebuilding
+-- a key for enumeration is proof-preserving: every stored index came from an
+-- already validated 'Id'. Ordinary loaded ID columns remain boxed so their
+-- representation never escapes through the public storage API.
 instance Key (Id e) where
-  newtype MKeys s (Id e) = MIdKeys (BMV.MVector s (Id e))
-  newtype Keys (Id e)    = IdKeys (BV.Vector (Id e))
-  newKeys n                     = MIdKeys <$> BMV.new n
-  readKey (MIdKeys v) i         = BMV.read v i
-  writeKey (MIdKeys v) i x      = BMV.write v i x
-  freezeKeys (MIdKeys v)        = IdKeys <$> BV.freeze v
-  indexKey (IdKeys v) i         = v BV.! i
+  newtype MKeys s (Id e) = MIdKeys (UMV.MVector s Int)
+  newtype Keys (Id e)    = IdKeys (UV.Vector Int)
+  newKeys n                     = MIdKeys <$> UMV.new n
+  matchesKey (MIdKeys v) i x    = (== idIndex x) <$> UMV.read v i
+  writeKey (MIdKeys v) i x      = UMV.write v i (idIndex x)
+  copyKey (MIdKeys source) i (MIdKeys target) j =
+    UMV.read source i >>= UMV.write target j
+  freezeKeys (MIdKeys v)        = IdKeys <$> UV.freeze v
+  indexKey (IdKeys v) i         = IdInternal.Id (v UV.! i)
+  matchesFrozenKey (IdKeys v) i x = v UV.! i == idIndex x
   {-# INLINE newKeys #-}
-  {-# INLINE readKey #-}
+  {-# INLINE matchesKey #-}
   {-# INLINE writeKey #-}
+  {-# INLINE copyKey #-}
   {-# INLINE indexKey #-}
+  {-# INLINE matchesFrozenKey #-}
 
 instance Key Double where
   newtype MKeys s Double = MDblKeys (UMV.MVector s Double)
   newtype Keys Double    = DblKeys (UV.Vector Double)
   newKeys n                 = MDblKeys <$> UMV.new n
-  readKey (MDblKeys v) i    = UMV.read v i
+  matchesKey (MDblKeys v) i x = (== x) <$> UMV.read v i
   writeKey (MDblKeys v) i x = UMV.write v i x
+  copyKey (MDblKeys source) i (MDblKeys target) j =
+    UMV.read source i >>= UMV.write target j
   freezeKeys (MDblKeys v)   = DblKeys <$> UV.freeze v
   indexKey (DblKeys v) i    = v UV.! i
+  matchesFrozenKey (DblKeys v) i x = v UV.! i == x
   {-# INLINE newKeys #-}
-  {-# INLINE readKey #-}
+  {-# INLINE matchesKey #-}
   {-# INLINE writeKey #-}
+  {-# INLINE copyKey #-}
   {-# INLINE indexKey #-}
+  {-# INLINE matchesFrozenKey #-}
 
 -- The one key type that stays boxed: a ByteString is a pointer, a length and an
 -- offset, so there is no flat form to put it in. Group keys that are strings are
@@ -189,27 +209,40 @@ instance Key ByteString where
   newtype MKeys s ByteString = MBsKeys (BMV.MVector s ByteString)
   newtype Keys ByteString    = BsKeys (BV.Vector ByteString)
   newKeys n                = MBsKeys <$> BMV.new n
-  readKey (MBsKeys v) i    = BMV.read v i
+  matchesKey (MBsKeys v) i x = (== x) <$> BMV.read v i
   writeKey (MBsKeys v) i x = BMV.write v i x
+  copyKey (MBsKeys source) i (MBsKeys target) j =
+    BMV.read source i >>= BMV.write target j
   freezeKeys (MBsKeys v)   = BsKeys <$> BV.freeze v
   indexKey (BsKeys v) i    = v BV.! i
+  matchesFrozenKey (BsKeys v) i x = v BV.! i == x
   {-# INLINE newKeys #-}
-  {-# INLINE readKey #-}
+  {-# INLINE matchesKey #-}
   {-# INLINE writeKey #-}
+  {-# INLINE copyKey #-}
   {-# INLINE indexKey #-}
+  {-# INLINE matchesFrozenKey #-}
 
 instance (Key a, Key b) => Key (a, b) where
   data MKeys s (a, b) = MPairKeys !(MKeys s a) !(MKeys s b)
   data Keys (a, b)    = PairKeys !(Keys a) !(Keys b)
   newKeys n                         = MPairKeys <$> newKeys n <*> newKeys n
-  readKey (MPairKeys u v) i         = (,) <$> readKey u i <*> readKey v i
+  matchesKey (MPairKeys u v) i (x, y) = do
+    firstMatches <- matchesKey u i x
+    if firstMatches then matchesKey v i y else return False
   writeKey (MPairKeys u v) i (x, y) = writeKey u i x >> writeKey v i y
+  copyKey (MPairKeys su sv) i (MPairKeys tu tv) j =
+    copyKey su i tu j >> copyKey sv i tv j
   freezeKeys (MPairKeys u v)        = PairKeys <$> freezeKeys u <*> freezeKeys v
   indexKey (PairKeys u v) i         = (indexKey u i, indexKey v i)
+  matchesFrozenKey (PairKeys u v) i (x, y) =
+    matchesFrozenKey u i x && matchesFrozenKey v i y
   {-# INLINE newKeys #-}
-  {-# INLINE readKey #-}
+  {-# INLINE matchesKey #-}
   {-# INLINE writeKey #-}
+  {-# INLINE copyKey #-}
   {-# INLINE indexKey #-}
+  {-# INLINE matchesFrozenKey #-}
 
 --------------------------------------------------------------------------------
 -- The three column shapes
@@ -334,6 +367,13 @@ multiValues column =
 -- a number or a tuple of them, and anything that is not keeps to `fold`.
 data Dense e t = Dense !Int !(UV.Vector t) !(UArray Int Bool)
 
+-- | The same dense aggregate layout addressed by an explicitly bounded
+-- integer key. Keeping it distinct from 'Dense' prevents an arbitrary 'Int'
+-- from being confused with a validated entity identifier while still allowing
+-- compact packed group keys (for example TPC-H Q1's two one-byte flags) to use
+-- direct array indexing.
+data DenseInt t = DenseInt !Int !(UV.Vector t) !(UArray Int Bool)
+
 -- | One reduced value per key when the keys are NOT a dense id space: a group
 -- key of `(returnflag, linestatus)` or `(nation, year)` has no array index to
 -- be. Same contents as `Dense`, addressed by hashing instead.
@@ -381,7 +421,7 @@ tableSlot (Table mask hs ks _) d = go (fromIntegral h .&. mask)
     h = slotHash d
     go i = case hs UV.! i of
              0                                -> -1
-             h' | h' == h && indexKey ks i == d -> i
+             h' | h' == h && matchesFrozenKey ks i d -> i
                 | otherwise                   -> go ((i + 1) .&. mask)
 {-# INLINE tableSlot #-}
 

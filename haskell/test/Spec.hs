@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# OPTIONS_GHC -fno-full-laziness #-}
@@ -9,6 +10,7 @@ import Control.Exception (IOException, try)
 import Control.Monad (unless)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.Vector as BV
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Maybe (isNothing)
 import System.Directory (createDirectoryIfMissing, getTemporaryDirectory)
@@ -20,7 +22,7 @@ import Prela.Id
 import qualified Prela.Pull as P
 import qualified Prela.PullStaged.Query as Q
 import Prela.Storage
-import StagedQueries (schemaQuery)
+import StagedQueries (dictionaryQuery, schemaQuery)
 import TinyStaged (TinyS, link_universe, loadTinyS, loadTinySChecked)
 
 data E
@@ -35,6 +37,9 @@ stagedQueries schema =
   let ((((sequels, recent), undated), television), best) =
         stagedQueryProduct schema
   in (sequels, recent, undated, television, best)
+
+stagedDictionary :: TinyS -> (BV.Vector ByteString, [(Int, Int)])
+stagedDictionary = $$(Q.compile dictionaryQuery)
 
 main :: IO ()
 main = do
@@ -200,6 +205,8 @@ testCacheAndStaging check = do
   let expected = (["Aliens", "Alien 3"], 2, ["Solaris"], ["Solaris"], 8.5)
   check "staged schema queries" (stagedQueries schema) expected
   check "fast staged schema queries" (stagedQueries fastSchema) expected
+  check "staged dictionary and dense distinct count"
+    (stagedDictionary schema) (BV.fromList ["movie", "tv series"], [(0, 2)])
   check "sparse schema universe" (map idIndex (universeIds (link_universe schema))) [0, 2]
   check "fast sparse schema universe"
     (map idIndex (universeIds (link_universe fastSchema))) [0, 2]

@@ -45,6 +45,7 @@ import Data.Bits ((.&.))
 import Data.Hashable (Hashable)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Vector as BV
 import qualified Data.Vector.Mutable as BMV
 import qualified Data.Vector.Unboxed as UV
 import qualified Data.Vector.Unboxed.Mutable as UMV
@@ -236,15 +237,17 @@ insertTable f ini d mt@(MTable mask cnt hs ks vsc) = do
     else return mt
   where
     h = slotHash d
-    -- The first slot that is either empty or already holds this key. Both are
-    -- terminal, and which one it is the caller rediscovers from the hash word.
+    -- Check the compact hash store before reading a potentially compound key.
     probe i = do
       h' <- UMV.read hs i
       if h' == 0
         then return i
-        else do
-          k <- readKey ks i
-          if h' == h && k == d then return i else probe ((i + 1) .&. mask)
+        else if h' == h
+          then do
+            matches <- matchesKey ks i d
+            if matches then return i else advance i
+          else advance i
+    advance i = probe ((i + 1) .&. mask)
 {-# INLINE insertTable #-}
 
 -- | Rehash into a table of twice the capacity. Only occupied slots move, and
@@ -259,12 +262,11 @@ growTable (MTable mask cnt hs ks vsc) ini = do
   forM_ [0 .. mask] $ \i -> do
     h <- UMV.read hs i
     when (h /= 0) $ do
-      k <- readKey ks i
       v <- UMV.read vs i
       let place j = do
             h' <- UMV.read hs' j
             if h' == 0
-              then UMV.write hs' j h >> writeKey ks' j k >> UMV.write vs' j v
+              then UMV.write hs' j h >> copyKey ks i ks' j >> UMV.write vs' j v
               else place ((j + 1) .&. mask')
       place (fromIntegral h .&. mask')
   return new
@@ -292,6 +294,41 @@ withCountDistinct s k =
 
     distinct :: CodeQ (Table (d, r) ()) -> Stream d ()
     distinct t = mapkS (\p -> [|| fst $$p ||]) (fromTable t)
+
+-- | Count distinct entity ids per bounded integer group. On normal extents the
+-- pair is represented by one integer, and the final counts use a dense array;
+-- invalid or overflowing bounds retain the generic, fully checked semantics.
+withDenseDistinctCount :: CodeQ Int -> CodeQ Int -> Stream Int (Id e)
+                       -> ((forall q. SMode q => q Int Int) -> CodeQ w)
+                       -> CodeQ w
+withDenseDistinctCount groupCount memberCount rows continue =
+  [|| let !groups = $$groupCount
+          !members = $$memberCount
+      in if 0 <= groups && 0 < members
+            && groups <= (maxBound :: Int) `div` members
+         then
+           let !distinctPairs =
+                 $$(buildTable (\_ _ -> [|| () ||]) [|| () ||]
+                      (packed [|| groups ||] [|| members ||]))
+           in $$(withDenseInt [|| groups ||]
+                  (\total _ -> [|| $$total + (1 :: Int) ||]) [|| 0 ||]
+                  (distinct [|| members ||] [|| distinctPairs ||]) continue)
+         else $$(withCountDistinct rows continue) ||]
+  where
+    packed groups members =
+      mapvS (\_ -> [|| () ||])
+      . mapkVS
+          (\group member ->
+            [|| $$group * $$members + idIndex $$member ||])
+      $ filtKV
+          (\group member ->
+            [|| let !g = $$group
+                    !m = idIndex $$member
+                in 0 <= g && g < $$groups && 0 <= m && m < $$members ||])
+          rows
+
+    distinct members table =
+      mapkS (\pair -> [|| $$pair `div` $$members ||]) (fromTable table)
 
 --------------------------------------------------------------------------------
 -- Dense
@@ -322,6 +359,32 @@ withDenseOuter n op ini s k =
   [|| let !dn = $$(buildDense n op ini [|| True ||] s)
       in $$(k (fromDense [|| dn ||])) ||]
 
+-- | Dense grouped fold for an explicitly bounded integer key. Unlike the
+-- entity-id form, both bounds are checked because an ordinary 'Int' can be
+-- negative. Only seen slots are emitted, so unused positions in a packed key
+-- space do not fabricate groups.
+withDenseInt :: UV.Unbox t
+             => CodeQ Int -> (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t
+             -> Stream Int r
+             -> ((forall q. SMode q => q Int t) -> CodeQ w) -> CodeQ w
+withDenseInt n op ini s k =
+  [|| let !dn = $$(buildDenseInt n op ini s)
+      in $$(k (fromDenseInt [|| dn ||])) ||]
+
+-- | Replace repeated values with compact integer codes while building a dense
+-- entity-to-code relation. The boxed vector contains one copy of each distinct
+-- value in code order, so reporting code can recover the original value after
+-- the hot part of the query has finished.
+withDictionary :: Ord value
+               => CodeQ Int -> Stream (Id e) value
+               -> ((forall q. SMode q => q (Id e) Int)
+                   -> CodeQ (BV.Vector value) -> CodeQ w)
+               -> CodeQ w
+withDictionary n rows continue =
+  [|| case $$(buildDictionary n rows) of
+        (!codes, !labels) ->
+          $$(continue (fromDense [|| codes ||]) [|| labels ||]) ||]
+
 -- The reduce step is `modify` rather than a read, an apply and a write, because
 -- that is the form that stays allocation-free: @op@ is applied to the slot's
 -- components and the result written straight back, with no accumulator built on
@@ -349,6 +412,58 @@ buildDense n op ini pre s =
                                else return $$acc ||])
                    [|| () ||] s)
         Dense cap <$> UV.freeze vals <*> freeze seen) ||]
+
+buildDenseInt :: UV.Unbox t
+              => CodeQ Int -> (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t
+              -> Stream Int r -> CodeQ (DenseInt t)
+buildDenseInt n op ini s =
+  [|| runST (do
+        let !cap = $$n
+        vals <- newSlots cap $$ini
+        seen <- newBits cap False
+        () <- $$(sfoldST
+                   (\acc d v ->
+                      [|| let i = $$d
+                          in if 0 <= i && i < cap
+                               then do
+                                 UMV.modify vals (\t -> $$(op [|| t ||] v)) i
+                                 writeArray seen i True
+                                 return $$acc
+                               else return $$acc ||])
+                   [|| () ||] s)
+        DenseInt cap <$> UV.freeze vals <*> freeze seen) ||]
+
+-- Build the dictionary and dense code column in one pass. The ordered map is
+-- construction-only: later scans see only integer array reads.
+buildDictionary :: Ord value
+                => CodeQ Int -> Stream (Id e) value
+                -> CodeQ (Dense e Int, BV.Vector value)
+buildDictionary n rows =
+  [|| runST (do
+        let !cap = $$n
+        codes <- newSlots cap (-1 :: Int)
+        seen <- newBits cap False
+        (_, labels, _) <- $$(sfoldST
+          (\state entity value ->
+            [|| case $$state of
+                  (!dictionary, !items, !nextCode) ->
+                    let !i = idIndex $$entity
+                        !item = $$value
+                    in if 0 <= i && i < cap
+                       then case Map.lookup item dictionary of
+                         Just code -> do
+                           UMV.write codes i code
+                           writeArray seen i True
+                           return (dictionary, items, nextCode)
+                         Nothing -> do
+                           UMV.write codes i nextCode
+                           writeArray seen i True
+                           return (Map.insert item nextCode dictionary,
+                                   item : items, nextCode + 1)
+                       else return (dictionary, items, nextCode) ||])
+          [|| (Map.empty, [], 0 :: Int) ||] rows)
+        dense <- Dense cap <$> UV.freeze codes <*> freeze seen
+        return (dense, BV.fromList (reverse labels))) ||]
 
 -- | Precompute dense membership: consume a stream, set a bit at each VALUE it
 -- emits, and hand back the identity relation on those ids. This is the one

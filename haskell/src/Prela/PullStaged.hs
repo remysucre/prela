@@ -20,5 +20,7 @@ module Prela.PullStaged
 import Prela.Id
 import Prela.PullStaged.Ops
   ( SMode, compose, diff, disj, groupBy, leftCompose, prod, restrict, union )
-import Prela.PullStaged.Query
+-- The umbrella keeps 'Prela.Id.idIndex' as its unqualified observation.
+-- Generated scalar code uses the deliberately qualified 'Q.idIndex'.
+import Prela.PullStaged.Query hiding (idIndex)
 import Prela.PullStaged.Stream (Lookup, Stream, invStream)

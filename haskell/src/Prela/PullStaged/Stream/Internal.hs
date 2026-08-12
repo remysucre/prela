@@ -109,10 +109,16 @@ data Stream k v
 
 -- | Generated keyed access to a relation.
 --
--- Applying a key returns a pull stream of matching values. The stream key is
--- `()` because the supplied key is already known. Consumers such as `anyOf`
--- provide short-circuiting, so `Lookup` needs no `probeAny` operation.
-newtype Lookup k v = Lookup { at :: CodeQ k -> Stream () v }
+-- @at@ preserves the full stream of values for consumers that genuinely need
+-- to enumerate a multi-valued row. @probeAny@ is the allocation-free membership
+-- path: it asks whether any value at a key satisfies a generated predicate.
+-- Keeping that operation explicit lets functional columns, compositions and
+-- products emit straight-line tests instead of constructing a tiny pull stream
+-- and immediately consuming it with 'anyOf' for every outer row.
+data Lookup k v = Lookup
+  { at       :: CodeQ k -> Stream () v
+  , probeAny :: CodeQ k -> (CodeQ v -> CodeQ Bool) -> CodeQ Bool
+  }
 
 --------------------------------------------------------------------------------
 -- Mode-free operators

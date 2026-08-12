@@ -9,8 +9,11 @@ module Prela.PullStaged.Materialize
   , withFold
   , withBufFold
   , withCountDistinct
+  , withDenseDistinctCount
   , withDense
   , withDenseOuter
+  , withDenseInt
+  , withDictionary
   , withBits
   ) where
 

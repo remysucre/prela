@@ -10,8 +10,9 @@
 -- Binary operators take a concrete `Lookup` on the right because that side is
 -- always accessed by key.
 --
--- Pull consumers handle early termination, so keyed access does not need a
--- separate early-exit operation.
+-- Keyed access carries a fused early-exit operation. This is what keeps a
+-- membership test inside a scan as a straight-line predicate rather than a
+-- one-row pull loop.
 module Prela.PullStaged.Ops
   ( SMode (..)
     -- * Fixed-mode operators
@@ -20,6 +21,7 @@ module Prela.PullStaged.Ops
   , union
   , disj
   , resolveId
+  , mapLookupKey
   ) where
 
 import Data.Hashable (Hashable)
@@ -44,6 +46,7 @@ class SMode q where
   fromIndex      :: Ord d => CodeQ (Map d [r]) -> q d r
   fromCache      :: Ord d => CodeQ (Map d s) -> q d s
   fromDense      :: UV.Unbox t => CodeQ (Dense e t) -> q (Id e) t
+  fromDenseInt   :: UV.Unbox t => CodeQ (DenseInt t) -> q Int t
   -- Enumeration order is hash-table slot order and is therefore unspecified.
   fromTable      :: (Hashable d, Key d, UV.Unbox t) => CodeQ (Table d t) -> q d t
   fromBits       :: CodeQ (Bits e) -> q (Id e) (Id e)
@@ -63,6 +66,22 @@ class SMode q where
 
   filt     :: (CodeQ r -> CodeQ Bool) -> q d r -> q d r
   mapv     :: (CodeQ r -> CodeQ s) -> q d r -> q d s
+
+-- | Does a keyed relation contain any value? The accepting predicate is kept
+-- explicit in 'probeAny' so filters and compositions can fuse into the same
+-- generated test instead of allocating an intermediate stream value.
+memberAt :: Lookup d r -> CodeQ d -> CodeQ Bool
+memberAt relation key = probeAny relation key (\_ -> [|| True ||])
+
+-- | Compatibility construction for inherently list-backed lookups. Loaded
+-- columns and executor caches provide direct probes below; a materialized list
+-- still needs to walk its values, but does so only for operators that chose that
+-- representation explicitly.
+streamLookup :: (CodeQ d -> Stream () r) -> Lookup d r
+streamLookup values = Lookup
+  { at = values
+  , probeAny = \key accept -> anyOf (filtS accept (values key))
+  }
 
 --------------------------------------------------------------------------------
 -- Enumeration
@@ -115,6 +134,18 @@ instance SMode Stream where
                               Nothing -> $$(skip [|| $$s + 1 ||])
                        else $$(skip [|| $$s + 1 ||]) ||]
     }
+  fromDenseInt c = Lin Producer
+    { source       = c
+    , initialState = \_ -> [|| 0 :: Int ||]
+    , next         = \e s yield skip done ->
+        [|| case $$e of
+              DenseInt n _vals seen ->
+                if $$s >= n then $$done
+                else if atBit seen $$s
+                       then $$(yield [|| $$s ||] [|| _vals UV.! $$s ||]
+                                     [|| $$s + 1 ||])
+                       else $$(skip [|| $$s + 1 ||]) ||]
+    }
   fromTable t = Lin Producer
     { source       = t
     , initialState = \_ -> [|| 0 :: Int ||]
@@ -152,8 +183,8 @@ instance SMode Stream where
                                    (mapvS (\v -> [|| let !x = $$u
                                                          !y = $$v
                                                      in (x, y) ||]) (at b d)))
-  restrict a b = filtKV (\_ r -> anyOf (at b r)) a
-  diff     a b = filtKV (\d _ -> [|| not $$(anyOf (at b d)) ||]) a
+  restrict a b = filtKV (\_ r -> memberAt b r) a
+  diff     a b = filtKV (\d _ -> [|| not $$(memberAt b d) ||]) a
   filt     t a = filtS t a
   mapv     f a = mapvS f a
 
@@ -162,83 +193,175 @@ instance SMode Stream where
 --------------------------------------------------------------------------------
 
 -- Lookup leaves validate keys before reading storage. Invalid keys produce an
--- empty stream.
+-- empty stream. Each leaf supplies both full enumeration and a fused
+-- predicate probe; the latter is the hot path for restrict/difference.
 instance SMode Lookup where
-  universe u = Lookup $ \x -> mapvS (\_ -> x) (guardS [|| containsId $$u $$x ||])
-  column c = Lookup $ \x -> Lin Producer
-    { source       = c
-    , initialState = \_ -> [|| True ||]
-    , next         = \e s yield _skip done ->
-        [|| case $$e of
+  universe u = Lookup
+    { at = \x -> mapvS (\_ -> x) (guardS [|| containsId $$u $$x ||])
+    , probeAny = \x accept ->
+        [|| containsId $$u $$x && $$(accept x) ||]
+    }
+  column c = Lookup
+    { at = \x -> Lin Producer
+        { source       = c
+        , initialState = \_ -> [|| True ||]
+        , next         = \e s yield _skip done ->
+            [|| case $$e of
+                  Col n _st ->
+                    let i = idIndex $$x
+                    in if $$s && i < n
+                         then $$(yield [|| () ||] [|| atStore _st i ||] [|| False ||])
+                         else $$done ||]
+        }
+    , probeAny = \x accept ->
+        [|| case $$c of
               Col n _st ->
                 let i = idIndex $$x
-                in if $$s && i < n
-                     then $$(yield [|| () ||] [|| atStore _st i ||] [|| False ||])
-                     else $$done ||]
+                in i < n && $$(accept [|| atStore _st i ||]) ||]
     }
-  sparseColumn c = Lookup $ \x -> Lin Producer
-    { source       = c
-    , initialState = \_ -> [|| True ||]
-    , next         = \e s yield _skip done ->
+  sparseColumn c = Lookup
+    { at = \x -> Lin Producer
+        { source       = c
+        , initialState = \_ -> [|| True ||]
+        , next         = \e s yield _skip done ->
+            [|| let i = idIndex $$x
+                in if $$s && i < sparseColLen $$e
+                     then case sparseAt $$e i of
+                            Just value -> $$(yield [|| () ||] [|| value ||] [|| False ||])
+                            Nothing    -> $$done
+                     else $$done ||]
+        }
+    , probeAny = \x accept ->
         [|| let i = idIndex $$x
-            in if $$s && i < sparseColLen $$e
-                 then case sparseAt $$e i of
-                        Just value -> $$(yield [|| () ||] [|| value ||] [|| False ||])
-                        Nothing    -> $$done
-                 else $$done ||]
+            in if i < sparseColLen $$c
+                 then case sparseAt $$c i of
+                        Just value -> $$(accept [|| value ||])
+                        Nothing    -> False
+                 else False ||]
     }
   -- The row's extent is read once, in `initialState`, rather than on every step. An
   -- out-of-range key gets the empty range (0, 0), which is the no-values answer.
-  multiColumn c = Lookup $ \x -> Lin Producer
-    { source       = c
-    , initialState = \e -> [|| case $$e of
-                          MultiCol n offs _ ->
-                            let i = idIndex $$x
-                            in if i < n then (off32 offs i, off32 offs (i + 1))
-                                        else (0, 0) ||]
-    , next = \e s yield _skip done ->
-        [|| case $$e of
-              MultiCol _ _ _st -> case $$s of
-                (j, end) | j >= end  -> $$done
-                         | otherwise -> $$(yield [|| () ||] [|| atStore _st j ||]
-                                                 [|| (j + 1, end) ||]) ||]
+  multiColumn c = Lookup
+    { at = \x -> Lin Producer
+        { source       = c
+        , initialState = \e -> [|| case $$e of
+                              MultiCol n offs _ ->
+                                let i = idIndex $$x
+                                in if i < n then (off32 offs i, off32 offs (i + 1))
+                                            else (0, 0) ||]
+        , next = \e s yield _skip done ->
+            [|| case $$e of
+                  MultiCol _ _ _st -> case $$s of
+                    (j, end) | j >= end  -> $$done
+                             | otherwise -> $$(yield [|| () ||] [|| atStore _st j ||]
+                                                     [|| (j + 1, end) ||]) ||]
+        }
+    , probeAny = \x accept ->
+        [|| case $$c of
+              MultiCol n offs _st ->
+                let i = idIndex $$x
+                    go j end
+                      | j >= end = False
+                      | $$(accept [|| atStore _st j ||]) = True
+                      | otherwise = go (j + 1) end
+                in i < n && go (off32 offs i) (off32 offs (i + 1)) ||]
     }
-  fromDense c = Lookup $ \x -> Lin Producer
-    { source       = c
-    , initialState = \_ -> [|| True ||]
-    , next         = \e s yield _skip done ->
-        [|| case $$e of
+  fromDense c = Lookup
+    { at = \x -> Lin Producer
+        { source       = c
+        , initialState = \_ -> [|| True ||]
+        , next         = \e s yield _skip done ->
+            [|| case $$e of
+                  Dense n _vals seen ->
+                    let i = idIndex $$x
+                    in if $$s && i < n && atBit seen i
+                         then $$(yield [|| () ||] [|| _vals UV.! i ||] [|| False ||])
+                         else $$done ||]
+        }
+    , probeAny = \x accept ->
+        [|| case $$c of
               Dense n _vals seen ->
                 let i = idIndex $$x
-                in if $$s && i < n && atBit seen i
-                     then $$(yield [|| () ||] [|| _vals UV.! i ||] [|| False ||])
-                     else $$done ||]
+                in i < n && atBit seen i && $$(accept [|| _vals UV.! i ||]) ||]
     }
-  fromTable t = Lookup $ \x -> Lin Producer
-    { source       = t
-    , initialState = \e -> [|| tableSlot $$e $$x ||]
-    , next         = \e s yield _skip done ->
-        [|| case $$e of
-              Table _ _ _ _vs
-                | $$s >= 0  -> $$(yield [|| () ||] [|| _vs UV.! $$s ||] [|| -1 ||])
-                | otherwise -> $$done ||]
+  fromDenseInt c = Lookup
+    { at = \x -> Lin Producer
+        { source       = c
+        , initialState = \_ -> [|| True ||]
+        , next         = \e s yield _skip done ->
+            [|| case $$e of
+                  DenseInt n _vals seen ->
+                    if $$s && 0 <= $$x && $$x < n && atBit seen $$x
+                      then $$(yield [|| () ||] [|| _vals UV.! $$x ||] [|| False ||])
+                      else $$done ||]
+        }
+    , probeAny = \x accept ->
+        [|| case $$c of
+              DenseInt n _vals seen ->
+                0 <= $$x && $$x < n && atBit seen $$x
+                  && $$(accept [|| _vals UV.! $$x ||]) ||]
     }
-  fromBits b = Lookup $ \x -> mapvS (\_ -> x) (guardS [|| bitsMember $$b $$x ||])
-  fromIndex m = Lookup $ \x -> Lin (listProd [|| Map.findWithDefault [] $$x $$m ||])
-  fromCache m = Lookup $ \x -> Lin (maybeProd [|| Map.lookup $$x $$m ||])
+  fromTable t = Lookup
+    { at = \x -> Lin Producer
+        { source       = t
+        , initialState = \e -> [|| tableSlot $$e $$x ||]
+        , next         = \e s yield _skip done ->
+            [|| case $$e of
+                  Table _ _ _ _vs
+                    | $$s >= 0  -> $$(yield [|| () ||] [|| _vs UV.! $$s ||] [|| -1 ||])
+                    | otherwise -> $$done ||]
+        }
+    , probeAny = \x accept ->
+        [|| case $$t of
+              Table _ _ _ _vs ->
+                let slot = tableSlot $$t $$x
+                in slot >= 0 && $$(accept [|| _vs UV.! slot ||]) ||]
+    }
+  fromBits b = Lookup
+    { at = \x -> mapvS (\_ -> x) (guardS [|| bitsMember $$b $$x ||])
+    , probeAny = \x accept -> [|| bitsMember $$b $$x && $$(accept x) ||]
+    }
+  fromIndex m = streamLookup (\x -> Lin (listProd [|| Map.findWithDefault [] $$x $$m ||]))
+  fromCache m = Lookup
+    { at = \x -> Lin (maybeProd [|| Map.lookup $$x $$m ||])
+    , probeAny = \x accept ->
+        [|| case Map.lookup $$x $$m of
+              Nothing -> False
+              Just value -> $$(accept [|| value ||]) ||]
+    }
 
-  compose  a b = Lookup $ \x -> Bind (at a x) (\_ e -> at b e)
-  prod     a b = Lookup $ \x ->
-                   Bind (at a x)
-                        (\_ u -> mapvS (\v -> [|| let !p = $$u
-                                                      !q = $$v
-                                                  in (p, q) ||]) (at b x))
-  restrict a b = Lookup $ \x -> filtS (\r -> anyOf (at b r)) (at a x)
+  compose a b = Lookup
+    { at = \x -> Bind (at a x) (\_ e -> at b e)
+    , probeAny = \x accept -> probeAny a x (\e -> probeAny b e accept)
+    }
+  prod a b = Lookup
+    { at = \x -> Bind (at a x)
+                  (\_ u -> mapvS (\v -> [|| let { !p = $$u; !q = $$v }
+                                              in (p, q) ||]) (at b x))
+    , probeAny = \x accept ->
+        probeAny a x (\u -> probeAny b x (\v -> accept [|| ($$u, $$v) ||]))
+    }
+  restrict a b = Lookup
+    { at = \x -> filtS (memberAt b) (at a x)
+    , probeAny = \x accept ->
+        probeAny a x (\r -> [|| $$(memberAt b r) && $$(accept r) ||])
+    }
   -- The test is on the KEY, so it is decided once for the whole lookup rather
   -- than per returned row, which is what `whenS` is for.
-  diff     a b = Lookup $ \x -> whenS [|| not $$(anyOf (at b x)) ||] (at a x)
-  filt     t a = Lookup $ \x -> filtS t (at a x)
-  mapv     f a = Lookup $ \x -> mapvS f (at a x)
+  diff a b = Lookup
+    { at = \x -> whenS [|| not $$(memberAt b x) ||] (at a x)
+    , probeAny = \x accept ->
+        [|| not $$(memberAt b x) && $$(probeAny a x accept) ||]
+    }
+  filt t a = Lookup
+    { at = \x -> filtS t (at a x)
+    , probeAny = \x accept ->
+        probeAny a x (\r -> [|| $$(t r) && $$(accept r) ||])
+    }
+  mapv f a = Lookup
+    { at = \x -> mapvS f (at a x)
+    , probeAny = \x accept -> probeAny a x (accept . f)
+    }
 
 --------------------------------------------------------------------------------
 -- Fixed-mode operators
@@ -272,15 +395,34 @@ union = catS
 -- not a placeholder, it is the constraint made visible — you cannot navigate
 -- through an OR or read a value out of one, and the type says so.
 --
--- This is two `anyOf`s and a `guardS`; short-circuiting follows directly from
--- the pull consumer.
+-- The probe path is a direct short-circuiting OR. Full enumeration remains a
+-- one-row unit stream because this relation deliberately exposes membership
+-- only.
 disj :: Lookup d u -> Lookup d v -> Lookup d ()
-disj a b = Lookup $ \x -> guardS [|| $$(anyOf (at a x)) || $$(anyOf (at b x)) ||]
+disj a b = Lookup
+  { at = \x -> guardS [|| $$(memberAt a x) || $$(memberAt b x) ||]
+  , probeAny = \x accept ->
+      [|| ($$(memberAt a x) || $$(memberAt b x)) && $$(accept [|| () ||]) ||]
+  }
 
 -- | Resolve a stored non-negative index through its target entity universe.
 -- Missing, out-of-range, and dead identifiers all produce no value.
 resolveId :: CodeQ (Universe e) -> Lookup Int (Id e)
-resolveId domain = Lookup $ \index -> Lin (maybeProd [|| lookupId $$domain $$index ||])
+resolveId domain = Lookup
+  { at = \index -> Lin (maybeProd [|| lookupId $$domain $$index ||])
+  , probeAny = \index accept ->
+      [|| case lookupId $$domain $$index of
+            Nothing -> False
+            Just identifier -> $$(accept [|| identifier ||]) ||]
+  }
+
+-- | Adapt a keyed relation by transforming the key supplied to it. This is
+-- contravariant in the lookup key and does not enumerate or allocate anything.
+mapLookupKey :: (CodeQ a -> CodeQ b) -> Lookup b r -> Lookup a r
+mapLookupKey transform relation = Lookup
+  { at = at relation . transform
+  , probeAny = \key accept -> probeAny relation (transform key) accept
+  }
 
 --------------------------------------------------------------------------------
 -- Producer-level leaves

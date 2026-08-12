@@ -13,23 +13,13 @@ module Prela.Id
   ) where
 
 import Data.Array.Unboxed (UArray, (!), listArray)
-import Data.Hashable (Hashable (..))
 import Data.Maybe (mapMaybe)
+import Prela.Id.Internal (Id (..), idIndex)
 
--- | A zero-based identifier tagged with its entity type. The constructor is
--- deliberately private: an identifier can only be obtained by looking it up in
--- a 'Universe'.
-newtype Id e = Id Int deriving (Eq, Ord, Show)
-
-instance Hashable (Id e) where
-  hashWithSalt salt (Id i) = hashWithSalt salt i
-  {-# INLINE hashWithSalt #-}
-
--- | The numeric position of an identifier. This is observation, not
--- construction; callers cannot turn an arbitrary number back into an 'Id'.
-idIndex :: Id e -> Int
-idIndex (Id i) = i
-{-# INLINE idIndex #-}
+-- The 'Id' constructor is deliberately omitted from this module's export list:
+-- callers can observe an index but can obtain an identifier only through a
+-- universe check. Executor internals import "Prela.Id.Internal" when storing an
+-- already-validated identifier as a machine integer.
 
 -- | An entity's valid identifier space. A dense universe accepts every index in
 -- its range; a sparse one additionally carries a validity mask.
@@ -57,9 +47,12 @@ lookupId (Universe n live) i
   | i < 0 || i >= n = Nothing
   | maybe True (! i) live = Just (Id i)
   | otherwise = Nothing
+{-# INLINE lookupId #-}
 
 containsId :: Universe e -> Id e -> Bool
-containsId u = maybe False (const True) . lookupId u . idIndex
+containsId (Universe n live) (Id i) =
+  0 <= i && i < n && maybe True (! i) live
+{-# INLINE containsId #-}
 
 universeIds :: Universe e -> [Id e]
 universeIds u = mapMaybe (lookupId u) [0 .. universeSize u - 1]
@@ -70,3 +63,4 @@ boundedId :: Int -> Int -> Maybe (Id e)
 boundedId n i
   | 0 <= i && i < n = Just (Id i)
   | otherwise = Nothing
+{-# INLINE boundedId #-}

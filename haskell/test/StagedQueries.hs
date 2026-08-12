@@ -21,9 +21,10 @@
 -- And the @where@ preamble that buys back the bare spelling of each leaf works
 -- exactly as it did before, signatures and all, for exactly the same reason:
 -- `movie` is enumerated in one query and accessed through `Lookup` in another.
-module StagedQueries (schemaQuery) where
+module StagedQueries (schemaQuery, dictionaryQuery) where
 
 import Data.ByteString (ByteString)
+import qualified Data.Vector as BV
 import Prela.PullStaged.Ops
 import Prela.PullStaged.Stream
 import qualified Prela.PullStaged.Query as Q
@@ -77,3 +78,18 @@ schemaQuery = Q.query build
         best :: Q.Scalar Double
         best = Q.foldAll (\a v -> Q.ifThenElse (a Q..>. v) a v) 0
                          (compose movie rating)
+
+-- Exercise compact value coding and its bounded distinct-count consumer on a
+-- tiny schema, independently of the TPC-H integration benchmark.
+dictionaryQuery :: Q.Query Sch.TinyS (BV.Vector ByteString, [(Int, Int)])
+dictionaryQuery = Q.query $ \s -> do
+  (kindCodes, labels) <- Q.dictionary
+    (Sch.movieExtent s)
+    (compose (Sch.movie s) (compose (Sch.kind s) (Sch.kindText s)))
+  let grouped :: Stream Int (Id Sch.Keyword)
+      grouped = compose
+        (groupBy (Sch.movie s) (Q.keyed kindCodes))
+        (Sch.keyword s)
+  counts <- Q.denseDistinctCount
+    (Sch.movieExtent s) (Sch.keywordExtent s) grouped
+  pure (Q.pair labels (Q.collect (Q.stream counts)))

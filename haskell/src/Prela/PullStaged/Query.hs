@@ -1,5 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
 
@@ -33,10 +34,13 @@ module Prela.PullStaged.Query
   , div
   , member
   , take
+  , firstByte
   , isPrefixOf
   , isSuffixOf
   , isInfixOf
+  , orderedInfixOf
   , mapList
+  , idIndex
   , extent
     -- * Relations
   , Relation
@@ -50,8 +54,11 @@ module Prela.PullStaged.Query
   , groupFold
   , bufferFold
   , distinctCount
+  , denseDistinctCount
+  , DenseKey
   , denseFold
   , denseFoldOuter
+  , dictionary
   , bitset
   , regex
     -- * Predicates and value transforms
@@ -65,6 +72,7 @@ module Prela.PullStaged.Query
   , between
   , range
   , filterBy
+  , mapKeys
   , mapValues
   , rx
   , nrx
@@ -84,6 +92,7 @@ import Data.Hashable (Hashable)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
 import Data.String (IsString (..))
+import qualified Data.Vector as BV
 import qualified Data.Vector.Unboxed as UV
 import Language.Haskell.TH (CodeQ)
 import Language.Haskell.TH.Syntax (Lift, liftTyped)
@@ -92,6 +101,7 @@ import qualified Prelude as Base
 import Text.Regex.TDFA (Regex, RegexLike)
 
 import Prela.Id (Id, Universe, universeSize)
+import qualified Prela.Id as Id
 import qualified Prela.PullStaged.Materialize as M
 import qualified Prela.PullStaged.Ops as O
 import Prela.PullStaged.Ops (SMode)
@@ -178,6 +188,15 @@ member (Scalar value) choices =
 take :: Scalar Int -> Scalar ByteString -> Scalar ByteString
 take (Scalar size) (Scalar value) = Scalar [|| BS.take $$size $$value ||]
 
+-- | The first byte as an 'Int', or zero for an empty string. Returning a
+-- defined default keeps this observation total; schema-specific callers may
+-- rely on a stronger non-empty invariant without introducing partial indexing.
+firstByte :: Scalar ByteString -> Scalar Int
+firstByte (Scalar value) = Scalar
+  [|| case BS.uncons $$value of
+        Nothing       -> 0
+        Just (byte, _) -> Base.fromEnum byte ||]
+
 isPrefixOf, isSuffixOf, isInfixOf
   :: Scalar ByteString -> Scalar ByteString -> Scalar Bool
 isPrefixOf (Scalar needle) (Scalar value) =
@@ -187,9 +206,32 @@ isSuffixOf (Scalar needle) (Scalar value) =
 isInfixOf (Scalar needle) (Scalar value) =
   Scalar [|| BS.isInfixOf $$needle $$value ||]
 
+-- | Whether the first byte string occurs before the second. This is the
+-- literal-substring equivalent of @first.*second@, without invoking a regex
+-- engine. Empty and missing inputs follow 'ByteString' search semantics.
+orderedInfixOf
+  :: Scalar ByteString -> Scalar ByteString -> Scalar ByteString -> Scalar Bool
+orderedInfixOf (Scalar firstNeedle) (Scalar secondNeedle) (Scalar value) = Scalar
+  [|| let !needle1 = $$firstNeedle
+          !needle2 = $$secondNeedle
+          !input = $$value
+      in if BS.null needle1
+           then BS.isInfixOf needle2 input
+           else case BS.breakSubstring needle1 input of
+             (_, suffix)
+               | BS.null suffix -> False
+               | otherwise -> BS.isInfixOf needle2
+                                (BS.drop (BS.length needle1) suffix) ||]
+
 mapList :: (Scalar a -> Scalar b) -> Scalar [a] -> Scalar [b]
 mapList transform (Scalar values) = Scalar
   [|| map (\value -> $$(scalarCode (transform (Scalar [|| value ||])))) $$values ||]
+
+-- | Observe an entity identifier's validated zero-based position. This does
+-- not expose identifier construction: the result is an ordinary generated
+-- 'Int', useful for compact unboxed fold state.
+idIndex :: Scalar (Id e) -> Scalar Int
+idIndex (Scalar identifier) = Scalar [|| Id.idIndex $$identifier ||]
 
 -- | The generated extent of an entity universe. Schema declarations expose a
 -- named accessor built from this primitive.
@@ -287,14 +329,42 @@ distinctCount :: (Hashable d, Key d, Hashable r, Key r)
 distinctCount rows = Gen $ \continue ->
   M.withCountDistinct rows (\relation -> continue (Relation relation))
 
-denseFold :: UV.Unbox acc
+-- | Count distinct entity ids within bounded integer groups. Supplying the two
+-- extents lets the executor use one packed integer per pair and a dense count
+-- array, while preserving the same relation result as 'distinctCount'.
+denseDistinctCount :: Scalar Int -> Scalar Int -> Stream Int (Id e)
+                   -> Gen (Relation Int Int)
+denseDistinctCount (Scalar groups) (Scalar memberExtent) rows = Gen $ \continue ->
+  M.withDenseDistinctCount groups memberExtent rows
+    (\relation -> continue (Relation relation))
+
+-- | Keys that can safely select a slot in a bounded dense aggregate. Entity
+-- identifiers are already non-negative; ordinary integers receive an explicit
+-- lower- and upper-bound check in the generated loop.
+class DenseKey key where
+  withDenseKey
+    :: UV.Unbox acc
+    => CodeQ Int
+    -> (CodeQ acc -> CodeQ r -> CodeQ acc)
+    -> CodeQ acc
+    -> Stream key r
+    -> ((forall q. SMode q => q key acc) -> CodeQ w)
+    -> CodeQ w
+
+instance DenseKey (Id e) where
+  withDenseKey = M.withDense
+
+instance DenseKey Int where
+  withDenseKey = M.withDenseInt
+
+denseFold :: (DenseKey key, UV.Unbox acc)
           => Scalar Int
           -> (Scalar acc -> Scalar r -> Scalar acc)
           -> Scalar acc
-          -> Stream (Id e) r
-          -> Gen (Relation (Id e) acc)
+          -> Stream key r
+          -> Gen (Relation key acc)
 denseFold (Scalar size) step (Scalar initial) rows = Gen $ \continue ->
-  M.withDense size
+  withDenseKey size
     (\acc value -> scalarCode (step (Scalar acc) (Scalar value)))
     initial rows (\relation -> continue (Relation relation))
 
@@ -308,6 +378,16 @@ denseFoldOuter (Scalar size) step (Scalar initial) rows = Gen $ \continue ->
   M.withDenseOuter size
     (\acc value -> scalarCode (step (Scalar acc) (Scalar value)))
     initial rows (\relation -> continue (Relation relation))
+
+-- | Assign a compact integer to each distinct stream value. The relation maps
+-- every input entity to its code; the vector maps codes back to values for final
+-- rendering. This keeps repeated strings and compound values out of hot keys.
+dictionary :: Ord value
+           => Scalar Int -> Stream (Id e) value
+           -> Gen (Relation (Id e) Int, Scalar (BV.Vector value))
+dictionary (Scalar size) rows = Gen $ \continue ->
+  M.withDictionary size rows $ \relation labels ->
+    continue (Relation relation, Scalar labels)
 
 bitset :: Scalar Int -> Stream d (Id e) -> Gen (Relation (Id e) (Id e))
 bitset (Scalar size) rows = Gen $ \continue ->
@@ -341,6 +421,11 @@ range (Scalar low) (Scalar high) = P.range low high
 
 filterBy :: SMode q => (Scalar r -> Scalar Bool) -> q d r -> q d r
 filterBy predicate = O.filt (scalarCode . predicate . Scalar)
+
+-- | Adapt the input key of a lookup. For example, a relation keyed by nation
+-- can be attached to @(nation, year)@ groups with @mapKeys first@.
+mapKeys :: (Scalar a -> Scalar b) -> Lookup b r -> Lookup a r
+mapKeys transform = O.mapLookupKey (scalarCode . transform . Scalar)
 
 mapValues :: SMode q => (Scalar r -> Scalar s) -> q d r -> q d s
 mapValues transform = O.mapv (scalarCode . transform . Scalar)
