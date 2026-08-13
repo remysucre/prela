@@ -19,6 +19,10 @@ Nevertheless, the most idiomatic way to write a query already performs well in o
 > Prela is a research prototype in early development. 
 > Expect constant and sweeping changes to both language design and implementation.
 
+The staged-pull Haskell implementation has its own
+[query-writing walkthrough and reference](./haskell/README.md), including the
+drive/probe execution model and Template Haskell staging boundary.
+
 ## Example
 
 Consider Join Order Benchmark [22a](https://github.com/gregrahn/join-order-benchmark/blob/master/22a.sql):
