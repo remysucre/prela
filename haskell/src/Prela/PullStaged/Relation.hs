@@ -2,9 +2,12 @@
 
 -- | Package-private relation facade and mode-selection evidence.
 --
--- 'Prela.PullStaged.Query' hides the 'Relation' constructor and the 'asStream'
+-- "Prela.PullStaged.Query" hides the t'Relation' constructor and the 'asStream'
 -- and 'asLookup' selectors. They select an executor representation during code
--- generation; they do not scan data or perform a keyed lookup themselves.
+-- generation; they do not scan data or perform a keyed lookup themselves. This
+-- rank-n facade lets one relation definition be driven on the left of an
+-- operator and probed on the right without exposing either representation to a
+-- query author.
 module Prela.PullStaged.Relation where
 
 import qualified Prela.PullStaged.Ops as O
@@ -19,6 +22,7 @@ newtype Relation d r = Relation
 
 -- | Representations which can supply whole-relation traversal code.
 class Drivable q where
+  -- | Select the whole-relation stream representation.
   asStream :: q d r -> Stream d r
 
 instance Drivable Stream where
@@ -29,6 +33,7 @@ instance Drivable Relation where
 
 -- | Representations which can supply keyed-access code.
 class Probeable q where
+  -- | Select the keyed lookup representation.
   asLookup :: q d r -> Lookup d r
 
 instance Probeable Lookup where
@@ -38,7 +43,7 @@ instance Probeable Relation where
   asLookup = useRelation
 
 -- A relation is itself a valid algebra mode. Instantiating its rank-n field as
--- 'Stream' or 'Lookup' selects the corresponding specialized executor instance.
+-- t'Stream' or t'Lookup' selects the corresponding specialized executor instance.
 instance O.Mode Relation where
   universe source = Relation (O.universe source)
   column source = Relation (O.column source)
@@ -59,26 +64,32 @@ instance O.Mode Relation where
   filt predicate (Relation rows) = Relation (O.filt predicate rows)
   mapv transform (Relation rows) = Relation (O.mapv transform rows)
 
--- | Algebra over author-level relations. The left side preserves its mode; the
--- right side is selected as a keyed representation by context.
+-- | Compose through the left relation's value. The left operand preserves its
+-- mode and the right operand is selected as a keyed lookup.
 compose :: (Mode q, Probeable p) => q d e -> p e f -> q d f
 compose rows indexed = O.compose rows (asLookup indexed)
 
+-- | Pair values from two relations which share a key.
 prod :: (Mode q, Probeable p) => q d u -> p d v -> q d (u, v)
 prod rows indexed = O.prod rows (asLookup indexed)
 
+-- | Keep left rows whose value occurs as a key in the right relation.
 restrict :: (Mode q, Probeable p) => q d r -> p r e -> q d r
 restrict rows predicate = O.restrict rows (asLookup predicate)
 
+-- | Keep left rows whose key has no match in the right relation.
 diff :: (Mode q, Probeable p) => q d r -> p d e -> q d r
 diff rows excluded = O.diff rows (asLookup excluded)
 
+-- | Rekey each driven row using a lookup on its value.
 groupBy :: (Drivable q, Probeable p) => q d r -> p r k -> Stream k r
 groupBy rows key = O.groupBy (asStream rows) (asLookup key)
 
+-- | Rekey the right relation by values enumerated from the left relation.
 leftCompose :: (Drivable q, Probeable p) => q d e -> p d f -> Stream e f
 leftCompose rows indexed = O.leftCompose (asStream rows) (asLookup indexed)
 
+-- | Enumerate the left stream followed by the right stream.
 union :: (Drivable left, Drivable right)
       => left d r -> right d r -> Stream d r
 union left right = O.union (asStream left) (asStream right)
@@ -89,5 +100,6 @@ disj :: (Probeable left, Probeable right)
      => left d r -> right d s -> Lookup d ()
 disj left right = O.disj (asLookup left) (asLookup right)
 
+-- | Swap keys and values for enumeration without building a reverse index.
 invStream :: Drivable q => q d r -> Stream r d
 invStream = S.invStream . asStream

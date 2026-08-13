@@ -1,10 +1,16 @@
+-- | Small TPC-H reference results embedded in the benchmark executable.
+--
+-- Larger oracle results remain external files to keep compilation reasonable;
+-- "Main" chooses between these values and those files by query number.
 module TPCH.Oracles (inlineOracles) where
 
 import Data.List (intercalate)
 
+-- | Join oracle rows using the same no-final-newline format as query renderers.
 joinLines :: [String] -> String
 joinLines = intercalate "\n"
 
+-- | Reference output for queries whose complete results are compact.
 inlineOracles :: [(String, String)]
 inlineOracles =
   [ ("1", joinLines

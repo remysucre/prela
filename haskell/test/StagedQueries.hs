@@ -14,10 +14,10 @@
 --
 -- Each `Q.collect` and `Q.foldAll` emits its own loop. Binary `Q.pair` is the
 -- sole generated product constructor, so larger products nest exactly like
--- relational `prod` results.
+-- relational @prod@ results.
 --
 -- The @where@ preamble keeps the bare spelling of each leaf, signatures and
--- all. `movie` is enumerated in one query and probed in another; the surrounding
+-- all. @movie@ is enumerated in one query and probed in another; the surrounding
 -- operator chooses that mode without an explicit conversion.
 module StagedQueries
   ( schemaQuery, dictionaryQuery, topKQuery, sharedRelationQuery
@@ -34,6 +34,8 @@ import Prela.Id (Id)
 
 import qualified TinyStaged as Sch
 
+-- | Combine navigation, restriction, difference, aggregation, and products in
+-- one generated tiny-schema query.
 schemaQuery :: Q.Query Sch.TinyS
                (((([ByteString], Int), [ByteString]), [ByteString]), Double)
 schemaQuery = Q.query build
@@ -81,7 +83,7 @@ schemaQuery = Q.query build
         best = Q.foldAll (\a v -> Q.ifThenElse (a Q..>. v) a v) 0
                          (compose movie rating)
 
--- Exercise compact value coding and its bounded distinct-count consumer on a
+-- | Exercise compact value coding and its bounded distinct-count consumer on a
 -- tiny schema, independently of the TPC-H integration benchmark.
 dictionaryQuery :: Q.Query Sch.TinyS (BV.Vector ByteString, [(Int, Int)])
 dictionaryQuery = Q.query $ \s -> do
@@ -96,6 +98,7 @@ dictionaryQuery = Q.query $ \s -> do
     (Sch.movieExtent s) (Sch.keywordExtent s) grouped
   pure (Q.pair labels (Q.collect counts))
 
+-- | Check ordered retention, preserved keys, and a zero-capacity top-k buffer.
 -- A bounded materializer must order retained rows, preserve their keys for
 -- downstream composition, and handle a zero-sized buffer without touching it.
 topKQuery
@@ -111,9 +114,10 @@ topKQuery = Q.query $ \s -> do
   none <- Q.topK 0 descending ratings
   pure (Q.pair (Q.collect best) (Q.collect none))
 
+-- | Enumerate and probe the same dense materializer beneath one generated bind.
 -- One dense materializer is enumerated on the left and probed on the right.
 -- Both uses remain beneath the single generated binding introduced by
--- `denseFold`; no stream/keyed choice appears in the query.
+-- @denseFold@; no stream/keyed choice appears in the query.
 sharedRelationQuery
   :: Q.Query Sch.TinyS
        ([(Id Sch.Movie, Int)], [(Id Sch.Movie, Int)])
@@ -123,7 +127,9 @@ sharedRelationQuery = Q.query $ \s -> do
   pure (Q.pair (Q.collect years)
                (Q.collect (compose (Sch.movie s) years)))
 
--- Exercise the allocation-free ordered substring scan, including its empty
+-- | Exercise both orders and empty needles in the ordered substring scan.
+--
+-- The allocation-free scan includes its empty
 -- needle behavior. The Q13 oracle covers its seven/eight-byte packed-word path.
 orderedInfixQuery :: Q.Query Sch.TinyS ((Int, Int), (Int, Int))
 orderedInfixQuery = Q.query $ \s ->
@@ -134,6 +140,8 @@ orderedInfixQuery = Q.query $ \s ->
        (Q.pair (matches "Ali" "en") (matches "en" "Ali"))
        (Q.pair (matches "" "lar") (matches "Alien" "")))
 
+-- | Compare driven and keyed access to deliberately malformed boxed references.
+--
 -- The direct reference leaf must agree in its Stream and Lookup modes, and its
 -- checked boxed and trusted word-backed storage representations must have the
 -- same semantics for holes, invalid targets, and dead targets.
@@ -151,6 +159,8 @@ referenceQuery = Q.query $ \fixture ->
   in pure (Q.pair (Q.collect boxedDriven)
                   (Q.collect (O.compose sources boxedKeyed)))
 
+-- | Compare driven and keyed access under both generated schema loaders.
+--
 -- Loaded schemas exercise boxed storage under the checked loader and
 -- word-backed storage under the trusted loader. Enumerating the reference leaf
 -- directly must agree with probing it from the source universe.

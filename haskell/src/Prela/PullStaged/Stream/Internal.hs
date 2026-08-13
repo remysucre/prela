@@ -79,7 +79,7 @@ lam1 f = [|| \_x -> $$(f [|| _x ||]) ||]
 -- | A producer that advances by at most one element.
 --
 -- `next` receives the source and state, then emits one continuation:
--- `yield`, `skip`, or `done`. A filtered row uses `skip`, returning control
+-- @yield@, @skip@, or @done@. A filtered row uses @skip@, returning control
 -- without producing a value.
 --
 -- `source` holds loop-invariant code such as a schema field selection. Consumers
@@ -90,9 +90,9 @@ data Producer k v = forall st src. Producer
   , initialState :: CodeQ src -> CodeQ st      -- ^ State passed to the first call to `next`.
   , next         :: forall a. CodeQ src
           -> CodeQ st
-          -> (CodeQ k -> CodeQ v -> CodeQ st -> CodeQ a) -- ^ yield
-          -> (CodeQ st -> CodeQ a)                       -- ^ skip
-          -> CodeQ a                                     -- ^ done
+          -> (CodeQ k -> CodeQ v -> CodeQ st -> CodeQ a) -- yield continuation
+          -> (CodeQ st -> CodeQ a)                       -- skip continuation
+          -> CodeQ a                                     -- done result
           -> CodeQ a                                     -- ^ Emit one step.
   }
 
@@ -118,7 +118,9 @@ data Stream k v
 -- and immediately consuming it with 'anyOf' for every outer row.
 data Lookup k v = Lookup
   { at       :: CodeQ k -> Stream () v
+    -- ^ Enumerate every value stored at the supplied key.
   , probeAny :: CodeQ k -> (CodeQ v -> CodeQ Bool) -> CodeQ Bool
+    -- ^ Test values at the key with a fused, short-circuiting predicate.
   }
 
 --------------------------------------------------------------------------------
@@ -127,17 +129,19 @@ data Lookup k v = Lookup
 
 -- | Turn a flat producer into a general stream.
 --
--- Only `Producer`s can be zipped because lockstep needs direct access to both
+-- Only t'Producer's can be zipped because lockstep needs direct access to both
 -- states. After `linear`, that capability is intentionally unavailable.
 linear :: Producer d r -> Stream d r
 linear = Lin
 {-# INLINE linear #-}
 
+-- | Map the values of a stream without changing its keys or shape.
 mapvS :: (CodeQ r -> CodeQ r') -> Stream d r -> Stream d r'
 mapvS h (Lin p)    = Lin (mapvP h p)
 mapvS h (Bind o g) = Bind o (\x e -> mapvS h (g x e))
 mapvS h (Cat a b)  = Cat (mapvS h a) (mapvS h b)
 
+-- | Map the keys of a stream without changing its values or shape.
 mapkS :: (CodeQ d -> CodeQ d') -> Stream d r -> Stream d' r
 mapkS h (Lin p)    = Lin (mapkP h p)
 mapkS h (Bind o g) = Bind o (\x e -> mapkS h (g x e))
@@ -151,13 +155,13 @@ mapkVS h (Lin p)    = Lin (mapkVP h p)
 mapkVS h (Bind o g) = Bind o (\x e -> mapkVS h (g x e))
 mapkVS h (Cat a b)  = Cat (mapkVS h a) (mapkVS h b)
 
--- | Set each row's key to its own value. `groupBy` adds a keyed lookup.
+-- | Set each row's key to its own value. @groupBy@ adds a keyed lookup.
 byValue :: Stream d r -> Stream r r
 byValue (Lin p)    = Lin (byValueP p)
 byValue (Bind o g) = Bind o (\x e -> byValue (g x e))
 byValue (Cat a b)  = Cat (byValue a) (byValue b)
 
--- | Swap key and value. Enumeration only, and free. There is no `Lookup` form:
+-- | Swap key and value. Enumeration only, and free. There is no t'Lookup' form:
 -- keyed access to an inverse requires building a reverse index, which is
 -- "Prela.PullStaged.Materialize"'s @invert@.
 invStream :: Stream d r -> Stream r d
@@ -165,6 +169,7 @@ invStream (Lin p)    = Lin (swapP p)
 invStream (Bind o g) = Bind o (\x e -> invStream (g x e))
 invStream (Cat a b)  = Cat (invStream a) (invStream b)
 
+-- | Keep the stream rows whose values satisfy the staged predicate.
 filtS :: (CodeQ r -> CodeQ Bool) -> Stream d r -> Stream d r
 filtS t = filtKV (\_ r -> t r)
 
@@ -174,7 +179,7 @@ filtKV t (Lin p)    = Lin (filtPKV t p)
 filtKV t (Bind o g) = Bind o (\x e -> filtKV t (g x e))
 filtKV t (Cat a b)  = Cat (filtKV t a) (filtKV t b)
 
--- | One row of `()` if the test passes, none if it does not.
+-- | One row of @()@ if the test passes, none if it does not.
 guardS :: CodeQ Bool -> Stream () ()
 guardS c = Lin Producer
   { source       = [|| () ||]
@@ -184,7 +189,7 @@ guardS c = Lin Producer
   }
 
 -- | Run a stream only if a generation-time-emitted test passes at runtime. Used
--- by the `Lookup` implementation of `diff`, where the test is on the supplied
+-- by the t'Lookup' implementation of @diff@, where the test is on the supplied
 -- key and so is decided once for the whole stream rather than per row.
 whenS :: CodeQ Bool -> Stream d r -> Stream d r
 whenS c s = Bind (guardS c) (\_ _ -> s)
@@ -197,18 +202,21 @@ catS = Cat
 -- Producer-level operators
 --------------------------------------------------------------------------------
 
+-- | Map the values yielded by a flat producer.
 mapvP :: (CodeQ r -> CodeQ r') -> Producer d r -> Producer d r'
 mapvP h (Producer env i step) = Producer
   { source = env, initialState = i
   , next = \e s yield skip done -> step e s (\d r s' -> yield d (h r) s') skip done
   }
 
+-- | Map the keys yielded by a flat producer.
 mapkP :: (CodeQ d -> CodeQ d') -> Producer d r -> Producer d' r
 mapkP h (Producer env i step) = Producer
   { source = env, initialState = i
   , next = \e s yield skip done -> step e s (\d r s' -> yield (h d) r s') skip done
   }
 
+-- | Map each producer key with both the old key and value in scope.
 mapkVP :: (CodeQ d -> CodeQ r -> CodeQ d') -> Producer d r -> Producer d' r
 mapkVP h (Producer env i step) = Producer
   { source = env, initialState = i
@@ -217,21 +225,25 @@ mapkVP h (Producer env i step) = Producer
         skip done
   }
 
+-- | Replace each producer key with the corresponding value.
 byValueP :: Producer d r -> Producer r r
 byValueP (Producer env i step) = Producer
   { source = env, initialState = i
   , next = \e s yield skip done -> step e s (\_ r s' -> yield r r s') skip done
   }
 
+-- | Exchange the keys and values yielded by a producer.
 swapP :: Producer d r -> Producer r d
 swapP (Producer env i step) = Producer
   { source = env, initialState = i
   , next = \e s yield skip done -> step e s (\d r s' -> yield r d s') skip done
   }
 
+-- | Keep producer rows whose values satisfy the staged predicate.
 filtP :: (CodeQ r -> CodeQ Bool) -> Producer d r -> Producer d r
 filtP t = filtPKV (\_ r -> t r)
 
+-- | Keep producer rows satisfying a predicate over both key and value.
 -- Bind the value once because both the test and yield use it.
 filtPKV :: (CodeQ d -> CodeQ r -> CodeQ Bool) -> Producer d r -> Producer d r
 filtPKV t (Producer env i step) = Producer
@@ -269,6 +281,7 @@ sfoldWhile p f z (Bind o g) =
     z o
 sfoldWhile p f z (Cat a b) = sfoldWhile p f (sfoldWhile p f z a) b
 
+-- | Implement a stopping fold over one flat producer.
 -- Bind the producer environment once outside the loop.
 foldWhileP :: (CodeQ acc -> CodeQ Bool)
            -> (CodeQ acc -> CodeQ d -> CodeQ r -> CodeQ acc)
@@ -304,6 +317,7 @@ sfoldST f z (Bind o g) =
 sfoldST f z (Cat a b) =
   [|| $$(sfoldST f z a) >>= \ !z' -> $$(sfoldST f [|| z' ||] b) ||]
 
+-- | Implement an effectful fold over one flat producer.
 foldSTP :: (CodeQ acc -> CodeQ d -> CodeQ r -> CodeQ (ST s acc))
         -> CodeQ acc -> Producer d r -> CodeQ (ST s acc)
 foldSTP f z (Producer env i step) =
@@ -320,6 +334,7 @@ foldAll :: (CodeQ acc -> CodeQ r -> CodeQ acc)
         -> CodeQ acc -> Stream d r -> CodeQ acc
 foldAll op = sfold (\acc _ v -> op acc v)
 
+-- | Count all rows in a stream.
 count :: Stream d r -> CodeQ Int
 count = sfold (\acc _ _ -> [|| $$acc + 1 ||]) [|| 0 ||]
 

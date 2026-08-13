@@ -1,4 +1,10 @@
 -- | Phantom-typed entity identifiers and the universes that validate them.
+--
+-- An @Id entity@ cannot be confused with an identifier from another entity at
+-- compile time. At runtime it is an integer, but its public constructor is
+-- hidden: callers obtain identifiers by validating indices against a
+-- t'Universe'. Dense universes accept a contiguous range; sparse universes also
+-- carry a live-row mask.
 module Prela.Id
   ( Id
   , idIndex
@@ -37,6 +43,8 @@ universeFromMask live = Universe n (Just (listArray (0, n - 1) live))
   where
     n = length live
 
+-- | Return the number of addressable positions in a universe, including dead
+-- positions in a sparse universe.
 universeSize :: Universe e -> Int
 universeSize (Universe n _) = n
 
@@ -49,11 +57,13 @@ lookupId (Universe n live) i
   | otherwise = Nothing
 {-# INLINE lookupId #-}
 
+-- | Test whether an identifier is in range and live in the supplied universe.
 containsId :: Universe e -> Id e -> Bool
 containsId (Universe n live) (Id i) =
   0 <= i && i < n && maybe True (! i) live
 {-# INLINE containsId #-}
 
+-- | Enumerate every live identifier in ascending index order.
 universeIds :: Universe e -> [Id e]
 universeIds u = mapMaybe (lookupId u) [0 .. universeSize u - 1]
 

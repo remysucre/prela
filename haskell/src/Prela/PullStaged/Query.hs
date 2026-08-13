@@ -2,7 +2,10 @@
 --
 -- Package-private modules split the implementation by concept. This module
 -- deliberately lists the safe vocabulary instead of re-exporting their
--- constructors and representation selectors.
+-- constructors and representation selectors. Query authors construct a
+-- t'Query' with 'query', use t'Gen' sequencing for shared runtime state, terminate
+-- with a scalar consumer, and splice the ordinary function returned by
+-- 'compile'.
 module Prela.PullStaged.Query
   ( -- * Generated scalars
     Scalar
@@ -108,8 +111,11 @@ import qualified Prela.PullStaged.Stream as S
 -- | A complete staged function from a loaded schema to a result.
 newtype Query schema result = Query (CodeQ schema -> Gen (Scalar result))
 
+-- | Package a pure query builder. The schema argument denotes the eventual
+-- runtime schema inside generated code.
 query :: (CodeQ schema -> Gen (Scalar result)) -> Query schema result
 query = Query
 
+-- | Generate an ordinary function which executes a complete staged query.
 compile :: Query schema result -> CodeQ (schema -> result)
 compile (Query build) = S.lam1 (runScalarGen . build)

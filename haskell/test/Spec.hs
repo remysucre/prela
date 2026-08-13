@@ -4,6 +4,13 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# OPTIONS_GHC -fno-full-laziness #-}
 
+-- | Integration tests for identifiers, cache I/O, generated schemas, and the
+-- staged pull executor.
+--
+-- The suite compares checked and trusted cache loaders, then runs compact
+-- generated queries against both representations.  Its fixtures also pin the
+-- behavior of sparse universes, malformed references, shared materializers,
+-- bounded top-k, and ordered substring scans.
 module Main where
 
 import Control.Exception (IOException, try)
@@ -29,41 +36,51 @@ import TinyStaged
   ( Kind, Movie, RefFixture, RefSource, RefTarget, TinyS, link_universe, loadTinyS
   , loadTinySChecked, refFixture )
 
+-- | Phantom entity tag used by storage-only fixtures.
 data E
 
+-- | Compile the composite tiny-schema query once for the test executable.
 stagedQueryProduct
   :: TinyS -> (((([ByteString], Int), [ByteString]), [ByteString]), Double)
 stagedQueryProduct = $$(Q.compile schemaQuery)
 
+-- | Flatten the generated query's nested product into assertion-friendly form.
 stagedQueries :: TinyS -> ([ByteString], Int, [ByteString], [ByteString], Double)
 stagedQueries schema =
   let ((((sequels, recent), undated), television), best) =
         stagedQueryProduct schema
   in (sequels, recent, undated, television, best)
 
+-- | Run compact dictionary coding and dense distinct counting.
 stagedDictionary :: TinyS -> (BV.Vector ByteString, [(Int, Int)])
 stagedDictionary = $$(Q.compile dictionaryQuery)
 
+-- | Run the bounded top-k test query.
 stagedTopK
   :: TinyS -> ([(Id Movie, Double)], [(Id Movie, Double)])
 stagedTopK = $$(Q.compile topKQuery)
 
+-- | Run a query that drives and probes one materialized relation.
 stagedSharedRelation
   :: TinyS -> ([(Id Movie, Int)], [(Id Movie, Int)])
 stagedSharedRelation = $$(Q.compile sharedRelationQuery)
 
+-- | Run ordered-substring cases covering both orders and empty needles.
 stagedOrderedInfix :: TinyS -> ((Int, Int), (Int, Int))
 stagedOrderedInfix = $$(Q.compile orderedInfixQuery)
 
+-- | Run driven and probed reads of an in-memory malformed reference column.
 stagedReferences
   :: RefFixture
   -> ([(Id RefSource, Id RefTarget)], [(Id RefSource, Id RefTarget)])
 stagedReferences = $$(Q.compile referenceQuery)
 
+-- | Run driven and probed reads of a cache-loaded reference column.
 stagedLoadedReferences
   :: TinyS -> ([(Id Movie, Id Kind)], [(Id Movie, Id Kind)])
 stagedLoadedReferences = $$(Q.compile loadedReferenceQuery)
 
+-- | Execute every check and fail the test process if any assertion differs.
 main :: IO ()
 main = do
   failures <- newIORef (0 :: Int)
@@ -81,6 +98,7 @@ main = do
     then putStrLn "all checks ok"
     else putStrLn (show count ++ " failure(s)") >> exitFailure
 
+-- | Check dense and sparse universe construction and identifier validation.
 testIds
   :: (forall a. (Eq a, Show a) => String -> a -> a -> IO ())
   -> IO ()
@@ -103,6 +121,7 @@ testIds check = do
   check "sparse universe contains only live ids"
     (map (containsId live) [m0, m1, m2, m3]) [True, False, True, False]
 
+-- | Round-trip every cache shape and exercise the generated tiny schema.
 testCacheAndStaging
   :: (forall a. (Eq a, Show a) => String -> a -> a -> IO ())
   -> IO ()
@@ -244,10 +263,12 @@ testCacheAndStaging check = do
   -- Keep all target ids used above live so the test also pins their provenance.
   check "target ids retain their indices" (map idIndex [t0, t1, t2]) [0, 1, 2]
 
+-- | Construct a dense fixture universe or fail with the supplied label.
 requireUniverse :: String -> Int -> IO (Universe e)
 requireUniverse label size =
   maybe (fail (label ++ ": invalid extent")) pure (denseUniverse size)
 
+-- | Obtain a fixture identifier or fail with the supplied label.
 requireId :: String -> Universe e -> Int -> IO (Id e)
 requireId label domain index =
   maybe (fail (label ++ ": outside its universe")) pure (lookupId domain index)

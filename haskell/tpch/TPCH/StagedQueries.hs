@@ -11,11 +11,12 @@
 -- caches. A relation bound by `Q.groupFold`, `Q.materialize`, or `Q.bitset` is
 -- constructed once in generated code and may safely be used more than once.
 --
--- Queries return typed rows or scalars. The `renderN` functions below them are
+-- Queries return typed rows or scalars. The @renderN@ functions below them are
 -- ordinary Haskell applied after compilation; sorting, limiting, and report
 -- formatting therefore never cross the staging boundary.
 module TPCH.StagedQueries
-  ( q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11
+  ( Q1Acc, Q2Row, Q10Row, Q16Key, Q18Row
+  , q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11
   , q12, q13, q14, q15, q16, q17, q18, q19, q20, q21, q22
   , render1, render2, render3, render4, render5, render6, render7, render8
   , render9, render10, render11, render12, render13, render14, render15
@@ -61,15 +62,20 @@ fmtDate d = pad 4 (d `div` 10000) ++ "-" ++ pad 2 ((d `div` 100) `mod` 100)
                                  ++ "-" ++ pad 2 (d `mod` 100)
   where pad n v = let t = show v in replicate (n - length t) '0' ++ t
 
+-- | Join rendered rows without a trailing newline.
 joinLines :: [String] -> String
 joinLines = intercalate "\n"
 
+-- | Join the fields of one TPC-H result row.
 row :: [String] -> String
 row = intercalate "|"
 
+-- | Decode the benchmark's ASCII bytes for reporting.
 bs :: ByteString -> String
 bs = BS.unpack
 
+-- | Render an internal identifier as its one-based TPC-H natural key.
+--
 -- Natural keys in the TPC-H source data are 1-based; internal ids are 0-based,
 -- so the +1 is an output detail and appears nowhere else.
 key1 :: Id e -> String
@@ -79,7 +85,7 @@ key1 identifier = show (idIndex identifier + 1)
 -- Q1 — pricing summary report
 --------------------------------------------------------------------------------
 
--- Summarize shipped quantity, prices, discounts, taxes, averages, and line
+-- | Summarize shipped quantity, prices, discounts, taxes, averages, and line
 -- counts by return flag and line status for shipments through 2 September 1998.
 q1 :: Q.Query TPCHS [(Int, Q1Acc)]
 q1 = Q.query build
@@ -105,17 +111,21 @@ q1 = Q.query build
                   q1Acc (qty + q) (ext + e) (di + dc)
                         (dp + dpInc) (chg + chgInc) (n + Q.int 1)) acc) qe) edc
 
+-- | Six-field accumulator used by Q1's dense group fold.
+--
 -- Binary products are the sole product representation in the query DSL. These
 -- two local helpers give Q1's six-field accumulator meaningful order without
 -- adding tuple-arity operations to the generic API.
 type Q1Acc = (((((Double, Double), Double), Double), Double), Int)
 
+-- | Construct a staged Q1 accumulator from its six components.
 q1Acc
   :: Q.Scalar Double -> Q.Scalar Double -> Q.Scalar Double
   -> Q.Scalar Double -> Q.Scalar Double -> Q.Scalar Int -> Q.Scalar Q1Acc
 q1Acc qty ext di dp chg n =
   Q.pair (Q.pair (Q.pair (Q.pair (Q.pair qty ext) di) dp) chg) n
 
+-- | Eliminate a staged Q1 accumulator into a six-argument function.
 onQ1Acc
   :: (Q.Scalar Double -> Q.Scalar Double -> Q.Scalar Double
       -> Q.Scalar Double -> Q.Scalar Double -> Q.Scalar Int -> Q.Scalar a)
@@ -129,6 +139,7 @@ onQ1Acc use = Q.onPair $ \qtyExtDiDpChg n ->
       qtyExtDiDp)
     qtyExtDiDpChg
 
+-- | Format one Q1 aggregate row.
 fmt1 :: (Int, Q1Acc) -> String
 fmt1 (flags, (((((qty, ext), di), dp), chg), n)) =
   row [ bs rf, bs ls, f2 qty, f2 ext, f2 dp, f2 chg
@@ -138,6 +149,7 @@ fmt1 (flags, (((((qty, ext), di), dp), chg), n)) =
     ls = BS.singleton (toEnum (flags `mod` 16 + 70))
     nf = fromIntegral n
 
+-- | Sort and render the complete Q1 result.
 render1 :: [(Int, Q1Acc)] -> String
 render1 = joinLines . map fmt1 . sortOn fst
 
@@ -145,7 +157,7 @@ render1 = joinLines . map fmt1 . sortOn fst
 -- Q2 — minimum-cost supplier per part
 --------------------------------------------------------------------------------
 
--- Find the European suppliers offering each size-15 brass part at its lowest
+-- | Find the European suppliers offering each size-15 brass part at its lowest
 -- supply cost, then report the top 100 offers by account balance and name.
 -- Hoist both selective dimension predicates into bitsets. The two intentional
 -- partsupp scans then perform bounded id probes, and the minimum-cost fold only
@@ -194,9 +206,11 @@ q2 = Q.query build
                               (supplierPhone s))
                         (supplierComment s)
 
+-- | Nested result payload assembled for one Q2 supplier offer.
 type Q2Row = (((((((Double, ByteString), ByteString), ByteString), ByteString)
               , ByteString), Id Part), ByteString)
 
+-- | Compare Q2 candidates by balance, nation, supplier name, and part key.
 rank2
   :: Q.Scalar (Id PartSupp)
   -> Q.Scalar (Id PartSupp, (((Double, ByteString), ByteString), Id Part))
@@ -216,18 +230,22 @@ rank2 _ left _ right =
        `Q.thenCompare`
      Q.compare (Q.second leftFields) (Q.second rightFields)
 
--- Flatten the nested pairs once, so the comparator and the formatter both read
+-- | Flatten a Q2 payload into reporting order.
+--
+-- The comparator and the formatter can then read
 -- named components instead of unpicking a seven-deep tuple.
 flat2 :: Q2Row -> (Double, ByteString, ByteString, Id Part, ByteString
                   , ByteString, ByteString, ByteString)
 flat2 (((((((acct, sname), nat), addr), phone), comm), pk), mfg) =
   (acct, sname, nat, pk, mfg, addr, phone, comm)
 
+-- | Format one flattened Q2 result row.
 fmt2 :: (Double, ByteString, ByteString, Id Part, ByteString, ByteString, ByteString, ByteString)
      -> String
 fmt2 (acct, sname, nat, pk, mfg, addr, phone, comm) =
   row [f2 acct, bs sname, bs nat, key1 pk, bs mfg, bs addr, bs phone, bs comm]
 
+-- | Render the already-ranked Q2 result.
 render2 :: [(Id PartSupp, Q2Row)] -> String
 render2 = joinLines . map fmt2 . map (flat2 . snd)
 
@@ -235,7 +253,7 @@ render2 = joinLines . map fmt2 . map (flat2 . snd)
 -- Q3 — shipping priority
 --------------------------------------------------------------------------------
 
--- Find the ten highest-revenue unshipped orders placed before 15 March 1995 by
+-- | Find the ten highest-revenue unshipped orders placed before 15 March 1995 by
 -- customers in the BUILDING segment, using lines shipped after that date.
 -- SQL groups by (l_orderkey, o_orderdate, o_shippriority). The orderkey fixes
 -- the other two, so all three ride in the group key and the output reads them
@@ -261,6 +279,7 @@ q3 = Q.query build
       best <- Q.topK 10 rank3 revenue
       pure (Q.collect best)
 
+-- | Compare Q3 groups by descending revenue and ascending order date.
 rank3
   :: Q.Scalar ((Id Order, Int), Int) -> Q.Scalar Double
   -> Q.Scalar ((Id Order, Int), Int) -> Q.Scalar Double
@@ -269,9 +288,11 @@ rank3 leftKey leftRevenue rightKey rightRevenue =
   Q.compare rightRevenue leftRevenue `Q.thenCompare`
   Q.compare (Q.second (Q.first leftKey)) (Q.second (Q.first rightKey))
 
+-- | Format one Q3 order-revenue row.
 fmt3 :: (((Id Order, Int), Int), Double) -> String
 fmt3 (((o, d), sp), r) = row [key1 o, f2 r, fmtDate d, show sp]
 
+-- | Render the already-ranked Q3 result.
 render3 :: [(((Id Order, Int), Int), Double)] -> String
 render3 = joinLines . map fmt3
 
@@ -279,7 +300,7 @@ render3 = joinLines . map fmt3
 -- Q4 — order priority checking
 --------------------------------------------------------------------------------
 
--- Count third-quarter 1993 orders by priority when at least one line was
+-- | Count third-quarter 1993 orders by priority when at least one line was
 -- received after its committed delivery date.
 q4 :: Q.Query TPCHS [(ByteString, Int)]
 q4 = Q.query $ \s -> do
@@ -297,9 +318,11 @@ q4 = Q.query $ \s -> do
              (priority s))
   pure (Q.collect counts)
 
+-- | Format one Q4 priority count.
 fmt4 :: (ByteString, Int) -> String
 fmt4 (p, n) = row [bs p, show n]
 
+-- | Sort and render the complete Q4 result.
 render4 :: [(ByteString, Int)] -> String
 render4 = joinLines . map fmt4 . sortOn fst
 
@@ -307,7 +330,7 @@ render4 = joinLines . map fmt4 . sortOn fst
 -- Q5 — local supplier volume
 --------------------------------------------------------------------------------
 
--- Rank Asian nations by 1994 revenue from orders where the customer and
+-- | Rank Asian nations by 1994 revenue from orders where the customer and
 -- supplier belong to the same nation.
 -- The group key carries the work: a lineitem maps to its supplier's nation name,
 -- with the ASIA restriction and the customer-nation equality pushed into the key
@@ -335,9 +358,11 @@ q5 = Q.query build
                             (Q.eq "ASIA" (compose (nationRegion s) (regionName s))))
                   (compose (compose (liOrder s) (orderCustomer s)) (customerNation s))))
 
+-- | Format one Q5 nation-revenue row.
 fmt5 :: (Id Nation, (Double, ByteString)) -> String
 fmt5 (_, (v, n)) = row [bs n, f2 v]
 
+-- | Rank and render the Q5 result by descending revenue.
 render5 :: [(Id Nation, (Double, ByteString))] -> String
 render5 = joinLines . map fmt5 . sortBy (\a b -> comparing (fst . snd) b a)
 
@@ -345,7 +370,7 @@ render5 = joinLines . map fmt5 . sortBy (\a b -> comparing (fst . snd) b a)
 -- Q6 — forecasting revenue change
 --------------------------------------------------------------------------------
 
--- Estimate the revenue from 1994 lines discounted by 5–7 percent whose ordered
+-- | Estimate the revenue from 1994 lines discounted by 5–7 percent whose ordered
 -- quantity was below 24 units.
 q6 :: Q.Query TPCHS Double
 q6 = Q.query $ \s ->
@@ -359,6 +384,7 @@ q6 = Q.query $ \s ->
         (\a -> Q.onPair (\e dc -> a + e * dc)) 0 rows
   in pure revenue
 
+-- | Render the scalar Q6 revenue.
 render6 :: Double -> String
 render6 = f2
 
@@ -366,7 +392,7 @@ render6 = f2
 -- Q7 — volume shipping between nation pairs
 --------------------------------------------------------------------------------
 
--- Report discounted shipping revenue by year and direction for trade between
+-- | Report discounted shipping revenue by year and direction for trade between
 -- France and Germany during 1995 and 1996.
 q7 :: Q.Query TPCHS [((Int, (ByteString, ByteString)), Double)]
 q7 = Q.query build
@@ -415,14 +441,17 @@ q7 = Q.query build
         (\a -> Q.onPair (\e dc -> a + e * (1 - dc))) 0 grouped
       pure (Q.collect result)
 
+-- | Order Q7 rows by supplier nation, customer nation, then year.
 cmp7 :: ((Int, (ByteString, ByteString)), Double)
      -> ((Int, (ByteString, ByteString)), Double) -> Ordering
 cmp7 ((y1, (s1, c1)), _) ((y2, (s2, c2)), _) =
   compare s1 s2 <> compare c1 c2 <> compare y1 y2
 
+-- | Format one Q7 directional revenue row.
 fmt7 :: ((Int, (ByteString, ByteString)), Double) -> String
 fmt7 ((y, (n1, n2)), v) = row [bs n1, bs n2, show y, f2 v]
 
+-- | Sort and render the complete Q7 result.
 render7 :: [((Int, (ByteString, ByteString)), Double)] -> String
 render7 = joinLines . map fmt7 . sortBy cmp7
 
@@ -430,7 +459,7 @@ render7 = joinLines . map fmt7 . sortBy cmp7
 -- Q8 — market share for BRAZIL
 --------------------------------------------------------------------------------
 
--- Compute Brazil's yearly share of revenue for economy anodized steel parts
+-- | Compute Brazil's yearly share of revenue for economy anodized steel parts
 -- bought by customers in the America region during 1995 and 1996.
 -- Per year, the BRAZIL share of the volume on ECONOMY ANODIZED STEEL parts sold
 -- to customers in AMERICA. The group key navigates the order once — restricting
@@ -467,9 +496,11 @@ q8 = Q.query build
                 Q.pair (b + Q.ifThenElse (nm Q..==. "BRAZIL") vol 0)
                        (t + vol)) acc) ed
 
+-- | Format one Q8 year and market-share row.
 fmt8 :: (Int, Double) -> String
 fmt8 (y, v) = row [show y, f2 v]
 
+-- | Sort and render the complete Q8 result.
 render8 :: [(Int, Double)] -> String
 render8 = joinLines . map fmt8 . sortOn fst
 
@@ -477,12 +508,12 @@ render8 = joinLines . map fmt8 . sortOn fst
 -- Q9 — product type profit measure
 --------------------------------------------------------------------------------
 
--- Calculate yearly profit by supplier nation for parts whose names contain
+-- | Calculate yearly profit by supplier nation for parts whose names contain
 -- "green", subtracting supply cost from discounted sales revenue.
 -- Hoist the selective @name contains green@ predicate to the part domain. The
 -- six-million-row lineitem scan then pays one bit test before any compound-key
 -- lookup. Supply cost uses the staged hash fold rather than the general-purpose
--- ordered `Map` materializer, and is probed only once for each surviving row.
+-- ordered @Map@ materializer, and is probed only once for each surviving row.
 q9 :: Q.Query TPCHS [((Id Nation, Int), (Double, ByteString))]
 q9 = Q.query $ \s -> do
   greenParts <- Q.bitset
@@ -513,13 +544,16 @@ q9 = Q.query $ \s -> do
   let groupNationName = Q.mapKeys Q.first (nationName s)
   pure (Q.collect (prod result groupNationName))
 
+-- | Order Q9 rows by nation and descending year.
 cmp9 :: ((Id Nation, Int), (Double, ByteString))
      -> ((Id Nation, Int), (Double, ByteString)) -> Ordering
 cmp9 ((_, y1), (_, n1)) ((_, y2), (_, n2)) = compare n1 n2 <> compare y2 y1
 
+-- | Format one Q9 nation-year profit row.
 fmt9 :: ((Id Nation, Int), (Double, ByteString)) -> String
 fmt9 ((_, y), (v, n)) = row [bs n, show y, f2 v]
 
+-- | Sort and render the complete Q9 result.
 render9 :: [((Id Nation, Int), (Double, ByteString))] -> String
 render9 = joinLines . map fmt9 . sortBy cmp9
 
@@ -527,7 +561,7 @@ render9 = joinLines . map fmt9 . sortBy cmp9
 -- Q10 — returned-item reporting
 --------------------------------------------------------------------------------
 
--- Find the 20 customers responsible for the most revenue from returned items
+-- | Find the 20 customers responsible for the most revenue from returned items
 -- on orders placed in the final quarter of 1993, including contact details.
 q10 :: Q.Query TPCHS [(Id Customer, Q10Row)]
 q10 = Q.query build
@@ -554,13 +588,16 @@ q10 = Q.query build
                               (customerPhone s))
                         (customerComment s)
 
+-- | Revenue and contact payload reported for one Q10 customer.
 type Q10Row = (Double, (((((ByteString, Double), ByteString), ByteString), ByteString)
               , ByteString))
 
+-- | Format one Q10 customer-revenue row.
 fmt10 :: (Id Customer, Q10Row) -> String
 fmt10 (c, (r, (((((nm, ab), nat), addr), phone), comm)))=
   row [key1 c, bs nm, f2 r, f2 ab, bs nat, bs addr, bs phone, bs comm]
 
+-- | Render the already-ranked Q10 result.
 render10 :: [(Id Customer, Q10Row)] -> String
 render10 = joinLines . map fmt10
 
@@ -568,7 +605,7 @@ render10 = joinLines . map fmt10
 -- Q11 — important stock
 --------------------------------------------------------------------------------
 
--- Find parts stocked by German suppliers whose total on-hand value exceeds
+-- | Find parts stocked by German suppliers whose total on-hand value exceeds
 -- 0.01 percent of the value of all German-held stock.
 -- The threshold is a scalar read off the same table the answer is filtered
 -- against. `Q.share` emits one strict runtime binding and returns a reusable
@@ -589,9 +626,11 @@ q11 = Q.query $ \s -> do
     (0.0001 * Q.foldAll (+) 0 valuePerPart)
   pure (Q.collect (Q.gt threshold valuePerPart))
 
+-- | Format one Q11 part-value row.
 fmt11 :: (Id Part, Double) -> String
 fmt11 (p, v) = row [key1 p, f2 v]
 
+-- | Rank and render the Q11 result by descending value.
 render11 :: [(Id Part, Double)] -> String
 render11 = joinLines . map fmt11 . sortBy (\a b -> comparing snd b a)
 
@@ -599,7 +638,7 @@ render11 = joinLines . map fmt11 . sortBy (\a b -> comparing snd b a)
 -- Q12 — shipping modes and order priority
 --------------------------------------------------------------------------------
 
--- For MAIL and SHIP deliveries received in 1994, count high-priority versus
+-- | For MAIL and SHIP deliveries received in 1994, count high-priority versus
 -- lower-priority orders whose ship, commit, and receipt dates are in order.
 q12 :: Q.Query TPCHS [(ByteString, (Int, Int))]
 q12 = Q.query build
@@ -627,9 +666,11 @@ q12 = Q.query build
             (Q.pair (h + 1) l)
             (Q.pair h (l + 1))) acc
 
+-- | Format one Q12 ship-mode priority count.
 fmt12 :: (ByteString, (Int, Int)) -> String
 fmt12 (m, (h, l)) = row [bs m, show h, show l]
 
+-- | Sort and render the complete Q12 result.
 render12 :: [(ByteString, (Int, Int))] -> String
 render12 = joinLines . map fmt12 . sortOn fst
 
@@ -637,10 +678,10 @@ render12 = joinLines . map fmt12 . sortOn fst
 -- Q13 — customer distribution
 --------------------------------------------------------------------------------
 
--- Show how many customers placed each possible number of orders, excluding
+-- | Show how many customers placed each possible number of orders, excluding
 -- orders whose comments contain "special" followed later by "requests".
 -- SQL's LEFT JOIN: customers with no qualifying order still count, at zero. That
--- is what `denseFoldOuter` is for — it emits every key in the customer id space,
+-- is what @denseFoldOuter@ is for — it emits every key in the customer id space,
 -- seeded with the initial value. `orders` being a sparse universe means driving
 -- it already skips the orderkey gaps, so the group key is the bare foreign key
 -- with no validity guard of its own.
@@ -662,12 +703,15 @@ q13 = Q.query $ \s -> do
     (invStream countPerCust)
   pure (Q.collect dist)
 
+-- | Order Q13 buckets by descending customer count then descending order count.
 cmp13 :: (Int, Int) -> (Int, Int) -> Ordering
 cmp13 (k1, v1) (k2, v2) = compare v2 v1 <> compare k2 k1
 
+-- | Format one Q13 order-count distribution bucket.
 fmt13 :: (Int, Int) -> String
 fmt13 (c, n) = row [show c, show n]
 
+-- | Sort and render the complete Q13 result.
 render13 :: [(Int, Int)] -> String
 render13 = joinLines . map fmt13 . sortBy cmp13
 
@@ -675,7 +719,7 @@ render13 = joinLines . map fmt13 . sortBy cmp13
 -- Q14 — promo revenue ratio
 --------------------------------------------------------------------------------
 
--- Calculate what percentage of September 1995 discounted revenue came from
+-- | Calculate what percentage of September 1995 discounted revenue came from
 -- promotional parts.
 q14 :: Q.Query TPCHS Double
 q14 = Q.query $ \s ->
@@ -694,6 +738,7 @@ q14 = Q.query $ \s ->
                 (total + price)) acc) ed
   in pure (Q.onPair (\promo total -> 100 * promo / total) totals)
 
+-- | Render the scalar Q14 percentage.
 render14 :: Double -> String
 render14 = f2
 
@@ -701,7 +746,7 @@ render14 = f2
 -- Q15 — top supplier
 --------------------------------------------------------------------------------
 
--- Find every supplier tied for the greatest discounted revenue during the
+-- | Find every supplier tied for the greatest discounted revenue during the
 -- first quarter of 1996, and report their contact details.
 q15 :: Q.Query TPCHS
          [(Id Supplier, (Double, ((ByteString, ByteString), ByteString)))]
@@ -725,10 +770,12 @@ q15 = Q.query build
                            (liSupplier s))
                   (prod (extendedprice s) (discount s))
 
+-- | Format one Q15 supplier-revenue row.
 fmt15 :: (Id Supplier, (Double, ((ByteString, ByteString), ByteString))) -> String
 fmt15 (k, (rev, ((nm, addr), phone))) =
   row [key1 k, bs nm, bs addr, bs phone, f2 rev]
 
+-- | Sort and render the complete Q15 result.
 render15
   :: [(Id Supplier, (Double, ((ByteString, ByteString), ByteString)))] -> String
 render15 = joinLines . map fmt15 . sortOn fst
@@ -737,11 +784,13 @@ render15 = joinLines . map fmt15 . sortOn fst
 -- Q16 — distinct supplier count
 --------------------------------------------------------------------------------
 
--- Count distinct acceptable suppliers for each qualifying brand, type, and
+-- | Count distinct acceptable suppliers for each qualifying brand, type, and
 -- size combination, excluding Brand#45, medium-polished types, and suppliers
 -- whose comments identify customer complaints.
+-- | Dictionary-coded brand, type, and size grouping key for Q16.
 type Q16Key = ((ByteString, ByteString), Int)
 
+-- | Compute distinct acceptable supplier counts for each qualifying part key.
 q16 :: Q.Query TPCHS (BV.Vector Q16Key, [(Int, Int)])
 q16 = Q.query $ \s -> do
   -- Part attributes repeat across four partsupp rows and supplier comments
@@ -774,13 +823,16 @@ q16 = Q.query $ \s -> do
   counts <- Q.denseDistinctCount (partExtent s) (supplierExtent s) grouped
   pure (Q.pair labels (Q.collect counts))
 
+-- | Order Q16 rows by descending count and then attribute tuple.
 cmp16 :: (((ByteString, ByteString), Int), Int)
       -> (((ByteString, ByteString), Int), Int) -> Ordering
 cmp16 (k1, c1) (k2, c2) = compare c2 c1 <> compare k1 k2
 
+-- | Format one decoded Q16 grouping row.
 fmt16 :: (((ByteString, ByteString), Int), Int) -> String
 fmt16 (((b, t), sz), c) = row [bs b, bs t, show sz, show c]
 
+-- | Decode dictionary keys, sort them, and render the Q16 result.
 render16 :: (BV.Vector Q16Key, [(Int, Int)]) -> String
 render16 (labels, counts) =
   joinLines . map fmt16 . sortBy cmp16 $ map decode counts
@@ -794,7 +846,7 @@ render16 (labels, counts) =
 -- Q17 — small-quantity order revenue
 --------------------------------------------------------------------------------
 
--- Estimate average yearly revenue from Brand#23 medium-box parts sold in
+-- | Estimate average yearly revenue from Brand#23 medium-box parts sold in
 -- quantities below 20 percent of that part's average ordered quantity.
 q17 :: Q.Query TPCHS Double
 q17 = Q.query $ \s -> do
@@ -824,6 +876,7 @@ q17 = Q.query $ \s -> do
                  (extendedprice s))
   pure (total / 7)
 
+-- | Render the scalar Q17 revenue.
 render17 :: Double -> String
 render17 = f2
 
@@ -831,7 +884,7 @@ render17 = f2
 -- Q18 — large volume customer
 --------------------------------------------------------------------------------
 
--- Find the top 100 orders whose lines total more than 300 units, reporting the
+-- | Find the top 100 orders whose lines total more than 300 units, reporting the
 -- customer, order date, total price, and summed quantity.
 -- Every output column is functionally determined by the order, so they are all
 -- attached after the fold rather than dragged through it.
@@ -856,12 +909,15 @@ q18 = Q.query $ \s -> do
                                 (orderCustomer s)))
   pure (Q.collect result)
 
+-- | Quantity, order attributes, and customer payload reported by Q18.
 type Q18Row = (Double, ((Double, Int), (ByteString, Id Customer)))
 
+-- | Format one Q18 large-order row.
 fmt18 :: (Id Order, Q18Row) -> String
 fmt18 (o, (sumQ, ((tp, d), (nm, c)))) =
   row [bs nm, key1 c, key1 o, fmtDate d, f2 tp, f2 sumQ]
 
+-- | Render the already-ranked Q18 result.
 render18 :: [(Id Order, Q18Row)] -> String
 render18 = joinLines . map fmt18
 
@@ -869,7 +925,7 @@ render18 = joinLines . map fmt18
 -- Q19 — discounted revenue
 --------------------------------------------------------------------------------
 
--- Sum discounted revenue for three specified brand, container, size, and
+-- | Sum discounted revenue for three specified brand, container, size, and
 -- quantity bands shipped by air with in-person delivery instructions.
 q19 :: Q.Query TPCHS Double
 q19 = Q.query $ \s ->
@@ -898,6 +954,7 @@ q19 = Q.query $ \s ->
         (\a -> Q.onPair (\e dc -> a + e * (1 - dc))) 0 rows
   in pure revenue
 
+-- | Render the scalar Q19 revenue.
 render19 :: Double -> String
 render19 = f2
 
@@ -905,7 +962,7 @@ render19 = f2
 -- Q20 — potential part promotion
 --------------------------------------------------------------------------------
 
--- Find Canadian suppliers with a forest-named part whose available stock is
+-- | Find Canadian suppliers with a forest-named part whose available stock is
 -- greater than half the quantity of that part shipped in 1994.
 q20 :: Q.Query TPCHS [(Id Supplier, (ByteString, ByteString))]
 q20 = Q.query $ \s -> do
@@ -942,9 +999,11 @@ q20 = Q.query $ \s -> do
         (prod (supplierName s) (supplierAddress s))
   pure (Q.collect result)
 
+-- | Format one Q20 supplier contact row.
 fmt20 :: (ByteString, ByteString) -> String
 fmt20 (nm, addr) = row [bs nm, bs addr]
 
+-- | Sort and render the complete Q20 result.
 render20 :: [(Id Supplier, (ByteString, ByteString))] -> String
 render20 = joinLines . map fmt20 . sortOn fst . map snd
 
@@ -952,7 +1011,7 @@ render20 = joinLines . map fmt20 . sortOn fst . map snd
 -- Q21 — suppliers who kept orders waiting
 --------------------------------------------------------------------------------
 
--- Rank Saudi Arabian suppliers by late lines on completed orders that involved
+-- | Rank Saudi Arabian suppliers by late lines on completed orders that involved
 -- another supplier but had no other supplier responsible for a late line.
 -- A distinct count is more information than either SQL existence test needs.
 -- For both all lines and late lines, track unseen / one supplier / multiple.
@@ -1016,6 +1075,7 @@ q21 = Q.query build
                  (Q.filterBy (Q.onPair (Q..<.))
                    (prod (commitdate s) (receiptdate s)))
 
+    -- Track whether no, one, or multiple supplier identifiers have been seen.
     observe
       :: Q.Scalar Int
       -> Q.Scalar Int -> Q.Scalar (Id Supplier) -> Q.Scalar Int
@@ -1029,6 +1089,7 @@ q21 = Q.query build
             seen
             multiple)
 
+    -- Update the packed all-lines and late-lines supplier states for one row.
     updateState
       :: Q.Scalar Int
       -> Q.Scalar Int
@@ -1048,9 +1109,11 @@ q21 = Q.query build
               lateSeen) $ \lateSeen' ->
             allSeen' * base + lateSeen') dates) observation
 
+-- | Format one Q21 supplier waiting-count row.
 fmt21 :: (Id Supplier, (Int, ByteString)) -> String
 fmt21 (_, (c, nm)) = row [bs nm, show c]
 
+-- | Render the already-ranked Q21 result.
 render21 :: [(Id Supplier, (Int, ByteString))] -> String
 render21 = joinLines . map fmt21
 
@@ -1058,7 +1121,7 @@ render21 = joinLines . map fmt21
 -- Q22 — global sales opportunity
 --------------------------------------------------------------------------------
 
--- For selected phone-country prefixes, count customers with no orders and an
+-- | For selected phone-country prefixes, count customers with no orders and an
 -- above-average positive balance, and sum those balances by prefix.
 -- Two runtime values are shared across later work: the scalar average and the
 -- bitset of customers who have orders. `do` notation expresses both generated
@@ -1092,8 +1155,10 @@ q22 = Q.query build
                      (Q.oneOf ["13", "31", "23", "29", "30", "18", "17"]
                        (Q.mapValues (Q.take 2) (customerPhone s)))
 
+-- | Format one Q22 country-prefix opportunity row.
 fmt22 :: (ByteString, (Int, Double)) -> String
 fmt22 (c, (n, sm)) = row [bs c, show n, f2 sm]
 
+-- | Sort and render the complete Q22 result.
 render22 :: [(ByteString, (Int, Double))] -> String
 render22 = joinLines . map fmt22 . sortOn fst

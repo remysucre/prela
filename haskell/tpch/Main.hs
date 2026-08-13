@@ -23,6 +23,8 @@ import TPCH.Oracles (inlineOracles)
 import qualified TPCH.Staged as Queries
 import qualified TPCH.StagedSchema as Schema
 
+-- | Load the selected schema representation, run requested rounds, and report
+-- oracle mismatches.
 main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
@@ -39,6 +41,7 @@ main = do
       (timed (loadSchema cacheDir))
       cacheDir
 
+-- | Run selected named queries against one loaded schema and their oracles.
 run :: [String] -> Int -> [(String, a -> String)] -> IO (Double, a) -> String -> IO ()
 run args rounds queries load cacheDir = do
   let picked | null args = queries
@@ -76,6 +79,7 @@ timed act = do
   t1 <- getMonotonicTime
   pure (t1 - t0, a)
 
+-- | Format elapsed seconds in the benchmark's fixed-width display.
 secs :: Double -> String
 secs t = pad 8 (show (fromIntegral (round (t * 10000) :: Integer) / 10000 :: Double) ++ "s")
   where pad n x = replicate (n - length x) ' ' ++ x
@@ -89,15 +93,18 @@ diffLines ws gs =
     n = max (length ws) (length gs)
     pad xs = take n (xs ++ repeat "<missing>")
 
+-- | Read an inline or file-backed reference result for a query number.
 oracle :: String -> IO String
 oracle name = case lookup name inlineOracles of
   Just s  -> pure s
   Nothing -> patch name . trimEnd <$> readFile ("../oracles/tpch" </> ("Q" ++ name ++ ".txt"))
 
--- The recorded files end with a newline; the queries do not emit one.
+-- | Remove trailing whitespace present in recorded oracle files.
 trimEnd :: String -> String
 trimEnd = dropWhileEnd (`elem` " \n\r")
 
+-- | Normalize the two known Q9 floating-point summation-order differences.
+--
 -- Q9 sums a few hundred thousand floats per group, so the last cent depends on
 -- the summation order. The algebraic order used here (and in the Rust and Julia
 -- ports, which agree with each other) drifts one cent from DuckDB's on two of
@@ -108,6 +115,7 @@ patch "9" = replace "EGYPT|1996|47745727.55"   "EGYPT|1996|47745727.54"
           . replace "MOROCCO|1997|42698382.85" "MOROCCO|1997|42698382.86"
 patch _   = id
 
+-- | Replace every non-overlapping occurrence of one string with another.
 replace :: String -> String -> String -> String
 replace from to = go
   where

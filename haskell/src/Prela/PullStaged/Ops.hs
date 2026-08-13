@@ -3,9 +3,9 @@
 
 -- | Leaves and operators that work in either query position.
 --
--- `Mode` has two executor instances: `Stream` for driving and `Lookup` for keyed
+-- 'Mode' has two executor instances: t'Stream' for driving and t'Lookup' for keyed
 -- access. A query remains polymorphic until its result type selects an instance.
--- Binary operators take a concrete `Lookup` on the right because that side is
+-- Binary operators take a concrete t'Lookup' on the right because that side is
 -- always accessed by key.
 --
 -- Keyed access carries a fused early-exit operation. This is what keeps a
@@ -33,15 +33,20 @@ import qualified Prela.Id.Internal as IdInternal
 import Prela.PullStaged.Stream.Internal
 import Prela.Storage.Internal
 
+-- | Relational operations available in both driving and probing positions.
+--
 -- Storage fields use leading underscores because consumers such as `count` may
 -- discard values. In that case staging removes the read and leaves the field
 -- binder unused in generated code.
 class Mode q where
-  -- Leaves.
+  -- | Enumerate or probe the identity relation of an entity universe.
   universe       :: CodeQ (Universe e) -> q (Id e) (Id e)
+  -- | Read a total, one-valued column.
   column         :: Elem r => CodeQ (Col e r) -> q (Id e) r
+  -- | Read a one-valued column with absent rows.
   sparseColumn   :: CodeQ (SparseCol e r) -> q (Id e) r
-  -- A declared one-valued reference is one physical leaf. Keeping its raw
+  -- | Read and validate a one-valued entity reference as one physical leaf.
+  -- Keeping its raw
   -- nullable index and target validation in the same generated branch avoids
   -- allocating @Maybe Int@ and @Maybe (Id target)@ for driven reads.
   referenceColumn
@@ -52,29 +57,38 @@ class Mode q where
   referenceColumn sourceDomain raw targetDomain =
     compose (compose (universe sourceDomain) (sparseColumn raw))
             (resolveId targetDomain)
+  -- | Read a CSR-backed multi-valued column.
   multiColumn    :: Elem r => CodeQ (MultiCol e r) -> q (Id e) r
+  -- | Read an ordered map whose keys each own a value list.
   fromIndex      :: Ord d => CodeQ (Map d [r]) -> q d r
+  -- | Read an ordered map containing one value per key.
   fromCache      :: Ord d => CodeQ (Map d s) -> q d s
+  -- | Read an entity-keyed dense aggregate.
   fromDense      :: UV.Unbox t => CodeQ (Dense e t) -> q (Id e) t
+  -- | Read an integer-keyed dense aggregate.
   fromDenseInt   :: UV.Unbox t => CodeQ (DenseInt t) -> q Int t
-  -- Enumeration order is hash-table slot order and is therefore unspecified.
+  -- | Read a hash-backed aggregate. Enumeration order is hash-table slot order
+  -- and is therefore unspecified.
   fromTable      :: (Hashable d, Key d, UV.Unbox t) => CodeQ (Table d t) -> q d t
+  -- | Read a dense entity-membership bitset as an identity relation.
   fromBits       :: CodeQ (Bits e) -> q (Id e) (Id e)
 
-  -- Chain two relations through a shared middle value: `r : d -> e` and
+  -- | Chain two relations through a shared middle value: `r : d -> e` and
   -- `s : e -> f` give `d -> f`. Also field navigation.
   compose  :: q d e -> Lookup e f -> q d f
 
-  -- Pair two relations sharing a DOMAIN: for each key, take both values.
+  -- | Pair two relations sharing a domain key.
   prod     :: q d u -> Lookup d v -> q d (u, v)
 
-  -- Keep rows whose value has at least one match in the second relation.
+  -- | Keep rows whose value has at least one match in the second relation.
   restrict :: q d r -> Lookup r e -> q d r
 
-  -- Keep rows whose key has no match in the second relation.
+  -- | Keep rows whose key has no match in the second relation.
   diff     :: q d r -> Lookup d e -> q d r
 
+  -- | Keep values satisfying generated code.
   filt     :: (CodeQ r -> CodeQ Bool) -> q d r -> q d r
+  -- | Transform values with generated code while preserving keys.
   mapv     :: (CodeQ r -> CodeQ s) -> q d r -> q d s
 
 -- | Does a keyed relation contain any value? The accepting predicate is kept
@@ -509,6 +523,7 @@ mapLookupKey transform relation = Lookup
 -- The two leaves worth zipping. Everything else reaches lockstep by being
 -- materialized first, which is the honest cost of the linearity restriction.
 
+-- | Produce the live identifiers in an entity universe.
 universeProd :: CodeQ (Universe e) -> Producer (Id e) (Id e)
 universeProd u = Producer
   { source       = u
@@ -523,6 +538,7 @@ universeProd u = Producer
                    Nothing -> $$(skip [|| $$index + 1 ||]) ||]
   }
 
+-- | Produce every row of a total column with its bounded identifier.
 columnProd :: Elem r => CodeQ (Col e r) -> Producer (Id e) r
 columnProd c = Producer
   { source       = c
@@ -547,6 +563,7 @@ columnProd c = Producer
 -- folds are preferred for large grouped aggregates.
 -- Nothing here can fuse into an array read, because there is no array.
 
+-- | Produce the elements of a generated list with unit keys.
 listProd :: CodeQ [a] -> Producer () a
 listProd xs = Producer
   { source       = xs
@@ -557,6 +574,7 @@ listProd xs = Producer
             (y : ys) -> $$(yield [|| () ||] [|| y ||] [|| ys ||]) ||]
   }
 
+-- | Produce a generated list of key/value pairs.
 pairProd :: CodeQ [(d, r)] -> Producer d r
 pairProd xs = Producer
   { source       = xs
@@ -567,6 +585,7 @@ pairProd xs = Producer
             ((k, y) : ys) -> $$(yield [|| k ||] [|| y ||] [|| ys ||]) ||]
   }
 
+-- | Produce zero or one value from a generated optional value.
 maybeProd :: CodeQ (Maybe a) -> Producer () a
 maybeProd m = Producer
   { source       = m

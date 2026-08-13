@@ -18,7 +18,7 @@
 -- THE ACCUMULATOR IS LOOP STATE. The consumer generates the loop, so a table
 -- under construction is a loop argument rather than a mutable reference — see
 -- @sfoldST@ in "Prela.PullStaged.Stream". Carrying it directly avoids a
--- per-row `STRef` allocation.
+-- per-row @STRef@ allocation.
 --
 -- THE SHAPE IS A CONTINUATION, not a return. This is the one rule of staging:
 -- a `CodeQ` used twice is code emitted twice. @fold q@ returning a relation
@@ -76,14 +76,17 @@ import Prela.Storage.Internal
 -- Query-level boundaries
 --------------------------------------------------------------------------------
 
+-- | Index a relation by its existing key, preserving all values per key.
 materialize :: (Ord d, Drivable q) => q d r -> Gen (Relation d r)
 materialize rows = Gen $ \continue ->
   withMaterialize (asStream rows) (\relation -> continue (Relation relation))
 
+-- | Swap keys and values and build an index supporting both drive and probe.
 invert :: (Ord r, Drivable q) => q d r -> Gen (Relation r d)
 invert rows = Gen $ \continue ->
   withInv (asStream rows) (\relation -> continue (Relation relation))
 
+-- | Reduce values independently per key into an open-addressed hash table.
 groupFold :: (Drivable q, Hashable d, Key d, UV.Unbox acc)
           => (Scalar acc -> Scalar r -> Scalar acc)
           -> Scalar acc -> q d r -> Gen (Relation d acc)
@@ -92,6 +95,8 @@ groupFold step (Scalar initial) rows = Gen $ \continue ->
            initial (asStream rows)
            (\relation -> continue (Relation relation))
 
+-- | Buffer every group in stream order and reduce each complete value list.
+-- Prefer 'groupFold' when a pairwise reduction is sufficient.
 bufferFold :: (Drivable q, Ord d)
            => (Scalar [r] -> Scalar acc)
            -> q d r -> Gen (Relation d acc)
@@ -99,6 +104,7 @@ bufferFold reduce rows = Gen $ \continue ->
   withBufFold (scalarCode . reduce . Scalar) (asStream rows)
               (\relation -> continue (Relation relation))
 
+-- | Count distinct values per key with hash-backed deduplication.
 distinctCount :: (Drivable q, Hashable d, Key d, Hashable r, Key r)
               => q d r -> Gen (Relation d Int)
 distinctCount rows = Gen $ \continue ->
@@ -113,6 +119,7 @@ denseDistinctCount (Scalar groups) (Scalar memberExtent) rows = Gen $ \continue 
 
 -- | Keys that can safely select a slot in a bounded dense aggregate.
 class DenseKey key where
+  -- | Select the dense materializer appropriate to the key representation.
   withDenseKey
     :: UV.Unbox acc
     => CodeQ Int
@@ -128,6 +135,8 @@ instance DenseKey (Id e) where
 instance DenseKey Int where
   withDenseKey = withDenseInt
 
+-- | Reduce values into a bounded dense array addressed directly by each key.
+-- Out-of-range keys are ignored and unseen slots are not enumerated.
 denseFold :: (Drivable q, DenseKey key, UV.Unbox acc)
           => Scalar Int
           -> (Scalar acc -> Scalar r -> Scalar acc)
@@ -139,6 +148,8 @@ denseFold (Scalar size) step (Scalar initial) rows = Gen $ \continue ->
     (\acc value -> scalarCode (step (Scalar acc) (Scalar value)))
     initial (asStream rows) (\relation -> continue (Relation relation))
 
+-- | Dense entity-key fold which also emits unseen slots with the initial value.
+-- The supplied extent must describe a complete dense entity universe.
 denseFoldOuter :: (Drivable q, UV.Unbox acc)
                => Scalar Int
                -> (Scalar acc -> Scalar r -> Scalar acc)
@@ -159,6 +170,8 @@ dictionary (Scalar size) rows = Gen $ \continue ->
   withDictionary size (asStream rows) $ \relation labels ->
     continue (Relation relation, Scalar labels)
 
+-- | Precompute identity-relation membership for values in a bounded entity
+-- universe. Values outside the extent are ignored.
 bitset :: Drivable q
        => Scalar Int -> q d (Id e) -> Gen (Relation (Id e) (Id e))
 bitset (Scalar size) rows = Gen $ \continue ->
@@ -316,7 +329,9 @@ buildTable op ini s =
             vs <- BMV.read vsc 0
             Table mask <$> UV.freeze hs <*> freezeKeys ks <*> UV.freeze vs) ||]
 
--- The mutable table under construction: the same three stores as `Table`, plus
+-- | Mutable open-addressed table threaded through a generated build loop.
+--
+-- It contains the same three stores as @Table@, plus
 -- the mask and a one-slot count. Passed and returned by value — growth replaces
 -- all of it at once, and under pull there is somewhere to put the replacement.
 --
@@ -359,6 +374,7 @@ data MTable s d t =
   MTable !Int (UMV.MVector s Int) (UMV.MVector s Word) (MKeys s d)
          (BMV.MVector s (UMV.MVector s t))
 
+-- | Allocate an empty mutable table and install its accumulator store cell.
 newMTable :: (Key d, UV.Unbox t)
           => UMV.MVector s Int -> BMV.MVector s (UMV.MVector s t) -> Int -> t
           -> ST s (MTable s d t)
@@ -377,11 +393,11 @@ newMTable cnt vsc cap ini = do
 --
 -- @f@ is the reducer already applied to the incoming value, so a fresh slot gets
 -- @f ini@ and an occupied one gets @f old@. It is a runtime function only in this
--- signature: the caller passes a literal lambda and `INLINE` puts it back where
+-- signature: the caller passes a literal lambda and @INLINE@ puts it back where
 -- it came from.
 --
 -- The body is in three parts, and the split is load bearing rather than stylistic.
--- `probe` walks the collision chain and returns nothing but a slot index; then
+-- @probe@ walks the collision chain and returns nothing but a slot index; then
 -- the old value is fetched; then the reducer runs, ONCE. Written the obvious way
 -- — one loop that reduces in whichever branch it lands in — the reducer appears
 -- at two sites, both inside a recursive function. That has two costs, and Q1 paid
@@ -562,7 +578,9 @@ withDictionary n rows continue =
         (!codes, !labels) ->
           $$(continue (fromDense [|| codes ||]) [|| labels ||]) ||]
 
--- The reduce step is `modify` rather than a read, an apply and a write, because
+-- | Build a dense entity-key aggregate in one generated pass.
+--
+-- The reduce step is @modify@ rather than a read, an apply and a write, because
 -- that is the form that stays allocation-free: @op@ is applied to the slot's
 -- components and the result written straight back, with no accumulator built on
 -- the heap in between. The vector library's checked update remains
@@ -591,6 +609,7 @@ buildDense n op ini pre s =
                    [|| () ||] s)
         Dense cap <$> UV.freeze vals <*> freeze seen) ||]
 
+-- | Build a dense bounded-integer aggregate in one generated pass.
 buildDenseInt :: UV.Unbox t
               => CodeQ Int -> (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t
               -> Stream Int r -> CodeQ (DenseInt t)
@@ -612,7 +631,7 @@ buildDenseInt n op ini s =
                    [|| () ||] s)
         DenseInt cap <$> UV.freeze vals <*> freeze seen) ||]
 
--- Build the dictionary and dense code column in one pass. The ordered map is
+-- | Build the dictionary and dense code column in one pass. The ordered map is
 -- construction-only: later scans see only integer array reads.
 buildDictionary :: Ord value
                 => CodeQ Int -> Stream (Id e) value

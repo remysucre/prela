@@ -2,8 +2,17 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TemplateHaskell #-}
 
--- | Generate staged schema storage, default mmap and explicit checked loaders,
--- and query accessors from a compact entity declaration.
+-- | Schema declarations and their staged query interface.
+--
+-- 'declareStagedSchema' turns a compact list of entities and fields into the
+-- boundary between on-disk cache data and staged queries.  It generates
+-- phantom entity tags, a strict record of loaded columns, fast and checked
+-- loaders, entity universes and extents, and relation-valued field accessors.
+-- References are stored physically as integers and exposed as typed 'Id'
+-- values only after the generated accessor has checked the target universe.
+--
+-- The declaration vocabulary in this module describes storage, not a query
+-- plan: query execution remains in "Prela.PullStaged".
 module Prela.Schema
   ( Ty, str, int, dbl, ref
   , Field, one, many, as
@@ -17,7 +26,7 @@ import Data.ByteString (ByteString)
 import Data.Char (toLower, toUpper)
 import Data.List (intercalate)
 import Language.Haskell.TH
-import Language.Haskell.TH.Syntax (Lift, liftTyped)
+import Language.Haskell.TH.Syntax (Lift, addModFinalizer, liftTyped)
 
 import Prela.Cache
 import Prela.Id
@@ -26,16 +35,21 @@ import qualified Prela.PullStaged.Relation as R
 import qualified Prela.PullStaged.Scalar as S
 import Prela.Storage
 
+-- | Logical field type understood by the schema generator.
 data Ty = TInt | TDouble | TStr | TRef String
 
+-- | Logical string, integer, and double field types, respectively.
 str, int, dbl :: Ty
 str = TStr
 int = TInt
 dbl = TDouble
 
+-- | A reference to the entity with the given declaration name.
 ref :: String -> Ty
 ref = TRef
 
+-- | A field declaration, including its cache name, accessor name, type, and
+-- cardinality.
 data Field = Field
   { fFile :: String
   , fAs   :: String
@@ -43,15 +57,19 @@ data Field = Field
   , fMany :: Bool
   }
 
+-- | Declare a one-valued field whose cache and accessor share a name.
 one :: String -> Ty -> Field
 one name ty = Field name name ty False
 
+-- | Declare a multi-valued field whose cache and accessor share a name.
 many :: String -> Ty -> Field
 many name ty = Field name name ty True
 
+-- | Override the generated accessor name without changing the cache name.
 as :: Field -> String -> Field
 as field name = field { fAs = name }
 
+-- | An entity declaration and its generated universe accessor.
 data Ent = Ent
   { eName   :: String
   , eUniv   :: String
@@ -59,6 +77,7 @@ data Ent = Ent
   , eSparse :: Bool
   }
 
+-- | Declare a dense entity.
 entity :: String -> String -> [Field] -> Ent
 entity name universeName fields = Ent name universeName fields False
 
@@ -67,6 +86,10 @@ entity name universeName fields = Ent name universeName fields False
 sparseEntity :: String -> String -> [Field] -> Ent
 sparseEntity name universeName fields = Ent name universeName fields True
 
+-- | Generate a schema record, loaders, entity tags, and staged accessors.
+--
+-- Generation fails when an entity has no fields, generated names clash, or a
+-- sparse entity cannot derive its live-row mask from its first field.
 declareStagedSchema :: String -> [Ent] -> Q [Dec]
 declareStagedSchema schemaName entities
   | null entities = fail "declareStagedSchema: no entities"
@@ -107,11 +130,20 @@ declareStagedSchema schemaName entities
           _               -> True
       ]
 
+-- | Generate the phantom tag type for an entity.
 tagDeclaration :: Ent -> Q Dec
-tagDeclaration ent = dataD (pure []) (mkName (eName ent)) [] Nothing [] []
+tagDeclaration ent = do
+  let name = mkName (eName ent)
+  documentDeclaration name
+    ("Phantom entity tag generated for the " ++ eName ent ++ " table.")
+  dataD (pure []) name [] Nothing [] []
 
+-- | Generate the strict record that owns all loaded universes and columns.
 recordDeclaration :: Name -> [Ent] -> Q Dec
 recordDeclaration recordName entities = do
+  documentDeclaration recordName
+    ("Loaded storage record for the generated " ++ nameBase recordName ++ " schema.")
+  mapM_ documentEntityFields entities
   fields <- concat <$> mapM entityFields entities
   dataD (pure []) recordName [] Nothing [recC recordName (map pure fields)] []
   where
@@ -123,8 +155,15 @@ recordDeclaration recordName entities = do
     columnField ent field = do
       ty <- columnType ent field
       pure (columnFieldName ent field, strict, ty)
+    documentEntityFields ent = do
+      documentDeclaration (universeFieldName ent)
+        ("Loaded universe backing the " ++ eName ent ++ " entity.")
+      mapM_ (\field ->
+        documentDeclaration (columnFieldName ent field)
+          ("Loaded storage backing " ++ eName ent ++ "." ++ fFile field ++ "."))
+        (eFields ent)
 
--- Each generated record selector gets a small, liftable tag and a 'Project'
+-- | Give each generated record selector a small, liftable tag and a 'Project'
 -- instance.  Accessors pass that concrete tag to 'fieldCode'.  This keeps the
 -- generated selection fully typechecked without constructing typed TH syntax
 -- by hand or coercing an untyped expression into 'CodeQ'.
@@ -145,6 +184,9 @@ projectionDeclarations recordName entities = concat <$> sequence
       value <- valueType
       let tagName = projectionTagName recordName selector
           tagType = conT tagName
+      documentDeclaration tagName
+        ("Internal projection tag for the generated " ++ nameBase selector
+          ++ " schema field.")
       tag <- dataD (pure []) tagName [] Nothing
         [normalC tagName []]
         [derivClause Nothing [conT ''Lift]]
@@ -155,23 +197,29 @@ projectionDeclarations recordName entities = concat <$> sequence
             (normalB (appE (varE selector) (varE (mkName "record")))) []]]
       pure [tag, instanceDeclaration]
 
+-- | Derive the private projection-tag name for a generated record selector.
 projectionTagName :: Name -> Name -> Name
 projectionTagName recordName selector =
   mkName (nameBase recordName ++ upperFirst (nameBase selector) ++ "Field")
 
+-- | Uppercase the first character of a generated name.
 upperFirst :: String -> String
 upperFirst (first : rest) = toUpper first : rest
 upperFirst [] = []
 
+-- | Generate the default mmap loader and the validating checked loader.
 loaderDeclarations :: Name -> [Ent] -> Q [Dec]
 loaderDeclarations recordName entities = do
   let defaultName = mkName ("load" ++ nameBase recordName)
       checkedName = mkName ("load" ++ nameBase recordName ++ "Checked")
   defaultDeclarations <- makeLoader defaultName loadFunction
+    "Load the schema through the trusted memory-mapped cache path."
   checkedDeclarations <- makeLoader checkedName loadCheckedFunction
+    "Load the schema through the validating checked cache path."
   pure (defaultDeclarations ++ checkedDeclarations)
   where
-    makeLoader loaderName fieldLoader = do
+    makeLoader loaderName fieldLoader documentation = do
+      documentDeclaration loaderName documentation
       directory <- newName "directory"
       groups <- mapM binders entities
       columnStatements <- sequence
@@ -208,6 +256,7 @@ loaderDeclarations recordName entities = do
         _ -> [| checkedDenseUniverse $(litE (stringL (eName ent))) $(pure lengths) |]
       bindS (varP universeValue) (pure expression)
 
+-- | Build a dense entity universe after checking all column lengths agree.
 checkedDenseUniverse :: String -> [Int] -> IO (Universe e)
 checkedDenseUniverse entityName lengths = do
   size <- checkedExtent entityName lengths
@@ -215,6 +264,7 @@ checkedDenseUniverse entityName lengths = do
     Just result -> pure result
     Nothing -> ioError (userError (entityName ++ ": negative universe size"))
 
+-- | Derive a sparse universe from its first column and validate its extent.
 checkedSparseUniverse :: String -> SparseCol e Int -> [Int] -> IO (Universe e)
 checkedSparseUniverse entityName firstColumn lengths = do
   size <- checkedExtent entityName lengths
@@ -223,6 +273,7 @@ checkedSparseUniverse entityName firstColumn lengths = do
     ioError (userError (entityName ++ ": validity mask length disagrees with its columns"))
   pure result
 
+-- | Return the common column length, or report an inconsistent entity layout.
 checkedExtent :: String -> [Int] -> IO Int
 checkedExtent entityName lengths = case lengths of
   [] -> ioError (userError (entityName ++ ": entity has no columns"))
@@ -231,6 +282,7 @@ checkedExtent entityName lengths = case lengths of
       ioError (userError (entityName ++ ": columns have inconsistent lengths"))
     pure size
 
+-- | Generate universe, extent, and relation-valued accessors for one entity.
 accessorDeclarations :: Name -> Ent -> Q [Dec]
 accessorDeclarations recordName ent = do
   universeAccessor <- makeUniverseAccessor
@@ -250,6 +302,8 @@ accessorDeclarations recordName ent = do
       record <- newName "schema"
       let name = mkName (eUniv ent)
           domain = get record (universeFieldName ent)
+      documentDeclaration name
+        ("Identity relation over the live " ++ eName ent ++ " identifiers.")
       signature <- sigD name
         [t| $recordCode -> R.Relation (Id $tag) (Id $tag) |]
       function <- funD name [clause [varP record] (normalB [| O.universe $domain |]) []]
@@ -260,6 +314,8 @@ accessorDeclarations recordName ent = do
       record <- newName "schema"
       let name = mkName (extentAccessorName ent)
           domain = get record (universeFieldName ent)
+      documentDeclaration name
+        ("Staged storage extent of the " ++ eName ent ++ " identifier space.")
       signature <- sigD name [t| $recordCode -> S.Scalar Int |]
       function <- funD name
         [clause [varP record] (normalB [| S.extent $domain |]) []]
@@ -284,6 +340,9 @@ accessorDeclarations recordName ent = do
               let targetDomain = get record (universeFieldNameByName target)
               in [| O.compose $liveRows (O.resolveId $targetDomain) |]
             _ -> liveRows
+      documentDeclaration name
+        ("Staged " ++ cardinality field ++ " relation for " ++ eName ent
+          ++ "." ++ fFile field ++ ".")
       signature <- sigD name
         [t| $recordCode -> R.Relation (Id $tag) $(elementType (fTy field)) |]
       function <- funD name [clause [varP record] (normalB body) []]
@@ -294,8 +353,13 @@ accessorDeclarations recordName ent = do
       TRef _ -> True
       _      -> False
 
+    cardinality field
+      | fMany field = "multi-valued"
+      | otherwise   = "one-valued"
+
 -- | A typed record projection selected by a generated, liftable field tag.
 class Project field record value | field -> record value where
+  -- | Select the record field identified by the projection tag.
   projectField :: field -> record -> value
 
 -- | Quote a record projection without an unchecked typed-code coercion.
@@ -303,32 +367,46 @@ fieldCode :: (Lift field, Project field record value)
           => field -> CodeQ record -> CodeQ value
 fieldCode field record = [|| projectField $$(liftTyped field) $$record ||]
 
+-- | Attach documentation after a generating splice has added its declarations
+-- to the module environment.
+documentDeclaration :: Name -> String -> Q ()
+documentDeclaration name documentation =
+  addModFinalizer (putDoc (DeclDoc name) documentation)
+
+-- | Derive a private schema-record selector for a column.
 columnFieldName :: Ent -> Field -> Name
 columnFieldName ent field = mkName (lowerFirst (eName ent) ++ "_" ++ fFile field)
 
+-- | Derive a private schema-record selector for an entity universe.
 universeFieldName :: Ent -> Name
 universeFieldName = universeFieldNameByName . eName
 
+-- | Derive a universe selector from an entity declaration name.
 universeFieldNameByName :: String -> Name
 universeFieldNameByName entityName = mkName (lowerFirst entityName ++ "_universe")
 
+-- | Derive the public staged extent accessor for an entity.
 extentAccessorName :: Ent -> String
 extentAccessorName ent = lowerFirst (eName ent) ++ "Extent"
 
+-- | Lowercase the first character of a generated name.
 lowerFirst :: String -> String
 lowerFirst (first : rest) = toLower first : rest
 lowerFirst [] = []
 
+-- | Translate a logical field type to its query-facing Haskell type.
 elementType :: Ty -> Q Type
 elementType TInt = [t| Int |]
 elementType TDouble = [t| Double |]
 elementType TStr = [t| ByteString |]
 elementType (TRef target) = [t| Id $(conT (mkName target)) |]
 
+-- | Translate a logical field type to its cache representation.
 physicalElementType :: Ty -> Q Type
 physicalElementType (TRef _) = [t| Int |]
 physicalElementType ty = elementType ty
 
+-- | Select the storage container generated for a field declaration.
 columnType :: Ent -> Field -> Q Type
 columnType ent field
   | fMany field = [t| MultiCol $tag $element |]
@@ -341,6 +419,7 @@ columnType ent field
       TRef _ -> True
       _      -> False
 
+-- | Generate an expression that obtains a loaded column's row count.
 columnLength :: Field -> Name -> Q Exp
 columnLength field value
   | fMany field = [| multiColLen $(varE value) |]
@@ -351,6 +430,7 @@ columnLength field value
       TRef _ -> True
       _      -> False
 
+-- | Select the fast mmap loader for a field declaration.
 loadFunction :: Field -> Q Exp
 loadFunction field = case (fMany field, fTy field) of
   (False, TInt)    -> [| loadInts |]
@@ -363,6 +443,7 @@ loadFunction field = case (fMany field, fTy field) of
   (True, TDouble)  ->
     fail ("declareStagedSchema: no multi-valued float cache kind for " ++ show (fFile field))
 
+-- | Select the validating loader for a field declaration.
 loadCheckedFunction :: Field -> Q Exp
 loadCheckedFunction field = case (fMany field, fTy field) of
   (False, TInt)    -> [| loadIntsChecked |]

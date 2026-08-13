@@ -8,22 +8,23 @@
 --
 -- Two things about the declaration are worth reading before the queries.
 --
--- `Order` is a SPARSE entity. TPC-H leaves gaps in the orderkey sequence, so the
+-- @Order@ is a SPARSE entity. TPC-H leaves gaps in the orderkey sequence, so the
 -- id space runs 0 .. 5999999 while only 1.5M of those are real orders. The gaps
--- show up as holes in `Order_customer`, the first declared field, and
+-- show up as holes in @Order_customer@, the first declared field, and
 -- `sparseEntity` builds the validity mask from exactly that column, so driving
--- `orders` walks the live ids only. Every other entity's keys are contiguous.
+-- @orders@ walks the live ids only. Every other entity's keys are contiguous.
 --
 -- Every field name that appears on more than one entity is renamed with `as`,
 -- because the generator puts all accessors at the top level of this module and
 -- Haskell has no `Supplier::name` spelling. The rule used below is entity prefix
--- then field: `supplierName`, `customerName`, `liPart`, `psPart`. Names that are
+-- then field: @supplierName@, @customerName@, @liPart@, @psPart@. Names that are
 -- unique across the schema keep their bare spelling, which is most of the
--- interesting ones — `quantity`, `discount`, `shipdate`, `mktsegment`.
+-- interesting ones — @quantity@, @discount@, @shipdate@, @mktsegment@.
 module TPCH.Decl (tpchEntities) where
 
 import Prela.Schema
 
+-- | Declarations for all eight TPC-H entities and their cache-backed fields.
 tpchEntities :: [Ent]
 tpchEntities =
   [ entity "Region" "region"

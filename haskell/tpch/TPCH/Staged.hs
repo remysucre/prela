@@ -18,11 +18,11 @@
 --
 -- Bang patterns do not help. A strict binding is a `case`, and the float is
 -- allowed to rewrite a `case` into a `let` precisely when it crosses a binder.
--- The flag is the fix, and it is the same one `vector` recommends for fused
+-- The flag is the fix, and it is the same one @vector@ recommends for fused
 -- pipelines.
 --
 -- @OverloadedStrings@ is here for a related reason. The façade emits string
--- literals into this module, where they still need to mean `ByteString`.
+-- literals into this module, where they still need to mean @ByteString@.
 --
 -- @FlexibleContexts@ is the same story one step further out. `Q.bitset` emits a
 -- loop whose inferred type mentions @MArray (STUArray s) Bool m@, and the
@@ -30,7 +30,7 @@
 -- constraint has to be on here rather than where the quote was written.
 --
 -- This module is the explicit boundary: each splice produces a function that
--- computes typed rows, then an ordinary `renderN` function sorts, limits, and
+-- computes typed rows, then an ordinary @renderN@ function sorts, limits, and
 -- formats them. Query definitions themselves contain no quotation syntax.
 --
 -- `Q.compile` supplies the schema argument inside generated code. Query authors
@@ -43,6 +43,7 @@ import qualified Prela.PullStaged.Query as Q
 import TPCH.StagedQueries
 import TPCH.StagedSchema (TPCHS)
 
+-- | Every compiled TPC-H query paired with its number and result renderer.
 queries :: [(String, TPCHS -> String)]
 queries =
   [ ("1",  render1  . $$(Q.compile q1))

@@ -11,12 +11,14 @@ module Prela.Id.Internal
 
 import Data.Hashable (Hashable (..))
 
+-- | Zero-based storage index tagged by its entity type.
 newtype Id e = Id Int deriving (Eq, Ord, Show)
 
 instance Hashable (Id e) where
   hashWithSalt salt (Id i) = hashWithSalt salt i
   {-# INLINE hashWithSalt #-}
 
+-- | Return the validated identifier's zero-based storage index.
 idIndex :: Id e -> Int
 idIndex (Id i) = i
 {-# INLINE idIndex #-}

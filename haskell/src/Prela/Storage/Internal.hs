@@ -6,9 +6,12 @@
 --
 -- Nothing here executes anything. Storage is built once, and the staged leaves
 -- are views of it. That separation matters because a leaf is mode-polymorphic,
--- and a polymorphic binding is
--- re-elaborated at each instantiation, so a column built inside a leaf would be
--- built twice for a column used in both modes.
+-- and a polymorphic binding is re-elaborated at each instantiation. A column
+-- built inside a leaf would therefore be built twice when used in both modes.
+--
+-- This internal module owns physical representations and the primitive reads
+-- emitted by staged code. "Prela.Storage" is the supported construction and
+-- inspection facade; query operators should use "Prela.PullStaged.Ops".
 module Prela.Storage.Internal where
 
 import Control.Monad (when)
@@ -36,6 +39,8 @@ import qualified Prela.Id.Internal as IdInternal
 -- How element types are physically stored
 --------------------------------------------------------------------------------
 
+-- | Select the flat physical representation for a logical element type.
+--
 -- Rust gets flat storage for free: `Vec<i64>` is already a contiguous array of
 -- machine words. Haskell does not — `Array Int Int` is an array of POINTERS to
 -- boxed Ints, which is a cache miss per row and defeats the point of a column
@@ -54,17 +59,22 @@ import qualified Prela.Id.Internal as IdInternal
 -- either way.
 class Elem r where
   data Store r
+  -- | Pack logical values into the element type's physical store.
   packStore :: [r] -> Store r
+  -- | Return the number of logical values in a store.
   storeLen  :: Store r -> Int
+  -- | Read a logical value at a known-valid physical index.
   atStore   :: Store r -> Int -> r
 
+-- | Pack primitive values into an unboxed array.
 packU :: U.IArray UArray r => [r] -> UArray Int r
 packU vs = U.listArray (0, length vs - 1) vs
 
+-- | Pack storable values into a flat vector.
 packV :: V.Storable r => [r] -> V.Vector r
 packV = V.fromList
 
--- Offsets are 32-bit, as on disk. Widening to an index is a zero-extend.
+-- | Widen one 32-bit on-disk offset to an in-memory index.
 off32 :: V.Vector Word32 -> Int -> Int
 off32 v i = fromIntegral (v V.! i)
 {-# INLINE off32 #-}
@@ -112,6 +122,8 @@ instance Elem ByteString where
 -- How fold keys are physically stored
 --------------------------------------------------------------------------------
 
+-- | Select mutable and immutable physical stores for hash-table keys.
+--
 -- `Elem` above says how a COLUMN's values are laid out. This says the same for a
 -- hash table's KEYS, and it exists for the same reason. A boxed vector of
 -- `Id Order` is a vector of pointers, so confirming that a slot really holds the
@@ -121,7 +133,7 @@ instance Elem ByteString where
 --
 -- Two associated data families rather than one, because a table is filled
 -- mutably and read immutably and the two want different types. `Data.Vector`
--- splits `MVector`/`Vector` for the same reason.
+-- splits @MVector@/@Vector@ for the same reason.
 --
 -- The PAIR instance is what makes four instances cover the whole schema: a key
 -- of `((Id Order, Int), Int)` becomes three flat arrays side by side and is
@@ -136,12 +148,19 @@ instance Elem ByteString where
 class Eq d => Key d where
   data MKeys s d
   data Keys d
+  -- | Allocate uninitialized mutable storage for the requested number of keys.
   newKeys    :: Int -> ST s (MKeys s d)
+  -- | Test a key against one initialized mutable slot.
   matchesKey :: MKeys s d -> Int -> d -> ST s Bool
+  -- | Write a key into a mutable slot.
   writeKey   :: MKeys s d -> Int -> d -> ST s ()
+  -- | Copy one initialized key between mutable stores.
   copyKey    :: MKeys s d -> Int -> MKeys s d -> Int -> ST s ()
+  -- | Freeze mutable key storage for read-only lookup.
   freezeKeys :: MKeys s d -> ST s (Keys d)
+  -- | Reconstruct a key from an initialized immutable slot.
   indexKey   :: Keys d -> Int -> d
+  -- | Test a key against one initialized immutable slot.
   matchesFrozenKey :: Keys d -> Int -> d -> Bool
 
 instance Key Int where
@@ -256,6 +275,7 @@ instance (Key a, Key b) => Key (a, b) where
 -- | Total 1:1: every key in `0 .. n-1` has exactly one value.
 data Col e r = Col !Int !(Store r)
 
+-- | Pack a list as a dense column.
 mkCol :: Elem r => [r] -> Col e r
 mkCol vs = Col (storeLen s) s where s = packStore vs
 
@@ -284,13 +304,16 @@ data SparseCol e r where
   SparseCol      :: !(BV.Vector (Maybe r)) -> SparseCol e r
   SparseWordCol  :: !(V.Vector Word64) -> SparseCol e Int
 
+-- | Pack optional values as a sparse column.
 mkSparseCol :: [Maybe r] -> SparseCol e r
 mkSparseCol = SparseCol . BV.fromList
 
+-- | Return the key-space extent covered by a sparse column.
 sparseColLen :: SparseCol e r -> Int
 sparseColLen (SparseCol values) = BV.length values
 sparseColLen (SparseWordCol values) = V.length values
 
+-- | Read one sparse row, returning 'Nothing' for holes or invalid indices.
 sparseAt :: SparseCol e r -> Int -> Maybe r
 sparseAt (SparseCol values) i
   | 0 <= i && i < BV.length values = values BV.! i
@@ -324,6 +347,7 @@ withSparseIntAt (SparseWordCol values) i missing found
     value = values V.! i
 {-# INLINE withSparseIntAt #-}
 
+-- | Extract the row-presence mask without exposing stored values.
 sparseMask :: SparseCol e r -> [Bool]
 sparseMask (SparseCol values) = map isJust (BV.toList values)
 sparseMask (SparseWordCol values) = map (/= maxBound) (V.toList values)
@@ -333,11 +357,14 @@ sparseMask (SparseWordCol values) = map (/= maxBound) (V.toList values)
 -- are the same representation.
 data MultiCol e r = MultiCol !Int !(V.Vector Word32) !(Store r)
 
--- | Pairs with a key outside `0 .. n-1` are dropped. Per-key value order follows
--- the input.
+-- | Return the key-space extent covered by a multi-valued column.
 multiColLen :: MultiCol e r -> Int
 multiColLen (MultiCol n _ _) = n
 
+-- | Pack key/value pairs as CSR storage.
+--
+-- Pairs with a key outside @0 .. n-1@ are dropped. Per-key value order follows
+-- the input.
 mkMultiCol :: Elem r => Int -> [(Int, r)] -> MultiCol e r
 mkMultiCol n prs = MultiCol n (packV (scanl (+) 0 (map (fromIntegral . length) buckets)))
                              (packStore (concat buckets))
@@ -368,8 +395,10 @@ multiValues column =
 -- materializing operators in "Prela.PullStaged.Materialize" and read back as leaves,
 -- which is why they live here with the rest of the storage rather than there.
 
--- One reduced value per key over a dense key space `0 .. n-1`: what a grouped
--- fold produces when the keys are entity ids rather than arbitrary values. The
+-- | One reduced value per key over a dense key space @0 .. n-1@.
+--
+-- This is what a grouped fold produces when the keys are entity ids rather than
+-- arbitrary values. The
 -- presence array is what distinguishes "this key folded to init" from "this key
 -- was never seen", and it is also how the outer variant is expressed — seeding
 -- presence to all-True makes every key emit, so there is no separate flag.
@@ -381,15 +410,15 @@ multiValues column =
 -- product componentwise, so an accumulator of `(Double, Int)` is one `Double`
 -- array beside one `Int` array and a step writes two machine words in place.
 -- That is what makes the reduce loop allocation-free, matching what the Rust
--- port gets from a `Vec<S>` of `Copy` values.
+-- port gets from a @Vec<S>@ of copyable values.
 --
--- The price is the `Unbox` constraint, which every reader of a `Dense` carries:
+-- The price is the @Unbox@ constraint, which every reader of a @Dense@ carries:
 -- the accumulator has to be built out of primitives. In practice a fold state is
--- a number or a tuple of them, and anything that is not keeps to `fold`.
+-- a number or a tuple of them, and anything that is not keeps to @fold@.
 data Dense e t = Dense !Int !(UV.Vector t) !(UArray Int Bool)
 
 -- | The same dense aggregate layout addressed by an explicitly bounded
--- integer key. Keeping it distinct from 'Dense' prevents an arbitrary 'Int'
+-- integer key. Keeping it distinct from t'Dense' prevents an arbitrary 'Int'
 -- from being confused with a validated entity identifier while still allowing
 -- compact packed group keys (for example TPC-H Q1's two one-byte flags) to use
 -- direct array indexing.
@@ -397,11 +426,11 @@ data DenseInt t = DenseInt !Int !(UV.Vector t) !(UArray Int Bool)
 
 -- | One reduced value per key when the keys are NOT a dense id space: a group
 -- key of `(returnflag, linestatus)` or `(nation, year)` has no array index to
--- be. Same contents as `Dense`, addressed by hashing instead.
+-- be. Same contents as @Dense@, addressed by hashing instead.
 --
 -- Open addressing with linear probing, over three parallel stores rather than
 -- one array of entries: slot hashes, keys, accumulators. Splitting them is what
--- lets the accumulators be UNBOXED, for the reason spelled out on `Dense` — the
+-- lets the accumulators be UNBOXED, for the reason spelled out on @Dense@ — the
 -- reduce step then writes machine words in place instead of allocating a fresh
 -- accumulator per input row. It is also why the probe is cheap: scanning for a
 -- slot touches only the hash vector, which is contiguous machine words, and the
@@ -431,7 +460,7 @@ slotHash d = if h == 0 then 1 else h
     z0 = fromIntegral (hash d) :: Word
 {-# INLINE slotHash #-}
 
--- | The slot holding `d`, or -1 if there is none.
+-- | The slot holding @d@, or -1 if there is none.
 --
 -- An index rather than a `Maybe t`, because the accumulator is unboxed: handing
 -- back a `Maybe` would have to build the `Just` and box the value inside it,
@@ -446,9 +475,10 @@ tableSlot (Table mask hs ks _) d = go (fromIntegral h .&. mask)
                 | otherwise                   -> go ((i + 1) .&. mask)
 {-# INLINE tableSlot #-}
 
--- A dense membership set: the identity relation on whichever ids are present.
+-- | A dense membership set: the identity relation on the ids that are present.
+--
 -- `UArray Int Bool` is bit-packed by GHC, so a test is a word load and a shift,
--- which is the whole point of it over a `Map`. Driving it scans every bit rather
+-- which is the whole point of it over a @Map@. Driving it scans every bit rather
 -- than using Rust's trailing-zeros skip, so it is best used probed.
 newtype Bits e = Bits (UArray Int Bool)
 
@@ -461,14 +491,17 @@ mkBits n ids = Bits (runSTUArray (do
                 in when (i < n) (writeArray bs i True)) ids
   return bs))
 
+-- | Build a membership set directly from its presence mask.
 mkBitsFromMask :: [Bool] -> Bits e
 mkBitsFromMask = Bits . packU
 
--- Typed wrappers so the two stores above are built in one pass over the input.
--- `freeze` alone leaves the mutable type ambiguous; these pin it.
+-- | Allocate and initialize an unboxed accumulator vector.
+-- Typed wrappers ensure the stores above are built in one pass over the input.
+-- @freeze@ alone leaves the mutable type ambiguous; these pin it.
 newSlots :: UV.Unbox t => Int -> t -> ST s (UMV.MVector s t)
 newSlots = UMV.replicate
 
+-- | Allocate a bit-packed mutable presence array with a uniform initial value.
 newBits :: Int -> Bool -> ST s (STUArray s Int Bool)
 newBits n v = newArray (0, n - 1) v
 
