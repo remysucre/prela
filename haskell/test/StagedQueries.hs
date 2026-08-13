@@ -21,7 +21,7 @@
 -- operator chooses that mode without an explicit conversion.
 module StagedQueries
   ( schemaQuery, dictionaryQuery, topKQuery, sharedRelationQuery
-  , referenceQuery, loadedReferenceQuery ) where
+  , orderedInfixQuery, referenceQuery, loadedReferenceQuery ) where
 
 import Data.ByteString (ByteString)
 import qualified Data.Vector as BV
@@ -122,6 +122,17 @@ sharedRelationQuery = Q.query $ \s -> do
     (compose (Sch.movie s) (Sch.year s))
   pure (Q.pair (Q.collect years)
                (Q.collect (compose (Sch.movie s) years)))
+
+-- Exercise the allocation-free ordered substring scan, including its empty
+-- needle behavior. The Q13 oracle covers its seven/eight-byte packed-word path.
+orderedInfixQuery :: Q.Query Sch.TinyS ((Int, Int), (Int, Int))
+orderedInfixQuery = Q.query $ \s ->
+  let matches firstNeedle secondNeedle =
+        Q.count
+          (Q.filterBy (Q.orderedInfixOf firstNeedle secondNeedle) (Sch.title s))
+  in pure (Q.pair
+       (Q.pair (matches "Ali" "en") (matches "en" "Ali"))
+       (Q.pair (matches "" "lar") (matches "Alien" "")))
 
 -- The direct reference leaf must agree in its Stream and Lookup modes, and its
 -- checked boxed and trusted word-backed storage representations must have the

@@ -9,6 +9,8 @@ module Prela.PullStaged.Scalar where
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
+import qualified Data.ByteString.Unsafe as BSU
+import Data.Bits ((.&.), (.|.), finiteBitSize, shiftL)
 import Data.String (IsString (..))
 import Language.Haskell.TH (CodeQ)
 import Language.Haskell.TH.Syntax (Lift, liftTyped)
@@ -126,16 +128,78 @@ isInfixOf (Scalar needle) (Scalar value) =
 orderedInfixOf
   :: Scalar ByteString -> Scalar ByteString -> Scalar ByteString -> Scalar Bool
 orderedInfixOf (Scalar firstNeedle) (Scalar secondNeedle) (Scalar value) = Scalar
-  [|| let !needle1 = $$firstNeedle
-          !needle2 = $$secondNeedle
-          !input = $$value
-      in if BS.null needle1
-           then BS.isInfixOf needle2 input
-           else case BS.breakSubstring needle1 input of
-             (_, suffix)
-               | BS.null suffix -> False
-               | otherwise -> BS.isInfixOf needle2
-                                (BS.drop (BS.length needle1) suffix) ||]
+  [|| orderedInfixOfBytes $$firstNeedle $$secondNeedle $$value ||]
+
+-- Search by index rather than constructing the prefix, suffix, and post-match
+-- slices returned by 'BS.breakSubstring'. This predicate runs once per candidate
+-- row in TPC-H Q13, so even constant-size slice allocation becomes substantial.
+orderedInfixOfBytes :: ByteString -> ByteString -> ByteString -> Bool
+orderedInfixOfBytes firstNeedle secondNeedle input
+  | BS.null firstNeedle = containsFrom secondNeedle input 0
+  | firstAt < 0 = False
+  | otherwise = containsFrom secondNeedle input (firstAt + BS.length firstNeedle)
+  where
+    firstAt = findSubstringFrom firstNeedle input 0
+{-# INLINE orderedInfixOfBytes #-}
+
+containsFrom :: ByteString -> ByteString -> Int -> Bool
+containsFrom needle input start = findSubstringFrom needle input start >= 0
+{-# INLINE containsFrom #-}
+
+-- Return the first matching byte offset, or -1. The bounds checks are hoisted
+-- out of 'matchesAt', making its unsafe indexing safe by construction.
+findSubstringFrom :: ByteString -> ByteString -> Int -> Int
+findSubstringFrom needle input start
+  | needleLength == 0 = min start inputLength
+  | start < 0 = findSubstringFrom needle input 0
+  | start > lastStart = -1
+  | needleLength <= finiteBitSize (0 :: Word) `Base.div` 8 = packedSearch
+  | otherwise = search start
+  where
+    !needleLength = BS.length needle
+    !inputLength = BS.length input
+    !lastStart = inputLength - needleLength
+    !firstByteOfNeedle = BSU.unsafeIndex needle 0
+
+    -- For short needles, keep the current input window in one machine word.
+    -- Q13's two literals are seven and eight bytes, so each new candidate costs
+    -- one byte load, a shift, and a comparison rather than a nested byte loop.
+    !needleWord = wordAt needle 0 needleLength
+    !wordMask = (1 `shiftL` (8 * needleLength)) - 1
+    packedSearch = packed (wordAt input start needleLength)
+                          (start + needleLength)
+
+    packed !window !end
+      | window == needleWord = end - needleLength
+      | end >= inputLength = -1
+      | otherwise =
+          let !next = Base.fromIntegral (BSU.unsafeIndex input end)
+              !window' = wordMask .&. ((window `shiftL` 8) .|. next)
+          in packed window' (end + 1)
+
+    search !inputAt
+      | inputAt > lastStart = -1
+      | BSU.unsafeIndex input inputAt == firstByteOfNeedle
+          && matchesAt inputAt 1 = inputAt
+      | otherwise = search (inputAt + 1)
+
+    matchesAt !inputAt !needleAt
+      | needleAt >= needleLength = True
+      | BSU.unsafeIndex input (inputAt + needleAt)
+          == BSU.unsafeIndex needle needleAt = matchesAt inputAt (needleAt + 1)
+      | otherwise = False
+{-# INLINE findSubstringFrom #-}
+
+wordAt :: ByteString -> Int -> Int -> Word
+wordAt bytes start count = go 0 0
+  where
+    go !word !offset
+      | offset >= count = word
+      | otherwise =
+          go ((word `shiftL` 8)
+                .|. Base.fromIntegral (BSU.unsafeIndex bytes (start + offset)))
+             (offset + 1)
+{-# INLINE wordAt #-}
 
 mapList :: (Scalar a -> Scalar b) -> Scalar [a] -> Scalar [b]
 mapList transform (Scalar values) = Scalar

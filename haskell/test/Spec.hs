@@ -24,7 +24,7 @@ import qualified Prela.PullStaged.Query as Q
 import Prela.Storage
 import StagedQueries
   ( dictionaryQuery, loadedReferenceQuery, referenceQuery, schemaQuery
-  , sharedRelationQuery, topKQuery )
+  , orderedInfixQuery, sharedRelationQuery, topKQuery )
 import TinyStaged
   ( Kind, Movie, RefFixture, RefSource, RefTarget, TinyS, link_universe, loadTinyS
   , loadTinySChecked, refFixture )
@@ -51,6 +51,9 @@ stagedTopK = $$(Q.compile topKQuery)
 stagedSharedRelation
   :: TinyS -> ([(Id Movie, Int)], [(Id Movie, Int)])
 stagedSharedRelation = $$(Q.compile sharedRelationQuery)
+
+stagedOrderedInfix :: TinyS -> ((Int, Int), (Int, Int))
+stagedOrderedInfix = $$(Q.compile orderedInfixQuery)
 
 stagedReferences
   :: RefFixture
@@ -214,6 +217,8 @@ testCacheAndStaging check = do
      in (indices scanned, indices probed))
     ([(0, 1979), (1, 1986), (3, 1992)],
      [(0, 1979), (1, 1986), (3, 1992)])
+  check "ordered substring scan"
+    (stagedOrderedInfix schema) ((3, 0), (1, 3))
   check "sparse schema universe" (map idIndex (universeIds (link_universe schema))) [0, 2]
   check "fast sparse schema universe"
     (map idIndex (universeIds (link_universe fastSchema))) [0, 2]
