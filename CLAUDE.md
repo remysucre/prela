@@ -13,22 +13,23 @@ pairs, not sentinel identifiers.
 
 ## Haskell architecture
 
-There are two query implementations:
+`Prela.PullStaged.Query` is the query-author API and generates tight loops over
+the physical stores in `Prela.Storage`.
 
-- `Prela.Pull` is the direct, pure reference semantics over ordinary Haskell
-  values. `Stream` enumerates pairs and `Lookup` performs keyed access.
-- `Prela.PullStaged` has the same relational surface but generates tight loops
-  over the physical stores in `Prela.Storage`.
+The staged implementation is split by concept into package-private `Scalar`,
+`Relation`, `Generation`, `Predicate`, `Materialize`, and `Consumer` modules.
+`Query` is the single supported query-author import and selectively exports the
+safe qualified `Q.` vocabulary. Executor representations live in `Stream`,
+`Ops`, and the two substantial `.Internal` modules.
 
 `Prela.Cache` validates and loads cache-format-v2 column files into managed
 storage. `Prela.Schema` uses Template Haskell to generate entity tags, checked
 loaders, universes, and staged accessors. Foreign indices are resolved through
 their target universe in generated code.
 
-Materializers in `Prela.Pull.Materialize` and
-`Prela.PullStaged.Materialize` are deliberate pipeline boundaries. The staged
-variants use continuation arguments so generated storage is bound once even
-when a materialized relation is used more than once.
+Materializers in the `Q.*` API are deliberate pipeline boundaries. The staged
+surface uses `Gen` do-notation; its continuation scopes ensure generated storage
+is bound once even when a materialized relation is used more than once.
 
 ## Commands
 
@@ -37,7 +38,6 @@ Run these from `haskell/` with GHC 9.10 and Cabal 3.x:
 ```bash
 cabal build all
 cabal test prela-test --test-show-details=direct
-cabal run prela-demo-pull
 
 # Requires the shared binary TPC-H cache (default ../cache).
 cabal run prela-tpch
@@ -48,11 +48,10 @@ cabal run prela-tpch -- 1 6 14
 
 ## Query conventions
 
-- Keep reusable leaves mode-polymorphic (`Mode q => ...` or `SMode q => ...`)
-  and select `Stream` or `Lookup` at the boundary.
+- Give reusable generated schema leaves `Relation` signatures; executor modules
+  select `Stream` or `Lookup` internally.
 - Use `collect`, `foldAll`, or another consumer to leave the relation algebra.
-- Bind staged materializers through their `with...` continuations to preserve
-  sharing.
+- Bind materializers with `Gen` do-notation to preserve generated sharing.
 - Keep generated schema accessors as top-level functions; local signatures are
   important because associated storage types enable `MonoLocalBinds`.
 - Treat cache bytes as untrusted. Add validation before constructing a storage

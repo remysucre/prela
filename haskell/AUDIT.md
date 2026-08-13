@@ -1,8 +1,7 @@
 # Haskell implementation audit
 
-The Haskell tree now has two implementations: a direct pure pull semantics and
-a staged pull executor over validated column storage. The old callback-based
-Push backend and its obsolete design prototypes have been removed.
+The Haskell tree contains only the staged executor over validated column
+storage. Obsolete backends and design prototypes have been removed.
 
 ## Changes completed
 
@@ -34,18 +33,18 @@ Push backend and its obsolete design prototypes have been removed.
 
 ### API and maintenance
 
-- `Prela.PullStaged` is now an umbrella module parallel to `Prela.Pull`.
+- `Prela.PullStaged.Query` is the single supported staged query-author import;
+  the concept modules are package-private and `Stream`/`Ops` form the executor
+  layer.
 - The package exposes no Push modules or Push executable.
-- Tests and the Pull demo construct identifiers through universes and model
-  missing references as absent pairs.
-- The unstaged `index` materializer now accumulates in linear time rather than
-  appending to each group repeatedly.
+- Tests construct identifiers through universes and model missing references as
+  absent pairs.
 - `Prela.Storage` exposes abstract storage types, checked construction and safe
   inspection only. Physical stores, cache-only constructors, key arrays, and
   hash-table operations live in `Prela.Storage.Internal`.
-- Direct and staged `Stream`/`Lookup` types are abstract. Existential `Producer`
-  state and plan constructors live in their respective `.Internal` modules,
-  and mutable materializer helpers are no longer part of the public API.
+- Staged `Stream`/`Lookup` types are abstract. Existential `Producer` state and
+  plan constructors live in `Stream.Internal`, and mutable materializer helpers
+  are no longer part of the public API.
 
 ## Remaining worthwhile improvements
 
@@ -57,27 +56,29 @@ size that the schema already knows.
 
 ### Reduce staging ceremony
 
-Implemented. `Prela.PullStaged.Query` now provides `Scalar`, `Relation`, a pure
-generation monad, and `Query`. Predicates accept ordinary literals, scalar tuple
-destructuring and common byte operations remain inside the façade, materializers
+Implemented. Package-private `Scalar`, `Relation`, `Generation`, `Predicate`,
+`Materialize`, and `Consumer` modules each own one part of the staged
+implementation. `Prela.PullStaged.Query` is the explicit public façade and
+selectively exports the author vocabulary. Predicates accept ordinary literals, scalar
+tuple destructuring and common byte operations stay quote-free, materializers
 use `do` notation, and complete queries use `Q.query`/`Q.compile`. All 22 TPC-H
 builders are quote-free. They return typed rows or scalars; ordinary `renderN`
 functions perform result sorting, limiting, and formatting after compilation.
-Typed quotation remains confined to the façade and low-level executor modules.
-Generated products use only `pair`/`onPair`; larger products nest rather than
-expanding into an arity-specific family of tuple combinators.
+Typed quotation remains confined to the façade implementation and low-level
+executor modules. Generated products use only `pair`/`onPair`; larger products
+nest rather than expanding into an arity-specific family of tuple combinators.
 
 ### Automate performance contracts
 
 The correctness suite now checks IDs, sparse-universe parity, cache validation,
-nullable references, plain Pull behavior, and staged schema queries. The next
+nullable references, and staged schema queries. The next
 useful gate is automated Core/allocation checking for representative fused
 queries, plus the existing 22-query TPC-H oracle run as a slow test target.
 
 ## Verification expected for this change
 
-- Build the library, Pull demo, tests, and staged TPC-H executable.
-- Run the test suite and Pull demo.
+- Build the library, tests, and staged TPC-H executable.
+- Run the test suite.
 - Scan active source, tests, applications, and TPC-H code for unchecked
   operation imports or calls.
 - Run the TPC-H oracle suite when the local cache is available.

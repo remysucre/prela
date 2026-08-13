@@ -19,7 +19,6 @@ import System.FilePath ((</>))
 
 import Prela.Cache hiding (Kind)
 import Prela.Id
-import qualified Prela.Pull as P
 import qualified Prela.PullStaged.Query as Q
 import Prela.Storage
 import StagedQueries
@@ -30,7 +29,6 @@ import TinyStaged
   , loadTinySChecked, refFixture )
 
 data E
-data T
 
 stagedQueryProduct
   :: TinyS -> (((([ByteString], Int), [ByteString]), [ByteString]), Double)
@@ -71,7 +69,7 @@ main = do
                   ++ "\n  want " ++ show expected)
         modifyIORef' failures (+ 1)
 
-  testIdsAndPull check
+  testIds check
   testCacheAndStaging check
 
   count <- readIORef failures
@@ -79,10 +77,10 @@ main = do
     then putStrLn "all checks ok"
     else putStrLn (show count ++ " failure(s)") >> exitFailure
 
-testIdsAndPull
+testIds
   :: (forall a. (Eq a, Show a) => String -> a -> a -> IO ())
   -> IO ()
-testIdsAndPull check = do
+testIds check = do
   movies <- requireUniverse "movies" 4
   m0 <- requireId "movie 0" movies 0
   m1 <- requireId "movie 1" movies 1
@@ -100,29 +98,6 @@ testIdsAndPull check = do
   check "sparse universe rejects dead id" (lookupId live 1) Nothing
   check "sparse universe contains only live ids"
     (map (containsId live) [m0, m1, m2, m3]) [True, False, True, False]
-
-  let movie :: P.Mode q => q (Id E) (Id E)
-      movie = P.universe movies
-      title :: P.Mode q => q (Id E) String
-      title = P.column ["Alien", "Aliens", "Solaris", "Alien 3"]
-      year :: P.Mode q => q (Id E) Int
-      year = P.multiColumn [[1979], [1986], [], [1992]]
-      predecessor :: P.Mode q => q (Id E) (Id E)
-      predecessor = P.sparseColumn [Nothing, Just m0, Nothing, Nothing]
-      recent :: P.Stream (Id E) String
-      recent = P.compose (P.restrict movie (P.gt 1980 year)) title
-      predecessors :: P.Stream (Id E) String
-      predecessors = P.compose predecessor title
-      sparseIdentity :: P.Lookup (Id E) (Id E)
-      sparseIdentity = P.universe live
-
-  check "plain pull query" (P.collect recent)
-    [(m1, "Aliens"), (m3, "Alien 3")]
-  check "missing foreign key is no pair" (P.collect predecessors)
-    [(m1, "Alien")]
-  check "sparse lookup agrees with enumeration"
-    (map (P.anyOf . P.at sparseIdentity) [m0, m1, m2, m3])
-    [True, False, True, False]
 
 testCacheAndStaging
   :: (forall a. (Eq a, Show a) => String -> a -> a -> IO ())

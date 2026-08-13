@@ -444,7 +444,7 @@ instance Mode Lookup where
 
 -- | Re-key a stream by something computed from each VALUE. What comes out is
 -- (group key, value), which is exactly what a grouped fold wants, so
--- @withFold op ini (groupBy q key)@ is Prela's GROUP BY over a non-key column.
+-- @groupFold op ini (groupBy q key)@ is Prela's GROUP BY over a non-key column.
 --
 -- Enumeration only, and free: one extra keyed lookup per row with nothing
 -- stored. Its second argument is looked up at the VALUE rather than the key,
@@ -538,7 +538,8 @@ columnProd c = Producer
 --------------------------------------------------------------------------------
 
 -- The `Map`-backed leaves are the one place the engine is not flat, and they are
--- the reason "Prela.PullStaged.Materialize" prefers `withFold` over `withIndex`.
+-- the reason "Prela.PullStaged.Materialize.Internal" prefers `withFold` over
+-- `withIndex`.
 -- Nothing here can fuse into an array read, because there is no array.
 
 listProd :: CodeQ [a] -> Producer () a

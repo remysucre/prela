@@ -159,7 +159,7 @@ byValue (Cat a b)  = Cat (byValue a) (byValue b)
 
 -- | Swap key and value. Enumeration only, and free. There is no `Lookup` form:
 -- keyed access to an inverse requires building a reverse index, which is
--- "Prela.PullStaged.Materialize"'s @withInv@.
+-- "Prela.PullStaged.Materialize"'s @invert@.
 invStream :: Stream d r -> Stream r d
 invStream (Lin p)    = Lin (swapP p)
 invStream (Bind o g) = Bind o (\x e -> invStream (g x e))

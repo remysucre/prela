@@ -23,8 +23,9 @@ import Language.Haskell.TH.Syntax (Lift, liftTyped)
 
 import Prela.Cache
 import Prela.Id
-import qualified Prela.PullStaged.Ops as S
-import qualified Prela.PullStaged.Query as Q
+import qualified Prela.PullStaged.Ops as O
+import qualified Prela.PullStaged.Relation as R
+import qualified Prela.PullStaged.Scalar as S
 import Prela.Storage
 
 data Ty = TInt | TDouble | TStr | TRef String
@@ -255,8 +256,8 @@ accessorDeclarations recordName ent = do
       let name = mkName (eUniv ent)
           domain = get record (universeFieldName ent)
       signature <- sigD name
-        [t| $recordCode -> Q.Relation (Id $tag) (Id $tag) |]
-      function <- funD name [clause [varP record] (normalB [| S.universe $domain |]) []]
+        [t| $recordCode -> R.Relation (Id $tag) (Id $tag) |]
+      function <- funD name [clause [varP record] (normalB [| O.universe $domain |]) []]
       inlinePragma <- pragInlD name Inline FunLike AllPhases
       pure [signature, function, inlinePragma]
 
@@ -264,9 +265,9 @@ accessorDeclarations recordName ent = do
       record <- newName "schema"
       let name = mkName (extentAccessorName ent)
           domain = get record (universeFieldName ent)
-      signature <- sigD name [t| $recordCode -> Q.Scalar Int |]
+      signature <- sigD name [t| $recordCode -> S.Scalar Int |]
       function <- funD name
-        [clause [varP record] (normalB [| Q.extent $domain |]) []]
+        [clause [varP record] (normalB [| S.extent $domain |]) []]
       inlinePragma <- pragInlD name Inline FunLike AllPhases
       pure [signature, function, inlinePragma]
 
@@ -276,20 +277,20 @@ accessorDeclarations recordName ent = do
           sourceDomain = get record (universeFieldName ent)
           column = get record (columnFieldName ent field)
           rawLeaf
-            | fMany field = [| S.multiColumn $column |]
-            | isReference field = [| S.sparseColumn $column |]
-            | otherwise = [| S.column $column |]
-          liveRows = [| S.compose (S.universe $sourceDomain) $rawLeaf |]
+            | fMany field = [| O.multiColumn $column |]
+            | isReference field = [| O.sparseColumn $column |]
+            | otherwise = [| O.column $column |]
+          liveRows = [| O.compose (O.universe $sourceDomain) $rawLeaf |]
           body = case (fMany field, fTy field) of
             (False, TRef target) ->
               let targetDomain = get record (universeFieldNameByName target)
-              in [| S.referenceColumn $sourceDomain $column $targetDomain |]
+              in [| O.referenceColumn $sourceDomain $column $targetDomain |]
             (True, TRef target) ->
               let targetDomain = get record (universeFieldNameByName target)
-              in [| S.compose $liveRows (S.resolveId $targetDomain) |]
+              in [| O.compose $liveRows (O.resolveId $targetDomain) |]
             _ -> liveRows
       signature <- sigD name
-        [t| $recordCode -> Q.Relation (Id $tag) $(elementType (fTy field)) |]
+        [t| $recordCode -> R.Relation (Id $tag) $(elementType (fTy field)) |]
       function <- funD name [clause [varP record] (normalB body) []]
       inlinePragma <- pragInlD name Inline FunLike AllPhases
       pure [signature, function, inlinePragma]

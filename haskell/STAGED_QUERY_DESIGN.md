@@ -11,18 +11,19 @@ a composition and a fold, compilation must preserve that restriction,
 composition, and fold in that order. Prela deliberately gives the author control
 over the plan; the Haskell front end must not quietly become an optimizer.
 
-The intended pipeline is:
+The implemented pipeline is:
 
 ```text
-ordinary typed Haskell plan
-        ↓  structural lowering
-existing staged Stream/Lookup implementation
+ordinary typed Haskell expressions
+        ↓  context selects Stream or Lookup
+staged Stream/Lookup code generators
         ↓  code generation and fusion
 tight runtime loops
 ```
 
-The middle layer may fuse away iterator plumbing, as it already does, but it may
-not invent a different relational or physical plan.
+There is no plan AST or rewrite phase. The middle layer may fuse away iterator
+plumbing, as it already does, but it may not invent a different relational or
+physical plan.
 
 ## Why change the current surface?
 
@@ -77,7 +78,7 @@ Compilation must not automatically:
 Any of those transformations may be useful, but in Prela they belong in an
 explicit alternative query written by the programmer.
 
-### Algebra operators lower one-for-one
+### Algebra operators delegate one-for-one
 
 The new representation needs direct counterparts for the existing algebra:
 
@@ -91,7 +92,7 @@ The new representation needs direct counterparts for the existing algebra:
 | `filt predicate a` | scalar value filter | `Ops.filt` |
 | `mapValues f a` | scalar value mapping | `Ops.mapv` |
 
-Lowering may select the stream or keyed implementation demanded by the
+Specialization may select the stream or keyed implementation demanded by the
 surrounding operator. That is execution mode selection, not plan optimization.
 For example, the right side of `restrict` is naturally lowered to a keyed probe,
 preserving the existing fused `probeAny` fast path.
@@ -116,34 +117,24 @@ old operator defines one, and the distinction between membership-only union and
 enumerable bag concatenation. Similar-looking relational expressions are not
 interchangeable when they differ on duplicates or enumeration.
 
-## The three times involved
+## The two times involved
 
-Staging is easier to reason about when the three phases are kept separate.
+Staging is easier to reason about when generation and execution are kept
+separate.
 
-### 1. Plan construction
+### 1. Query generation
 
-Template Haskell evaluates an ordinary Haskell function which constructs a
-typed plan. This is where we want normal `let`, `where`, functions, and static
-type checking.
+Template Haskell evaluates the ordinary Haskell query builder. Relational
+operators directly assemble specialized `Stream` and `Lookup` descriptions;
+terminal consumers turn those descriptions into generated code. Explicit
+materializers introduce generated runtime bindings through `Gen`.
 
 No data is scanned at this time.
 
-### 2. Lowering and code generation
-
-The compiler walks the plan and invokes the existing staged executor
-combinators. Materializer nodes introduce generated runtime bindings here.
-
-No query data is scanned at this time either; the result is Haskell code which
-will do so later.
-
-### 3. Query execution
+### 2. Query execution
 
 The generated function receives the loaded schema and runs the emitted loops.
-The plan representation and lowering logic do not exist in this runtime code.
-
-This separation is why a plan data type need not make queries slower. It is
-compile-time data, not a runtime interpreter. Performance depends on whether
-lowering emits the same loops and materializers as the old query.
+The façade types and generation logic do not exist in this runtime code.
 
 ## Context-selected scan and probe
 
@@ -151,7 +142,7 @@ A reusable relation now has one author-level type:
 
 ```haskell
 newtype Relation d r = Relation
-  { use :: forall q. Mode q => q d r }
+  { useRelation :: forall q. Mode q => q d r }
 ```
 
 This value is a generation-time capability, not a runtime tagged union. Its
@@ -191,8 +182,8 @@ Membership union (`disj`) deliberately still produces a `Lookup`: it can answer
 whether a key is in either input, but there is no general way to enumerate that
 result without choosing duplicate and ordering semantics.
 
-This is execution-mode selection, not query optimization. Every algebra
-operator still lowers one-for-one to the existing staged operator.
+This is execution-mode selection, not query optimization. Every façade operator
+still delegates one-for-one to the existing staged operator.
 
 ## Why a materialized relation is still built once
 
@@ -347,10 +338,10 @@ Demonstrate both of these in small tests:
 This is implemented by the `Gen` continuation scope and covered by the focused
 shared-relation regression.
 
-### 4. Implement structural lowering
+### 4. Keep specialization structural
 
-Each plan constructor should have an evident lowering equation to the existing
-staged operator. There should be no rewrite phase.
+Each façade operator should delegate directly to the corresponding staged
+operator. There should be no rewrite phase.
 
 ### 5. Test representative plans
 
@@ -388,11 +379,13 @@ check.
 
 ## Current status
 
-The settled query path uses the lightweight `Relation` facade in
-`Prela.PullStaged.Query`. There is no separate plan AST or lowering module.
-`Q.stream` and `Q.keyed` remain as compatibility projections for executor code
-and representation-level tests, but they are not part of ordinary query
-authorship.
+The settled query path uses a lightweight `Relation` facade. Package-private
+`Scalar`, `Relation`, `Generation`, `Predicate`, `Materialize`, and `Consumer`
+modules own their corresponding implementation concepts.
+`Prela.PullStaged.Query` is the single supported author import: it owns
+complete-query construction and compilation and selectively exports the safe
+qualified @Q.@ vocabulary. There is no separate plan AST or lowering module,
+and representation selectors are not part of the author API.
 
 The result is deliberately modest: queries select physical materializers and
 retain their written operator order, while consumers select scan or probe mode

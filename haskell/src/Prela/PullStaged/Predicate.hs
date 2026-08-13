@@ -2,66 +2,80 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TemplateHaskell #-}
 
--- | Comparison and regex sugar.
+-- | Predicates and value transforms over generated scalar expressions.
 --
--- None of these is a new node: each is `filt` from "Prela.PullStaged.Ops" with a
--- fixed closure. They get a module of their own because they are the surface
--- syntax rather than the machinery — adding a predicate should not mean touching
--- the executor.
---
--- The value being tested is on the left of the comparison and the argument @v@
--- on the right, as in the Prela surface @year > 1980@.
---
--- The bound is a `CodeQ` rather than a plain value, so a query writes
--- @gt [|| 1980 ||] year@ and not @gt 1980 year@. That is the price of staging
--- and it is charged uniformly. The alternative is a `Lift` constraint and
--- @liftTyped@, which would read better at the use site but would not accept a
--- bound computed from the query's own arguments — and TPC-H's bounds are dates
--- and strings built in the query, so that restriction would bite.
-module Prela.PullStaged.Predicate where
+-- These functions are author-facing syntax over the fixed relational operators;
+-- they introduce no optimizer or separate predicate representation.
+module Prela.PullStaged.Predicate
+  ( eq
+  , ne
+  , gt
+  , lt
+  , ge
+  , le
+  , oneOf
+  , between
+  , range
+  , filterBy
+  , mapKeys
+  , mapValues
+  , regex
+  , rx
+  , nrx
+  ) where
 
 import Language.Haskell.TH (CodeQ)
+import Language.Haskell.TH.Syntax (Lift, liftTyped)
 import Text.Regex.TDFA (Regex, RegexLike, makeRegex, matchTest)
 
-import Prela.PullStaged.Ops
+import Prela.PullStaged.Generation (Gen (..))
+import qualified Prela.PullStaged.Ops as O
+import Prela.PullStaged.Ops (Mode)
+import Prela.PullStaged.Relation (Probeable (asLookup))
+import Prela.PullStaged.Scalar
+import Prela.PullStaged.Stream (Lookup)
 
-eq, ne :: (Mode q, Eq r) => CodeQ r -> q d r -> q d r
-eq v = filt (\x -> [|| $$x == $$v ||])
-ne v = filt (\x -> [|| $$x /= $$v ||])
+eq, ne :: (Mode q, Eq r) => Scalar r -> q d r -> q d r
+eq (Scalar value) = O.filt (\x -> [|| $$x == $$value ||])
+ne (Scalar value) = O.filt (\x -> [|| $$x /= $$value ||])
 
-gt, lt, ge, le :: (Mode q, Ord r) => CodeQ r -> q d r -> q d r
-gt v = filt (\x -> [|| $$x >  $$v ||])
-lt v = filt (\x -> [|| $$x <  $$v ||])
-ge v = filt (\x -> [|| $$x >= $$v ||])
-le v = filt (\x -> [|| $$x <= $$v ||])
+gt, lt, ge, le :: (Mode q, Ord r) => Scalar r -> q d r -> q d r
+gt (Scalar value) = O.filt (\x -> [|| $$x >  $$value ||])
+lt (Scalar value) = O.filt (\x -> [|| $$x <  $$value ||])
+ge (Scalar value) = O.filt (\x -> [|| $$x >= $$value ||])
+le (Scalar value) = O.filt (\x -> [|| $$x <= $$value ||])
 
-isIn :: (Mode q, Eq r) => CodeQ [r] -> q d r -> q d r
-isIn vs = filt (\x -> [|| $$x `elem` $$vs ||])
+oneOf :: (Mode q, Eq r, Lift r) => [r] -> q d r -> q d r
+oneOf values = O.filt (\x -> [|| $$x `elem` $$(liftTyped values) ||])
 
--- Ranges. `between` is closed at both ends, which is what SQL's BETWEEN means;
--- `range` is half-open, which is what a date bound written as
--- @>= '1994-01-01' AND < '1995-01-01'@ wants. Both are here rather than left to
--- two `filt`s because writing them as @ge lo . le hi@ builds two nodes and reads
--- worse at the use site.
-between, range :: (Mode q, Ord r) => CodeQ r -> CodeQ r -> q d r -> q d r
-between lo hi = filt (\x -> [|| let !v = $$x in v >= $$lo && v <= $$hi ||])
-range   lo hi = filt (\x -> [|| let !v = $$x in v >= $$lo && v <  $$hi ||])
+-- | Closed and half-open generated ranges, respectively.
+between, range :: (Mode q, Ord r)
+               => Scalar r -> Scalar r -> q d r -> q d r
+between (Scalar low) (Scalar high) = O.filt
+  (\x -> [|| let !value = $$x in value >= $$low && value <= $$high ||])
+range (Scalar low) (Scalar high) = O.filt
+  (\x -> [|| let !value = $$x in value >= $$low && value < $$high ||])
 
--- | Compile a regex once, in the generated code, and hand the rest of the query
--- a reference to it.
---
--- This is the same continuation shape the materializers in
--- "Prela.PullStaged.Materialize" use, and for the same reason. Writing
--- @rx :: String -> q d s -> q d s@ and splicing @makeRegex re@ straight into the
--- per-row test would put the compile INSIDE the loop, since a `CodeQ` used once
--- per row is code that runs once per row. GHC used to rescue that by floating
--- the constant out, but the generated loops are compiled with
--- @-fno-full-laziness@, so nothing floats and the regex would be rebuilt per
--- row. Binding it here says what was meant.
+filterBy :: Mode q => (Scalar r -> Scalar Bool) -> q d r -> q d r
+filterBy predicate = O.filt (scalarCode . predicate . Scalar)
+
+-- | Adapt the input key of a lookup.
+mapKeys :: Probeable q => (Scalar a -> Scalar b) -> q b r -> Lookup a r
+mapKeys transform = O.mapLookupKey (scalarCode . transform . Scalar) . asLookup
+
+mapValues :: Mode q => (Scalar r -> Scalar s) -> q d r -> q d s
+mapValues transform = O.mapv (scalarCode . transform . Scalar)
+
+-- | Compile a regex once in generated code and return a reusable scalar handle.
+regex :: String -> Gen (Scalar Regex)
+regex expression = Gen $ \continue ->
+  withRegex expression (continue . Scalar)
+
 withRegex :: String -> (CodeQ Regex -> CodeQ w) -> CodeQ w
-withRegex re k = [|| let !r = makeRegex (re :: String) :: Regex in $$(k [|| r ||]) ||]
+withRegex expression continue =
+  [|| let !compiled = makeRegex (expression :: String) :: Regex
+      in $$(continue [|| compiled ||]) ||]
 
--- Regex match and its negation, over a regex `withRegex` already compiled.
-rx, nrx :: (Mode q, RegexLike Regex s) => CodeQ Regex -> q d s -> q d s
-rx  r = filt (\x -> [|| matchTest $$r $$x ||])
-nrx r = filt (\x -> [|| not (matchTest $$r $$x) ||])
+rx, nrx :: (Mode q, RegexLike Regex s) => Scalar Regex -> q d s -> q d s
+rx (Scalar expression) = O.filt (\x -> [|| matchTest $$expression $$x ||])
+nrx (Scalar expression) = O.filt (\x -> [|| not (matchTest $$expression $$x) ||])
