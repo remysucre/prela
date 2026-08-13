@@ -194,17 +194,14 @@ rank2
   -> Q.Scalar (Id PartSupp, (((Double, ByteString), ByteString), Id Part))
   -> Q.Scalar Ordering
 rank2 _ left _ right =
-  let leftFields = Q.second left
-      rightFields = Q.second right
-      leftAccountNation = Q.first (Q.first leftFields)
-      rightAccountNation = Q.first (Q.first rightFields)
-  in Q.compare (Q.first rightAccountNation) (Q.first leftAccountNation)
-       `Q.thenCompare`
-     Q.compare (Q.second leftAccountNation) (Q.second rightAccountNation)
-       `Q.thenCompare`
-     Q.compare (Q.second (Q.first leftFields)) (Q.second (Q.first rightFields))
-       `Q.thenCompare`
-     Q.compare (Q.second leftFields) (Q.second rightFields)
+  Q.onTuple4 (\leftAccount leftNation leftName leftPart ->
+    Q.onTuple4 (\rightAccount rightNation rightName rightPart ->
+      Q.compare rightAccount leftAccount `Q.thenCompare`
+      Q.compare leftNation rightNation `Q.thenCompare`
+      Q.compare leftName rightName `Q.thenCompare`
+      Q.compare leftPart rightPart)
+      (Q.second right))
+    (Q.second left)
 
 -- | Flatten a Q2 payload into reporting order.
 --
