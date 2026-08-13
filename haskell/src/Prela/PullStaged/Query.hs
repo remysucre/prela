@@ -12,9 +12,17 @@ module Prela.PullStaged.Query
   , lit
   , int
   , pair
+  , tuple3
+  , tuple4
+  , tuple5
+  , tuple6
   , first
   , second
   , onPair
+  , onTuple3
+  , onTuple4
+  , onTuple5
+  , onTuple6
   , letScalar
   , ifThenElse
   , compare

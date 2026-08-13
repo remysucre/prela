@@ -91,7 +91,7 @@ q1 :: Q.Query TPCHS [(Int, Q1Acc)]
 q1 = Q.query build
   where
     build s = do
-      tbl <- Q.denseFold 288 step (q1Acc 0 0 0 0 0 (Q.int 0)) grouped
+      tbl <- Q.denseFold 288 step (Q.tuple6 0 0 0 0 0 (Q.int 0)) grouped
       pure (Q.collect tbl)
       where
         grouped :: Stream Int (((Double, Double), Double), Double)
@@ -102,42 +102,18 @@ q1 = Q.query build
                   (prod (prod (prod (quantity s) (extendedprice s)) (discount s)) (tax s))
         encodeFlags = Q.onPair $ \returnFlag status ->
           (Q.firstByte returnFlag - 65) * 16 + (Q.firstByte status - 70)
-        step acc = Q.onPair $ \edc tx ->
-          Q.onPair (\qe dc ->
-            Q.onPair (\q e ->
-              onQ1Acc (\qty ext di dp chg n ->
-                Q.letScalar (e * (1 - dc)) $ \dpInc ->
-                Q.letScalar (dpInc * (1 + tx)) $ \chgInc ->
-                  q1Acc (qty + q) (ext + e) (di + dc)
-                        (dp + dpInc) (chg + chgInc) (n + Q.int 1)) acc) qe) edc
+        step acc = Q.onTuple4 $ \q e dc tx ->
+          Q.onTuple6 (\qty ext di dp chg n ->
+            Q.letScalar (e * (1 - dc)) $ \dpInc ->
+            Q.letScalar (dpInc * (1 + tx)) $ \chgInc ->
+              Q.tuple6 (qty + q) (ext + e) (di + dc)
+                       (dp + dpInc) (chg + chgInc) (n + Q.int 1)) acc
 
 -- | Six-field accumulator used by Q1's dense group fold.
 --
--- Binary products are the sole product representation in the query DSL. These
--- two local helpers give Q1's six-field accumulator meaningful order without
--- adding tuple-arity operations to the generic API.
+-- The generic tuple conveniences hide its left-associated binary-pair storage
+-- from the update expression.
 type Q1Acc = (((((Double, Double), Double), Double), Double), Int)
-
--- | Construct a staged Q1 accumulator from its six components.
-q1Acc
-  :: Q.Scalar Double -> Q.Scalar Double -> Q.Scalar Double
-  -> Q.Scalar Double -> Q.Scalar Double -> Q.Scalar Int -> Q.Scalar Q1Acc
-q1Acc qty ext di dp chg n =
-  Q.pair (Q.pair (Q.pair (Q.pair (Q.pair qty ext) di) dp) chg) n
-
--- | Eliminate a staged Q1 accumulator into a six-argument function.
-onQ1Acc
-  :: (Q.Scalar Double -> Q.Scalar Double -> Q.Scalar Double
-      -> Q.Scalar Double -> Q.Scalar Double -> Q.Scalar Int -> Q.Scalar a)
-  -> Q.Scalar Q1Acc -> Q.Scalar a
-onQ1Acc use = Q.onPair $ \qtyExtDiDpChg n ->
-  Q.onPair (\qtyExtDiDp chg ->
-    Q.onPair (\qtyExtDi dp ->
-      Q.onPair (\qtyExt di ->
-        Q.onPair (\qty ext -> use qty ext di dp chg n) qtyExt)
-        qtyExtDi)
-      qtyExtDiDp)
-    qtyExtDiDpChg
 
 -- | Format one Q1 aggregate row.
 fmt1 :: (Int, Q1Acc) -> String
@@ -489,12 +465,11 @@ q8 = Q.query build
                                       (Q.between 19950101 19961231 (date s)))))
                   (prod (prod (extendedprice s) (discount s))
                         (compose (compose (liSupplier s) (supplierNation s)) (nationName s)))
-        step acc = Q.onPair $ \ed nm ->
-          Q.onPair (\e dc ->
-            Q.onPair (\b t ->
-                  Q.letScalar (e * (1 - dc)) $ \vol ->
-                Q.pair (b + Q.ifThenElse (nm Q..==. "BRAZIL") vol 0)
-                       (t + vol)) acc) ed
+        step acc = Q.onTuple3 $ \e dc nm ->
+          Q.onPair (\b t ->
+            Q.letScalar (e * (1 - dc)) $ \vol ->
+              Q.pair (b + Q.ifThenElse (nm Q..==. "BRAZIL") vol 0)
+                     (t + vol)) acc
 
 -- | Format one Q8 year and market-share row.
 fmt8 :: (Int, Double) -> String
@@ -537,9 +512,8 @@ q9 = Q.query $ \s -> do
                                (Q.mapValues (`Q.div` 10000)
                                   (compose (liOrder s) (date s)))))
                 (prod (prod (prod costPerLi (extendedprice s)) (discount s)) (quantity s))
-      step a = Q.onPair $ \ced q ->
-        Q.onPair (\ce dc ->
-          Q.onPair (\cost e -> a + e * (1 - dc) - cost * q) ce) ced
+      step a = Q.onTuple4 $ \cost e dc q ->
+        a + e * (1 - dc) - cost * q
   result <- Q.groupFold step 0 grouped
   let groupNationName = Q.mapKeys Q.first (nationName s)
   pure (Q.collect (prod result groupNationName))
@@ -653,9 +627,8 @@ q12 = Q.query build
                              (prod
                                (prod (Q.range 19940101 19950101 (receiptdate s))
                                      (Q.oneOf ["MAIL", "SHIP"] (shipmode s)))
-                               (Q.filterBy (Q.onPair $ \shc r ->
-                                  Q.onPair (\sh c ->
-                                    (sh Q..<. c) Q..&&. (c Q..<. r)) shc)
+                               (Q.filterBy (Q.onTuple3 $ \sh c r ->
+                                  (sh Q..<. c) Q..&&. (c Q..<. r))
                                  (prod (prod (shipdate s) (commitdate s))
                                        (receiptdate s)))))
                            (shipmode s))
@@ -729,13 +702,12 @@ q14 = Q.query $ \s ->
                      (prod (prod (extendedprice s) (discount s))
                            (compose (liPart s) (ty s)))
       totals = Q.foldAll step (Q.pair 0 0) rows
-      step acc = Q.onPair $ \ed typ ->
-        Q.onPair (\e dc ->
-          Q.onPair (\promo total ->
+      step acc = Q.onTuple3 $ \e dc typ ->
+        Q.onPair (\promo total ->
             Q.letScalar (e * (1 - dc)) $ \price ->
               Q.pair
                 (promo + Q.ifThenElse (Q.isPrefixOf "PROMO" typ) price 0)
-                (total + price)) acc) ed
+                (total + price)) acc
   in pure (Q.onPair (\promo total -> 100 * promo / total) totals)
 
 -- | Render the scalar Q14 percentage.
@@ -939,17 +911,14 @@ q19 = Q.query $ \s ->
       branches = Q.filterBy test
         (prod (compose (liPart s) (prod (prod (brand s) (container s)) (size s)))
               (quantity s))
-      test = Q.onPair $ \bcs q ->
-        Q.onPair (\bc sz ->
-          Q.onPair (\br ct ->
-            let branch wantedBrand containers lowQ highQ highSize =
-                  (br Q..==. wantedBrand) Q..&&. Q.member ct containers Q..&&.
-                  (q Q..>=. lowQ) Q..&&. (q Q..<=. highQ) Q..&&.
-                  (sz Q..>=. 1) Q..&&. (sz Q..<=. highSize)
-            in branch "Brand#12" ["SM CASE", "SM BOX", "SM PACK", "SM PKG"] 1 11 5
-               Q..||. branch "Brand#23" ["MED BAG", "MED BOX", "MED PKG", "MED PACK"] 10 20 10
-               Q..||. branch "Brand#34" ["LG CASE", "LG BOX", "LG PACK", "LG PKG"] 20 30 15)
-            bc) bcs
+      test = Q.onTuple4 $ \br ct sz q ->
+        let branch wantedBrand containers lowQ highQ highSize =
+              (br Q..==. wantedBrand) Q..&&. Q.member ct containers Q..&&.
+              (q Q..>=. lowQ) Q..&&. (q Q..<=. highQ) Q..&&.
+              (sz Q..>=. 1) Q..&&. (sz Q..<=. highSize)
+        in branch "Brand#12" ["SM CASE", "SM BOX", "SM PACK", "SM PKG"] 1 11 5
+           Q..||. branch "Brand#23" ["MED BAG", "MED BOX", "MED PKG", "MED PACK"] 10 20 10
+           Q..||. branch "Brand#34" ["LG CASE", "LG BOX", "LG PACK", "LG PKG"] 20 30 15
       revenue = Q.foldAll
         (\a -> Q.onPair (\e dc -> a + e * (1 - dc))) 0 rows
   in pure revenue

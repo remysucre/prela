@@ -36,10 +36,31 @@ lit = Scalar . liftTyped
 int :: Int -> Scalar Int
 int value = Scalar [|| ($$(liftTyped value) :: Int) ||]
 
--- | The sole generated product constructor. Larger products are nested binary
--- pairs, matching the representation produced by relational product.
+-- | Construct one generated binary product.
 pair :: Scalar a -> Scalar b -> Scalar (a, b)
 pair (Scalar a) (Scalar b) = Scalar [|| ($$a, $$b) ||]
+
+-- | Construct a left-associated generated triple.
+tuple3 :: Scalar a -> Scalar b -> Scalar c -> Scalar ((a, b), c)
+tuple3 a b c = pair (pair a b) c
+
+-- | Construct a left-associated generated four-tuple.
+tuple4
+  :: Scalar a -> Scalar b -> Scalar c -> Scalar d
+  -> Scalar (((a, b), c), d)
+tuple4 a b c d = pair (tuple3 a b c) d
+
+-- | Construct a left-associated generated five-tuple.
+tuple5
+  :: Scalar a -> Scalar b -> Scalar c -> Scalar d -> Scalar e
+  -> Scalar ((((a, b), c), d), e)
+tuple5 a b c d e = pair (tuple4 a b c d) e
+
+-- | Construct a left-associated generated six-tuple.
+tuple6
+  :: Scalar a -> Scalar b -> Scalar c -> Scalar d -> Scalar e -> Scalar f
+  -> Scalar (((((a, b), c), d), e), f)
+tuple6 a b c d e f = pair (tuple5 a b c d e) f
 
 -- | Project the first component of a generated pair.
 first :: Scalar (a, b) -> Scalar a
@@ -54,6 +75,50 @@ onPair :: (Scalar a -> Scalar b -> Scalar c) -> Scalar (a, b) -> Scalar c
 onPair f (Scalar value) = Scalar
   [|| case $$value of
         (a, b) -> $$(scalarCode (f (Scalar [|| a ||]) (Scalar [|| b ||]))) ||]
+
+-- | Eliminate a left-associated generated triple.
+onTuple3
+  :: (Scalar a -> Scalar b -> Scalar c -> Scalar result)
+  -> Scalar ((a, b), c) -> Scalar result
+onTuple3 use (Scalar value) = Scalar
+  [|| case $$value of
+        ((a, b), c) ->
+          $$(scalarCode (use (Scalar [|| a ||]) (Scalar [|| b ||])
+                             (Scalar [|| c ||]))) ||]
+
+-- | Eliminate a left-associated generated four-tuple.
+onTuple4
+  :: (Scalar a -> Scalar b -> Scalar c -> Scalar d -> Scalar result)
+  -> Scalar (((a, b), c), d) -> Scalar result
+onTuple4 use (Scalar value) = Scalar
+  [|| case $$value of
+        (((a, b), c), d) ->
+          $$(scalarCode (use (Scalar [|| a ||]) (Scalar [|| b ||])
+                             (Scalar [|| c ||]) (Scalar [|| d ||]))) ||]
+
+-- | Eliminate a left-associated generated five-tuple.
+onTuple5
+  :: (Scalar a -> Scalar b -> Scalar c -> Scalar d -> Scalar e
+      -> Scalar result)
+  -> Scalar ((((a, b), c), d), e) -> Scalar result
+onTuple5 use (Scalar value) = Scalar
+  [|| case $$value of
+        ((((a, b), c), d), e) ->
+          $$(scalarCode (use (Scalar [|| a ||]) (Scalar [|| b ||])
+                             (Scalar [|| c ||]) (Scalar [|| d ||])
+                             (Scalar [|| e ||]))) ||]
+
+-- | Eliminate a left-associated generated six-tuple.
+onTuple6
+  :: (Scalar a -> Scalar b -> Scalar c -> Scalar d -> Scalar e -> Scalar f
+      -> Scalar result)
+  -> Scalar (((((a, b), c), d), e), f) -> Scalar result
+onTuple6 use (Scalar value) = Scalar
+  [|| case $$value of
+        (((((a, b), c), d), e), f) ->
+          $$(scalarCode (use (Scalar [|| a ||]) (Scalar [|| b ||])
+                             (Scalar [|| c ||]) (Scalar [|| d ||])
+                             (Scalar [|| e ||]) (Scalar [|| f ||]))) ||]
 
 -- | Name a scalar expression once in generated code.
 letScalar :: Scalar a -> (Scalar a -> Scalar b) -> Scalar b

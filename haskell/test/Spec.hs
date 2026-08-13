@@ -31,7 +31,7 @@ import qualified Prela.PullStaged.Query as Q
 import Prela.Storage
 import StagedQueries
   ( dictionaryQuery, loadedReferenceQuery, referenceQuery, schemaQuery
-  , orderedInfixQuery, sharedRelationQuery, topKQuery )
+  , orderedInfixQuery, sharedRelationQuery, topKQuery, tupleHelpersQuery )
 import TinyStaged
   ( Kind, Movie, RefFixture, RefSource, RefTarget, TinyS, link_universe, loadTinyS
   , loadTinySChecked, refFixture )
@@ -68,6 +68,10 @@ stagedSharedRelation = $$(Q.compile sharedRelationQuery)
 -- | Run ordered-substring cases covering both orders and empty needles.
 stagedOrderedInfix :: TinyS -> ((Int, Int), (Int, Int))
 stagedOrderedInfix = $$(Q.compile orderedInfixQuery)
+
+-- | Run all generated tuple construction and elimination conveniences.
+stagedTupleHelpers :: TinyS -> (((Int, Int), Int), Int)
+stagedTupleHelpers = $$(Q.compile tupleHelpersQuery)
 
 -- | Run driven and probed reads of an in-memory malformed reference column.
 stagedReferences
@@ -238,6 +242,8 @@ testCacheAndStaging check = do
      [(0, 1979), (1, 1986), (3, 1992)])
   check "ordered substring scan"
     (stagedOrderedInfix schema) ((3, 0), (1, 3))
+  check "staged tuple conveniences"
+    (stagedTupleHelpers schema) (((6, 10), 15), 21)
   check "sparse schema universe" (map idIndex (universeIds (link_universe schema))) [0, 2]
   check "fast sparse schema universe"
     (map idIndex (universeIds (link_universe fastSchema))) [0, 2]

@@ -12,16 +12,17 @@
 -- The schema argument is a generation-time reference, so a leaf like
 -- @Sch.title s@ describes a generated column read.
 --
--- Each `Q.collect` and `Q.foldAll` emits its own loop. Binary `Q.pair` is the
--- sole generated product constructor, so larger products nest exactly like
--- relational @prod@ results.
+-- Each `Q.collect` and `Q.foldAll` emits its own loop. Generated tuples retain
+-- the left-associated binary-pair representation of relational @prod@ results;
+-- the arity conveniences only hide the mechanical construction and elimination.
 --
 -- The @where@ preamble keeps the bare spelling of each leaf, signatures and
 -- all. @movie@ is enumerated in one query and probed in another; the surrounding
 -- operator chooses that mode without an explicit conversion.
 module StagedQueries
   ( schemaQuery, dictionaryQuery, topKQuery, sharedRelationQuery
-  , orderedInfixQuery, referenceQuery, loadedReferenceQuery ) where
+  , orderedInfixQuery, tupleHelpersQuery, referenceQuery, loadedReferenceQuery
+  ) where
 
 import Data.ByteString (ByteString)
 import qualified Data.Vector as BV
@@ -41,10 +42,7 @@ schemaQuery :: Q.Query Sch.TinyS
 schemaQuery = Q.query build
   where
     build s =
-      pure (Q.pair
-        (Q.pair (Q.pair (Q.pair (values sequels) recent) (values undated))
-                (values tv))
-        best)
+      pure (Q.tuple5 (values sequels) recent (values undated) (values tv) best)
       where
         values q = Q.mapList Q.second (Q.collect q)
 
@@ -139,6 +137,17 @@ orderedInfixQuery = Q.query $ \s ->
   in pure (Q.pair
        (Q.pair (matches "Ali" "en") (matches "en" "Ali"))
        (Q.pair (matches "" "lar") (matches "Alien" "")))
+
+-- | Exercise every generated tuple constructor and matching eliminator.
+tupleHelpersQuery :: Q.Query Sch.TinyS (((Int, Int), Int), Int)
+tupleHelpersQuery = Q.query $ \_ ->
+  let sum3 = Q.onTuple3 (\a b c -> a + b + c) (Q.tuple3 1 2 3)
+      sum4 = Q.onTuple4 (\a b c d -> a + b + c + d) (Q.tuple4 1 2 3 4)
+      sum5 = Q.onTuple5 (\a b c d e -> a + b + c + d + e)
+               (Q.tuple5 1 2 3 4 5)
+      sum6 = Q.onTuple6 (\a b c d e f -> a + b + c + d + e + f)
+               (Q.tuple6 1 2 3 4 5 6)
+  in pure (Q.tuple4 sum3 sum4 sum5 sum6)
 
 -- | Compare driven and keyed access to deliberately malformed boxed references.
 --
