@@ -23,7 +23,8 @@ import qualified Prela.Pull as P
 import qualified Prela.PullStaged.Query as Q
 import Prela.Storage
 import StagedQueries
-  ( dictionaryQuery, loadedReferenceQuery, referenceQuery, schemaQuery, topKQuery )
+  ( dictionaryQuery, loadedReferenceQuery, referenceQuery, schemaQuery
+  , sharedRelationQuery, topKQuery )
 import TinyStaged
   ( Kind, Movie, RefFixture, RefSource, RefTarget, TinyS, link_universe, loadTinyS
   , loadTinySChecked, refFixture )
@@ -47,6 +48,10 @@ stagedDictionary = $$(Q.compile dictionaryQuery)
 stagedTopK
   :: TinyS -> ([(Id Movie, Double)], [(Id Movie, Double)])
 stagedTopK = $$(Q.compile topKQuery)
+
+stagedSharedRelation
+  :: TinyS -> ([(Id Movie, Int)], [(Id Movie, Int)])
+stagedSharedRelation = $$(Q.compile sharedRelationQuery)
 
 stagedReferences
   :: RefFixture
@@ -227,6 +232,12 @@ testCacheAndStaging check = do
     (let (best, none) = stagedTopK schema
      in (map (\(movieId, rating) -> (idIndex movieId, rating)) best, none))
     ([(0, 8.5), (1, 8.4)], [])
+  check "one staged relation scans and probes"
+    (let (scanned, probed) = stagedSharedRelation schema
+         indices = map (\(movieId, year) -> (idIndex movieId, year))
+     in (indices scanned, indices probed))
+    ([(0, 1979), (1, 1986), (3, 1992)],
+     [(0, 1979), (1, 1986), (3, 1992)])
   check "sparse schema universe" (map idIndex (universeIds (link_universe schema))) [0, 2]
   check "fast sparse schema universe"
     (map idIndex (universeIds (link_universe fastSchema))) [0, 2]

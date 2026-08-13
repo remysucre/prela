@@ -47,6 +47,17 @@ module Prela.PullStaged.Query
   , extent
     -- * Relations
   , Relation
+  , Drivable
+  , Probeable
+  , compose
+  , prod
+  , restrict
+  , diff
+  , groupBy
+  , leftCompose
+  , union
+  , disj
+  , invStream
   , stream
   , keyed
     -- * Pure generation
@@ -108,7 +119,7 @@ import Prela.Id (Id, Universe, universeSize)
 import qualified Prela.Id as Id
 import qualified Prela.PullStaged.Materialize as M
 import qualified Prela.PullStaged.Ops as O
-import Prela.PullStaged.Ops (SMode)
+import Prela.PullStaged.Ops (Mode)
 import qualified Prela.PullStaged.Predicate as P
 import qualified Prela.PullStaged.Stream as S
 import Prela.PullStaged.Stream (Lookup, Stream)
@@ -282,16 +293,98 @@ instance IsString a => IsString (Scalar a) where
 
 -- | A relation that may be instantiated as either a stream or a keyed lookup.
 newtype Relation d r = Relation
-  { use :: forall q. SMode q => q d r
+  { use :: forall q. Mode q => q d r
   }
 
--- | Enumerate a generated relation.
+-- | Things which can be driven row by row. Ordinary schema and materialized
+-- relations select their stream implementation here; already-linear plans are
+-- left unchanged.
+class Drivable q where
+  asStream :: q d r -> Stream d r
+
+instance Drivable Stream where
+  asStream = Base.id
+
+instance Drivable Relation where
+  asStream = use
+
+-- | Things which can be probed by key. A logical 'Relation' chooses its lookup
+-- implementation only when an operator actually needs one.
+class Probeable q where
+  asLookup :: q d r -> Lookup d r
+
+instance Probeable Lookup where
+  asLookup = Base.id
+
+instance Probeable Relation where
+  asLookup = use
+
+-- A relation is itself a valid algebra mode. This instance keeps schema leaves
+-- mode-polymorphic underneath while presenting one concrete author-level type.
+-- Instantiating 'use' as 'Stream' or 'Lookup' selects the existing specialized
+-- executor instance; it does not build or interpret another runtime object.
+instance O.Mode Relation where
+  universe source = Relation (O.universe source)
+  column source = Relation (O.column source)
+  sparseColumn source = Relation (O.sparseColumn source)
+  referenceColumn sourceDomain raw targetDomain =
+    Relation (O.referenceColumn sourceDomain raw targetDomain)
+  multiColumn source = Relation (O.multiColumn source)
+  fromIndex source = Relation (O.fromIndex source)
+  fromCache source = Relation (O.fromCache source)
+  fromDense source = Relation (O.fromDense source)
+  fromDenseInt source = Relation (O.fromDenseInt source)
+  fromTable source = Relation (O.fromTable source)
+  fromBits source = Relation (O.fromBits source)
+  compose (Relation rows) indexed = Relation (O.compose rows indexed)
+  prod (Relation rows) indexed = Relation (O.prod rows indexed)
+  restrict (Relation rows) indexed = Relation (O.restrict rows indexed)
+  diff (Relation rows) indexed = Relation (O.diff rows indexed)
+  filt predicate (Relation rows) = Relation (O.filt predicate rows)
+  mapv transform (Relation rows) = Relation (O.mapv transform rows)
+
+-- | Algebra over author-level relations. The left side determines whether a
+-- result remains generally reusable ('Relation') or is already a linear
+-- 'Stream'; the right side is selected as a keyed probe by context.
+compose :: (Mode q, Probeable p) => q d e -> p e f -> q d f
+compose rows indexed = O.compose rows (asLookup indexed)
+
+prod :: (Mode q, Probeable p) => q d u -> p d v -> q d (u, v)
+prod rows indexed = O.prod rows (asLookup indexed)
+
+restrict :: (Mode q, Probeable p) => q d r -> p r e -> q d r
+restrict rows predicate = O.restrict rows (asLookup predicate)
+
+diff :: (Mode q, Probeable p) => q d r -> p d e -> q d r
+diff rows excluded = O.diff rows (asLookup excluded)
+
+groupBy :: (Drivable q, Probeable p) => q d r -> p r k -> Stream k r
+groupBy rows key = O.groupBy (asStream rows) (asLookup key)
+
+leftCompose :: (Drivable q, Probeable p) => q d e -> p d f -> Stream e f
+leftCompose rows indexed = O.leftCompose (asStream rows) (asLookup indexed)
+
+union :: (Drivable left, Drivable right)
+      => left d r -> right d r -> Stream d r
+union left right = O.union (asStream left) (asStream right)
+
+-- Membership union is intentionally probe-only; unlike 'Relation', it makes no
+-- promise that its values can be enumerated.
+disj :: (Probeable left, Probeable right)
+     => left d r -> right d s -> Lookup d ()
+disj left right = O.disj (asLookup left) (asLookup right)
+
+invStream :: Drivable q => q d r -> Stream r d
+invStream = S.invStream . asStream
+
+-- | Compatibility projections for executor code and representation tests.
+-- Ordinary query operators now select these modes from context.
 stream :: Relation d r -> Stream d r
-stream = use
+stream = asStream
 
 -- | Access a generated relation by key.
 keyed :: Relation d r -> Lookup d r
-keyed = use
+keyed = asLookup
 
 -- | A pure CPS builder. A bind introduces nested generated runtime bindings;
 -- it performs no effects while a query runs.
@@ -320,41 +413,41 @@ share (Scalar value) = Gen $ \continue ->
   [|| let !shared = $$value
       in $$(continue (Scalar [|| shared ||])) ||]
 
-materialize :: Ord d => Stream d r -> Gen (Relation d r)
+materialize :: (Ord d, Drivable q) => q d r -> Gen (Relation d r)
 materialize rows = Gen $ \continue ->
-  M.withMaterialize rows (\relation -> continue (Relation relation))
+  M.withMaterialize (asStream rows) (\relation -> continue (Relation relation))
 
-invert :: Ord r => Stream d r -> Gen (Relation r d)
+invert :: (Ord r, Drivable q) => q d r -> Gen (Relation r d)
 invert rows = Gen $ \continue ->
-  M.withInv rows (\relation -> continue (Relation relation))
+  M.withInv (asStream rows) (\relation -> continue (Relation relation))
 
-groupFold :: (Hashable d, Key d, UV.Unbox acc)
+groupFold :: (Drivable q, Hashable d, Key d, UV.Unbox acc)
           => (Scalar acc -> Scalar r -> Scalar acc)
-          -> Scalar acc -> Stream d r -> Gen (Relation d acc)
+          -> Scalar acc -> q d r -> Gen (Relation d acc)
 groupFold step (Scalar initial) rows = Gen $ \continue ->
   M.withFold (\acc value -> scalarCode (step (Scalar acc) (Scalar value)))
-             initial rows
+             initial (asStream rows)
              (\relation -> continue (Relation relation))
 
-bufferFold :: Ord d
+bufferFold :: (Drivable q, Ord d)
            => (Scalar [r] -> Scalar acc)
-           -> Stream d r -> Gen (Relation d acc)
+           -> q d r -> Gen (Relation d acc)
 bufferFold reduce rows = Gen $ \continue ->
-  M.withBufFold (scalarCode . reduce . Scalar) rows
+  M.withBufFold (scalarCode . reduce . Scalar) (asStream rows)
                 (\relation -> continue (Relation relation))
 
-distinctCount :: (Hashable d, Key d, Hashable r, Key r)
-              => Stream d r -> Gen (Relation d Int)
+distinctCount :: (Drivable q, Hashable d, Key d, Hashable r, Key r)
+              => q d r -> Gen (Relation d Int)
 distinctCount rows = Gen $ \continue ->
-  M.withCountDistinct rows (\relation -> continue (Relation relation))
+  M.withCountDistinct (asStream rows) (\relation -> continue (Relation relation))
 
 -- | Count distinct entity ids within bounded integer groups. Supplying the two
 -- extents lets the executor use one packed integer per pair and a dense count
 -- array, while preserving the same relation result as 'distinctCount'.
-denseDistinctCount :: Scalar Int -> Scalar Int -> Stream Int (Id e)
+denseDistinctCount :: Drivable q => Scalar Int -> Scalar Int -> q Int (Id e)
                    -> Gen (Relation Int Int)
 denseDistinctCount (Scalar groups) (Scalar memberExtent) rows = Gen $ \continue ->
-  M.withDenseDistinctCount groups memberExtent rows
+  M.withDenseDistinctCount groups memberExtent (asStream rows)
     (\relation -> continue (Relation relation))
 
 -- | Keys that can safely select a slot in a bounded dense aggregate. Entity
@@ -367,7 +460,7 @@ class DenseKey key where
     -> (CodeQ acc -> CodeQ r -> CodeQ acc)
     -> CodeQ acc
     -> Stream key r
-    -> ((forall q. SMode q => q key acc) -> CodeQ w)
+    -> ((forall q. Mode q => q key acc) -> CodeQ w)
     -> CodeQ w
 
 instance DenseKey (Id e) where
@@ -376,49 +469,51 @@ instance DenseKey (Id e) where
 instance DenseKey Int where
   withDenseKey = M.withDenseInt
 
-denseFold :: (DenseKey key, UV.Unbox acc)
+denseFold :: (Drivable q, DenseKey key, UV.Unbox acc)
           => Scalar Int
           -> (Scalar acc -> Scalar r -> Scalar acc)
           -> Scalar acc
-          -> Stream key r
+          -> q key r
           -> Gen (Relation key acc)
 denseFold (Scalar size) step (Scalar initial) rows = Gen $ \continue ->
   withDenseKey size
     (\acc value -> scalarCode (step (Scalar acc) (Scalar value)))
-    initial rows (\relation -> continue (Relation relation))
+    initial (asStream rows) (\relation -> continue (Relation relation))
 
-denseFoldOuter :: UV.Unbox acc
+denseFoldOuter :: (Drivable q, UV.Unbox acc)
                => Scalar Int
                -> (Scalar acc -> Scalar r -> Scalar acc)
                -> Scalar acc
-               -> Stream (Id e) r
+               -> q (Id e) r
                -> Gen (Relation (Id e) acc)
 denseFoldOuter (Scalar size) step (Scalar initial) rows = Gen $ \continue ->
   M.withDenseOuter size
     (\acc value -> scalarCode (step (Scalar acc) (Scalar value)))
-    initial rows (\relation -> continue (Relation relation))
+    initial (asStream rows) (\relation -> continue (Relation relation))
 
 -- | Assign a compact integer to each distinct stream value. The relation maps
 -- every input entity to its code; the vector maps codes back to values for final
 -- rendering. This keeps repeated strings and compound values out of hot keys.
-dictionary :: Ord value
-           => Scalar Int -> Stream (Id e) value
+dictionary :: (Drivable q, Ord value)
+           => Scalar Int -> q (Id e) value
            -> Gen (Relation (Id e) Int, Scalar (BV.Vector value))
 dictionary (Scalar size) rows = Gen $ \continue ->
-  M.withDictionary size rows $ \relation labels ->
+  M.withDictionary size (asStream rows) $ \relation labels ->
     continue (Relation relation, Scalar labels)
 
-bitset :: Scalar Int -> Stream d (Id e) -> Gen (Relation (Id e) (Id e))
+bitset :: Drivable q
+       => Scalar Int -> q d (Id e) -> Gen (Relation (Id e) (Id e))
 bitset (Scalar size) rows = Gen $ \continue ->
-  M.withBits size rows (\relation -> continue (Relation relation))
+  M.withBits size (asStream rows) (\relation -> continue (Relation relation))
 
 -- | Keep a bounded, ordered result inside generated code and pass its rows to
 -- subsequent relational operators. The comparator follows 'Data.List.sortBy':
 -- @LT@ means the left row ranks ahead of the right row.
 topK
-  :: Scalar Int
+  :: Drivable q
+  => Scalar Int
   -> (Scalar d -> Scalar r -> Scalar d -> Scalar r -> Scalar Ordering)
-  -> Stream d r
+  -> q d r
   -> Gen (Stream d r)
 topK (Scalar size) order rows = Gen $ \continue ->
   M.withTopK size
@@ -427,7 +522,7 @@ topK (Scalar size) order rows = Gen $ \continue ->
           right = Scalar rightRow
       in scalarCode
            (order (first left) (second left) (first right) (second right)))
-    rows continue
+    (asStream rows) continue
 
 regex :: String -> Gen (Scalar Regex)
 regex expression = Gen $ \continue ->
@@ -437,56 +532,56 @@ regex expression = Gen $ \continue ->
 -- Surface predicates and consumers
 --------------------------------------------------------------------------------
 
-eq, ne :: (SMode q, Eq r) => Scalar r -> q d r -> q d r
+eq, ne :: (Mode q, Eq r) => Scalar r -> q d r -> q d r
 eq (Scalar value) = P.eq value
 ne (Scalar value) = P.ne value
 
-gt, lt, ge, le :: (SMode q, Ord r) => Scalar r -> q d r -> q d r
+gt, lt, ge, le :: (Mode q, Ord r) => Scalar r -> q d r -> q d r
 gt (Scalar value) = P.gt value
 lt (Scalar value) = P.lt value
 ge (Scalar value) = P.ge value
 le (Scalar value) = P.le value
 
-oneOf :: (SMode q, Eq r, Lift r) => [r] -> q d r -> q d r
+oneOf :: (Mode q, Eq r, Lift r) => [r] -> q d r -> q d r
 oneOf values = P.isIn (liftTyped values)
 
-between, range :: (SMode q, Ord r)
+between, range :: (Mode q, Ord r)
                => Scalar r -> Scalar r -> q d r -> q d r
 between (Scalar low) (Scalar high) = P.between low high
 range (Scalar low) (Scalar high) = P.range low high
 
-filterBy :: SMode q => (Scalar r -> Scalar Bool) -> q d r -> q d r
+filterBy :: Mode q => (Scalar r -> Scalar Bool) -> q d r -> q d r
 filterBy predicate = O.filt (scalarCode . predicate . Scalar)
 
 -- | Adapt the input key of a lookup. For example, a relation keyed by nation
 -- can be attached to @(nation, year)@ groups with @mapKeys first@.
-mapKeys :: (Scalar a -> Scalar b) -> Lookup b r -> Lookup a r
-mapKeys transform = O.mapLookupKey (scalarCode . transform . Scalar)
+mapKeys :: Probeable q => (Scalar a -> Scalar b) -> q b r -> Lookup a r
+mapKeys transform = O.mapLookupKey (scalarCode . transform . Scalar) . asLookup
 
-mapValues :: SMode q => (Scalar r -> Scalar s) -> q d r -> q d s
+mapValues :: Mode q => (Scalar r -> Scalar s) -> q d r -> q d s
 mapValues transform = O.mapv (scalarCode . transform . Scalar)
 
-rx, nrx :: (SMode q, RegexLike Regex s) => Scalar Regex -> q d s -> q d s
+rx, nrx :: (Mode q, RegexLike Regex s) => Scalar Regex -> q d s -> q d s
 rx (Scalar expression) = P.rx expression
 nrx (Scalar expression) = P.nrx expression
 
-foldAll :: (Scalar acc -> Scalar r -> Scalar acc)
-        -> Scalar acc -> Stream d r -> Scalar acc
+foldAll :: Drivable q => (Scalar acc -> Scalar r -> Scalar acc)
+        -> Scalar acc -> q d r -> Scalar acc
 foldAll step (Scalar initial) rows = Scalar
   (S.foldAll (\acc value -> scalarCode (step (Scalar acc) (Scalar value)))
-             initial rows)
+             initial (asStream rows))
 
-count :: Stream d r -> Scalar Int
-count = Scalar . S.count
+count :: Drivable q => q d r -> Scalar Int
+count = Scalar . S.count . asStream
 
-anyOf :: Stream d r -> Scalar Bool
-anyOf = Scalar . S.anyOf
+anyOf :: Drivable q => q d r -> Scalar Bool
+anyOf = Scalar . S.anyOf . asStream
 
-collect :: Stream d r -> Scalar [(d, r)]
-collect = Scalar . S.collect
+collect :: Drivable q => q d r -> Scalar [(d, r)]
+collect = Scalar . S.collect . asStream
 
-limit :: Scalar Int -> Stream d r -> Scalar [(d, r)]
-limit (Scalar size) = Scalar . S.limit size
+limit :: Drivable q => Scalar Int -> q d r -> Scalar [(d, r)]
+limit (Scalar size) = Scalar . S.limit size . asStream
 
 --------------------------------------------------------------------------------
 -- Complete queries

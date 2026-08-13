@@ -30,18 +30,19 @@ The existing staged executor is not the main problem. It already generates fast
 loops and has useful distinctions between scanning a relation and probing it by
 key.
 
-The problem is that query definitions currently expose too much of that
-implementation. They contain:
+Before the relation facade, query definitions exposed too much of that
+implementation. They contained:
 
-- `Stream`, `Lookup`, and `SMode` types;
+- `Stream`, `Lookup`, and `Mode` constraints;
 - `Q.stream` and `Q.keyed` conversions;
 - `Gen` actions and large `do` blocks for runtime materialization;
 - `Q.Scalar`, `Q.pair`, and `Q.onPair` for staged scalar expressions; and
 - deeply nested `compose` calls for foreign-key navigation.
 
-Those details make the query look like code-generation machinery rather than a
-Prela plan. The Rust embedding hides most of the same executor distinctions
-behind one compositional query vocabulary.
+Those details made the query look like code-generation machinery rather than a
+Prela plan. The new `Relation` facade removes `Stream`, `Lookup`, `Mode`,
+`Q.stream`, and `Q.keyed` from ordinary TPC-H query code. The remaining staging
+and nested-product syntax is a separate surface problem.
 
 For example, the important idea in Q4 is simple:
 
@@ -144,9 +145,56 @@ This separation is why a plan data type need not make queries slower. It is
 compile-time data, not a runtime interpreter. Performance depends on whether
 lowering emits the same loops and materializers as the old query.
 
-## The important sharing problem
+## Context-selected scan and probe
 
-This is the unresolved part of the design.
+A reusable relation now has one author-level type:
+
+```haskell
+newtype Relation d r = Relation
+  { use :: forall q. Mode q => q d r }
+```
+
+This value is a generation-time capability, not a runtime tagged union. Its
+rank-n field says that the existing staged implementation may be instantiated
+as whichever executor mode the consumer needs. Two small capability classes
+encode that context:
+
+```haskell
+class Drivable q where
+  asStream :: q d r -> Stream d r
+
+class Probeable q where
+  asLookup :: q d r -> Lookup d r
+```
+
+`Relation` supports both capabilities. An already-linear `Stream` supports
+driving, while a probe-only `Lookup` supports probing. The public operators
+make the choice:
+
+- `collect`, folds, materializers, `groupBy`, `union`, and the left side of
+  `leftCompose` call `asStream`;
+- the right sides of `compose`, `prod`, `restrict`, `diff`, `groupBy`, and
+  `leftCompose` call `asLookup`; and
+- the left side of `compose`, `prod`, `restrict`, and `diff` retains its current
+  mode, so a `Relation` result remains reusable while a `Stream` result remains
+  linear.
+
+Consequently the query author writes:
+
+```haskell
+restrict (orders s) lateOrders
+Q.collect lateOrders
+```
+
+rather than spelling `Q.keyed lateOrders` and `Q.stream lateOrders`.
+Membership union (`disj`) deliberately still produces a `Lookup`: it can answer
+whether a key is in either input, but there is no general way to enumerate that
+result without choosing duplicate and ordering semantics.
+
+This is execution-mode selection, not query optimization. Every algebra
+operator still lowers one-for-one to the existing staged operator.
+
+## Why a materialized relation is still built once
 
 Consider an ordinary, unmaterialized relation used twice:
 
@@ -170,23 +218,36 @@ in prod (compose rows minimumCost)
 The materialized fold must be constructed once and probed twice. Emitting the
 fold twice changes both the physical plan and its cost.
 
-Therefore the compiler must distinguish:
+The implementation distinguishes:
 
 - reuse of a logical relation description, which does not imply
   materialization; and
 - reuse of the result of an explicitly materializing node, which must retain
   its one-build scope.
 
-A naive recursive AST lowerer does not guarantee this. Each traversal of the
-same fold subtree can emit a new fold. Conversely, automatic
-common-subexpression elimination would be wrong because it could cache ordinary
-relations the author meant to scan independently.
+The answer is the existing CPS scope of `Gen`. A materializer such as
+`denseFold` emits its runtime build before invoking the continuation, then gives
+that continuation a `Relation` whose stream and lookup implementations both
+refer to the same generated local binding. Choosing `asStream` or `asLookup`
+instantiates an accessor to that binding; it does not invoke the builder.
 
-We should not settle the public representation until it has a precise answer to
-this problem. Possible mechanisms include explicit typed materialization
-bindings, stable identities only on materializer nodes, or a scoped plan form
-which represents “build once, use this reference below.” The choice should be
-judged by semantic clarity first and surface convenience second.
+Schematically, generated code has this shape:
+
+```haskell
+let !storage = buildDense input
+in (collect (scanDense storage),
+    collect (compose rows (lookupDense storage)))
+```
+
+It does not have two copies of `buildDense`. This works without an AST identity
+table or common-subexpression elimination: the `do` binding for the explicit
+materializer is the build-once scope. By contrast, a plain Haskell `let` that
+names an unmaterialized `Relation` only shares its generation-time description;
+using it in two enumerating positions still emits two traversals and no cache.
+
+The focused `sharedRelationQuery` regression test exercises exactly this case:
+one dense relation is collected and also composed as a keyed relation, with no
+explicit mode conversions in the query.
 
 ## What the compiler is allowed to do for speed
 
@@ -261,7 +322,7 @@ to 2.16--2.18 s. All queries continue to match their recorded oracles. Detailed
 measurements and the earlier leaf diagnosis are in
 [`STAGED_FOREIGN_KEY_ALLOCATION.md`](STAGED_FOREIGN_KEY_ALLOCATION.md).
 
-## Proposed development sequence
+## Development and verification sequence
 
 ### 1. Freeze the semantic reference
 
@@ -283,7 +344,8 @@ Demonstrate both of these in small tests:
 - one explicitly materialized fold or bitset referenced twice emits one build
   and two probes.
 
-This must be solved before migrating large queries.
+This is implemented by the `Gen` continuation scope and covered by the focused
+shared-relation regression.
 
 ### 4. Implement structural lowering
 
@@ -318,24 +380,35 @@ Only after the semantic and performance checks pass should TPC-H queries move
 to the new representation. A migrated query should remain visibly comparable
 to its Rust counterpart and to the old Haskell plan.
 
-The full TPC-H build is too slow for the normal edit loop. Use the focused
-staged test suite during development and run the complete oracle suite at
-milestones.
+The ordinary staged TPC-H module is now migrated: it has no `Q.stream`,
+`Q.keyed`, or author-written `Mode` signatures. The full TPC-H build is too
+slow for the normal edit loop, so the focused staged test suite remains the
+normal development target and the complete oracle suite remains the milestone
+check.
 
-## Status of the current prototype
+## Current status
 
-`Prela.PullStaged.Plan` is an experiment, not the settled design. It demonstrates
-that pure typed plan nodes can lower into the existing executor and pass small
-fold and bitset tests. It does **not** yet provide a satisfactory general answer
-for materializer identity and reuse.
+The settled query path uses the lightweight `Relation` facade in
+`Prela.PullStaged.Query`. There is no separate plan AST or lowering module.
+`Q.stream` and `Q.keyed` remain as compatibility projections for executor code
+and representation-level tests, but they are not part of ordinary query
+authorship.
 
-Accordingly:
+The result is deliberately modest: queries select physical materializers and
+retain their written operator order, while consumers select scan or probe mode
+from context. The generated runtime program still uses the same specialized
+`Stream` and `Lookup` executor paths.
 
-- do not remove the old TPC-H queries yet;
-- do not treat the prototype surface as final;
-- do not add optimization or rewrite passes; and
-- solve and test sharing before expanding the prototype.
+### `-O1` equivalence check
 
-The desired outcome is modest but important: queries should look like normal
-typed Haskell descriptions of Prela plans, while the generated runtime program
-remains the same fast program the author explicitly asked for.
+The explicit-mode commit and the relation-facade working tree were built in
+separate clean directories with GHC 9.10.3 at `-O1`, against the same SF1 cache.
+An allocation-counter runner forced every rendered query result. The cumulative
+query-body total was exactly 1,007,366,880 bytes for both builds, and all 22
+individual query counts also matched byte-for-byte.
+
+After discarding each process's first round, four complete-suite rounds averaged
+about 2.50 s for the explicit `Q.stream`/`Q.keyed` source and 2.48 s for the
+facade source. That difference is ordinary run noise; importantly, there is no
+timing or allocation regression. All 22 results matched their recorded oracles
+in both builds.

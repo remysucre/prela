@@ -5,7 +5,7 @@
 
 -- | Leaves and operators that work in either query position.
 --
--- `SMode` has two instances: `Stream` for enumeration and `Lookup` for keyed
+-- `Mode` has two executor instances: `Stream` for driving and `Lookup` for keyed
 -- access. A query remains polymorphic until its result type selects an instance.
 -- Binary operators take a concrete `Lookup` on the right because that side is
 -- always accessed by key.
@@ -14,7 +14,7 @@
 -- membership test inside a scan as a straight-line predicate rather than a
 -- one-row pull loop.
 module Prela.PullStaged.Ops
-  ( SMode (..)
+  ( Mode (..)
     -- * Fixed-mode operators
   , groupBy
   , leftCompose
@@ -38,7 +38,7 @@ import Prela.Storage.Internal
 -- Storage fields use leading underscores because consumers such as `count` may
 -- discard values. In that case staging removes the read and leaves the field
 -- binder unused in generated code.
-class SMode q where
+class Mode q where
   -- Leaves.
   universe       :: CodeQ (Universe e) -> q (Id e) (Id e)
   column         :: Elem r => CodeQ (Col e r) -> q (Id e) r
@@ -122,7 +122,7 @@ withReference sourceDomain rawColumn targetDomain sourceId found missing =
 -- Enumeration
 --------------------------------------------------------------------------------
 
-instance SMode Stream where
+instance Mode Stream where
   universe u       = Lin (universeProd u)
   column c         = Lin (columnProd c)
   sparseColumn c = Lin Producer
@@ -249,7 +249,7 @@ instance SMode Stream where
 -- Lookup leaves validate keys before reading storage. Invalid keys produce an
 -- empty stream. Each leaf supplies both full enumeration and a fused
 -- predicate probe; the latter is the hot path for restrict/difference.
-instance SMode Lookup where
+instance Mode Lookup where
   universe u = Lookup
     { at = \x -> mapvS (\_ -> x) (guardS [|| containsId $$u $$x ||])
     , probeAny = \x accept ->

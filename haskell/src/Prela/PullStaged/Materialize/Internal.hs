@@ -123,7 +123,7 @@ index = sfold (\m d r -> [|| Map.insertWith (++) $$d [$$r] $$m ||]) [|| Map.empt
 -- | Force a leg once so reuse is free. Same pairs, now backed by the index.
 withMaterialize :: Ord d
                 => Stream d r
-                -> ((forall q. SMode q => q d r) -> CodeQ w) -> CodeQ w
+                -> ((forall q. Mode q => q d r) -> CodeQ w) -> CodeQ w
 withMaterialize s k =
   [|| let !m = $$(index s) in $$(k (fromIndex [|| m ||])) ||]
 
@@ -132,7 +132,7 @@ withMaterialize s k =
 -- enumeration.
 withInv :: Ord r
         => Stream d r
-        -> ((forall q. SMode q => q r d) -> CodeQ w) -> CodeQ w
+        -> ((forall q. Mode q => q r d) -> CodeQ w) -> CodeQ w
 withInv s k = withMaterialize (invStream s) k
 
 -- | The whole-group fold: instead of reducing pairwise, hand the reducer the
@@ -146,7 +146,7 @@ withInv s k = withMaterialize (invStream s) k
 -- each group is handed is in stream order.
 withBufFold :: Ord d
             => (CodeQ [r] -> CodeQ t) -> Stream d r
-            -> ((forall q. SMode q => q d t) -> CodeQ w) -> CodeQ w
+            -> ((forall q. Mode q => q d t) -> CodeQ w) -> CodeQ w
 withBufFold f s k =
   [|| let !m = Map.map (\xs -> $$(f [|| reverse xs ||])) $$(index s)
       in $$(k (fromCache [|| m ||])) ||]
@@ -165,7 +165,7 @@ withBufFold f s k =
 -- rather than called through a closure.
 withFold :: (Hashable d, Key d, UV.Unbox t)
          => (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t -> Stream d r
-         -> ((forall q. SMode q => q d t) -> CodeQ w) -> CodeQ w
+         -> ((forall q. Mode q => q d t) -> CodeQ w) -> CodeQ w
 withFold op ini s k =
   [|| let !tbl = $$(buildTable op ini s) in $$(k (fromTable [|| tbl ||])) ||]
 
@@ -335,7 +335,7 @@ growTable (MTable mask cnt hs ks vsc) ini = do
 -- `buildTable` generates a loop over its slots.
 withCountDistinct :: forall d r w. (Hashable d, Key d, Hashable r, Key r)
                   => Stream d r
-                  -> ((forall q. SMode q => q d Int) -> CodeQ w) -> CodeQ w
+                  -> ((forall q. Mode q => q d Int) -> CodeQ w) -> CodeQ w
 withCountDistinct s k =
   [|| let !dd = $$(buildTable (\_ _ -> [|| () ||]) [|| () ||] pairs)
       in $$(withFold (\n _ -> [|| $$n + (1 :: Int) ||]) [|| 0 ||]
@@ -351,7 +351,7 @@ withCountDistinct s k =
 -- pair is represented by one integer, and the final counts use a dense array;
 -- invalid or overflowing bounds retain the generic, fully checked semantics.
 withDenseDistinctCount :: CodeQ Int -> CodeQ Int -> Stream Int (Id e)
-                       -> ((forall q. SMode q => q Int Int) -> CodeQ w)
+                       -> ((forall q. Mode q => q Int Int) -> CodeQ w)
                        -> CodeQ w
 withDenseDistinctCount groupCount memberCount rows continue =
   [|| let !groups = $$groupCount
@@ -394,7 +394,7 @@ withDenseDistinctCount groupCount memberCount rows continue =
 withDense :: UV.Unbox t
           => CodeQ Int -> (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t
           -> Stream (Id e) r
-          -> ((forall q. SMode q => q (Id e) t) -> CodeQ w) -> CodeQ w
+          -> ((forall q. Mode q => q (Id e) t) -> CodeQ w) -> CodeQ w
 withDense n op ini s k =
   [|| let !dn = $$(buildDense n op ini [|| False ||] s)
       in $$(k (fromDense [|| dn ||])) ||]
@@ -406,7 +406,7 @@ withDense n op ini s k =
 withDenseOuter :: UV.Unbox t
                => CodeQ Int -> (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t
                -> Stream (Id e) r
-               -> ((forall q. SMode q => q (Id e) t) -> CodeQ w) -> CodeQ w
+               -> ((forall q. Mode q => q (Id e) t) -> CodeQ w) -> CodeQ w
 withDenseOuter n op ini s k =
   [|| let !dn = $$(buildDense n op ini [|| True ||] s)
       in $$(k (fromDense [|| dn ||])) ||]
@@ -418,7 +418,7 @@ withDenseOuter n op ini s k =
 withDenseInt :: UV.Unbox t
              => CodeQ Int -> (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t
              -> Stream Int r
-             -> ((forall q. SMode q => q Int t) -> CodeQ w) -> CodeQ w
+             -> ((forall q. Mode q => q Int t) -> CodeQ w) -> CodeQ w
 withDenseInt n op ini s k =
   [|| let !dn = $$(buildDenseInt n op ini s)
       in $$(k (fromDenseInt [|| dn ||])) ||]
@@ -429,7 +429,7 @@ withDenseInt n op ini s k =
 -- the hot part of the query has finished.
 withDictionary :: Ord value
                => CodeQ Int -> Stream (Id e) value
-               -> ((forall q. SMode q => q (Id e) Int)
+               -> ((forall q. Mode q => q (Id e) Int)
                    -> CodeQ (BV.Vector value) -> CodeQ w)
                -> CodeQ w
 withDictionary n rows continue =
@@ -529,7 +529,7 @@ buildDictionary n rows =
 -- millions of times; use `anyOf` where it is asked once per outer row and the
 -- inner relation is small.
 withBits :: CodeQ Int -> Stream d (Id e)
-         -> ((forall q. SMode q => q (Id e) (Id e)) -> CodeQ w) -> CodeQ w
+         -> ((forall q. Mode q => q (Id e) (Id e)) -> CodeQ w) -> CodeQ w
 withBits n s k =
   [|| let !bs = Bits (runSTUArray (do
                         let !cap = $$n

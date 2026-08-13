@@ -255,7 +255,7 @@ accessorDeclarations recordName ent = do
       let name = mkName (eUniv ent)
           domain = get record (universeFieldName ent)
       signature <- sigD name
-        [t| forall q. S.SMode q => $recordCode -> q (Id $tag) (Id $tag) |]
+        [t| $recordCode -> Q.Relation (Id $tag) (Id $tag) |]
       function <- funD name [clause [varP record] (normalB [| S.universe $domain |]) []]
       inlinePragma <- pragInlD name Inline FunLike AllPhases
       pure [signature, function, inlinePragma]
@@ -289,7 +289,7 @@ accessorDeclarations recordName ent = do
               in [| S.compose $liveRows (S.resolveId $targetDomain) |]
             _ -> liveRows
       signature <- sigD name
-        [t| forall q. S.SMode q => $recordCode -> q (Id $tag) $(elementType (fTy field)) |]
+        [t| $recordCode -> Q.Relation (Id $tag) $(elementType (fTy field)) |]
       function <- funD name [clause [varP record] (normalB body) []]
       inlinePragma <- pragInlD name Inline FunLike AllPhases
       pure [signature, function, inlinePragma]

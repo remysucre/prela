@@ -9,7 +9,7 @@ module TinyStaged where
 
 import Language.Haskell.TH (CodeQ)
 import Prela.Id (Id, Universe, denseUniverse, universeFromMask)
-import Prela.PullStaged.Ops (SMode, referenceColumn)
+import Prela.PullStaged.Ops (Mode, referenceColumn)
 import Prela.Schema
 import Prela.Storage (SparseCol, mkSparseCol)
 
@@ -58,7 +58,7 @@ refSourceDomain :: CodeQ RefFixture -> CodeQ (Universe RefSource)
 refSourceDomain fixture = [|| refSourceUniverse $$fixture ||]
 
 boxedReference
-  :: SMode q => CodeQ RefFixture -> q (Id RefSource) (Id RefTarget)
+  :: Mode q => CodeQ RefFixture -> q (Id RefSource) (Id RefTarget)
 boxedReference fixture = referenceColumn
   (refSourceDomain fixture)
   [|| refBoxedColumn $$fixture ||]

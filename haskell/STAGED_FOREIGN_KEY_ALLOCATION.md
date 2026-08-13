@@ -48,7 +48,7 @@ described below is the production implementation.
 
 ## Implementation outcome
 
-`SMode.referenceColumn` is now the physical leaf for generated one-valued
+`Mode.referenceColumn` is now the physical leaf for generated one-valued
 reference accessors. `Prela.Schema` emits that leaf automatically. Multi-valued
 references retain the general CSR-plus-resolution path.
 

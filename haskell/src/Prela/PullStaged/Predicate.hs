@@ -25,17 +25,17 @@ import Text.Regex.TDFA (Regex, RegexLike, makeRegex, matchTest)
 
 import Prela.PullStaged.Ops
 
-eq, ne :: (SMode q, Eq r) => CodeQ r -> q d r -> q d r
+eq, ne :: (Mode q, Eq r) => CodeQ r -> q d r -> q d r
 eq v = filt (\x -> [|| $$x == $$v ||])
 ne v = filt (\x -> [|| $$x /= $$v ||])
 
-gt, lt, ge, le :: (SMode q, Ord r) => CodeQ r -> q d r -> q d r
+gt, lt, ge, le :: (Mode q, Ord r) => CodeQ r -> q d r -> q d r
 gt v = filt (\x -> [|| $$x >  $$v ||])
 lt v = filt (\x -> [|| $$x <  $$v ||])
 ge v = filt (\x -> [|| $$x >= $$v ||])
 le v = filt (\x -> [|| $$x <= $$v ||])
 
-isIn :: (SMode q, Eq r) => CodeQ [r] -> q d r -> q d r
+isIn :: (Mode q, Eq r) => CodeQ [r] -> q d r -> q d r
 isIn vs = filt (\x -> [|| $$x `elem` $$vs ||])
 
 -- Ranges. `between` is closed at both ends, which is what SQL's BETWEEN means;
@@ -43,7 +43,7 @@ isIn vs = filt (\x -> [|| $$x `elem` $$vs ||])
 -- @>= '1994-01-01' AND < '1995-01-01'@ wants. Both are here rather than left to
 -- two `filt`s because writing them as @ge lo . le hi@ builds two nodes and reads
 -- worse at the use site.
-between, range :: (SMode q, Ord r) => CodeQ r -> CodeQ r -> q d r -> q d r
+between, range :: (Mode q, Ord r) => CodeQ r -> CodeQ r -> q d r -> q d r
 between lo hi = filt (\x -> [|| let !v = $$x in v >= $$lo && v <= $$hi ||])
 range   lo hi = filt (\x -> [|| let !v = $$x in v >= $$lo && v <  $$hi ||])
 
@@ -62,6 +62,6 @@ withRegex :: String -> (CodeQ Regex -> CodeQ w) -> CodeQ w
 withRegex re k = [|| let !r = makeRegex (re :: String) :: Regex in $$(k [|| r ||]) ||]
 
 -- Regex match and its negation, over a regex `withRegex` already compiled.
-rx, nrx :: (SMode q, RegexLike Regex s) => CodeQ Regex -> q d s -> q d s
+rx, nrx :: (Mode q, RegexLike Regex s) => CodeQ Regex -> q d s -> q d s
 rx  r = filt (\x -> [|| matchTest $$r $$x ||])
 nrx r = filt (\x -> [|| not (matchTest $$r $$x) ||])

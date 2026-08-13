@@ -20,14 +20,18 @@
 --
 -- And the @where@ preamble that buys back the bare spelling of each leaf works
 -- exactly as it did before, signatures and all, for exactly the same reason:
--- `movie` is enumerated in one query and accessed through `Lookup` in another.
+-- `movie` is enumerated in one query and probed in another; the surrounding
+-- operator chooses that mode without an explicit conversion.
 module StagedQueries
-  ( schemaQuery, dictionaryQuery, topKQuery, referenceQuery, loadedReferenceQuery ) where
+  ( schemaQuery, dictionaryQuery, topKQuery, sharedRelationQuery
+  , referenceQuery, loadedReferenceQuery ) where
 
 import Data.ByteString (ByteString)
 import qualified Data.Vector as BV
-import Prela.PullStaged.Ops
-import Prela.PullStaged.Stream
+import qualified Prela.PullStaged.Ops as O
+import Prela.PullStaged.Query
+  ( Relation, compose, diff, groupBy, restrict )
+import Prela.PullStaged.Stream (Lookup, Stream)
 import qualified Prela.PullStaged.Query as Q
 import Prela.Id (Id)
 
@@ -45,24 +49,24 @@ schemaQuery = Q.query build
       where
         values q = Q.mapList Q.second (Q.collect q)
 
-        movie :: SMode q => q (Id Sch.Movie) (Id Sch.Movie)
+        movie :: Relation (Id Sch.Movie) (Id Sch.Movie)
         movie = Sch.movie s
-        title :: SMode q => q (Id Sch.Movie) ByteString
+        title :: Relation (Id Sch.Movie) ByteString
         title = Sch.title s
-        year :: SMode q => q (Id Sch.Movie) Int
+        year :: Relation (Id Sch.Movie) Int
         year = Sch.year s
-        rating :: SMode q => q (Id Sch.Movie) Double
+        rating :: Relation (Id Sch.Movie) Double
         rating = Sch.rating s
-        keyword :: SMode q => q (Id Sch.Movie) (Id Sch.Keyword)
+        keyword :: Relation (Id Sch.Movie) (Id Sch.Keyword)
         keyword = Sch.keyword s
-        keywordText :: SMode q => q (Id Sch.Keyword) ByteString
+        keywordText :: Relation (Id Sch.Keyword) ByteString
         keywordText = Sch.keywordText s
-        kind :: SMode q => q (Id Sch.Movie) (Id Sch.Kind)
+        kind :: Relation (Id Sch.Movie) (Id Sch.Kind)
         kind = Sch.kind s
-        kindText :: SMode q => q (Id Sch.Kind) ByteString
+        kindText :: Relation (Id Sch.Kind) ByteString
         kindText = Sch.kindText s
 
-        sequels :: Stream (Id Sch.Movie) ByteString
+        sequels :: Relation (Id Sch.Movie) ByteString
         sequels = compose (restrict movie (Q.eq "sequel" (compose keyword keywordText)))
                           title
 
@@ -70,10 +74,10 @@ schemaQuery = Q.query build
         recent = Q.foldAll (\n _ -> n + 1) 0
                          (compose (restrict movie (Q.gt 1980 year)) year)
 
-        undated :: Stream (Id Sch.Movie) ByteString
+        undated :: Relation (Id Sch.Movie) ByteString
         undated = compose (diff movie year) title
 
-        tv :: Stream (Id Sch.Movie) ByteString
+        tv :: Relation (Id Sch.Movie) ByteString
         tv = compose (restrict movie (Q.eq "tv series" (compose kind kindText))) title
 
         best :: Q.Scalar Double
@@ -89,11 +93,11 @@ dictionaryQuery = Q.query $ \s -> do
     (compose (Sch.movie s) (compose (Sch.kind s) (Sch.kindText s)))
   let grouped :: Stream Int (Id Sch.Keyword)
       grouped = compose
-        (groupBy (Sch.movie s) (Q.keyed kindCodes))
+        (groupBy (Sch.movie s) kindCodes)
         (Sch.keyword s)
   counts <- Q.denseDistinctCount
     (Sch.movieExtent s) (Sch.keywordExtent s) grouped
-  pure (Q.pair labels (Q.collect (Q.stream counts)))
+  pure (Q.pair labels (Q.collect counts))
 
 -- A bounded materializer must order retained rows, preserve their keys for
 -- downstream composition, and handle a zero-sized buffer without touching it.
@@ -101,7 +105,7 @@ topKQuery
   :: Q.Query Sch.TinyS
        ([(Id Sch.Movie, Double)], [(Id Sch.Movie, Double)])
 topKQuery = Q.query $ \s -> do
-  let ratings :: Stream (Id Sch.Movie) Double
+  let ratings :: Relation (Id Sch.Movie) Double
       ratings = compose (Sch.movie s) (Sch.rating s)
       descending leftKey leftRating rightKey rightRating =
         Q.compare rightRating leftRating `Q.thenCompare`
@@ -109,6 +113,18 @@ topKQuery = Q.query $ \s -> do
   best <- Q.topK 2 descending ratings
   none <- Q.topK 0 descending ratings
   pure (Q.pair (Q.collect best) (Q.collect none))
+
+-- One dense materializer is enumerated on the left and probed on the right.
+-- Both uses remain beneath the single generated binding introduced by
+-- `denseFold`; no stream/keyed choice appears in the query.
+sharedRelationQuery
+  :: Q.Query Sch.TinyS
+       ([(Id Sch.Movie, Int)], [(Id Sch.Movie, Int)])
+sharedRelationQuery = Q.query $ \s -> do
+  years <- Q.denseFold (Sch.movieExtent s) (\_ year -> year) 0
+    (compose (Sch.movie s) (Sch.year s))
+  pure (Q.pair (Q.collect years)
+               (Q.collect (compose (Sch.movie s) years)))
 
 -- The direct reference leaf must agree in its Stream and Lookup modes, and its
 -- checked boxed and trusted word-backed storage representations must have the
@@ -123,9 +139,9 @@ referenceQuery = Q.query $ \fixture ->
       boxedKeyed :: Lookup (Id Sch.RefSource) (Id Sch.RefTarget)
       boxedKeyed = Sch.boxedReference fixture
       sources :: Stream (Id Sch.RefSource) (Id Sch.RefSource)
-      sources = universe (Sch.refSourceDomain fixture)
+      sources = O.universe (Sch.refSourceDomain fixture)
   in pure (Q.pair (Q.collect boxedDriven)
-                  (Q.collect (compose sources boxedKeyed)))
+                  (Q.collect (O.compose sources boxedKeyed)))
 
 -- Loaded schemas exercise boxed storage under the checked loader and
 -- word-backed storage under the trusted loader. Enumerating the reference leaf
@@ -134,10 +150,7 @@ loadedReferenceQuery
   :: Q.Query Sch.TinyS
        ([(Id Sch.Movie, Id Sch.Kind)], [(Id Sch.Movie, Id Sch.Kind)])
 loadedReferenceQuery = Q.query $ \schema ->
-  let driven :: Stream (Id Sch.Movie) (Id Sch.Kind)
-      driven = Sch.kind schema
-      keyed :: Lookup (Id Sch.Movie) (Id Sch.Kind)
-      keyed = Sch.kind schema
-      sources :: Stream (Id Sch.Movie) (Id Sch.Movie)
+  let reference = Sch.kind schema
       sources = Sch.movie schema
-  in pure (Q.pair (Q.collect driven) (Q.collect (compose sources keyed)))
+  in pure (Q.pair (Q.collect reference)
+                  (Q.collect (compose sources reference)))
