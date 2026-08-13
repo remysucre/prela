@@ -1,8 +1,0 @@
-cradle:
-  cabal:
-    - path: "./src"
-      component: "lib:prela"
-    - path: "./tpch"
-      component: "exe:prela-tpch"
-    - path: "./test"
-      component: "test:prela-test"

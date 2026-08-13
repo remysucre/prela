@@ -2,7 +2,23 @@ cabal-version:      3.0
 name:               prela
 version:            0.1.0
 synopsis:           Prela — Tarski algebra-of-relations query language, Haskell port
+description:
+    A staged pull implementation of Prela, an embedded query language based on
+    Tarski's algebra of relations. Queries are written as typed Haskell
+    combinators and compiled with Template Haskell to fused columnar loops.
+homepage:           https://github.com/remysucre/prela
+bug-reports:        https://github.com/remysucre/prela/issues
+license:            MIT
+license-file:       LICENSE
+author:             Yisu Remy Wang and contributors
+maintainer:         Thia Richey <gannet@cs.washington.edu>
+category:           Database
 build-type:         Simple
+tested-with:        GHC ==9.10.3
+
+source-repository head
+    type:            git
+    location:        https://github.com/remysucre/prela.git
 
 library
     exposed-modules:  Prela.Id
@@ -22,20 +38,33 @@ library
                     , Prela.PullStaged.Materialize
                     , Prela.PullStaged.Consumer
     hs-source-dirs:   src
-    build-depends:    base >=4.14, containers, array, bytestring, regex-tdfa
-                    , vector, template-haskell, hashable, filepath, mmap
+    build-depends:    base >=4.14 && <4.21
+                    , array >=0.5 && <0.6
+                    , bytestring >=0.10 && <0.13
+                    , containers >=0.6 && <0.8
+                    , filepath >=1.4 && <1.6
+                    , hashable >=1.3 && <1.6
+                    , mmap >=0.5 && <0.6
+                    , regex-tdfa >=1.3 && <1.4
+                    , template-haskell >=2.16 && <2.23
+                    , vector >=0.12 && <0.14
     default-language: Haskell2010
-    ghc-options:      -O2 -Wall
+    ghc-options:      -Wall
 
 test-suite prela-test
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
     other-modules:    TinyStaged, StagedQueries
     hs-source-dirs:   test
-    build-depends:    base >=4.14, prela, bytestring, directory
-                    , filepath, template-haskell, vector
+    build-depends:    base >=4.14 && <4.21
+                    , bytestring >=0.10 && <0.13
+                    , directory >=1.3 && <1.4
+                    , filepath >=1.4 && <1.6
+                    , prela
+                    , template-haskell >=2.16 && <2.23
+                    , vector >=0.12 && <0.14
     default-language: Haskell2010
-    ghc-options:      -O2 -Wall
+    ghc-options:      -Wall
 
 -- The TPC-H suite: schema, the 22 queries, and the runner that checks each
 -- against its oracle. Needs a cache built by the Rust regen tool — see
@@ -48,6 +77,10 @@ executable prela-tpch
                     , TPCH.StagedQueries
                     , TPCH.Staged
     hs-source-dirs:   tpch
-    build-depends:    base >=4.14, prela, bytestring, filepath, vector
+    build-depends:    base >=4.14 && <4.21
+                    , bytestring >=0.10 && <0.13
+                    , filepath >=1.4 && <1.6
+                    , prela
+                    , vector >=0.12 && <0.14
     default-language: Haskell2010
-    ghc-options:      -O2 -Wall
+    ghc-options:      -Wall
