@@ -1011,40 +1011,41 @@ render20 = joinLines . map fmt20 . sortOn fst . map snd
 -- Q21 — suppliers who kept orders waiting
 --------------------------------------------------------------------------------
 
+-- | First supplier seen and whether a different supplier was later observed.
+type SupplierSeen = (Int, Bool)
+
+-- | Overall-supplier and late-supplier cardinality states for one order.
+type OrderSupplierState = (SupplierSeen, SupplierSeen)
+
 -- | Rank Saudi Arabian suppliers by late lines on completed orders that involved
 -- another supplier but had no other supplier responsible for a late line.
 -- A distinct count is more information than either SQL existence test needs.
--- For both all lines and late lines, track unseen / one supplier / multiple.
--- Those two small states are packed into one `Int`, so the order-sized dense
--- fold needs one unboxed vector rather than the two vectors of a pair. Because
--- orders are an id-indexed domain, one lineitem pass performs the classification
--- without global @(order, supplier)@ hash sets.
+-- For both all lines and late lines, remember the first supplier and whether a
+-- different supplier was subsequently observed. Because orders are an
+-- id-indexed domain, one lineitem pass performs both classifications without
+-- global @(order, supplier)@ hash sets.
 q21 :: Q.Query TPCHS [(Id Supplier, (Int, ByteString))]
 q21 = Q.query build
   where
     build s = do
-      -- Candidate supplier ids occupy 1..supplierExtent. The next value is the
-      -- multiple-suppliers marker and `base` is one beyond every live state.
-      base <- Q.share (supplierExtent s + 2)
-      let multiple = base - 1
       supplierState <- Q.denseFold
-        (orderExtent s) (updateState base multiple) 0 observations
+        (orderExtent s) updateState emptyOrderSupplierState observations
       saudiSuppliers <- Q.bitset
         (supplierExtent s)
         (restrict (supplier s)
           (Q.eq "SAUDI ARABIA"
             (compose (supplierNation s) (nationName s))))
       let -- The order has more than one supplier across all its lines …
-          multiSupp :: Relation (Id Order) Int
+          multiSupp :: Relation (Id Order) OrderSupplierState
           multiSupp = Q.filterBy
-            (\packed -> (packed `Q.div` base) Q..==. multiple)
+            (Q.second . Q.first)
             supplierState
           -- … but exactly one across its late ones.
-          onlyLate :: Relation (Id Order) Int
+          onlyLate :: Relation (Id Order) OrderSupplierState
           onlyLate = Q.filterBy
-            (\packed ->
-              Q.letScalar (packed `Q.mod` base) $ \lateSeen ->
-                (lateSeen Q..>. 0) Q..&&. (lateSeen Q..<. multiple))
+            (\state -> Q.onPair (\firstLate multipleLate ->
+              (firstLate Q..>=. 0) Q..&&. Q.notS multipleLate)
+              (Q.second state))
             supplierState
           orderOk :: Relation (Id Lineitem) (Id Order)
           orderOk = restrict (liOrder s)
@@ -1075,39 +1076,44 @@ q21 = Q.query build
                  (Q.filterBy (Q.onPair (Q..<.))
                    (prod (commitdate s) (receiptdate s)))
 
-    -- Track whether no, one, or multiple supplier identifiers have been seen.
-    observe
-      :: Q.Scalar Int
-      -> Q.Scalar Int -> Q.Scalar (Id Supplier) -> Q.Scalar Int
-    observe multiple seen supplierId =
-      Q.letScalar (Q.idIndex supplierId + 1) $ \candidate ->
-        Q.ifThenElse
-          (seen Q..==. 0)
-          candidate
-          (Q.ifThenElse
-            ((seen Q..==. multiple) Q..||. (seen Q..==. candidate))
-            seen
-            multiple)
+    -- No supplier has yet been observed in either classification.
+    -- The first component is -1 until a supplier is observed. This is the
+    -- unboxed equivalent of Rust's @(Option<Id<Supplier>>, bool)@ state.
+    emptyOrderSupplierState :: Q.Scalar OrderSupplierState
+    emptyOrderSupplierState =
+      Q.pair (Q.pair (-1) (Q.lit False)) (Q.pair (-1) (Q.lit False))
 
-    -- Update the packed all-lines and late-lines supplier states for one row.
+    -- Incorporate one supplier into a zero/one/multiple cardinality state.
+    observe
+      :: Q.Scalar SupplierSeen
+      -> Q.Scalar (Id Supplier)
+      -> Q.Scalar SupplierSeen
+    observe seen supplierId = Q.onPair update seen
+      where
+        update firstSupplier multiple =
+          Q.letScalar (Q.idIndex supplierId) $ \candidate ->
+            Q.ifThenElse
+              (firstSupplier Q..<. 0)
+              (Q.pair candidate (Q.lit False))
+              (Q.pair firstSupplier
+                (multiple Q..||. (firstSupplier Q../=. candidate)))
+
+    -- Update the structured all-lines and late-lines states for one row.
     updateState
-      :: Q.Scalar Int
-      -> Q.Scalar Int
-      -> Q.Scalar Int
+      :: Q.Scalar OrderSupplierState
       -> Q.Scalar (Id Supplier, (Int, Int))
-      -> Q.Scalar Int
-    updateState base multiple state observation =
-      Q.letScalar (state `Q.div` base) $ \allSeen ->
-      Q.letScalar (state `Q.mod` base) $ \lateSeen ->
-      Q.onPair (\supplierId dates ->
-        Q.onPair (\committed received ->
-          Q.letScalar (observe multiple allSeen supplierId) $ \allSeen' ->
-          Q.letScalar
-            (Q.ifThenElse
-              (committed Q..<. received)
-              (observe multiple lateSeen supplierId)
-              lateSeen) $ \lateSeen' ->
-            allSeen' * base + lateSeen') dates) observation
+      -> Q.Scalar OrderSupplierState
+    updateState state observation = Q.onPair updateOrder state
+      where
+        updateOrder allSeen lateSeen =
+          Q.onPair (\supplierId dates ->
+            Q.onPair (\committed received ->
+              Q.pair
+                (observe allSeen supplierId)
+                (Q.ifThenElse
+                  (committed Q..<. received)
+                  (observe lateSeen supplierId)
+                  lateSeen)) dates) observation
 
 -- | Format one Q21 supplier waiting-count row.
 fmt21 :: (Id Supplier, (Int, ByteString)) -> String
