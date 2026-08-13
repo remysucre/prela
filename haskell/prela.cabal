@@ -21,7 +21,6 @@ library
                     , Prela.PullStaged.Predicate
                     , Prela.PullStaged.Materialize
                     , Prela.PullStaged.Consumer
-                    , Prela.PullStaged.Materialize.Internal
     hs-source-dirs:   src
     build-depends:    base >=4.14, containers, array, bytestring, regex-tdfa
                     , vector, template-haskell, hashable, filepath, mmap

@@ -640,14 +640,14 @@ render12 = joinLines . map fmt12 . sortOn fst
 -- Show how many customers placed each possible number of orders, excluding
 -- orders whose comments contain "special" followed later by "requests".
 -- SQL's LEFT JOIN: customers with no qualifying order still count, at zero. That
--- is what `withDenseOuter` is for — it emits every key in the customer id space,
+-- is what `denseFoldOuter` is for — it emits every key in the customer id space,
 -- seeded with the initial value. `orders` being a sparse universe means driving
 -- it already skips the orderkey gaps, so the group key is the bare foreign key
 -- with no validity guard of its own.
 --
--- The second fold reads `invStream`. Both
--- flip the pairs; `inv` also builds an index for keyed access, which nothing
--- here needs, so the enumeration-only form is the honest choice.
+-- The second fold uses `invStream`, which flips the pairs without building an
+-- index. Nothing here needs keyed access, so the enumeration-only form is the
+-- honest choice.
 q13 :: Q.Query TPCHS [(Int, Int)]
 q13 = Q.query $ \s -> do
   countPerCust <- Q.denseFoldOuter
