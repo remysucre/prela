@@ -11,7 +11,7 @@
 module Main (main) where
 
 import Control.Monad (forM, unless)
-import Data.List (isPrefixOf)
+import Data.List (dropWhileEnd, isPrefixOf)
 import Data.Maybe (fromMaybe)
 import GHC.Clock (getMonotonicTime)
 import System.Environment (getArgs, lookupEnv)
@@ -20,8 +20,8 @@ import System.FilePath ((</>))
 import System.IO (hSetBuffering, stdout, BufferMode (LineBuffering))
 
 import TPCH.Oracles (inlineOracles)
-import qualified TPCH.Staged as Staged
-import qualified TPCH.StagedSchema as Staged
+import qualified TPCH.Staged as Queries
+import qualified TPCH.StagedSchema as Schema
 
 main :: IO ()
 main = do
@@ -31,19 +31,19 @@ main = do
   loader <- fromMaybe "fast" <$> lookupEnv "PRELA_LOADER"
   rounds <- maybe 2 read <$> lookupEnv "ROUNDS"
   loadSchema <- case loader of
-    "checked" -> pure Staged.loadTPCHSChecked
-    "fast"    -> pure Staged.loadTPCHS
+    "checked" -> pure Schema.loadTPCHSChecked
+    "fast"    -> pure Schema.loadTPCHS
     other     -> putStrLn ("unknown PRELA_LOADER " ++ show other
                            ++ "; expected checked or fast") >> exitFailure
-  run args rounds Staged.queries
-      (timed (loadSchema cacheDir >>= \schema -> pure schema))
+  run args rounds Queries.queries
+      (timed (loadSchema cacheDir))
       cacheDir
 
 run :: [String] -> Int -> [(String, a -> String)] -> IO (Double, a) -> String -> IO ()
 run args rounds queries load cacheDir = do
   let picked | null args = queries
              | otherwise = [ q | q@(n, _) <- queries, n `elem` args ]
-  unless (length picked == max (length args) (length picked)) $
+  unless (null args || length picked == length args) $
     putStrLn "warning: some names on the command line are not query names"
   (loadT, s) <- load
   putStrLn ("load " ++ secs loadT ++ "  from " ++ cacheDir)
@@ -54,17 +54,17 @@ run args rounds queries load cacheDir = do
     let ok = length (filter id results)
     putStrLn ("run " ++ show round_ ++ ": " ++ show ok ++ "/" ++ show (length results)
               ++ " match reference, total " ++ secs totalT)
-    return ok
+    pure ok
   unless (all (== length picked) oks) exitFailure
   where
     check s ((name, q), want) = do
-      (dt, got) <- timed (let g = q s in length g `seq` return g)
+      (dt, got) <- timed (let result = q s in length result `seq` pure result)
       if got == want
-        then putStrLn (pad 4 ("Q" ++ name) ++ " ok   " ++ secs dt) >> return True
+        then putStrLn (pad 4 ("Q" ++ name) ++ " ok   " ++ secs dt) >> pure True
         else do
           putStrLn (pad 4 ("Q" ++ name) ++ " DIFF " ++ secs dt)
           mapM_ putStrLn (take 6 (diffLines (lines want) (lines got)))
-          return False
+          pure False
     pad n t = t ++ replicate (n - length t) ' '
 
 -- | Wall time around an action, in seconds. The caller forces the result first,
@@ -74,7 +74,7 @@ timed act = do
   t0 <- getMonotonicTime
   a  <- act
   t1 <- getMonotonicTime
-  return (t1 - t0, a)
+  pure (t1 - t0, a)
 
 secs :: Double -> String
 secs t = pad 8 (show (fromIntegral (round (t * 10000) :: Integer) / 10000 :: Double) ++ "s")
@@ -91,12 +91,12 @@ diffLines ws gs =
 
 oracle :: String -> IO String
 oracle name = case lookup name inlineOracles of
-  Just s  -> return s
+  Just s  -> pure s
   Nothing -> patch name . trimEnd <$> readFile ("../oracles/tpch" </> ("Q" ++ name ++ ".txt"))
 
 -- The recorded files end with a newline; the queries do not emit one.
 trimEnd :: String -> String
-trimEnd = reverse . dropWhile (`elem` " \n\r") . reverse
+trimEnd = dropWhileEnd (`elem` " \n\r")
 
 -- Q9 sums a few hundred thousand floats per group, so the last cent depends on
 -- the summation order. The algebraic order used here (and in the Rust and Julia

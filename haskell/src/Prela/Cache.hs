@@ -29,11 +29,6 @@ module Prela.Cache
   , writeMultiInts
   , writeMultiIds
   , writeMultiStrs
-  , Kind (..)
-  , magic
-  , headerLen
-  , holeWord
-  , align8
   ) where
 
 import Control.Monad (unless, when)

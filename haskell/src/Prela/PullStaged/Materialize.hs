@@ -1,6 +1,4 @@
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE TemplateHaskell #-}
 
 -- | Explicit materialization boundaries for staged pull relations.
 --

@@ -1,8 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
 
--- | The staged twin of `Spec.schemaQueries`: the same five queries against the
--- same data, so Spec.hs can check the two engines agree row for row.
+-- | Focused integration queries over the small generated test schema.
 --
 -- The interesting part is the shape of the module rather than the queries.
 -- `schemaQuery` is a pure builder; `Q.compile` at the splice site turns it into
@@ -18,9 +16,8 @@
 -- sole generated product constructor, so larger products nest exactly like
 -- relational `prod` results.
 --
--- And the @where@ preamble that buys back the bare spelling of each leaf works
--- exactly as it did before, signatures and all, for exactly the same reason:
--- `movie` is enumerated in one query and probed in another; the surrounding
+-- The @where@ preamble keeps the bare spelling of each leaf, signatures and
+-- all. `movie` is enumerated in one query and probed in another; the surrounding
 -- operator chooses that mode without an explicit conversion.
 module StagedQueries
   ( schemaQuery, dictionaryQuery, topKQuery, sharedRelationQuery

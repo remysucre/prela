@@ -1,5 +1,3 @@
-{-# LANGUAGE TemplateHaskell #-}
-
 -- | The supported author-facing API for staged pull queries.
 --
 -- Package-private modules split the implementation by concept. This module

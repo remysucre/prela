@@ -9,16 +9,15 @@
 -- Everything else in the port emits a loop. These are the exceptions: each one
 -- consumes its input stream once into real storage and hands back something that
 -- reads the storage. A query that names something from here is a query that
--- allocates, and Prela is non-materialized by default, so making that visible in
--- the import list is the point.
+-- allocates, and Prela is non-materialized by default. The public operations
+-- keep those boundaries explicit in query source.
 --
 -- Two details follow directly from the pull representation.
 --
 -- THE ACCUMULATOR IS LOOP STATE. The consumer generates the loop, so a table
 -- under construction is a loop argument rather than a mutable reference — see
--- @sfoldST@ in "Prela.PullStaged.Stream".
--- FUSION.md's rule about never carrying a per-row accumulator in an `STRef` is
--- not a rule you can break any more.
+-- @sfoldST@ in "Prela.PullStaged.Stream". Carrying it directly avoids a
+-- per-row `STRef` allocation.
 --
 -- THE SHAPE IS A CONTINUATION, not a return. This is the one rule of staging:
 -- a `CodeQ` used twice is code emitted twice. @fold q@ returning a relation
@@ -26,16 +25,14 @@
 -- materializer exists to prevent. So each one here takes the rest of the query as
 -- a function and binds the storage once:
 --
--- > withFold plus [|| 0 ||] revenue $ \total ->
+-- > withFold step [|| 0 ||] revenue $ \total ->
 -- >   [|| ($$(collect (compose (universe n) total)), $$(count total)) ||]
 --
 -- @total@ arrives polymorphic in the mode, so the body may enumerate it, look up
 -- values by key, or both, and every use reads the same runtime binding. That is
--- strymonas's
--- @genlet@ cut down to the one shape Prela needs. MODES.md:235 warns that a
--- mode-polymorphic materialized binding builds its index twice; under this shape
--- it cannot, because what is polymorphic is the leaf wrapper and what is shared
--- is the storage underneath it.
+-- strymonas's @genlet@ cut down to the one shape Prela needs. The build cannot
+-- be duplicated because what is polymorphic is the leaf wrapper and what is
+-- shared is the storage underneath it.
 module Prela.PullStaged.Materialize.Internal where
 
 import Control.Monad (forM_, when)
@@ -184,7 +181,9 @@ buildTable op ini s =
         mt0 <- newMTable cnt vsc 64 z
         done <- $$(sfoldST
                      (\acc d r ->
-                        [|| insertTable (\t -> $$(op [|| t ||] r)) z $$d $$acc ||])
+                        [|| insertTable
+                              (\_current -> $$(op [|| _current ||] r))
+                              z $$d $$acc ||])
                      [|| mt0 ||] s)
         case done of
           MTable mask _ hs ks _ -> do
@@ -458,7 +457,8 @@ buildDense n op ini pre s =
                       [|| let i = idIndex $$d
                           in if i < cap
                                then do
-                                 UMV.modify vals (\t -> $$(op [|| t ||] v)) i
+                                 UMV.modify vals
+                                   (\_current -> $$(op [|| _current ||] v)) i
                                  writeArray seen i True
                                  return $$acc
                                else return $$acc ||])
@@ -478,7 +478,8 @@ buildDenseInt n op ini s =
                       [|| let i = $$d
                           in if 0 <= i && i < cap
                                then do
-                                 UMV.modify vals (\t -> $$(op [|| t ||] v)) i
+                                 UMV.modify vals
+                                   (\_current -> $$(op [|| _current ||] v)) i
                                  writeArray seen i True
                                  return $$acc
                                else return $$acc ||])

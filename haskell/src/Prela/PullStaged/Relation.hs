@@ -1,5 +1,3 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE RankNTypes #-}
 
 -- | Package-private relation facade and mode-selection evidence.
@@ -8,9 +6,6 @@
 -- and 'asLookup' selectors. They select an executor representation during code
 -- generation; they do not scan data or perform a keyed lookup themselves.
 module Prela.PullStaged.Relation where
-
-import Prelude hiding (lookup)
-import qualified Prelude as Base
 
 import qualified Prela.PullStaged.Ops as O
 import Prela.PullStaged.Ops (Mode)
@@ -27,7 +22,7 @@ class Drivable q where
   asStream :: q d r -> Stream d r
 
 instance Drivable Stream where
-  asStream = Base.id
+  asStream = id
 
 instance Drivable Relation where
   asStream = useRelation
@@ -37,7 +32,7 @@ class Probeable q where
   asLookup :: q d r -> Lookup d r
 
 instance Probeable Lookup where
-  asLookup = Base.id
+  asLookup = id
 
 instance Probeable Relation where
   asLookup = useRelation

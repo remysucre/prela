@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveLift #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 -- | A small schema used to exercise the staged pull engine.

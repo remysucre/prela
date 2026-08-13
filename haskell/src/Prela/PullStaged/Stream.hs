@@ -1,11 +1,9 @@
-{-# LANGUAGE TemplateHaskell #-}
-
--- | Public staged pull streams and their query-level operations.
+-- | Staged pull executor streams and their mode-free operations.
 --
 -- 'Stream' and 'Lookup' are deliberately abstract.  The existential producer
 -- state and the constructors used to assemble execution plans live in
--- "Prela.PullStaged.Stream.Internal"; ordinary queries consume and transform
--- streams through this module instead.
+-- "Prela.PullStaged.Stream.Internal". Executor code uses this module; query
+-- authors use "Prela.PullStaged.Query".
 module Prela.PullStaged.Stream
   ( Stream
   , Lookup

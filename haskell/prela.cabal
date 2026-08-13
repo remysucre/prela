@@ -33,7 +33,7 @@ test-suite prela-test
     main-is:          Spec.hs
     other-modules:    TinyStaged, StagedQueries
     hs-source-dirs:   test
-    build-depends:    base >=4.14, prela, bytestring, containers, directory
+    build-depends:    base >=4.14, prela, bytestring, directory
                     , filepath, template-haskell, vector
     default-language: Haskell2010
     ghc-options:      -O2 -Wall
@@ -49,7 +49,6 @@ executable prela-tpch
                     , TPCH.StagedQueries
                     , TPCH.Staged
     hs-source-dirs:   tpch
-    build-depends:    base >=4.14, prela, bytestring, containers, directory
-                    , filepath, template-haskell, vector
+    build-depends:    base >=4.14, prela, bytestring, filepath, vector
     default-language: Haskell2010
     ghc-options:      -O2 -Wall

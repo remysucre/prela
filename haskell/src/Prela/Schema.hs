@@ -1,7 +1,5 @@
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 -- | Generate staged schema storage, default mmap and explicit checked loaders,
@@ -169,12 +167,9 @@ loaderDeclarations :: Name -> [Ent] -> Q [Dec]
 loaderDeclarations recordName entities = do
   let defaultName = mkName ("load" ++ nameBase recordName)
       checkedName = mkName ("load" ++ nameBase recordName ++ "Checked")
-      fastName = mkName ("load" ++ nameBase recordName ++ "Fast")
   defaultDeclarations <- makeLoader defaultName loadFunction
   checkedDeclarations <- makeLoader checkedName loadCheckedFunction
-  fastSignature <- sigD fastName [t| FilePath -> IO $(conT recordName) |]
-  fastAlias <- valD (varP fastName) (normalB (varE defaultName)) []
-  pure (defaultDeclarations ++ checkedDeclarations ++ [fastSignature, fastAlias])
+  pure (defaultDeclarations ++ checkedDeclarations)
   where
     makeLoader loaderName fieldLoader = do
       directory <- newName "directory"

@@ -56,6 +56,3 @@ cabal run prela-tpch -- 1 6 14
   important because associated storage types enable `MonoLocalBinds`.
 - Treat cache bytes as untrusted. Add validation before constructing a storage
   value whenever the on-disk format grows.
-
-See `haskell/AUDIT.md` for the current cleanup status and next improvements, and
-`haskell/CACHE.md` for cache invariants.

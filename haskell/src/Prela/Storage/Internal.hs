@@ -478,8 +478,8 @@ newBits n v = newArray (0, n - 1) v
 
 -- The staged engine emits leaf bodies as CODE, so everything a leaf reads has to
 -- be a top-level name it can mention by reference. These three are the bit-mask
--- reads that "Prela.PullStaged.Ops" needs, factored out of the leaves that used to
--- write them inline.
+-- reads that "Prela.PullStaged.Ops" needs, kept here with the physical storage
+-- representation.
 
 -- | Test a mask bit. Callers establish the range first; the array operation is
 -- checked as a final guard.

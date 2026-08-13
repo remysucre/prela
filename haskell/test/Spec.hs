@@ -10,6 +10,7 @@ import Control.Exception (IOException, try)
 import Control.Monad (unless)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import Data.Either (isLeft)
 import qualified Data.Vector as BV
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Maybe (isNothing)
@@ -17,7 +18,7 @@ import System.Directory (createDirectoryIfMissing, getTemporaryDirectory)
 import System.Exit (exitFailure)
 import System.FilePath ((</>))
 
-import Prela.Cache hiding (Kind)
+import Prela.Cache
 import Prela.Id
 import qualified Prela.PullStaged.Query as Q
 import Prela.Storage
@@ -146,33 +147,33 @@ testCacheAndStaging check = do
   writeMultiInts dir "multi-ints" [[1, 2], [], [-3]]
   multiInts <- loadMultiIntsChecked dir "multi-ints" :: IO (MultiCol E Int)
   multiIntsFast <- loadMultiInts dir "multi-ints" :: IO (MultiCol E Int)
-  check "fast multi-integer cache" (multiColumnValues multiIntsFast)
-    (multiColumnValues multiInts)
+  check "fast multi-integer cache" (multiValues multiIntsFast)
+    (multiValues multiInts)
   check "multi column rejects negative rows" (multiAt multiInts (-1)) Nothing
   check "multi column rejects past-end rows" (multiAt multiInts 3) Nothing
 
   writeMultiIds dir "multi-ids" [[t0, t2], [], [t1]]
   multiIds <- loadMultiIdsChecked dir "multi-ids" :: IO (MultiCol E Int)
   multiIdsFast <- loadMultiIds dir "multi-ids" :: IO (MultiCol E Int)
-  check "fast multi-id cache" (multiColumnValues multiIdsFast)
-    (multiColumnValues multiIds)
+  check "fast multi-id cache" (multiValues multiIdsFast)
+    (multiValues multiIds)
 
   writeMultiStrs dir "multi-strings" [["ab", ""], [], ["c"]]
   multiStrings <- loadMultiStrsChecked dir "multi-strings" :: IO (MultiCol E ByteString)
   multiStringsFast <- loadMultiStrs dir "multi-strings"
     :: IO (MultiCol E ByteString)
-  check "fast multi-string cache" (multiColumnValues multiStringsFast)
-    (multiColumnValues multiStrings)
+  check "fast multi-string cache" (multiValues multiStringsFast)
+    (multiValues multiStrings)
 
   wrongKind <- try (loadIntsChecked dir "strings") :: IO (Either IOException (Col E Int))
-  check "cache kind mismatch" (either (const True) (const False) wrongKind) True
+  check "cache kind mismatch" (isLeft wrongKind) True
   BS.writeFile (dir </> "bad.bin") "not a cache"
   badMagic <- try (loadStrsChecked dir "bad") :: IO (Either IOException (Col E ByteString))
-  check "cache magic mismatch" (either (const True) (const False) badMagic) True
+  check "cache magic mismatch" (isLeft badMagic) True
   badMagicFast <- try (loadStrs dir "bad")
     :: IO (Either IOException (Col E ByteString))
   check "fast cache magic mismatch"
-    (either (const True) (const False) badMagicFast) True
+    (isLeft badMagicFast) True
 
   -- The staged schema stores foreign indices as checked optional integers and
   -- resolves them through the target universe inside generated code.
@@ -237,9 +238,6 @@ testCacheAndStaging check = do
 
   -- Keep all target ids used above live so the test also pins their provenance.
   check "target ids retain their indices" (map idIndex [t0, t1, t2]) [0, 1, 2]
-
-multiColumnValues :: Elem a => MultiCol e a -> [[a]]
-multiColumnValues = multiValues
 
 requireUniverse :: String -> Int -> IO (Universe e)
 requireUniverse label size =

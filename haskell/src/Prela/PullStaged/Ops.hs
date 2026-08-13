@@ -1,6 +1,4 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 -- | Leaves and operators that work in either query position.
@@ -134,7 +132,8 @@ instance Mode Stream where
                    Nothing -> $$(skip [|| $$s + 1 ||])
                    Just value ->
                      case boundedId (sparseColLen $$e) $$s of
-                       Just d  -> $$(yield [|| d ||] [|| value ||] [|| $$s + 1 ||])
+                       Just _domain ->
+                         $$(yield [|| _domain ||] [|| value ||] [|| $$s + 1 ||])
                        Nothing -> $$(skip [|| $$s + 1 ||]) ||]
     }
   referenceColumn sourceDomain rawColumn targetDomain = Lin Producer
@@ -166,8 +165,9 @@ instance Mode Stream where
               MultiCol n offs _st -> case $$s of
                 (i, j, end)
                   | j < end   -> case boundedId n i of
-                                   Just d  -> $$(yield [|| d ||] [|| atStore _st j ||]
-                                                       [|| (i, j + 1, end) ||])
+                                   Just _domain ->
+                                     $$(yield [|| _domain ||] [|| atStore _st j ||]
+                                              [|| (i, j + 1, end) ||])
                                    Nothing -> $$(skip [|| (i, j + 1, end) ||])
                   | i + 1 >= n -> $$done
                   | otherwise ->
@@ -183,8 +183,9 @@ instance Mode Stream where
                 if $$s >= n then $$done
                 else if atBit seen $$s
                        then case boundedId n $$s of
-                              Just d  -> $$(yield [|| d ||] [|| _vals UV.! $$s ||]
-                                                  [|| $$s + 1 ||])
+                              Just _domain ->
+                                $$(yield [|| _domain ||] [|| _vals UV.! $$s ||]
+                                         [|| $$s + 1 ||])
                               Nothing -> $$(skip [|| $$s + 1 ||])
                        else $$(skip [|| $$s + 1 ||]) ||]
     }
@@ -221,7 +222,9 @@ instance Mode Stream where
                 if $$s >= bitsLen bs then $$done
                 else if atBit bs $$s
                        then case boundedId (bitsLen bs) $$s of
-                              Just d  -> $$(yield [|| d ||] [|| d ||] [|| $$s + 1 ||])
+                              Just _domain ->
+                                $$(yield [|| _domain ||] [|| _domain ||]
+                                         [|| $$s + 1 ||])
                               Nothing -> $$(skip [|| $$s + 1 ||])
                        else $$(skip [|| $$s + 1 ||]) ||]
     }
@@ -514,7 +517,9 @@ universeProd u = Producer
       [|| if $$index >= universeSize $$domain
             then $$done
             else case lookupId $$domain $$index of
-                   Just d  -> $$(yield [|| d ||] [|| d ||] [|| $$index + 1 ||])
+                   Just _domain ->
+                     $$(yield [|| _domain ||] [|| _domain ||]
+                              [|| $$index + 1 ||])
                    Nothing -> $$(skip [|| $$index + 1 ||]) ||]
   }
 
@@ -528,8 +533,9 @@ columnProd c = Producer
               | $$index >= size -> $$done
               | otherwise ->
                   case boundedId size $$index of
-                    Just d  -> $$(yield [|| d ||] [|| atStore store $$index ||]
-                                        [|| $$index + 1 ||])
+                    Just _domain ->
+                      $$(yield [|| _domain ||] [|| atStore store $$index ||]
+                               [|| $$index + 1 ||])
                     Nothing -> $$done ||]
   }
 
@@ -537,9 +543,8 @@ columnProd c = Producer
 -- List-backed producers
 --------------------------------------------------------------------------------
 
--- The `Map`-backed leaves are the one place the engine is not flat, and they are
--- the reason "Prela.PullStaged.Materialize.Internal" prefers `withFold` over
--- `withIndex`.
+-- `Map`-backed leaves are the one place the engine is not flat. Hash-backed
+-- folds are preferred for large grouped aggregates.
 -- Nothing here can fuse into an array read, because there is no array.
 
 listProd :: CodeQ [a] -> Producer () a
