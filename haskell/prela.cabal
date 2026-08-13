@@ -84,3 +84,34 @@ executable prela-tpch
                     , vector >=0.12 && <0.14
     default-language: Haskell2010
     ghc-options:      -Wall
+
+-- A focused, runnable translation of the Rust README's JOB query 22a. It uses
+-- the same cache-format-v2 files produced by `cargo run --bin regen -- job`.
+executable prela-job-example
+    main-is:          Main.hs
+    other-modules:    JOB.Decl
+                    , JOB.Q22a
+                    , JOB.Staged
+                    , JOB.StagedSchema
+    hs-source-dirs:   job
+    build-depends:    base >=4.14 && <4.21
+                    , bytestring >=0.10 && <0.13
+                    , prela
+    default-language: Haskell2010
+    ghc-options:      -Wall
+
+test-suite prela-job-example-test
+    type:             exitcode-stdio-1.0
+    main-is:          JOBExampleSpec.hs
+    other-modules:    JOB.Decl
+                    , JOB.Q22a
+                    , JOB.Staged
+                    , JOB.StagedSchema
+    hs-source-dirs:   test, job
+    build-depends:    base >=4.14 && <4.21
+                    , bytestring >=0.10 && <0.13
+                    , directory >=1.3 && <1.4
+                    , filepath >=1.4 && <1.6
+                    , prela
+    default-language: Haskell2010
+    ghc-options:      -Wall
