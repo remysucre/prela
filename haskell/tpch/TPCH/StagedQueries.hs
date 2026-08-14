@@ -442,9 +442,9 @@ render8 = joinLines . map fmt8 . sortOn fst
 -- lookup. Supply cost uses the staged hash fold rather than the general-purpose
 -- ordered @Map@ materializer, and is probed only once for each surviving row.
 q9 :: Q.Query TPCHS [((Id Nation, Int), (Double, ByteString))]
-q9 = Q.query $ \s -> Q.bitset
+q9 = Q.query $ \s -> Q.regex "green" >>= \green -> Q.bitset
     (partExtent s)
-    (restrict (part s) (Q.filterBy (Q.isInfixOf "green") (partName s)))
+    (restrict (part s) (Q.rx green (partName s)))
   >>= \greenParts ->
   let sc :: Stream (Id Part, Id Supplier) Double
       sc = compose (groupBy (restrict (partsupp s)
@@ -604,14 +604,12 @@ render12 = joinLines . map fmt12 . sortOn fst
 -- index. Nothing here needs keyed access, so the enumeration-only form is the
 -- honest choice.
 q13 :: Q.Query TPCHS [(Int, Int)]
-q13 = Q.query $ \s -> Q.collect <$>
+q13 = Q.query $ \s -> Q.regex "special.*requests" >>= \excluded -> Q.collect <$>
   (Q.denseFoldOuter
     (customerExtent s)
     (\a _ -> a + 1) 0
     (groupBy (restrict (orders s)
-               (Q.filterBy
-                 (Q.notS . Q.orderedInfixOf "special" "requests")
-                 (orderComment s)))
+               (Q.nrx excluded (orderComment s)))
              (orderCustomer s))
    >>= Q.groupFold (\a _ -> a + 1) 0 . invStream)
 
@@ -694,7 +692,7 @@ type Q16Key = ((ByteString, ByteString), Int)
 
 -- | Compute distinct acceptable supplier counts for each qualifying part key.
 q16 :: Q.Query TPCHS (BV.Vector Q16Key, [(Int, Int)])
-q16 = Q.query $ \s ->
+q16 = Q.query $ \s -> Q.regex "Customer.*Complaints" >>= \complaint ->
   -- Part attributes repeat across four partsupp rows and supplier comments
   -- repeat across many more. Assign the qualifying attribute triples compact
   -- integer codes once, then keep strings out of the 800K-row partsupp pass.
@@ -710,9 +708,7 @@ q16 = Q.query $ \s ->
   >>= \(partCodes, labels) -> Q.bitset
     (supplierExtent s)
     (restrict (supplier s)
-      (Q.filterBy
-        (Q.notS . Q.orderedInfixOf "Customer" "Complaints")
-        (supplierComment s)))
+      (Q.nrx complaint (supplierComment s)))
   >>= \acceptableSuppliers ->
   let partCode :: Relation (Id PartSupp) Int
       partCode = compose (psPart s) partCodes

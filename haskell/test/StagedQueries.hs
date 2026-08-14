@@ -21,7 +21,7 @@
 -- operator chooses that mode without an explicit conversion.
 module StagedQueries
   ( schemaQuery, dictionaryQuery, topKQuery, sharedRelationQuery
-  , orderedInfixQuery, tupleHelpersQuery, referenceQuery, loadedReferenceQuery
+  , regexQuery, tupleHelpersQuery, referenceQuery, loadedReferenceQuery
   ) where
 
 import Data.ByteString (ByteString)
@@ -39,47 +39,44 @@ import qualified TinyStaged as Sch
 -- one generated tiny-schema query.
 schemaQuery :: Q.Query Sch.TinyS
                (((([ByteString], Int), [ByteString]), [ByteString]), Double)
-schemaQuery = Q.query build
-  where
-    build s =
-      pure (Q.tuple5 (values sequels) recent (values undated) (values tv) best)
-      where
-        values q = Q.mapList Q.second (Q.collect q)
+schemaQuery = Q.query $ \s ->
+  let values q = Q.mapList Q.second (Q.collect q)
 
-        movie :: Relation (Id Sch.Movie) (Id Sch.Movie)
-        movie = Sch.movie s
-        title :: Relation (Id Sch.Movie) ByteString
-        title = Sch.title s
-        year :: Relation (Id Sch.Movie) Int
-        year = Sch.year s
-        rating :: Relation (Id Sch.Movie) Double
-        rating = Sch.rating s
-        keyword :: Relation (Id Sch.Movie) (Id Sch.Keyword)
-        keyword = Sch.keyword s
-        keywordText :: Relation (Id Sch.Keyword) ByteString
-        keywordText = Sch.keywordText s
-        kind :: Relation (Id Sch.Movie) (Id Sch.Kind)
-        kind = Sch.kind s
-        kindText :: Relation (Id Sch.Kind) ByteString
-        kindText = Sch.kindText s
+      movie :: Relation (Id Sch.Movie) (Id Sch.Movie)
+      movie = Sch.movie s
+      title :: Relation (Id Sch.Movie) ByteString
+      title = Sch.title s
+      year :: Relation (Id Sch.Movie) Int
+      year = Sch.year s
+      rating :: Relation (Id Sch.Movie) Double
+      rating = Sch.rating s
+      keyword :: Relation (Id Sch.Movie) (Id Sch.Keyword)
+      keyword = Sch.keyword s
+      keywordText :: Relation (Id Sch.Keyword) ByteString
+      keywordText = Sch.keywordText s
+      kind :: Relation (Id Sch.Movie) (Id Sch.Kind)
+      kind = Sch.kind s
+      kindText :: Relation (Id Sch.Kind) ByteString
+      kindText = Sch.kindText s
 
-        sequels :: Relation (Id Sch.Movie) ByteString
-        sequels = compose (restrict movie (Q.eq "sequel" (compose keyword keywordText)))
-                          title
+      sequels :: Relation (Id Sch.Movie) ByteString
+      sequels = compose (restrict movie (Q.eq "sequel" (compose keyword keywordText)))
+                        title
 
-        recent :: Q.Scalar Int
-        recent = Q.foldAll (\n _ -> n + 1) 0
-                         (compose (restrict movie (Q.gt 1980 year)) year)
+      recent :: Q.Scalar Int
+      recent = Q.foldAll (\n _ -> n + 1) 0
+                       (compose (restrict movie (Q.gt 1980 year)) year)
 
-        undated :: Relation (Id Sch.Movie) ByteString
-        undated = compose (diff movie year) title
+      undated :: Relation (Id Sch.Movie) ByteString
+      undated = compose (diff movie year) title
 
-        tv :: Relation (Id Sch.Movie) ByteString
-        tv = compose (restrict movie (Q.eq "tv series" (compose kind kindText))) title
+      tv :: Relation (Id Sch.Movie) ByteString
+      tv = compose (restrict movie (Q.eq "tv series" (compose kind kindText))) title
 
-        best :: Q.Scalar Double
-        best = Q.foldAll (\a v -> Q.ifThenElse (a Q..>. v) a v) 0
-                         (compose movie rating)
+      best :: Q.Scalar Double
+      best = Q.foldAll (\a v -> Q.ifThenElse (a Q..>. v) a v) 0
+                       (compose movie rating)
+  in pure (Q.tuple5 (values sequels) recent (values undated) (values tv) best)
 
 -- | Exercise compact value coding and its bounded distinct-count consumer on a
 -- tiny schema, independently of the TPC-H integration benchmark.
@@ -125,18 +122,11 @@ sharedRelationQuery = Q.query $ \s -> do
   pure (Q.pair (Q.collect years)
                (Q.collect (compose (Sch.movie s) years)))
 
--- | Exercise both orders and empty needles in the ordered substring scan.
---
--- The allocation-free scan includes its empty
--- needle behavior. The Q13 oracle covers its seven/eight-byte packed-word path.
-orderedInfixQuery :: Q.Query Sch.TinyS ((Int, Int), (Int, Int))
-orderedInfixQuery = Q.query $ \s ->
-  let matches firstNeedle secondNeedle =
-        Q.count
-          (Q.filterBy (Q.orderedInfixOf firstNeedle secondNeedle) (Sch.title s))
-  in pure (Q.pair
-       (Q.pair (matches "Ali" "en") (matches "en" "Ali"))
-       (Q.pair (matches "" "lar") (matches "Alien" "")))
+-- | Compile two regular expressions once and apply them to a generated column.
+regexQuery :: Q.Query Sch.TinyS (Int, Int)
+regexQuery = Q.query $ \s ->
+  Q.pair <$> (Q.count . (`Q.rx` Sch.title s) <$> Q.regex "^Alien$")
+         <*> (Q.count . (`Q.rx` Sch.title s) <$> Q.regex "^Alien.*")
 
 -- | Exercise every generated tuple constructor and matching eliminator.
 tupleHelpersQuery :: Q.Query Sch.TinyS (((Int, Int), Int), Int)

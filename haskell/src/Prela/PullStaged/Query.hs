@@ -44,8 +44,6 @@ module Prela.PullStaged.Query
   , firstByte
   , isPrefixOf
   , isSuffixOf
-  , isInfixOf
-  , orderedInfixOf
   , mapList
   , idIndex
   , extent
@@ -126,4 +124,4 @@ query = Query
 
 -- | Generate an ordinary function which executes a complete staged query.
 compile :: Query schema result -> CodeQ (schema -> result)
-compile (Query build) = S.lam1 (runScalarGen . build)
+compile (Query generate) = S.lam1 (runScalarGen . generate)

@@ -10,7 +10,7 @@
 -- The suite compares checked and trusted cache loaders, then runs compact
 -- generated queries against both representations.  Its fixtures also pin the
 -- behavior of sparse universes, malformed references, shared materializers,
--- bounded top-k, and ordered substring scans.
+-- bounded top-k, and regular expressions.
 module Main where
 
 import Control.Exception (IOException, try)
@@ -31,7 +31,7 @@ import qualified Prela.PullStaged.Query as Q
 import Prela.Storage
 import StagedQueries
   ( dictionaryQuery, loadedReferenceQuery, referenceQuery, schemaQuery
-  , orderedInfixQuery, sharedRelationQuery, topKQuery, tupleHelpersQuery )
+  , regexQuery, sharedRelationQuery, topKQuery, tupleHelpersQuery )
 import TinyStaged
   ( Kind, Movie, RefFixture, RefSource, RefTarget, TinyS, link_universe, loadTinyS
   , loadTinySChecked, refFixture )
@@ -65,9 +65,9 @@ stagedSharedRelation
   :: TinyS -> ([(Id Movie, Int)], [(Id Movie, Int)])
 stagedSharedRelation = $$(Q.compile sharedRelationQuery)
 
--- | Run ordered-substring cases covering both orders and empty needles.
-stagedOrderedInfix :: TinyS -> ((Int, Int), (Int, Int))
-stagedOrderedInfix = $$(Q.compile orderedInfixQuery)
+-- | Run two regular-expression filters compiled outside their scans.
+stagedRegex :: TinyS -> (Int, Int)
+stagedRegex = $$(Q.compile regexQuery)
 
 -- | Run all generated tuple construction and elimination conveniences.
 stagedTupleHelpers :: TinyS -> (((Int, Int), Int), Int)
@@ -240,8 +240,7 @@ testCacheAndStaging check = do
      in (indices scanned, indices probed))
     ([(0, 1979), (1, 1986), (3, 1992)],
      [(0, 1979), (1, 1986), (3, 1992)])
-  check "ordered substring scan"
-    (stagedOrderedInfix schema) ((3, 0), (1, 3))
+  check "staged regex filters" (stagedRegex schema) (1, 3)
   check "staged tuple conveniences"
     (stagedTupleHelpers schema) (((6, 10), 15), 21)
   check "sparse schema universe" (map idIndex (universeIds (link_universe schema))) [0, 2]

@@ -16,45 +16,38 @@ import Prela.Id (Id)
 import Prela.PullStaged.Query
   ( compose, prod, restrict )
 import qualified Prela.PullStaged.Query as Q
-
--- | The left-associated product produced by @title.and(rating).and(company)@.
 type Q22aRow = ((ByteString, ByteString), ByteString)
 
--- | Select movies matching the README predicates and return title, rating, and
--- production-company name.  The final 'Q.collect' is the sole request to drive
--- the relation; composition, product, and restriction select all probes.
 q22a :: Q.Query JOBS [(Id Movie, Q22aRow)]
-q22a = Q.query $ \s -> pure . Q.collect $
-  movie s
-    `restrict`
-      ( compose (movieInfo s)
-          ( Q.eq "countries" (compose (infoType s) (infoTypeText s))
-            `prod` Q.oneOf ["Germany", "German", "USA", "American"] (infoValue s) )
-        `prod` Q.oneOf ["murder", "murder-in-title", "blood", "violence"]
-                 (compose (movieKeyword s) (keywordText s))
-        `prod` Q.gt 2008 (productionYear s)
-        `prod` Q.oneOf ["movie", "episode"]
-                 (compose (movieKind s) (kindText s)) )
-    `compose`
-      ( movieTitle s
-        `prod` ( movieData s
-                   `restrict` ( Q.lt "7.0" (dataText s)
-                                `prod` Q.eq "rating"
-                                  (compose (dataType s) (infoTypeText s)) )
-                   `compose` dataText s )
-        `prod` ( movieCompany s
-                   `restrict` ( Q.filterBy
-                                  (Q.notS . Q.isInfixOf "(USA)") (companyNote s)
-                                `prod` Q.filterBy
-                                  (Q.orderedInfixOf "(200" ")") (companyNote s)
-                                `prod` Q.ne "[us]" (companyCountry s)
-                                `prod` Q.eq "production companies"
-                                  (compose (companyType s) (companyTypeText s)) )
-                   `compose` companyName s ) )
+q22a = Q.query $ \s ->
+  Q.regex "\\(USA\\)" >>= \usa ->
+  Q.regex "\\(200.*\\)" >>= \year ->
+  pure . Q.collect $
+    movie s
+      `restrict`
+        (compose (movieInfo s)
+            ( Q.eq "countries" (compose (infoType s) (infoTypeText s))
+              `prod` Q.oneOf ["Germany", "German", "USA", "American"] (infoValue s) )
+          `prod` Q.oneOf ["murder", "murder-in-title", "blood", "violence"]
+                   (compose (movieKeyword s) (keywordText s))
+          `prod` Q.gt 2008 (productionYear s)
+          `prod` Q.oneOf ["movie", "episode"]
+                   (compose (movieKind s) (kindText s)) )
+      `compose`
+        (movieTitle s
+          `prod` (movieData s
+                     `restrict` ( Q.lt "7.0" (dataText s)
+                                  `prod` Q.eq "rating"
+                                    (compose (dataType s) (infoTypeText s)) )
+                     `compose` dataText s )
+          `prod` (movieCompany s
+                     `restrict` ( Q.nrx usa (companyNote s)
+                                  `prod` Q.rx year (companyNote s)
+                                  `prod` Q.ne "[us]" (companyCountry s)
+                                  `prod` Q.eq "production companies"
+                                    (compose (companyType s) (companyTypeText s)) )
+                     `compose` companyName s ) )
 
--- | Match the Rust JOB harness: take each output column's minimum independently
--- and join the three values with @ || @.  The algebra has already finished by
--- this point, so rendering remains ordinary unstaged Haskell.
 renderQ22a :: [(Id Movie, Q22aRow)] -> String
 renderQ22a [] = "(empty)"
 renderQ22a ((_, firstRow) : rest) =
