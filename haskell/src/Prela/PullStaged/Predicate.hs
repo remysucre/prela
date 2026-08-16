@@ -5,7 +5,7 @@
 -- | Predicates and value transforms over generated scalar expressions.
 --
 -- These functions are author-facing syntax over the fixed relational operators.
--- Each predicate becomes code inside the surrounding stream or lookup; there
+-- Each predicate becomes code inside the surrounding drive or probe; there
 -- is no predicate AST and no optimizer pass between this layer and execution.
 module Prela.PullStaged.Predicate
   ( eq
@@ -32,9 +32,9 @@ import Text.Regex.TDFA (Regex, RegexLike, makeRegex, matchTest)
 import Prela.PullStaged.Generation (Gen (..))
 import qualified Prela.PullStaged.Ops as O
 import Prela.PullStaged.Ops (Mode)
-import Prela.PullStaged.Relation (Probeable (asLookup))
+import Prela.PullStaged.Relation (Probeable (probe))
 import Prela.PullStaged.Scalar
-import Prela.PullStaged.Stream (Lookup)
+import Prela.PullStaged.Stream (Probe)
 
 -- | Keep values equal to, or unequal to, the supplied scalar.
 eq, ne :: (Mode q, Eq r) => Scalar r -> q d r -> q d r
@@ -64,9 +64,9 @@ range (Scalar low) (Scalar high) = O.filt
 filterBy :: Mode q => (Scalar r -> Scalar Bool) -> q d r -> q d r
 filterBy predicate = O.filt (scalarCode . predicate . Scalar)
 
--- | Adapt the input key of a lookup.
-mapKeys :: Probeable q => (Scalar a -> Scalar b) -> q b r -> Lookup a r
-mapKeys transform = O.mapLookupKey (scalarCode . transform . Scalar) . asLookup
+-- | Adapt the input key of a probe.
+mapKeys :: Probeable q => (Scalar a -> Scalar b) -> q b r -> Probe a r
+mapKeys transform = O.mapProbeKey (scalarCode . transform . Scalar) . probe
 
 -- | Transform relation values without changing their keys.
 mapValues :: Mode q => (Scalar r -> Scalar s) -> q d r -> q d s

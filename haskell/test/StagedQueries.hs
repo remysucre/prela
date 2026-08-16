@@ -29,7 +29,7 @@ import qualified Data.Vector as BV
 import qualified Prela.PullStaged.Ops as O
 import Prela.PullStaged.Query
   ( Relation, compose, diff, groupBy, restrict )
-import Prela.PullStaged.Stream (Lookup, Stream)
+import Prela.PullStaged.Stream (Probe, Drive)
 import qualified Prela.PullStaged.Query as Q
 import Prela.Id (Id)
 
@@ -85,7 +85,7 @@ dictionaryQuery = Q.query $ \s -> do
   (kindCodes, labels) <- Q.dictionary
     (Sch.movieExtent s)
     (compose (Sch.movie s) (compose (Sch.kind s) (Sch.kindText s)))
-  let grouped :: Stream Int (Id Sch.Keyword)
+  let grouped :: Drive Int (Id Sch.Keyword)
       grouped = compose
         (groupBy (Sch.movie s) kindCodes)
         (Sch.keyword s)
@@ -112,7 +112,7 @@ topKQuery = Q.query $ \s -> do
 -- | Enumerate and probe the same dense materializer beneath one generated bind.
 -- One dense materializer is enumerated on the left and probed on the right.
 -- Both uses remain beneath the single generated binding introduced by
--- @denseFold@; no stream/keyed choice appears in the query.
+-- @denseFold@; no drive/probe choice appears in the query.
 sharedRelationQuery
   :: Q.Query Sch.TinyS
        ([(Id Sch.Movie, Int)], [(Id Sch.Movie, Int)])
@@ -141,7 +141,7 @@ tupleHelpersQuery = Q.query $ \_ ->
 
 -- | Compare driven and keyed access to deliberately malformed boxed references.
 --
--- The direct reference leaf must agree in its Stream and Lookup modes, and its
+-- The direct reference leaf must agree in its Drive and Probe modes, and its
 -- checked boxed and trusted word-backed storage representations must have the
 -- same semantics for holes, invalid targets, and dead targets.
 referenceQuery
@@ -149,11 +149,11 @@ referenceQuery
        ([(Id Sch.RefSource, Id Sch.RefTarget)],
         [(Id Sch.RefSource, Id Sch.RefTarget)])
 referenceQuery = Q.query $ \fixture ->
-  let boxedDriven :: Stream (Id Sch.RefSource) (Id Sch.RefTarget)
+  let boxedDriven :: Drive (Id Sch.RefSource) (Id Sch.RefTarget)
       boxedDriven = Sch.boxedReference fixture
-      boxedKeyed :: Lookup (Id Sch.RefSource) (Id Sch.RefTarget)
+      boxedKeyed :: Probe (Id Sch.RefSource) (Id Sch.RefTarget)
       boxedKeyed = Sch.boxedReference fixture
-      sources :: Stream (Id Sch.RefSource) (Id Sch.RefSource)
+      sources :: Drive (Id Sch.RefSource) (Id Sch.RefSource)
       sources = O.universe (Sch.refSourceDomain fixture)
   in pure (Q.pair (Q.collect boxedDriven)
                   (Q.collect (O.compose sources boxedKeyed)))

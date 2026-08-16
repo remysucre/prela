@@ -7,7 +7,7 @@
 -- | Explicit materialization boundaries for staged pull relations.
 --
 -- Everything else in the port emits a loop. These are the exceptions: each one
--- consumes its input stream once into real storage and hands back something that
+-- consumes its input drive once into real storage and hands back something that
 -- reads the storage. A query that names something from here is a query that
 -- allocates, and Prela is non-materialized by default. The exported operations
 -- keep those boundaries explicit in query source; their mutable builders and
@@ -17,7 +17,7 @@
 --
 -- THE ACCUMULATOR IS LOOP STATE. The consumer generates the loop, so a table
 -- under construction is a loop argument rather than a mutable reference — see
--- @sfoldST@ in "Prela.PullStaged.Stream". Carrying it directly avoids a
+-- @dfoldST@ in "Prela.PullStaged.Stream". Carrying it directly avoids a
 -- per-row @STRef@ allocation.
 --
 -- THE SHAPE IS A CONTINUATION, not a return. This is the one rule of staging:
@@ -67,7 +67,7 @@ import Prela.Id
 import Prela.PullStaged.Generation (Gen (..))
 import Prela.PullStaged.Ops
 import Prela.PullStaged.Relation
-  ( Drivable (asStream), Relation (..))
+  ( Drivable (drive), Relation (..))
 import Prela.PullStaged.Scalar (Scalar (..), first, scalarCode, second)
 import Prela.PullStaged.Stream.Internal
 import Prela.Storage.Internal
@@ -79,12 +79,12 @@ import Prela.Storage.Internal
 -- | Index a relation by its existing key, preserving all values per key.
 materialize :: (Ord d, Drivable q) => q d r -> Gen (Relation d r)
 materialize rows = Gen $ \continue ->
-  withMaterialize (asStream rows) (\relation -> continue (Relation relation))
+  withMaterialize (drive rows) (\relation -> continue (Relation relation))
 
 -- | Swap keys and values and build an index supporting both drive and probe.
 invert :: (Ord r, Drivable q) => q d r -> Gen (Relation r d)
 invert rows = Gen $ \continue ->
-  withInv (asStream rows) (\relation -> continue (Relation relation))
+  withInv (drive rows) (\relation -> continue (Relation relation))
 
 -- | Reduce values independently per key into an open-addressed hash table.
 groupFold :: (Drivable q, Hashable d, Key d, UV.Unbox acc)
@@ -92,29 +92,29 @@ groupFold :: (Drivable q, Hashable d, Key d, UV.Unbox acc)
           -> Scalar acc -> q d r -> Gen (Relation d acc)
 groupFold step (Scalar initial) rows = Gen $ \continue ->
   withFold (\acc value -> scalarCode (step (Scalar acc) (Scalar value)))
-           initial (asStream rows)
+           initial (drive rows)
            (\relation -> continue (Relation relation))
 
--- | Buffer every group in stream order and reduce each complete value list.
+-- | Buffer every group in drive order and reduce each complete value list.
 -- Prefer 'groupFold' when a pairwise reduction is sufficient.
 bufferFold :: (Drivable q, Ord d)
            => (Scalar [r] -> Scalar acc)
            -> q d r -> Gen (Relation d acc)
 bufferFold reduce rows = Gen $ \continue ->
-  withBufFold (scalarCode . reduce . Scalar) (asStream rows)
+  withBufFold (scalarCode . reduce . Scalar) (drive rows)
               (\relation -> continue (Relation relation))
 
 -- | Count distinct values per key with hash-backed deduplication.
 distinctCount :: (Drivable q, Hashable d, Key d, Hashable r, Key r)
               => q d r -> Gen (Relation d Int)
 distinctCount rows = Gen $ \continue ->
-  withCountDistinct (asStream rows) (\relation -> continue (Relation relation))
+  withCountDistinct (drive rows) (\relation -> continue (Relation relation))
 
 -- | Count distinct entity ids within bounded integer groups.
 denseDistinctCount :: Drivable q => Scalar Int -> Scalar Int -> q Int (Id e)
                    -> Gen (Relation Int Int)
 denseDistinctCount (Scalar groups) (Scalar memberExtent) rows = Gen $ \continue ->
-  withDenseDistinctCount groups memberExtent (asStream rows)
+  withDenseDistinctCount groups memberExtent (drive rows)
     (\relation -> continue (Relation relation))
 
 -- | Keys that can safely select a slot in a bounded dense aggregate.
@@ -125,7 +125,7 @@ class DenseKey key where
     => CodeQ Int
     -> (CodeQ acc -> CodeQ r -> CodeQ acc)
     -> CodeQ acc
-    -> Stream key r
+    -> Drive key r
     -> ((forall q. Mode q => q key acc) -> CodeQ w)
     -> CodeQ w
 
@@ -146,7 +146,7 @@ denseFold :: (Drivable q, DenseKey key, UV.Unbox acc)
 denseFold (Scalar size) step (Scalar initial) rows = Gen $ \continue ->
   withDenseKey size
     (\acc value -> scalarCode (step (Scalar acc) (Scalar value)))
-    initial (asStream rows) (\relation -> continue (Relation relation))
+    initial (drive rows) (\relation -> continue (Relation relation))
 
 -- | Dense entity-key fold which also emits unseen slots with the initial value.
 -- The supplied extent must describe a complete dense entity universe.
@@ -159,15 +159,15 @@ denseFoldOuter :: (Drivable q, UV.Unbox acc)
 denseFoldOuter (Scalar size) step (Scalar initial) rows = Gen $ \continue ->
   withDenseOuter size
     (\acc value -> scalarCode (step (Scalar acc) (Scalar value)))
-    initial (asStream rows) (\relation -> continue (Relation relation))
+    initial (drive rows) (\relation -> continue (Relation relation))
 
--- | Assign a compact integer to each distinct stream value and return the
+-- | Assign a compact integer to each distinct drive value and return the
 -- reverse dictionary alongside the coded relation.
 dictionary :: (Drivable q, Ord value)
            => Scalar Int -> q (Id e) value
            -> Gen (Relation (Id e) Int, Scalar (BV.Vector value))
 dictionary (Scalar size) rows = Gen $ \continue ->
-  withDictionary size (asStream rows) $ \relation labels ->
+  withDictionary size (drive rows) $ \relation labels ->
     continue (Relation relation, Scalar labels)
 
 -- | Precompute identity-relation membership for values in a bounded entity
@@ -175,7 +175,7 @@ dictionary (Scalar size) rows = Gen $ \continue ->
 bitset :: Drivable q
        => Scalar Int -> q d (Id e) -> Gen (Relation (Id e) (Id e))
 bitset (Scalar size) rows = Gen $ \continue ->
-  withBits size (asStream rows) (\relation -> continue (Relation relation))
+  withBits size (drive rows) (\relation -> continue (Relation relation))
 
 -- | Retain a bounded ordered result inside generated code.
 topK
@@ -183,7 +183,7 @@ topK
   => Scalar Int
   -> (Scalar d -> Scalar r -> Scalar d -> Scalar r -> Scalar Ordering)
   -> q d r
-  -> Gen (Stream d r)
+  -> Gen (Drive d r)
 topK (Scalar size) order rows = Gen $ \continue ->
   withTopK size
     (\leftRow rightRow ->
@@ -191,7 +191,7 @@ topK (Scalar size) order rows = Gen $ \continue ->
           right = Scalar rightRow
       in scalarCode
            (order (first left) (second left) (first right) (second right)))
-    (asStream rows) continue
+    (drive rows) continue
 
 --------------------------------------------------------------------------------
 -- Bounded order
@@ -205,8 +205,8 @@ topK (Scalar size) order rows = Gen $ \continue ->
 withTopK
   :: CodeQ Int
   -> (CodeQ (d, r) -> CodeQ (d, r) -> CodeQ Ordering)
-  -> Stream d r
-  -> (Stream d r -> CodeQ w)
+  -> Drive d r
+  -> (Drive d r -> CodeQ w)
   -> CodeQ w
 withTopK requested compareRows rows continue =
   [|| let !topRows = runST (do
@@ -224,7 +224,7 @@ withTopK requested compareRows rows continue =
                                  then cursor else worst)
                   in go 1 0
             buffer <- BMV.new capacity
-            kept <- $$(sfoldST
+            kept <- $$(dfoldST
               (\rowCount key value ->
                 [|| if $$rowCount < capacity
                       then BMV.unsafeWrite buffer $$rowCount ($$key, $$value)
@@ -248,28 +248,28 @@ withTopK requested compareRows rows continue =
 -- Map-backed
 --------------------------------------------------------------------------------
 
--- | Consume a stream once and bucket its pairs by key.
+-- | Consume a drive once and bucket its pairs by key.
 --
--- Each group comes out in reverse stream order, because @insertWith (++)@ conses.
+-- Each group comes out in reverse drive order, because @insertWith (++)@ conses.
 -- `withBufFold` is the only thing that cares and it reverses; nothing else has
 -- ever promised an order.
-index :: Ord d => Stream d r -> CodeQ (Map d [r])
-index = sfold (\m d r -> [|| Map.insertWith (++) $$d [$$r] $$m ||]) [|| Map.empty ||]
+index :: Ord d => Drive d r -> CodeQ (Map d [r])
+index = dfold (\m d r -> [|| Map.insertWith (++) $$d [$$r] $$m ||]) [|| Map.empty ||]
 
 -- | Force a leg once so reuse is free. Same pairs, now backed by the index.
 withMaterialize :: Ord d
-                => Stream d r
+                => Drive d r
                 -> ((forall q. Mode q => q d r) -> CodeQ w) -> CodeQ w
 withMaterialize s k =
   [|| let !m = $$(index s) in $$(k (fromIndex [|| m ||])) ||]
 
 -- | A materialized inverse: index the flipped pairs so the result supports both
--- enumeration and keyed access. `invStream` alone is free but only supports
+-- enumeration and keyed access. `invDrive` alone is free but only supports
 -- enumeration.
 withInv :: Ord r
-        => Stream d r
+        => Drive d r
         -> ((forall q. Mode q => q r d) -> CodeQ w) -> CodeQ w
-withInv s k = withMaterialize (invStream s) k
+withInv s k = withMaterialize (invDrive s) k
 
 -- | The whole-group fold: instead of reducing pairwise, hand the reducer the
 -- entire group at once. For anything that does not fit `withFold`'s shape, which
@@ -279,9 +279,9 @@ withInv s k = withMaterialize (invStream s) k
 -- It costs strictly more than `withFold`, since every value is retained until the
 -- group is complete rather than collapsing into an accumulator, so reach for
 -- `withFold` unless the reducer genuinely cannot be written that way. The list
--- each group is handed is in stream order.
+-- each group is handed is in drive order.
 withBufFold :: Ord d
-            => (CodeQ [r] -> CodeQ t) -> Stream d r
+            => (CodeQ [r] -> CodeQ t) -> Drive d r
             -> ((forall q. Mode q => q d t) -> CodeQ w) -> CodeQ w
 withBufFold f s k =
   [|| let !m = Map.map (\xs -> $$(f [|| reverse xs ||])) $$(index s)
@@ -300,17 +300,17 @@ withBufFold f s k =
 -- @op@ is a generation-time function, so the reducer is emitted into the insert
 -- rather than called through a closure.
 withFold :: (Hashable d, Key d, UV.Unbox t)
-         => (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t -> Stream d r
+         => (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t -> Drive d r
          -> ((forall q. Mode q => q d t) -> CodeQ w) -> CodeQ w
 withFold op ini s k =
   [|| let !tbl = $$(buildTable op ini s) in $$(k (fromTable [|| tbl ||])) ||]
 
--- | Consume the stream once, reducing into an open-addressed table.
+-- | Consume the drive once, reducing into an open-addressed table.
 --
 -- Kept private because its result is the executor's hash-table representation;
 -- `withFold` and `withCountDistinct` are the query-level construction boundary.
 buildTable :: (Hashable d, Key d, UV.Unbox t)
-           => (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t -> Stream d r
+           => (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t -> Drive d r
            -> CodeQ (Table d t)
 buildTable op ini s =
   [|| runST (do
@@ -318,7 +318,7 @@ buildTable op ini s =
         cnt <- UMV.replicate 1 (0 :: Int)
         vsc <- BMV.new 1
         mt0 <- newMTable cnt vsc 64 z
-        done <- $$(sfoldST
+        done <- $$(dfoldST
                      (\acc d r ->
                         [|| insertTable
                               (\_current -> $$(op [|| _current ||] r))
@@ -337,7 +337,7 @@ buildTable op ini s =
 --
 -- Two of the five fields are one-element mutable vectors rather than plain
 -- values, and both are there for the same reason. This record is the accumulator
--- `sfoldST` threads through the loop, so GHC unboxes it into loop arguments; the
+-- `dfoldST` threads through the loop, so GHC unboxes it into loop arguments; the
 -- moment the loop WRITES through one of those arguments it has to rebuild the
 -- record to pass it on, and a rebuild is an allocation on every row.
 --
@@ -397,7 +397,7 @@ newMTable cnt vsc cap ini = do
 -- it came from.
 --
 -- The body is in three parts, and the split is load bearing rather than stylistic.
--- @probe@ walks the collision chain and returns nothing but a slot index; then
+-- @findSlot@ walks the collision chain and returns nothing but a slot index; then
 -- the old value is fetched; then the reducer runs, ONCE. Written the obvious way
 -- — one loop that reduces in whichever branch it lands in — the reducer appears
 -- at two sites, both inside a recursive function. That has two costs, and Q1 paid
@@ -414,7 +414,7 @@ newMTable cnt vsc cap ini = do
 insertTable :: (Hashable d, Key d, UV.Unbox t)
             => (t -> t) -> t -> d -> MTable s d t -> ST s (MTable s d t)
 insertTable f ini d mt@(MTable mask cnt hs ks vsc) = do
-  i <- probe (fromIntegral h .&. mask)
+  i <- findSlot (fromIntegral h .&. mask)
   h' <- UMV.read hs i
   let !fresh = h' == 0
   vs <- BMV.read vsc 0
@@ -431,7 +431,7 @@ insertTable f ini d mt@(MTable mask cnt hs ks vsc) = do
   where
     h = slotHash d
     -- Check the compact hash store before reading a potentially compound key.
-    probe i = do
+    findSlot i = do
       h' <- UMV.read hs i
       if h' == 0
         then return i
@@ -440,7 +440,7 @@ insertTable f ini d mt@(MTable mask cnt hs ks vsc) = do
             matches <- matchesKey ks i d
             if matches then return i else advance i
           else advance i
-    advance i = probe ((i + 1) .&. mask)
+    advance i = findSlot ((i + 1) .&. mask)
 {-# INLINE insertTable #-}
 
 -- | Rehash into a table of twice the capacity. Only occupied slots move, and
@@ -475,23 +475,23 @@ growTable (MTable mask cnt hs ks vsc) ini = do
 -- the first table — @dd@ is in scope for the inner splice, and the inner
 -- `buildTable` generates a loop over its slots.
 withCountDistinct :: forall d r w. (Hashable d, Key d, Hashable r, Key r)
-                  => Stream d r
+                  => Drive d r
                   -> ((forall q. Mode q => q d Int) -> CodeQ w) -> CodeQ w
 withCountDistinct s k =
   [|| let !dd = $$(buildTable (\_ _ -> [|| () ||]) [|| () ||] pairs)
       in $$(withFold (\n _ -> [|| $$n + (1 :: Int) ||]) [|| 0 ||]
                      (distinct [|| dd ||]) k) ||]
   where
-    pairs :: Stream (d, r) ()
-    pairs = mapvS (\_ -> [|| () ||]) (mapkVS (\d r -> [|| ($$d, $$r) ||]) s)
+    pairs :: Drive (d, r) ()
+    pairs = mapvD (\_ -> [|| () ||]) (mapkVD (\d r -> [|| ($$d, $$r) ||]) s)
 
-    distinct :: CodeQ (Table (d, r) ()) -> Stream d ()
-    distinct t = mapkS (\p -> [|| fst $$p ||]) (fromTable t)
+    distinct :: CodeQ (Table (d, r) ()) -> Drive d ()
+    distinct t = mapkD (\p -> [|| fst $$p ||]) (fromTable t)
 
 -- | Count distinct entity ids per bounded integer group. On normal extents the
 -- pair is represented by one integer, and the final counts use a dense array;
 -- invalid or overflowing bounds retain the generic, fully checked semantics.
-withDenseDistinctCount :: CodeQ Int -> CodeQ Int -> Stream Int (Id e)
+withDenseDistinctCount :: CodeQ Int -> CodeQ Int -> Drive Int (Id e)
                        -> ((forall q. Mode q => q Int Int) -> CodeQ w)
                        -> CodeQ w
 withDenseDistinctCount groupCount memberCount rows continue =
@@ -509,11 +509,11 @@ withDenseDistinctCount groupCount memberCount rows continue =
          else $$(withCountDistinct rows continue) ||]
   where
     packed groups members =
-      mapvS (\_ -> [|| () ||])
-      . mapkVS
+      mapvD (\_ -> [|| () ||])
+      . mapkVD
           (\group member ->
             [|| $$group * $$members + idIndex $$member ||])
-      $ filtKV
+      $ filtDKV
           (\group member ->
             [|| let !g = $$group
                     !m = idIndex $$member
@@ -521,7 +521,7 @@ withDenseDistinctCount groupCount memberCount rows continue =
           rows
 
     distinct members table =
-      mapkS (\pair -> [|| $$pair `div` $$members ||]) (fromTable table)
+      mapkD (\pair -> [|| $$pair `div` $$members ||]) (fromTable table)
 
 --------------------------------------------------------------------------------
 -- Dense
@@ -534,7 +534,7 @@ withDenseDistinctCount groupCount memberCount rows continue =
 -- range are dropped rather than growing the store.
 withDense :: UV.Unbox t
           => CodeQ Int -> (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t
-          -> Stream (Id e) r
+          -> Drive (Id e) r
           -> ((forall q. Mode q => q (Id e) t) -> CodeQ w) -> CodeQ w
 withDense n op ini s k =
   [|| let !dn = $$(buildDense n op ini [|| False ||] s)
@@ -546,7 +546,7 @@ withDense n op ini s k =
 -- that do not exist.
 withDenseOuter :: UV.Unbox t
                => CodeQ Int -> (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t
-               -> Stream (Id e) r
+               -> Drive (Id e) r
                -> ((forall q. Mode q => q (Id e) t) -> CodeQ w) -> CodeQ w
 withDenseOuter n op ini s k =
   [|| let !dn = $$(buildDense n op ini [|| True ||] s)
@@ -558,7 +558,7 @@ withDenseOuter n op ini s k =
 -- space do not fabricate groups.
 withDenseInt :: UV.Unbox t
              => CodeQ Int -> (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t
-             -> Stream Int r
+             -> Drive Int r
              -> ((forall q. Mode q => q Int t) -> CodeQ w) -> CodeQ w
 withDenseInt n op ini s k =
   [|| let !dn = $$(buildDenseInt n op ini s)
@@ -569,7 +569,7 @@ withDenseInt n op ini s k =
 -- value in code order, so reporting code can recover the original value after
 -- the hot part of the query has finished.
 withDictionary :: Ord value
-               => CodeQ Int -> Stream (Id e) value
+               => CodeQ Int -> Drive (Id e) value
                -> ((forall q. Mode q => q (Id e) Int)
                    -> CodeQ (BV.Vector value) -> CodeQ w)
                -> CodeQ w
@@ -586,17 +586,17 @@ withDictionary n rows continue =
 -- the heap in between. The vector library's checked update remains
 -- allocation-free on this guarded path.
 --
--- The accumulator threaded through `sfoldST` is @()@: everything this loop
+-- The accumulator threaded through `dfoldST` is @()@: everything this loop
 -- changes is in the two arrays, which are bound once, outside it.
 buildDense :: UV.Unbox t
            => CodeQ Int -> (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t -> CodeQ Bool
-           -> Stream (Id e) r -> CodeQ (Dense e t)
+           -> Drive (Id e) r -> CodeQ (Dense e t)
 buildDense n op ini pre s =
   [|| runST (do
         let !cap = $$n
         vals <- newSlots cap $$ini
         seen <- newBits cap $$pre
-        () <- $$(sfoldST
+        () <- $$(dfoldST
                    (\acc d v ->
                       [|| let i = idIndex $$d
                           in if i < cap
@@ -612,13 +612,13 @@ buildDense n op ini pre s =
 -- | Build a dense bounded-integer aggregate in one generated pass.
 buildDenseInt :: UV.Unbox t
               => CodeQ Int -> (CodeQ t -> CodeQ r -> CodeQ t) -> CodeQ t
-              -> Stream Int r -> CodeQ (DenseInt t)
+              -> Drive Int r -> CodeQ (DenseInt t)
 buildDenseInt n op ini s =
   [|| runST (do
         let !cap = $$n
         vals <- newSlots cap $$ini
         seen <- newBits cap False
-        () <- $$(sfoldST
+        () <- $$(dfoldST
                    (\acc d v ->
                       [|| let i = $$d
                           in if 0 <= i && i < cap
@@ -634,14 +634,14 @@ buildDenseInt n op ini s =
 -- | Build the dictionary and dense code column in one pass. The ordered map is
 -- construction-only: later scans see only integer array reads.
 buildDictionary :: Ord value
-                => CodeQ Int -> Stream (Id e) value
+                => CodeQ Int -> Drive (Id e) value
                 -> CodeQ (Dense e Int, BV.Vector value)
 buildDictionary n rows =
   [|| runST (do
         let !cap = $$n
         codes <- newSlots cap (-1 :: Int)
         seen <- newBits cap False
-        (_, labels, _) <- $$(sfoldST
+        (_, labels, _) <- $$(dfoldST
           (\state entity value ->
             [|| case $$state of
                   (!dictionaryMap, !items, !nextCode) ->
@@ -663,24 +663,24 @@ buildDictionary n rows =
         dense <- Dense cap <$> UV.freeze codes <*> freeze seen
         return (dense, BV.fromList (reverse labels))) ||]
 
--- | Precompute dense membership: consume a stream, set a bit at each VALUE it
+-- | Precompute dense membership: consume a drive, set a bit at each VALUE it
 -- emits, and hand back the identity relation on those ids. This is the one
 -- materializer that exists purely for speed — it is semantically the same as
 -- restricting against the relation's values, but a bit test beats re-running a
 -- subquery, so it pays off when the same filter is checked many times.
 --
 -- Under pull it is also the one with a rival. `anyOf` short-circuits, so an
--- EXISTS that used to need a precomputed bitset can now inspect the keyed stream
+-- EXISTS that used to need a precomputed bitset can now inspect the keyed drive
 -- directly. Keep this for the case where the same membership is looked up
 -- millions of times; use `anyOf` where it is asked once per outer row and the
 -- inner relation is small.
-withBits :: CodeQ Int -> Stream d (Id e)
+withBits :: CodeQ Int -> Drive d (Id e)
          -> ((forall q. Mode q => q (Id e) (Id e)) -> CodeQ w) -> CodeQ w
 withBits n s k =
   [|| let !bs = Bits (runSTUArray (do
                         let !cap = $$n
                         arr <- newBits cap False
-                        () <- $$(sfoldST
+                        () <- $$(dfoldST
                                    (\acc _ v ->
                                       [|| let i = idIndex $$v
                                           in if i < cap

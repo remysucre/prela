@@ -3,9 +3,9 @@
 
 -- | Leaves and operators that work in either query position.
 --
--- 'Mode' has two executor instances: t'Stream' for driving and t'Lookup' for keyed
+-- 'Mode' has two executor instances: t'Drive' for driving and t'Probe' for keyed
 -- access. A query remains polymorphic until its result type selects an instance.
--- Binary operators take a concrete t'Lookup' on the right because that side is
+-- Binary operators take a concrete t'Probe' on the right because that side is
 -- always accessed by key.
 --
 -- Keyed access carries a fused early-exit operation. This is what keeps a
@@ -19,7 +19,7 @@ module Prela.PullStaged.Ops
   , union
   , disj
   , resolveId
-  , mapLookupKey
+  , mapProbeKey
   ) where
 
 import Data.Hashable (Hashable)
@@ -75,16 +75,16 @@ class Mode q where
 
   -- | Chain two relations through a shared middle value: `r : d -> e` and
   -- `s : e -> f` give `d -> f`. Also field navigation.
-  compose  :: q d e -> Lookup e f -> q d f
+  compose  :: q d e -> Probe e f -> q d f
 
   -- | Pair two relations sharing a domain key.
-  prod     :: q d u -> Lookup d v -> q d (u, v)
+  prod     :: q d u -> Probe d v -> q d (u, v)
 
   -- | Keep rows whose value has at least one match in the second relation.
-  restrict :: q d r -> Lookup r e -> q d r
+  restrict :: q d r -> Probe r e -> q d r
 
   -- | Keep rows whose key has no match in the second relation.
-  diff     :: q d r -> Lookup d e -> q d r
+  diff     :: q d r -> Probe d e -> q d r
 
   -- | Keep values satisfying generated code.
   filt     :: (CodeQ r -> CodeQ Bool) -> q d r -> q d r
@@ -92,19 +92,19 @@ class Mode q where
   mapv     :: (CodeQ r -> CodeQ s) -> q d r -> q d s
 
 -- | Does a keyed relation contain any value? The accepting predicate is kept
--- explicit in 'probeAny' so filters and compositions can fuse into the same
--- generated test instead of allocating an intermediate stream value.
-memberAt :: Lookup d r -> CodeQ d -> CodeQ Bool
-memberAt relation key = probeAny relation key (\_ -> [|| True ||])
+-- explicit in 'exists' so filters and compositions can fuse into the same
+-- generated test instead of allocating an intermediate drive.
+memberAt :: Probe d r -> CodeQ d -> CodeQ Bool
+memberAt relation key = exists relation key (\_ -> [|| True ||])
 
--- | Compatibility construction for inherently list-backed lookups. Loaded
+-- | Compatibility construction for inherently list-backed probes. Loaded
 -- columns and executor caches provide direct probes below; a materialized list
 -- still needs to walk its values, but does so only for operators that chose that
 -- representation explicitly.
-streamLookup :: (CodeQ d -> Stream () r) -> Lookup d r
-streamLookup values = Lookup
+driveProbe :: (CodeQ d -> Drive () r) -> Probe d r
+driveProbe values = Probe
   { at = values
-  , probeAny = \key accept -> anyOf (filtS accept (values key))
+  , exists = \key accept -> anyOf (filtD accept (values key))
   }
 
 -- | Read and validate one stored reference without constructing an optional
@@ -134,10 +134,10 @@ withReference sourceDomain rawColumn targetDomain sourceId found missing =
 -- Enumeration
 --------------------------------------------------------------------------------
 
-instance Mode Stream where
-  universe u       = Lin (universeProd u)
-  column c         = Lin (columnProd c)
-  sparseColumn c = Lin Producer
+instance Mode Drive where
+  universe u       = Lin (universeStream u)
+  column c         = Lin (columnStream c)
+  sparseColumn c = Lin Stream
     { source       = c
     , initialState = \_ -> [|| 0 :: Int ||]
     , next         = \e s yield skip done ->
@@ -150,7 +150,7 @@ instance Mode Stream where
                          $$(yield [|| _domain ||] [|| value ||] [|| $$s + 1 ||])
                        Nothing -> $$(skip [|| $$s + 1 ||]) ||]
     }
-  referenceColumn sourceDomain rawColumn targetDomain = Lin Producer
+  referenceColumn sourceDomain rawColumn targetDomain = Lin Stream
     { source = [|| ($$sourceDomain, $$rawColumn, $$targetDomain) ||]
     , initialState = \_ -> [|| 0 :: Int ||]
     , next = \environment state yield skip done ->
@@ -171,7 +171,7 @@ instance Mode Stream where
     }
   -- Keep this flat so it remains zippable. State is @(key, cursor, rowEnd)@;
   -- `skip` advances to the next row.
-  multiColumn c = Lin Producer
+  multiColumn c = Lin Stream
     { source       = c
     , initialState = \_ -> [|| (-1 :: Int, 0 :: Int, 0 :: Int) ||]
     , next         = \e s yield skip done ->
@@ -188,7 +188,7 @@ instance Mode Stream where
                       let !i' = i + 1
                       in $$(skip [|| (i', off32 offs i', off32 offs (i' + 1)) ||]) ||]
     }
-  fromDense c = Lin Producer
+  fromDense c = Lin Stream
     { source       = c
     , initialState = \_ -> [|| 0 :: Int ||]
     , next         = \e s yield skip done ->
@@ -203,7 +203,7 @@ instance Mode Stream where
                               Nothing -> $$(skip [|| $$s + 1 ||])
                        else $$(skip [|| $$s + 1 ||]) ||]
     }
-  fromDenseInt c = Lin Producer
+  fromDenseInt c = Lin Stream
     { source       = c
     , initialState = \_ -> [|| 0 :: Int ||]
     , next         = \e s yield skip done ->
@@ -215,7 +215,7 @@ instance Mode Stream where
                                      [|| $$s + 1 ||])
                        else $$(skip [|| $$s + 1 ||]) ||]
     }
-  fromTable t = Lin Producer
+  fromTable t = Lin Stream
     { source       = t
     , initialState = \_ -> [|| 0 :: Int ||]
     , next         = \e s yield skip done ->
@@ -227,7 +227,7 @@ instance Mode Stream where
                                      [|| $$s + 1 ||])
                        else $$(skip [|| $$s + 1 ||]) ||]
     }
-  fromBits b = Lin Producer
+  fromBits b = Lin Stream
     { source       = b
     , initialState = \_ -> [|| 0 :: Int ||]
     , next         = \e s yield skip done ->
@@ -243,37 +243,37 @@ instance Mode Stream where
                        else $$(skip [|| $$s + 1 ||]) ||]
     }
   fromIndex m =
-    Bind (Lin (pairProd [|| Map.toList $$m ||]))
-         (\d vs -> mapkS (\_ -> d) (Lin (listProd vs)))
-  fromCache m = Lin (pairProd [|| Map.toList $$m ||])
+    Bind (Lin (pairStream [|| Map.toList $$m ||]))
+         (\d vs -> mapkD (\_ -> d) (Lin (listStream vs)))
+  fromCache m = Lin (pairStream [|| Map.toList $$m ||])
 
-  compose  a b = Bind a (\d e -> mapkS (\_ -> d) (at b e))
+  compose  a b = Bind a (\d e -> mapkD (\_ -> d) (at b e))
   -- Strict component bindings keep column reads from crossing the inner loop as
-  -- boxed thunks. They work with the strict binding in `sfoldWhile`.
-  prod     a b = Bind a (\d u -> mapkS (\_ -> d)
-                                   (mapvS (\v -> [|| let !x = $$u
+  -- boxed thunks. They work with the strict binding in `dfoldWhile`.
+  prod     a b = Bind a (\d u -> mapkD (\_ -> d)
+                                   (mapvD (\v -> [|| let !x = $$u
                                                          !y = $$v
                                                      in (x, y) ||]) (at b d)))
-  restrict a b = filtKV (\_ r -> memberAt b r) a
-  diff     a b = filtKV (\d _ -> [|| not $$(memberAt b d) ||]) a
-  filt     t a = filtS t a
-  mapv     f a = mapvS f a
+  restrict a b = filtDKV (\_ r -> memberAt b r) a
+  diff     a b = filtDKV (\d _ -> [|| not $$(memberAt b d) ||]) a
+  filt     t a = filtD t a
+  mapv     f a = mapvD f a
 
 --------------------------------------------------------------------------------
 -- Keyed access
 --------------------------------------------------------------------------------
 
--- Lookup leaves validate keys before reading storage. Invalid keys produce an
--- empty stream. Each leaf supplies both full enumeration and a fused
+-- Probe leaves validate keys before reading storage. Invalid keys produce an
+-- empty drive. Each leaf supplies both full enumeration and a fused
 -- predicate probe; the latter is the hot path for restrict/difference.
-instance Mode Lookup where
-  universe u = Lookup
-    { at = \x -> mapvS (\_ -> x) (guardS [|| containsId $$u $$x ||])
-    , probeAny = \x accept ->
+instance Mode Probe where
+  universe u = Probe
+    { at = \x -> mapvD (\_ -> x) (guardD [|| containsId $$u $$x ||])
+    , exists = \x accept ->
         [|| containsId $$u $$x && $$(accept x) ||]
     }
-  column c = Lookup
-    { at = \x -> Lin Producer
+  column c = Probe
+    { at = \x -> Lin Stream
         { source       = c
         , initialState = \_ -> [|| True ||]
         , next         = \e s yield _skip done ->
@@ -284,14 +284,14 @@ instance Mode Lookup where
                          then $$(yield [|| () ||] [|| atStore _st i ||] [|| False ||])
                          else $$done ||]
         }
-    , probeAny = \x accept ->
+    , exists = \x accept ->
         [|| case $$c of
               Col n _st ->
                 let i = idIndex $$x
                 in i < n && $$(accept [|| atStore _st i ||]) ||]
     }
-  sparseColumn c = Lookup
-    { at = \x -> Lin Producer
+  sparseColumn c = Probe
+    { at = \x -> Lin Stream
         { source       = c
         , initialState = \_ -> [|| True ||]
         , next         = \e s yield _skip done ->
@@ -302,7 +302,7 @@ instance Mode Lookup where
                             Nothing    -> $$done
                      else $$done ||]
         }
-    , probeAny = \x accept ->
+    , exists = \x accept ->
         [|| let i = idIndex $$x
             in if i < sparseColLen $$c
                  then case sparseAt $$c i of
@@ -310,8 +310,8 @@ instance Mode Lookup where
                         Nothing    -> False
                  else False ||]
     }
-  referenceColumn sourceDomain rawColumn targetDomain = Lookup
-    { at = \sourceId -> Lin Producer
+  referenceColumn sourceDomain rawColumn targetDomain = Probe
+    { at = \sourceId -> Lin Stream
         { source = [|| ($$sourceDomain, $$rawColumn, $$targetDomain) ||]
         , initialState = \_ -> [|| True ||]
         , next = \environment active yield _skip done ->
@@ -328,13 +328,13 @@ instance Mode Lookup where
                                done)
                       else $$done ||]
         }
-    , probeAny = \sourceId accept ->
+    , exists = \sourceId accept ->
         withReference sourceDomain rawColumn targetDomain sourceId accept [|| False ||]
     }
   -- The row's extent is read once, in `initialState`, rather than on every step. An
   -- out-of-range key gets the empty range (0, 0), which is the no-values answer.
-  multiColumn c = Lookup
-    { at = \x -> Lin Producer
+  multiColumn c = Probe
+    { at = \x -> Lin Stream
         { source       = c
         , initialState = \e -> [|| case $$e of
                               MultiCol n offs _ ->
@@ -348,7 +348,7 @@ instance Mode Lookup where
                              | otherwise -> $$(yield [|| () ||] [|| atStore _st j ||]
                                                      [|| (j + 1, end) ||]) ||]
         }
-    , probeAny = \x accept ->
+    , exists = \x accept ->
         [|| case $$c of
               MultiCol n offs _st ->
                 let i = idIndex $$x
@@ -358,8 +358,8 @@ instance Mode Lookup where
                       | otherwise = go (j + 1) end
                 in i < n && go (off32 offs i) (off32 offs (i + 1)) ||]
     }
-  fromDense c = Lookup
-    { at = \x -> Lin Producer
+  fromDense c = Probe
+    { at = \x -> Lin Stream
         { source       = c
         , initialState = \_ -> [|| True ||]
         , next         = \e s yield _skip done ->
@@ -370,14 +370,14 @@ instance Mode Lookup where
                          then $$(yield [|| () ||] [|| _vals UV.! i ||] [|| False ||])
                          else $$done ||]
         }
-    , probeAny = \x accept ->
+    , exists = \x accept ->
         [|| case $$c of
               Dense n _vals seen ->
                 let i = idIndex $$x
                 in i < n && atBit seen i && $$(accept [|| _vals UV.! i ||]) ||]
     }
-  fromDenseInt c = Lookup
-    { at = \x -> Lin Producer
+  fromDenseInt c = Probe
+    { at = \x -> Lin Stream
         { source       = c
         , initialState = \_ -> [|| True ||]
         , next         = \e s yield _skip done ->
@@ -387,14 +387,14 @@ instance Mode Lookup where
                       then $$(yield [|| () ||] [|| _vals UV.! $$x ||] [|| False ||])
                       else $$done ||]
         }
-    , probeAny = \x accept ->
+    , exists = \x accept ->
         [|| case $$c of
               DenseInt n _vals seen ->
                 0 <= $$x && $$x < n && atBit seen $$x
                   && $$(accept [|| _vals UV.! $$x ||]) ||]
     }
-  fromTable t = Lookup
-    { at = \x -> Lin Producer
+  fromTable t = Probe
+    { at = \x -> Lin Stream
         { source       = t
         , initialState = \e -> [|| tableSlot $$e $$x ||]
         , next         = \e s yield _skip done ->
@@ -403,84 +403,84 @@ instance Mode Lookup where
                     | $$s >= 0  -> $$(yield [|| () ||] [|| _vs UV.! $$s ||] [|| -1 ||])
                     | otherwise -> $$done ||]
         }
-    , probeAny = \x accept ->
+    , exists = \x accept ->
         [|| case $$t of
               Table _ _ _ _vs ->
                 let slot = tableSlot $$t $$x
                 in slot >= 0 && $$(accept [|| _vs UV.! slot ||]) ||]
     }
-  fromBits b = Lookup
-    { at = \x -> mapvS (\_ -> x) (guardS [|| bitsMember $$b $$x ||])
-    , probeAny = \x accept -> [|| bitsMember $$b $$x && $$(accept x) ||]
+  fromBits b = Probe
+    { at = \x -> mapvD (\_ -> x) (guardD [|| bitsMember $$b $$x ||])
+    , exists = \x accept -> [|| bitsMember $$b $$x && $$(accept x) ||]
     }
-  fromIndex m = streamLookup (\x -> Lin (listProd [|| Map.findWithDefault [] $$x $$m ||]))
-  fromCache m = Lookup
-    { at = \x -> Lin (maybeProd [|| Map.lookup $$x $$m ||])
-    , probeAny = \x accept ->
+  fromIndex m = driveProbe (\x -> Lin (listStream [|| Map.findWithDefault [] $$x $$m ||]))
+  fromCache m = Probe
+    { at = \x -> Lin (maybeStream [|| Map.lookup $$x $$m ||])
+    , exists = \x accept ->
         [|| case Map.lookup $$x $$m of
               Nothing -> False
               Just value -> $$(accept [|| value ||]) ||]
     }
 
-  compose a b = Lookup
+  compose a b = Probe
     { at = \x -> Bind (at a x) (\_ e -> at b e)
-    , probeAny = \x accept -> probeAny a x (\e -> probeAny b e accept)
+    , exists = \x accept -> exists a x (\e -> exists b e accept)
     }
-  prod a b = Lookup
+  prod a b = Probe
     { at = \x -> Bind (at a x)
-                  (\_ u -> mapvS (\v -> [|| let { !p = $$u; !q = $$v }
+                  (\_ u -> mapvD (\v -> [|| let { !p = $$u; !q = $$v }
                                               in (p, q) ||]) (at b x))
-    , probeAny = \x accept ->
-        probeAny a x (\u -> probeAny b x (\v -> accept [|| ($$u, $$v) ||]))
+    , exists = \x accept ->
+        exists a x (\u -> exists b x (\v -> accept [|| ($$u, $$v) ||]))
     }
-  restrict a b = Lookup
-    { at = \x -> filtS (memberAt b) (at a x)
-    , probeAny = \x accept ->
-        probeAny a x (\r -> [|| $$(memberAt b r) && $$(accept r) ||])
+  restrict a b = Probe
+    { at = \x -> filtD (memberAt b) (at a x)
+    , exists = \x accept ->
+        exists a x (\r -> [|| $$(memberAt b r) && $$(accept r) ||])
     }
-  -- The test is on the KEY, so it is decided once for the whole lookup rather
-  -- than per returned row, which is what `whenS` is for.
-  diff a b = Lookup
-    { at = \x -> whenS [|| not $$(memberAt b x) ||] (at a x)
-    , probeAny = \x accept ->
-        [|| not $$(memberAt b x) && $$(probeAny a x accept) ||]
+  -- The test is on the KEY, so it is decided once for the whole probe rather
+  -- than per returned row, which is what `whenD` is for.
+  diff a b = Probe
+    { at = \x -> whenD [|| not $$(memberAt b x) ||] (at a x)
+    , exists = \x accept ->
+        [|| not $$(memberAt b x) && $$(exists a x accept) ||]
     }
-  filt t a = Lookup
-    { at = \x -> filtS t (at a x)
-    , probeAny = \x accept ->
-        probeAny a x (\r -> [|| $$(t r) && $$(accept r) ||])
+  filt t a = Probe
+    { at = \x -> filtD t (at a x)
+    , exists = \x accept ->
+        exists a x (\r -> [|| $$(t r) && $$(accept r) ||])
     }
-  mapv f a = Lookup
-    { at = \x -> mapvS f (at a x)
-    , probeAny = \x accept -> probeAny a x (accept . f)
+  mapv f a = Probe
+    { at = \x -> mapvD f (at a x)
+    , exists = \x accept -> exists a x (accept . f)
     }
 
 --------------------------------------------------------------------------------
 -- Fixed-mode operators
 --------------------------------------------------------------------------------
 
--- | Re-key a stream by something computed from each VALUE. What comes out is
+-- | Re-key a drive by something computed from each VALUE. What comes out is
 -- (group key, value), which is exactly what a grouped fold wants, so
 -- @groupFold op ini (groupBy q key)@ is Prela's GROUP BY over a non-key column.
 --
--- Enumeration only, and free: one extra keyed lookup per row with nothing
+-- Enumeration only, and free: one extra keyed probe per row with nothing
 -- stored. Its second argument is looked up at the VALUE rather than the key,
 -- which is what makes it different from `compose`.
 --
-groupBy :: Stream d r -> Lookup r k -> Stream k r
-groupBy s key = Bind s (\_ x -> mapvS (\_ -> x) (byValue (at key x)))
+groupBy :: Drive d r -> Probe r k -> Drive k r
+groupBy s key = Bind s (\_ x -> mapvD (\_ -> x) (byValue (at key x)))
 
 -- | Left-compose, defined as @r <- s@ ≡ @r' -> s@: rekey the first relation by
 -- its own value, then chain the second onto it. Enumeration only, since
--- `invStream` is.
-leftCompose :: Stream d e -> Lookup d f -> Stream e f
-leftCompose a b = compose (invStream a) b
+-- `invDrive` is.
+leftCompose :: Drive d e -> Probe d f -> Drive e f
+leftCompose a b = compose (invDrive a) b
 
 -- | One relation and then the other. Enumeration only: keyed access to a union
 -- would have to search both sides and de-duplicate, and what queries actually
 -- want from OR is membership, which is `disj`.
-union :: Stream d r -> Stream d r -> Stream d r
-union = catS
+union :: Drive d r -> Drive d r -> Drive d r
+union = catD
 
 -- | Membership union, the OR of two filters. Never enumerated: only whether a
 -- key is present in either side is defined, so the value type is @()@. That is
@@ -488,44 +488,44 @@ union = catS
 -- through an OR or read a value out of one, and the type says so.
 --
 -- The probe path is a direct short-circuiting OR. Full enumeration remains a
--- one-row unit stream because this relation deliberately exposes membership
+-- one-row unit drive because this relation deliberately exposes membership
 -- only.
-disj :: Lookup d u -> Lookup d v -> Lookup d ()
-disj a b = Lookup
-  { at = \x -> guardS [|| $$(memberAt a x) || $$(memberAt b x) ||]
-  , probeAny = \x accept ->
+disj :: Probe d u -> Probe d v -> Probe d ()
+disj a b = Probe
+  { at = \x -> guardD [|| $$(memberAt a x) || $$(memberAt b x) ||]
+  , exists = \x accept ->
       [|| ($$(memberAt a x) || $$(memberAt b x)) && $$(accept [|| () ||]) ||]
   }
 
 -- | Resolve a stored non-negative index through its target entity universe.
 -- Missing, out-of-range, and dead identifiers all produce no value.
-resolveId :: CodeQ (Universe e) -> Lookup Int (Id e)
-resolveId domain = Lookup
-  { at = \index -> Lin (maybeProd [|| lookupId $$domain $$index ||])
-  , probeAny = \index accept ->
+resolveId :: CodeQ (Universe e) -> Probe Int (Id e)
+resolveId domain = Probe
+  { at = \index -> Lin (maybeStream [|| lookupId $$domain $$index ||])
+  , exists = \index accept ->
       [|| case lookupId $$domain $$index of
             Nothing -> False
             Just identifier -> $$(accept [|| identifier ||]) ||]
   }
 
 -- | Adapt a keyed relation by transforming the key supplied to it. This is
--- contravariant in the lookup key and does not enumerate or allocate anything.
-mapLookupKey :: (CodeQ a -> CodeQ b) -> Lookup b r -> Lookup a r
-mapLookupKey transform relation = Lookup
+-- contravariant in the probe key and does not enumerate or allocate anything.
+mapProbeKey :: (CodeQ a -> CodeQ b) -> Probe b r -> Probe a r
+mapProbeKey transform relation = Probe
   { at = at relation . transform
-  , probeAny = \key accept -> probeAny relation (transform key) accept
+  , exists = \key accept -> exists relation (transform key) accept
   }
 
 --------------------------------------------------------------------------------
--- Producer-level leaves
+-- Stream-level leaves
 --------------------------------------------------------------------------------
 
 -- The two leaves worth zipping. Everything else reaches lockstep by being
 -- materialized first, which is the honest cost of the linearity restriction.
 
 -- | Produce the live identifiers in an entity universe.
-universeProd :: CodeQ (Universe e) -> Producer (Id e) (Id e)
-universeProd u = Producer
+universeStream :: CodeQ (Universe e) -> Stream (Id e) (Id e)
+universeStream u = Stream
   { source       = u
   , initialState = \_ -> [|| 0 :: Int ||]
   , next         = \domain index yield skip done ->
@@ -539,8 +539,8 @@ universeProd u = Producer
   }
 
 -- | Produce every row of a total column with its bounded identifier.
-columnProd :: Elem r => CodeQ (Col e r) -> Producer (Id e) r
-columnProd c = Producer
+columnStream :: Elem r => CodeQ (Col e r) -> Stream (Id e) r
+columnStream c = Stream
   { source       = c
   , initialState = \_ -> [|| 0 :: Int ||]
   , next         = \sourceColumn index yield _skip done ->
@@ -556,7 +556,7 @@ columnProd c = Producer
   }
 
 --------------------------------------------------------------------------------
--- List-backed producers
+-- List-backed streams
 --------------------------------------------------------------------------------
 
 -- `Map`-backed leaves are the one place the engine is not flat. Hash-backed
@@ -564,8 +564,8 @@ columnProd c = Producer
 -- Nothing here can fuse into an array read, because there is no array.
 
 -- | Produce the elements of a generated list with unit keys.
-listProd :: CodeQ [a] -> Producer () a
-listProd xs = Producer
+listStream :: CodeQ [a] -> Stream () a
+listStream xs = Stream
   { source       = xs
   , initialState = \e -> e
   , next         = \_ s yield _skip done ->
@@ -575,8 +575,8 @@ listProd xs = Producer
   }
 
 -- | Produce a generated list of key/value pairs.
-pairProd :: CodeQ [(d, r)] -> Producer d r
-pairProd xs = Producer
+pairStream :: CodeQ [(d, r)] -> Stream d r
+pairStream xs = Stream
   { source       = xs
   , initialState = \e -> e
   , next         = \_ s yield _skip done ->
@@ -586,8 +586,8 @@ pairProd xs = Producer
   }
 
 -- | Produce zero or one value from a generated optional value.
-maybeProd :: CodeQ (Maybe a) -> Producer () a
-maybeProd m = Producer
+maybeStream :: CodeQ (Maybe a) -> Stream () a
+maybeStream m = Stream
   { source       = m
   , initialState = \e -> e
   , next         = \_ s yield _skip done ->

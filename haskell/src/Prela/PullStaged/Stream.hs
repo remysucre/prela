@@ -1,29 +1,29 @@
--- | Staged pull executor streams and their mode-free operations.
+-- | Staged streams, drives, probes, and their mode-free operations.
 --
--- t'Stream' and t'Lookup' are deliberately abstract.  The existential producer
+-- t'Drive' and t'Probe' are deliberately abstract. The existential stream
 -- state and the constructors used to assemble execution plans live in
 -- "Prela.PullStaged.Stream.Internal". Executor code uses this module; query
 -- authors use "Prela.PullStaged.Query". Re-exported Haddock comments describe
 -- the individual operations; this facade exists to keep representation
 -- constructors out of downstream modules.
 module Prela.PullStaged.Stream
-  ( Stream
-  , Lookup
+  ( Drive
+  , Probe
   , at
-    -- * Stream operators
-  , mapvS
-  , mapkS
-  , mapkVS
-  , filtS
-  , filtKV
-  , invStream
+    -- * Drive operators
+  , mapvD
+  , mapkD
+  , mapkVD
+  , filtD
+  , filtDKV
+  , invDrive
   , byValue
-  , whenS
-  , guardS
-  , catS
+  , whenD
+  , guardD
+  , catD
     -- * Consumers
-  , sfoldWhile
-  , sfold
+  , dfoldWhile
+  , dfold
   , foldAll
   , count
   , anyOf

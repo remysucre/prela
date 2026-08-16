@@ -59,7 +59,7 @@ module Prela.PullStaged.Query
   , leftCompose
   , union
   , disj
-  , invStream
+  , invDrive
     -- * Pure generation and materialization
   , Gen
   , share

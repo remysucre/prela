@@ -29,8 +29,8 @@ import Data.List (intercalate, sortBy, sortOn)
 import Data.Ord (comparing)
 import qualified Data.Vector as BV
 import Prela.PullStaged.Query
-  ( Relation, compose, diff, disj, groupBy, invStream, prod, restrict )
-import Prela.PullStaged.Stream (Lookup, Stream)
+  ( Relation, compose, diff, disj, groupBy, invDrive, prod, restrict )
+import Prela.PullStaged.Stream (Probe, Drive)
 import qualified Prela.PullStaged.Query as Q
 import Prela.Id (Id, idIndex)
 
@@ -291,7 +291,7 @@ render4 = joinLines . map fmt4 . sortOn fst
 -- supplier belong to the same nation.
 -- The group key carries the work: a lineitem maps to its supplier's nation name,
 -- with the ASIA restriction and the customer-nation equality pushed into the key
--- itself. A row whose keyed lookup yields nothing drops out, so the key doubles
+-- itself. A row whose keyed probe yields nothing drops out, so the key doubles
 -- as the filter and only the date window rides on the receiver.
 q5 :: Q.Query TPCHS [(Id Nation, (Double, ByteString))]
 q5 = Q.query $ \s ->
@@ -355,7 +355,7 @@ q7 = Q.query $ \s ->
   >>= \germanCustomers ->
   let supplierIn members = compose (liSupplier s) members
       customerIn members = compose (compose (liOrder s) (orderCustomer s)) members
-      directionOk :: Lookup (Id Lineitem) ()
+      directionOk :: Probe (Id Lineitem) ()
       directionOk = disj
         (supplierIn frenchSuppliers `prod` customerIn germanCustomers)
         (supplierIn germanSuppliers `prod` customerIn frenchCustomers)
@@ -439,14 +439,14 @@ render8 = joinLines . map fmt8 . sortOn fst
 -- "green", subtracting supply cost from discounted sales revenue.
 -- Hoist the selective @name contains green@ predicate to the part domain. The
 -- six-million-row lineitem scan then pays one bit test before any compound-key
--- lookup. Supply cost uses the staged hash fold rather than the general-purpose
+-- probe. Supply cost uses the staged hash fold rather than the general-purpose
 -- ordered @Map@ materializer, and is probed only once for each surviving row.
 q9 :: Q.Query TPCHS [((Id Nation, Int), (Double, ByteString))]
 q9 = Q.query $ \s -> Q.regex "green" >>= \green -> Q.bitset
     (partExtent s)
     (restrict (part s) (Q.rx green (partName s)))
   >>= \greenParts ->
-  let sc :: Stream (Id Part, Id Supplier) Double
+  let sc :: Drive (Id Part, Id Supplier) Double
       sc = compose (groupBy (restrict (partsupp s)
                                (compose (psPart s) greenParts))
                             (prod (psPart s) (psSupplier s)))
@@ -457,7 +457,7 @@ q9 = Q.query $ \s -> Q.regex "green" >>= \green -> Q.bitset
       greenLine :: Relation (Id Lineitem) (Id Part)
       greenLine = compose (liPart s) greenParts
 
-      grouped :: Stream (Id Nation, Int) (((Double, Double), Double), Double)
+      grouped :: Drive (Id Nation, Int) (((Double, Double), Double), Double)
       grouped =
         compose (groupBy (restrict (lineitem s) greenLine)
                          (prod (compose (liSupplier s) (supplierNation s))
@@ -532,7 +532,7 @@ render10 = joinLines . map fmt10
 -- scalar reference to it, without exposing that generated binding here.
 q11 :: Q.Query TPCHS [(Id Part, Double)]
 q11 = Q.query $ \s ->
-  let grouped :: Stream (Id Part) (Double, Int)
+  let grouped :: Drive (Id Part) (Double, Int)
       grouped =
         compose (groupBy (restrict (partsupp s)
                            (Q.eq "GERMANY"
@@ -600,7 +600,7 @@ render12 = joinLines . map fmt12 . sortOn fst
 -- it already skips the orderkey gaps, so the group key is the bare foreign key
 -- with no validity guard of its own.
 --
--- The second fold uses `invStream`, which flips the pairs without building an
+-- The second fold uses `invDrive`, which flips the pairs without building an
 -- index. Nothing here needs keyed access, so the enumeration-only form is the
 -- honest choice.
 q13 :: Q.Query TPCHS [(Int, Int)]
@@ -611,7 +611,7 @@ q13 = Q.query $ \s -> Q.regex "special.*requests" >>= \excluded -> Q.collect <$>
     (groupBy (restrict (orders s)
                (Q.nrx excluded (orderComment s)))
              (orderCustomer s))
-   >>= Q.groupFold (\a _ -> a + 1) 0 . invStream)
+   >>= Q.groupFold (\a _ -> a + 1) 0 . invDrive)
 
 -- | Order Q13 buckets by descending customer count then descending order count.
 cmp13 :: (Int, Int) -> (Int, Int) -> Ordering
@@ -714,7 +714,7 @@ q16 = Q.query $ \s -> Q.regex "Customer.*Complaints" >>= \complaint ->
       partCode = compose (psPart s) partCodes
       supplierOk :: Relation (Id PartSupp) (Id Supplier)
       supplierOk = compose (psSupplier s) acceptableSuppliers
-      grouped :: Stream Int (Id Supplier)
+      grouped :: Drive Int (Id Supplier)
       grouped =
         compose (groupBy (restrict (partsupp s) (prod partCode supplierOk))
                          partCode)
