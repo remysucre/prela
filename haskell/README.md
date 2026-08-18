@@ -22,9 +22,9 @@ data Stream k v = forall st src. Stream
   }
 ~~~
 
-`source` is the data used by the traversal (e.g., a column). Whenever a consumer asks the `Stream` to advance by calling its `next`, it will either `Yield` a value---in Prela, a row---or `Skip` without producing anything (which is important for operations like *filtering*). `Done` indicates that there are no more values to produce. `Yield` and `Skip` also produce a new state, `st`, that tells the stream how to resume. When scanning a column, for example, `state` would just be the index of the next row.
+`source` is the data used by the traversal (e.g., a column). Whenever a consumer asks the `Stream` to advance by calling its `next`, it will either `Yield` a value (in Prela, a row) or `Skip` without producing anything (which is important for operations like *filtering*). `Done` indicates that there are no more values to produce. `Yield` and `Skip` also produce a new state, `st`, that tells the stream how to resume. When scanning a column, for example, `st` would just be the index of the next row.
 
-In reality, Prela's `Stream` type is more complicated. One efficient way to implement pull streams is to pass *continuations* to the stream representing "what to do" in the `Yield`, `Skip`, and `Done` cases. This avoids building new `Step` values each time the stream is advanced (and therefore GC pauses down the line). Prela uses this representation:
+In reality, Prela's `Stream` type is more complicated. One efficient way to implement pull streams is to pass *continuations* to the stream representing "what to do" in the `Yield`, `Skip`, and `Done` cases. This avoids building new `Step` values each time the stream is advanced, reducing allocation (and therefore GC pauses down the line). Prela uses this representation:
 
 ~~~haskell
 data Stream k v = forall st src. Stream
@@ -52,9 +52,9 @@ data Drive k v
         (Drive k v)
 ~~~
 
-`Drive` describes how `Stream`s can be traversed. `Lin` wraps a basic `Stream`, and `Cat` runs one `Drive` after another. `Bind` says that whenever the first `Drive` yields a row, that row is passed to a function that constructs a new `Drive`. The new `Drive` is traversed, and then the first `Drive` is resumed.
+`Drive` describes all the ways to traverse a `Stream`: `Lin` wraps a basic `Stream`, and `Cat` runs one `Drive` after another. `Bind` says that whenever the first `Drive` yields a row, that row is passed to a function that constructs a new `Drive`. The new `Drive` is traversed, and then the first `Drive` is resumed.
 
-The `Drive` type can traverse every key-value pair in a relation, but sometimes we want to select a subset of a relation: getting the values associated with a given key, or checking that such values exist. For that, we have `Probe`:
+Sometimes, though, we want to select a subset of a relation, either getting the values associated with a given key or checking that such values exist. For that, we have `Probe`:
 
 ~~~haskell
 data Probe k v = Probe
@@ -63,7 +63,7 @@ data Probe k v = Probe
   }
 ~~~
 
-`Probe` provides two facilities. `at` returns a `Drive` over such values (returning the unit type for `k`, since it is already known), while `exists` checks whether any of them satisfy a predicate, stopping as soon as the predicate is satisfied. This is very similar to the Rust implementation, but here the two operations are stored together in a `Probe` value instead of being supplied by a trait implementation.
+`Probe` provides two facilities. `at` returns a `Drive` over such values (returning the unit type for `k`, since it is already known), while `exists` checks whether any of them satisfy a predicate, stopping as soon as the predicate is satisfied.
 
 `Drive` and `Probe` are two different ways of accessing a relation, and many operations on relations work for both: filtering a `Drive` produces another `Drive`; filtering a `Probe` produces another `Probe`. To describe all the operations that work for both types, we use the *type class* `Mode`:
 
@@ -82,7 +82,7 @@ class Mode q where
     ...
 ~~~
 
-`q` indicates either a concrete access mode---`Drive` or `Probe`, which each implement their version of the combinators in `Mode`---or a `Relation`, which doesn't impose an access mode yet:
+`q` is any representation with a `Mode` instance: either a `Drive` or `Probe`, which each implement their version of the combinators in `Mode`, or a `Relation`, which doesn't impose an access mode yet:
 
 ~~~haskell
 newtype Relation k v = Relation
@@ -90,7 +90,7 @@ newtype Relation k v = Relation
   }
 ~~~
 
-`Relation`s can be passed around in operations, but eventually they need to be used as either `Drive` or `Probe`. For this, we implement the additional type classes `Drivable` and `Probeable`:
+`Relation`s eventually need to be used as either `Drive` or `Probe`. To do this, we implement the additional type classes `Drivable` and `Probeable`:
 
 ~~~haskell
 class Drivable q where
@@ -107,4 +107,77 @@ class Probeable q where
   --- (... same instances for Probeable ...)
 ~~~
 
-`Drive` is already `Drivable`, and `Probe` is already `Probeable`; when we `drive` a `Relation`, we ask it for its `Drive` form.
+`Drive` is already `Drivable`, and `Probe` is already `Probeable`. When we `drive` a `Relation`, we ask it for its `Drive` form. Now we can write operations, or *combinators*, using the constructs we've defined:
+
+~~~haskell
+union :: (Drivable a, Drivable b) 
+  => a k v
+  -> b k v
+  -> Drive k v
+union l r = Cat (drive l) (drive r)
+~~~
+
+The type of `union` prescibes that both its arguments are `Drivable`, either `Relation`s or `Drive`s, and that the key and value types match. It returns a `Drive`. The implementation calls `drive` on both its left and right arguments to ensure that they are in the `Drive` form, then combines them using `Cat`. Similarly for `collect`:
+
+~~~haskell
+collect :: Drivable q => q k v -> [(k, v)]
+collect r = collectD (drive r)
+
+collectD :: Drive k v -> [(k, v)]
+collectD (Lin s) = collectS s
+collectD (Cat l r) = 
+  collectD l ++ collectD r
+--- (... same for Bind ...)
+
+collectS :: Stream k v -> [(k, v)]
+collectS (Stream src init next) =
+  loop (init src)
+  where
+    loop st =
+      next src st y s d
+
+    y k v st' =
+      (k, v) : loop st'
+
+    s st' = loop st'
+
+    d = []
+~~~
+
+`collect` has some additional complexity because it *consumes* a `Drive` and assembles its rows into a list, whereas `union` simply transforms two existing `Drive`s into one. `collect` recursively interprets the `Drive` until it reaches its `Lin` constructors, whereupon it repeatedly advances each `Stream` until that `Stream` reports `Done`.
+
+Let's apply these concepts in a concrete query. Suppose we declare a movie database in which each movie
+can refer to many cast and crew members:
+
+~~~haskell
+Schema "Database"
+  [ entity "Movie" "movies"
+      [ many "cast" (ref "Person")
+      , many "crew" (ref "Person")
+      ]
+  , entity "Person" "people"
+      [ one "name" str ]
+  ]
+~~~
+
+`many` means that a movie may be associated with any number of people. From
+this declaration, Prela generates the `Database` type and the `cast` and `crew`
+accessors, whose types look like this:
+
+~~~haskell
+cast :: Database -> Relation Movie Person
+crew :: Database -> Relation Movie Person
+~~~
+
+Finally, we can write a query:
+
+~~~haskell
+credits :: Database -> [(Movie, Person)]
+credits db =
+  collect $
+    union
+      (cast db)
+      (crew db)
+~~~
+
+Unfortunately, I've kind of lied to you about how Prela works.
