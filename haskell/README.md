@@ -52,7 +52,7 @@ data Drive k v
         (Drive k v)
 ~~~
 
-`Drive` describes all the ways to traverse a `Stream`: `Lin` wraps a basic `Stream`, and `Cat` runs one `Drive` after another. `Bind` says that whenever the first `Drive` yields a row, that row is passed to a function that constructs a new `Drive`. The new `Drive` is traversed, and then the first `Drive` is resumed.
+`Drive` describes a traversal composed of `Stream`s: `Lin` wraps a basic `Stream`, and `Cat` runs one `Drive` after another. `Bind` says that whenever the first `Drive` yields a row, that row is passed to a function that constructs a new `Drive`. The new `Drive` is traversed, and then the first `Drive` is resumed.
 
 Sometimes, though, we want to select a subset of a relation, either getting the values associated with a given key or checking that such values exist. For that, we have `Probe`:
 
@@ -180,4 +180,4 @@ credits db =
       (crew db)
 ~~~
 
-Unfortunately, I've kind of lied to you about how Prela works.
+Unfortunately, I've kind of lied to you about how Prela works. This representation is nice, but it doesn't actually fuse; as a result, the real Prela is implemented in a *staged* way, which makes the programming model more challenging than described here. Still, the underlying concepts are the same. I'll expand this document with the staging syntax as soon as I get the chance.

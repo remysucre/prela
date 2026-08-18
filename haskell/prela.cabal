@@ -25,11 +25,18 @@ library
                     , Prela.Storage
                     , Prela.Cache
                     , Prela.Schema
+                    , Prela.Pull.Stream
+                    , Prela.Pull.Ops
+                    , Prela.Pull.Query
                     , Prela.PullStaged.Stream
                     , Prela.PullStaged.Ops
                     , Prela.PullStaged.Query
     other-modules:    Prela.Storage.Internal
                     , Prela.Id.Internal
+                    , Prela.Pull.Stream.Internal
+                    , Prela.Pull.Relation
+                    , Prela.Pull.Predicate
+                    , Prela.Pull.Consumer
                     , Prela.PullStaged.Stream.Internal
                     , Prela.PullStaged.Scalar
                     , Prela.PullStaged.Relation
@@ -54,7 +61,7 @@ library
 test-suite prela-test
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
-    other-modules:    TinyStaged, StagedQueries
+    other-modules:    TinyStaged, StagedQueries, UnstagedQueries
     hs-source-dirs:   test
     build-depends:    base >=4.14 && <4.21
                     , bytestring >=0.10 && <0.13
@@ -84,6 +91,23 @@ executable prela-tpch
                     , vector >=0.12 && <0.14
     default-language: Haskell2010
     ghc-options:      -Wall
+
+-- A focused A/B test of query staging. Both versions run TPC-H Q6 over the
+-- same loaded columns and use the same Drive/Probe semantics.
+executable prela-staging-bench
+    main-is:          StagingMain.hs
+    other-modules:    TPCH.Decl
+                    , TPCH.StagedSchema
+                    , TPCH.StagedQueries
+                    , TPCH.UnstagedQueries
+    hs-source-dirs:   bench, tpch
+    build-depends:    base >=4.14 && <4.21
+                    , bytestring >=0.10 && <0.13
+                    , prela
+                    , template-haskell >=2.16 && <2.23
+                    , vector >=0.12 && <0.14
+    default-language: Haskell2010
+    ghc-options:      -Wall -rtsopts -with-rtsopts=-T
 
 -- A focused, runnable translation of the Rust README's JOB query 22a. It uses
 -- the same cache-format-v2 files produced by `cargo run --bin regen -- job`.

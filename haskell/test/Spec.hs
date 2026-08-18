@@ -32,6 +32,8 @@ import Prela.Storage
 import StagedQueries
   ( dictionaryQuery, loadedReferenceQuery, referenceQuery, schemaQuery
   , regexQuery, sharedRelationQuery, topKQuery, tupleHelpersQuery )
+import UnstagedQueries
+  ( unstagedLoadedReferences, unstagedQueries, unstagedReferences )
 import TinyStaged
   ( Kind, Movie, RefFixture, RefSource, RefTarget, TinyS, link_universe, loadTinyS
   , loadTinySChecked, refFixture )
@@ -228,6 +230,8 @@ testCacheAndStaging check = do
   let expected = (["Aliens", "Alien 3"], 2, ["Solaris"], ["Solaris"], 8.5)
   check "staged schema queries" (stagedQueries schema) expected
   check "fast staged schema queries" (stagedQueries fastSchema) expected
+  check "unstaged schema queries" (unstagedQueries schema) expected
+  check "fast unstaged schema queries" (unstagedQueries fastSchema) expected
   check "staged dictionary and dense distinct count"
     (stagedDictionary schema) (BV.fromList ["movie", "tv series"], [(0, 2)])
   check "staged bounded top-k"
@@ -255,13 +259,25 @@ testCacheAndStaging check = do
   check "staged boxed reference scan/keyed parity and validation"
     (indices boxedDriven, indices boxedKeyed)
     (expectedReferences, expectedReferences)
+  check "unstaged boxed reference scan/keyed parity and validation"
+    (let (driven, keyed) = unstagedReferences refFixture
+     in (indices driven, indices keyed))
+    (expectedReferences, expectedReferences)
   let expectedLoadedReferences = [(0, 0), (1, 0), (2, 1)]
   check "staged checked reference scan/keyed parity"
     (let (driven, keyed) = stagedLoadedReferences schema
      in (indices driven, indices keyed))
     (expectedLoadedReferences, expectedLoadedReferences)
+  check "unstaged checked reference scan/keyed parity"
+    (let (driven, keyed) = unstagedLoadedReferences schema
+     in (indices driven, indices keyed))
+    (expectedLoadedReferences, expectedLoadedReferences)
   check "staged word-backed reference scan/keyed parity"
     (let (driven, keyed) = stagedLoadedReferences fastSchema
+     in (indices driven, indices keyed))
+    (expectedLoadedReferences, expectedLoadedReferences)
+  check "unstaged word-backed reference scan/keyed parity"
+    (let (driven, keyed) = unstagedLoadedReferences fastSchema
      in (indices driven, indices keyed))
     (expectedLoadedReferences, expectedLoadedReferences)
 
