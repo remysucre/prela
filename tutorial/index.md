@@ -2,6 +2,9 @@
 title:  'Prela Tutorial'
 ...
 
+> [!TIP]
+> Changes made in any cell will be reflected when a later cell runs.
+
 <script id="rel-class" type="text/plain">
 class Rel:
     def __init__(self, pairs: list):
@@ -13,6 +16,8 @@ class Rel:
         return Rel(select(r, s))
 
     def where(self, other):
+        r = self.pairs
+        s = other.pairs
         return Rel(where(r, s))
 
     def __repr__(self):
@@ -35,9 +40,16 @@ title = Rel([(0, "Jaws"), (1, "Alien"), (2, "Tron")])
 
 ```python
 def select(r, s):
-  return [ (x, z) for x, yr in r for ys, z in s if yr == ys ]
+  result = []
+  for x, yr in r:
+    for ys, z in s:
+      if yr == ys:
+        result.append((x, z))
+  return result
 ```
 <run-snip lang="python" session="tutorial" hide-run></run-snip>
+
+It's basically `SELECT r.x, s.z FROM r, s WHERE r.y = s.y`
 
 For example: 
 
@@ -46,4 +58,22 @@ print(movie.select(title))
 ```
 <run-snip lang="python" session="tutorial"></run-snip>
 
+`.where` is restriction:
+
+```python
+def where(r, s):
+  keys = { y for y, _ in s }
+  return [ (x, y) for x, y in r if y in keys ]
+```
+<run-snip lang="python" session="tutorial" hide-run></run-snip>
+
+For example:
+
+```python
+print(movie.where(title))
+```
+<run-snip lang="python" session="tutorial"></run-snip>
+
 <script type="module" src="https://unpkg.com/@remywang/snip@0/snip.js"></script>
+
+Try removing `(2, "Tron")` from `title` and re-run the cell above.
