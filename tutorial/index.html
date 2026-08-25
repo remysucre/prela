@@ -276,24 +276,23 @@ build a toy version of Prela in Python to understand its core
 principles. By the end of this tutorial, you will understand how the
 following query works:</p>
 <div class="sourceCode" id="cb1"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>(movie.where(company.s(country).eq(<span class="st">&quot;[us]&quot;</span>)</span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>             <span class="op">&amp;</span> keyword.eq(<span class="st">&quot;character-name-in-title&quot;</span>))</span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>      .select(title <span class="op">&amp;</span> cast.s(person).s(alias).s(text)))</span></code></pre></div>
+class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>movie.where(company.s(country).eq(<span class="st">&quot;[us]&quot;</span>) <span class="op">&amp;</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>            keyword.eq(<span class="st">&quot;character-name-in-title&quot;</span>))</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>    .select(title <span class="op">&amp;</span> cast.s(person).s(alias).s(text))</span></code></pre></div>
 <p>You can probably already guess what it's doing: the query finds every
 movie produced by an American company and has a character name in its
 title, and outputs the title along with the alias for each cast member.
 Note that the <a
 href="https://github.com/gregrahn/join-order-benchmark/blob/master/16b.sql">equivalent
 query in SQL</a> spans over 20 lines.</p>
-<div class="note">
+<div class="tip">
 <div class="title">
-<p>Note</p>
+<p>Tip</p>
 </div>
 <p>This tutorial uses <a href="https://remy.wang/snip/">snip</a> to
 connect code cells into a notebook-like environment,<a href="#fn1"
-class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a> so
-you can edit the code in one cell and see it reflected in a later
-cell!</p>
+class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a>
+changes made in one cell are reflected in later cells.</p>
 </div>
 <script id="rel-class" type="text/plain">
 class Rel:
@@ -313,8 +312,8 @@ class Rel:
         s = other.pairs
         return Rel(where(r, s))
 
-    def __call__(self, x):
-        return call(self.pairs, x)
+    def __iter__(self):
+        return iter(self.pairs)
 
     def eq(self, v):
         return Rel(eq(self.pairs, v))
@@ -361,7 +360,7 @@ multiple columns. Suppose we have a table of movies:</p>
 </tr>
 </tbody>
 </table>
-<p>We can "shred" the 3-column table into 3 binary relations, each
+<p>We can decompose the 3-column table into 3 binary relations, each
 mapping the row number to the column value:</p>
 <div class="sourceCode" id="cb2"><pre
 class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>movie <span class="op">=</span> Rel([(<span class="dv">646</span>, <span class="dv">0</span>),</span>
@@ -383,54 +382,37 @@ the row number comes first in <code>title</code> and <code>year</code>,
 but second in <code>movie</code> (which is also not called
 <code>ID</code>). The reason for this will become clear later.</p>
 <p>The motivation for focusing on binary relations is that they
-generalize functions. Functions are very powerful and are the building
-blocks of programs. This is because functions <em>compose</em>, and the
-composition of binary relations turns out to generalize function
-composition.</p>
-<p>That is all very abstract, so let's go back to our examples. First, a
-binary relation is just a function that can "return" multiple results
-for every input. Because our relations are all finite, we can implement
-"calling" a relation by building a dictionary, then lookig up the
-argument from the dict:</p>
+generalize functions. Functions are powerful because they
+<em>compose</em>, making them the building blocks of programs. A
+function maps every input to a unique output, where as a relation can
+map an input to multiple different outputs. In a sense, a relation can
+be viewed as a <em>nondeterministic</em> function.</p>
+<p>That is all very abstract, so let's go back to our examples. To keep
+things simple, we will focus on relations mapping every input to exactly
+one output, i.e., they all happen to be functions. "Calling" a relation
+then boils down to turning that relation into a dictionary and looking
+up the value:</p>
 <div class="sourceCode" id="cb3"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> call(r, x):</span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  d <span class="op">=</span> {}</span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="cf">for</span> k, v <span class="kw">in</span> r:</span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>    d.setdefault(k, []).append(v)</span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> d.get(x, [])</span></code></pre></div>
-<p><run-snip lang="python" session="tutorial" hide-run></run-snip></p>
-<p>With a little bit of Python magic,<a href="#fn2" class="footnote-ref"
-id="fnref2" role="doc-noteref"><sup>2</sup></a> we can call the
-relations like so:</p>
-<div class="sourceCode" id="cb4"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie(<span class="dv">646</span>), title(<span class="dv">0</span>), year(<span class="dv">0</span>))</span></code></pre></div>
+class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="bu">dict</span>(movie)[<span class="dv">646</span>], <span class="bu">dict</span>(title)[<span class="dv">0</span>], <span class="bu">dict</span>(year)[<span class="dv">0</span>])</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
-<p>The results come back wrapped in lists because in general, a relation
-can map an input to multiple outputs.</p>
 <p>We're now ready to introduce the first and most important operator in
 Prela, the relational composition. Functional composition works by
 applying one function first, then applying the other one to the output.
 Relation composition is similar, and just applies the second relation to
-every output of the first. Relation composition is spelt as
-<code>select</code> in Prela:</p>
-<div class="sourceCode" id="cb5"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> select(r, s):</span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, z) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">for</span> z <span class="kw">in</span> call(s, y) ]</span></code></pre></div>
+the output of the first, skipping the inputs <code>s</code> has no
+output for. Relation composition is spelt as <code>select</code> in
+Prela:</p>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> select(r, s):</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  d <span class="op">=</span> <span class="bu">dict</span>(s)</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, d[y]) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">if</span> y <span class="kw">in</span> d ]</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial" hide-run></run-snip></p>
-<p>In other words, we join <code>r</code> and <code>s</code> on the
-second column of <code>r</code> and the first column of <code>s</code>,
-then keep the first column of <code>r</code> and second column of
-<code>s</code>; in SQL:</p>
-<div class="sourceCode" id="cb6"><pre
-class="sourceCode sql"><code class="sourceCode sql"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="kw">SELECT</span> r.x, s.z </span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>  <span class="kw">FROM</span> r, s </span>
-<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a> <span class="kw">WHERE</span> r.y <span class="op">=</span> s.y</span></code></pre></div>
 <p>Using our example, the query below composes <code>movie</code> with
 <code>title</code> to get a relation mapping each movie ID to its
-title:<a href="#fn3" class="footnote-ref" id="fnref3"
-role="doc-noteref"><sup>3</sup></a></p>
-<div class="sourceCode" id="cb7"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.select(title))</span></code></pre></div>
+title:<a href="#fn2" class="footnote-ref" id="fnref2"
+role="doc-noteref"><sup>2</sup></a></p>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.select(title))</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
 <p>Try changing <code>title</code> to <code>year</code> and see what you
 get. The power of composition really shows when we chain together
@@ -498,37 +480,37 @@ movie companies:</p>
 </table>
 </div>
 </div>
-<p>Shredding these the same way gives us four more relations:</p>
-<div class="sourceCode" id="cb8"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>company <span class="op">=</span> Rel([(<span class="dv">0</span>, <span class="dv">0</span>),</span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">1</span>, <span class="dv">1</span>),</span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">2</span>, <span class="dv">2</span>)])</span>
-<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>id2row  <span class="op">=</span> Rel([(<span class="dv">0</span>, <span class="dv">0</span>),</span>
-<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">1</span>, <span class="dv">1</span>),</span>
-<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">2</span>, <span class="dv">2</span>)])</span>
-<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a>name    <span class="op">=</span> Rel([(<span class="dv">0</span>, <span class="st">&quot;Paramount&quot;</span>),</span>
-<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">1</span>, <span class="st">&quot;Toho&quot;</span>),</span>
-<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">2</span>, <span class="st">&quot;Warner Bros.&quot;</span>)])</span>
-<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a>country <span class="op">=</span> Rel([(<span class="dv">0</span>, <span class="st">&quot;[us]&quot;</span>),</span>
-<span id="cb8-14"><a href="#cb8-14" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">1</span>, <span class="st">&quot;[jp]&quot;</span>),</span>
-<span id="cb8-15"><a href="#cb8-15" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">2</span>, <span class="st">&quot;[us]&quot;</span>)])</span></code></pre></div>
+<p>Decomposing the same way gives us four more relations:</p>
+<div class="sourceCode" id="cb6"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>company <span class="op">=</span> Rel([(<span class="dv">0</span>, <span class="dv">0</span>),</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">1</span>, <span class="dv">1</span>),</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">2</span>, <span class="dv">2</span>)])</span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>id2row  <span class="op">=</span> Rel([(<span class="dv">0</span>, <span class="dv">0</span>),</span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">1</span>, <span class="dv">1</span>),</span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">2</span>, <span class="dv">2</span>)])</span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>name    <span class="op">=</span> Rel([(<span class="dv">0</span>, <span class="st">&quot;Paramount&quot;</span>),</span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">1</span>, <span class="st">&quot;Toho&quot;</span>),</span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">2</span>, <span class="st">&quot;Warner Bros.&quot;</span>)])</span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a>country <span class="op">=</span> Rel([(<span class="dv">0</span>, <span class="st">&quot;[us]&quot;</span>),</span>
+<span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">1</span>, <span class="st">&quot;[jp]&quot;</span>),</span>
+<span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">2</span>, <span class="st">&quot;[us]&quot;</span>)])</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial" hide-run></run-snip></p>
 <p>Then, we can find the country of a movie's production company by a
 chain of <code>.select</code> calls, where we abbreviate with
 <code>.s</code>:</p>
-<div class="sourceCode" id="cb9"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.s(company).s(id2row).s(country))</span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.s(company).s(id2row).s(country))</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
 <p>Because joining via a foreign key almost always require "resolving"
 an ID to a row, Prela automatically inserts that step so one can write
-the following,<a href="#fn4" class="footnote-ref" id="fnref4"
-role="doc-noteref"><sup>4</sup></a> which reads just like "a movie's
+the following,<a href="#fn3" class="footnote-ref" id="fnref3"
+role="doc-noteref"><sup>3</sup></a> which reads just like "a movie's
 company's country"!</p>
-<div class="sourceCode" id="cb10"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.s(company).s(country))</span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.s(company).s(country))</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
 <p>Our company IDs happen to be their own row numbers, which makes
 <code>id2row</code> the identity relation --- try deleting
@@ -543,92 +525,99 @@ operator.</p>
 <code>r</code> against the first column of <code>s</code>,
 <code>&amp;</code> joins <code>r</code> and <code>s</code> on the first
 column of <em>both</em>, then pairs up their second columns:</p>
-<div class="sourceCode" id="cb11"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> and_(r, s):</span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, (y, z)) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">for</span> z <span class="kw">in</span> call(s, x) ]</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> and_(r, s):</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  d <span class="op">=</span> <span class="bu">dict</span>(s)</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, (y, d[x])) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">if</span> x <span class="kw">in</span> d ]</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial" hide-run></run-snip></p>
 <p>So <code>title &amp; year</code> maps every movie row to both of its
 attributes at once:</p>
-<div class="sourceCode" id="cb12"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(title <span class="op">&amp;</span> year)</span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(title <span class="op">&amp;</span> year)</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
 <p>Note that the result is still a binary relation, <code>&amp;</code>
 simply nests the values into a tuple. That means we can keep composing
 it like any other relation, which is how a query returns more than one
 column:</p>
-<div class="sourceCode" id="cb13"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.select(title <span class="op">&amp;</span> year))</span></code></pre></div>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.select(title <span class="op">&amp;</span> year))</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
 <p>Next, we need a way to say <em>which</em> rows we want. The predicate
 <code>.eq(v)</code> filters a relation, keeping only the pairs whose
 second column equals <code>v</code>:</p>
-<div class="sourceCode" id="cb14"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> eq(r, v):</span>
-<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, y) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">if</span> y <span class="op">==</span> v ]</span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> eq(r, v):</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, y) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">if</span> y <span class="op">==</span> v ]</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial" hide-run></run-snip></p>
 <p>On its own, <code>.eq</code> only narrows the relation it is applied
 to. The query below still maps movie rows to countries, just no longer
 all of them:</p>
-<div class="sourceCode" id="cb15"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(company.s(country).eq(<span class="st">&quot;[us]&quot;</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(company.s(country).eq(<span class="st">&quot;[us]&quot;</span>))</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
 <p>Finally, the <em>restriction</em> operator <code>.where</code> takes
 a predicate like the one above and filters another relation with it.</p>
-<div class="sourceCode" id="cb16"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> where(r, s):</span>
-<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>  keys <span class="op">=</span> { k <span class="cf">for</span> k, _ <span class="kw">in</span> s }</span>
-<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, y) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">if</span> y <span class="kw">in</span> keys ]</span></code></pre></div>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> where(r, s):</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  d <span class="op">=</span> <span class="bu">dict</span>(s)</span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, y) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">if</span> y <span class="kw">in</span> d ]</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial" hide-run></run-snip></p>
 <p>Handing our predicate to <code>.where</code> turns it into a filter
 on movies:</p>
-<div class="sourceCode" id="cb17"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>american <span class="op">=</span> company.s(country).eq(<span class="st">&quot;[us]&quot;</span>)</span>
-<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.where(american))</span></code></pre></div>
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.where(company.s(country).eq(<span class="st">&quot;[us]&quot;</span>)))</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
-<p>Reading the two lines together gives us "movies where the company's
-country is [us]", which is once again very close to plain English.</p>
-<p>One last trick: becuase <code>&amp;</code> joins its arguments, it
-doubles as logical conjunction once nested inside a
-<code>.where</code>:</p>
-<div class="sourceCode" id="cb18"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.where(american <span class="op">&amp;</span> year.eq(<span class="dv">1942</span>)))</span></code></pre></div>
+<p>This reads right off the code: "movies where the company's country is
+[us]".</p>
+<p>The query is getting long, so let's refactor it:</p>
+<div class="sourceCode" id="cb16"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>american <span class="op">=</span> company.s(country).eq(<span class="st">&quot;[us]&quot;</span>)</span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.where(american))</span></code></pre></div>
+<p><run-snip lang="python" session="tutorial"></run-snip></p>
+<p>Wait, did we just create a <a
+href="https://www.postgresql.org/docs/current/queries-with.html">CTE</a>
+with a plain Python variable? Yes! This is possible because Prela
+queries are made up of operators, and every subexpression is a valid
+query.</p>
+<p>How do we have multiple conditions? A happy accident is that, becuase
+<code>&amp;</code> joins its arguments, it doubles as logical
+conjunction once nested inside a <code>.where</code>:</p>
+<div class="sourceCode" id="cb17"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.where(american <span class="op">&amp;</span> year.eq(<span class="dv">1942</span>)))</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
 <p>Only Casablanca is American <em>and</em> from 1942. Putting it all
 together, <code>.select</code> then fetches whatever columns we want to
 see for the movies that survived the filter:</p>
-<div class="sourceCode" id="cb19"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.where(american <span class="op">&amp;</span> year.eq(<span class="dv">1942</span>)).select(title <span class="op">&amp;</span> year))</span></code></pre></div>
+<div class="sourceCode" id="cb18"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.where(american <span class="op">&amp;</span> year.eq(<span class="dv">1942</span>)).select(title <span class="op">&amp;</span> year))</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
 <p>We can even push the predicate into the <code>select</code> clause
 for a cleaner query:</p>
-<div class="sourceCode" id="cb20"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.where(american).select(title <span class="op">&amp;</span> year.eq(<span class="dv">1942</span>)))</span></code></pre></div>
+<div class="sourceCode" id="cb19"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.where(american).select(title <span class="op">&amp;</span> year.eq(<span class="dv">1942</span>)))</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
 <p>And that's pretty much the whole language! Prela also supports
-grouping and aggregation, and we are working a full documentation for
-the language. As an excercise,<a href="#fn5" class="footnote-ref"
-id="fnref5" role="doc-noteref"><sup>5</sup></a> you can try to define
-the necessary relations so that the snippet at the top runs. If you run
-into issues, try to break down the query - every subexpression in Prela
-is a valid query.</p>
-<div class="sourceCode" id="cb21"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="co"># keyword = ...</span></span>
-<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="co"># ...</span></span>
-<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.where(company.s(country).eq(<span class="st">&quot;[us]&quot;</span>)</span>
-<span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a>                  <span class="op">&amp;</span> keyword.eq(<span class="st">&quot;character-name-in-title&quot;</span>))</span>
-<span id="cb21-6"><a href="#cb21-6" aria-hidden="true" tabindex="-1"></a>          .select(title <span class="op">&amp;</span> cast.s(person).s(alias).s(text)))</span></code></pre></div>
+grouping and aggregation, and other common operators. We are working a
+full documentation for the language, so for now you can refer to our <a
+href="https://arxiv.org/abs/2607.26356">paper</a> for more details. As
+an excercise,<a href="#fn4" class="footnote-ref" id="fnref4"
+role="doc-noteref"><sup>4</sup></a> you can try to define the necessary
+relations so that the snippet at the top runs.</p>
+<div class="sourceCode" id="cb20"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="co"># keyword = ...</span></span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="co"># ...</span></span>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.where(company.s(country).eq(<span class="st">&quot;[us]&quot;</span>) <span class="op">&amp;</span></span>
+<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a>                  keyword.eq(<span class="st">&quot;character-name-in-title&quot;</span>))</span>
+<span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a>          .select(title <span class="op">&amp;</span> cast.s(person).s(alias).s(text)))</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
-<!-- Solution: `cast` is deliberately multi-valued, giving The Godfather two
-     cast members and therefore two rows of output.
+<!-- Solution:
 
 keyword = Rel([(0, "character-name-in-title"),
                (1, "samurai"),
                (2, "wwii")])
 
-cast    = Rel([(0, 0),
-               (0, 1),
-               (2, 2)])
+cast    = Rel([(0, 0), (1, 1), (2, 2)])
 
 person  = Rel([(0, 0), (1, 1), (2, 2)])
 
@@ -638,14 +627,13 @@ text    = Rel([(0, "Brando, Marlon"),
                (1, "Pacino, Al"),
                (2, "Bogart, Humphrey")])
 
-print(movie.where(company.s(country).eq("[us]")
-                  & keyword.eq("character-name-in-title"))
+print(movie.where(company.s(country).eq("[us]") &
+                  keyword.eq("character-name-in-title"))
            .select(title & cast.s(person).s(alias).s(text)))
 
 which prints:
 
 646, ('The Godfather', 'Brando, Marlon')
-646, ('The Godfather', 'Pacino, Al')
 -->
 
 <script type="module" src="https://unpkg.com/@remywang/snip@0/snip.js"></script>
@@ -657,16 +645,13 @@ role="doc-endnotes">
 <li id="fn1"><p>Different from e.g. Jupyter, snip always executes from
 the beginning from scratch to avoid corrupted state.<a href="#fnref1"
 class="footnote-back" role="doc-backlink">↩︎</a></p></li>
-<li id="fn2"><p>We're just forwarding <code>Rel.__call__</code> to
-<code>call()</code>.<a href="#fnref2" class="footnote-back"
-role="doc-backlink">↩︎</a></p></li>
-<li id="fn3"><p>The <code>.select</code> method syntax uses the same
+<li id="fn2"><p>The <code>.select</code> method syntax uses the same
 trick of forwarding <code>Rel.select</code> to <code>select()</code>.<a
+href="#fnref2" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn3"><p>Here we cheat by using the row number as company IDs.<a
 href="#fnref3" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
-<li id="fn4"><p>Here we cheat by using the row number as company IDs.<a
-href="#fnref4" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
-<li id="fn5"><p>A solution is hidden <em>somewhere</em> on this page
-;)<a href="#fnref5" class="footnote-back"
+<li id="fn4"><p>A solution is hidden <em>somewhere</em> on this page
+;)<a href="#fnref4" class="footnote-back"
 role="doc-backlink">↩︎</a></p></li>
 </ol>
 </section>

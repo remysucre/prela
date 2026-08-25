@@ -11,9 +11,9 @@ In this short tutorial, we will build a toy version of Prela
 By the end of this tutorial, you will understand how the following query works:
 
 ```python
-(movie.where(company.s(country).eq("[us]")
-             & keyword.eq("character-name-in-title"))
-      .select(title & cast.s(person).s(alias).s(text)))
+movie.where(company.s(country).eq("[us]") &
+            keyword.eq("character-name-in-title"))
+    .select(title & cast.s(person).s(alias).s(text))
 ```
 
 You can probably already guess what it's doing: the query finds every movie
@@ -21,9 +21,9 @@ You can probably already guess what it's doing: the query finds every movie
  and outputs the title along with the alias for each cast member.
 Note that the [equivalent query in SQL](https://github.com/gregrahn/join-order-benchmark/blob/master/16b.sql) spans over 20 lines.
 
-> [!NOTE]
+> [!TIP]
 > This tutorial uses [snip](https://remy.wang/snip/) to connect code cells into a notebook-like
-> environment,[^1] so you can edit the code in one cell and see it reflected in a later cell!
+> environment,[^1] changes made in one cell are reflected in later cells.
 
 [^1]: Different from e.g. Jupyter, snip always executes from the beginning from scratch to avoid corrupted state.
 
@@ -45,8 +45,8 @@ class Rel:
         s = other.pairs
         return Rel(where(r, s))
 
-    def __call__(self, x):
-        return call(self.pairs, x)
+    def __iter__(self):
+        return iter(self.pairs)
 
     def eq(self, v):
         return Rel(eq(self.pairs, v))
@@ -75,7 +75,7 @@ Suppose we have a table of movies:
 | 478 | Seven Samurai | 1954 |
 | 583 | Casablanca    | 1942 |
 
-We can "shred" the 3-column table into 3 binary relations, each mapping the row number to the column value:
+We can decompose the 3-column table into 3 binary relations, each mapping the row number to the column value:
 
 ```python
 movie = Rel([(646, 0),
@@ -98,60 +98,38 @@ Note how the row number comes first in `title` and `year`, but second in `movie`
 The reason for this will become clear later.
 
 The motivation for focusing on binary relations is that they generalize functions.
-Functions are very powerful and are the building blocks of programs.
-This is because functions *compose*, and the composition of binary relations turns out
- to generalize function composition.
+Functions are powerful because they *compose*,
+ making them the building blocks of programs.
+A function maps every input to a unique output,
+ where as a relation can map an input to multiple different outputs.
+In a sense, a relation can be viewed as a *nondeterministic* function.
 
 That is all very abstract, so let's go back to our examples.
-First, a binary relation is just a function that can "return" multiple results for every input.
-Because our relations are all finite, we can implement "calling" a relation
- by building a dictionary, then lookig up the argument from the dict:
+To keep things simple, we will focus on
+ relations mapping every input to exactly one output, 
+ i.e., they all happen to be functions.
+"Calling" a relation then boils down to turning that relation
+ into a dictionary and looking up the value: 
 
 ```python
-def call(r, x):
-  d = {}
-  for k, v in r:
-    d.setdefault(k, []).append(v)
-  return d.get(x, [])
-```
-<run-snip lang="python" session="tutorial" hide-run></run-snip>
-
-With a little bit of Python magic,[^2] we can call the relations like so: 
-
-[^2]: We're just forwarding `Rel.__call__` to `call()`. 
-
-```python
-print(movie(646), title(0), year(0))
+print(dict(movie)[646], dict(title)[0], dict(year)[0])
 ```
 <run-snip lang="python" session="tutorial"></run-snip>
-
-The results come back wrapped in lists because in general,
- a relation can map an input to multiple outputs.
 
 We're now ready to introduce the first and most important
  operator in Prela, the relational composition.
 Functional composition works by applying one function first, then applying
  the other one to the output.
 Relation composition is similar, and just applies the second relation
- to every output of the first.
+ to the output of the first, skipping the inputs `s` has no output for.
 Relation composition is spelt as `select` in Prela:
 
 ```python
 def select(r, s):
-  return [ (x, z) for x, y in r for z in call(s, y) ]
+  d = dict(s)
+  return [ (x, d[y]) for x, y in r if y in d ]
 ```
 <run-snip lang="python" session="tutorial" hide-run></run-snip>
-
-In other words, we join `r` and `s` on the second column of `r`
- and the first column of `s`,
- then keep the first column of `r` and second column of `s`;
- in SQL: 
-
-```sql
-SELECT r.x, s.z 
-  FROM r, s 
- WHERE r.y = s.y
-```
 
 Using our example, the query below composes `movie` with `title`
  to get a relation mapping each movie ID to its title:[^3]
@@ -187,7 +165,7 @@ Suppose we add a foreign key column mapping each movie to its production company
 :::
 :::::
 
-Shredding these the same way gives us four more relations:
+Decomposing the same way gives us four more relations:
 
 ```python
 company = Rel([(0, 0),
@@ -243,7 +221,8 @@ Where `.select` matches the second column of `r` against the first column of
 
 ```python
 def and_(r, s):
-  return [ (x, (y, z)) for x, y in r for z in call(s, x) ]
+  d = dict(s)
+  return [ (x, (y, d[x])) for x, y in r if x in d ]
 ```
 <run-snip lang="python" session="tutorial" hide-run></run-snip>
 
@@ -287,12 +266,21 @@ Finally, the *restriction* operator `.where` takes a predicate like the one abov
 
 ```python
 def where(r, s):
-  keys = { k for k, _ in s }
-  return [ (x, y) for x, y in r if y in keys ]
+  d = dict(s)
+  return [ (x, y) for x, y in r if y in d ]
 ```
 <run-snip lang="python" session="tutorial" hide-run></run-snip>
 
 Handing our predicate to `.where` turns it into a filter on movies:
+
+```python
+print(movie.where(company.s(country).eq("[us]")))
+```
+<run-snip lang="python" session="tutorial"></run-snip>
+
+This reads right off the code: "movies where the company's country is [us]".
+
+The query is getting long, so let's refactor it: 
 
 ```python
 american = company.s(country).eq("[us]")
@@ -300,10 +288,14 @@ print(movie.where(american))
 ```
 <run-snip lang="python" session="tutorial"></run-snip>
 
-Reading the two lines together gives us "movies where the company's country
- is [us]", which is once again very close to plain English.
+Wait, did we just create a [CTE](https://www.postgresql.org/docs/current/queries-with.html)
+ with a plain Python variable?
+Yes! This is possible because Prela queries are made up of operators,
+ and every subexpression is a valid query.
 
-One last trick: becuase `&` joins its arguments,
+How do we have multiple conditions?
+A happy accident is that, 
+ becuase `&` joins its arguments,
  it doubles as logical conjunction once nested inside a `.where`:
 
 ```python
@@ -329,10 +321,12 @@ print(movie.where(american).select(title & year.eq(1942)))
 <run-snip lang="python" session="tutorial"></run-snip>
 
 And that's pretty much the whole language!
-Prela also supports grouping and aggregation, and we are working a full documentation for the language.
+Prela also supports grouping and aggregation,
+ and other common operators.
+We are working a full documentation for the language,
+ so for now you can refer to our [paper](https://arxiv.org/abs/2607.26356) for more details.
 As an excercise,[^5] you can try to define the necessary relations so that the
  snippet at the top runs.
-If you run into issues, try to break down the query - every subexpression in Prela is a valid query.
 
 [^5]: A solution is hidden *somewhere* on this page ;)
 
@@ -340,22 +334,19 @@ If you run into issues, try to break down the query - every subexpression in Pre
 # keyword = ...
 # ...
 
-print(movie.where(company.s(country).eq("[us]")
-                  & keyword.eq("character-name-in-title"))
+print(movie.where(company.s(country).eq("[us]") &
+                  keyword.eq("character-name-in-title"))
           .select(title & cast.s(person).s(alias).s(text)))
 ```
 <run-snip lang="python" session="tutorial"></run-snip>
 
-<!-- Solution: `cast` is deliberately multi-valued, giving The Godfather two
-     cast members and therefore two rows of output.
+<!-- Solution:
 
 keyword = Rel([(0, "character-name-in-title"),
                (1, "samurai"),
                (2, "wwii")])
 
-cast    = Rel([(0, 0),
-               (0, 1),
-               (2, 2)])
+cast    = Rel([(0, 0), (1, 1), (2, 2)])
 
 person  = Rel([(0, 0), (1, 1), (2, 2)])
 
@@ -365,14 +356,13 @@ text    = Rel([(0, "Brando, Marlon"),
                (1, "Pacino, Al"),
                (2, "Bogart, Humphrey")])
 
-print(movie.where(company.s(country).eq("[us]")
-                  & keyword.eq("character-name-in-title"))
+print(movie.where(company.s(country).eq("[us]") &
+                  keyword.eq("character-name-in-title"))
            .select(title & cast.s(person).s(alias).s(text)))
 
 which prints:
 
 646, ('The Godfather', 'Brando, Marlon')
-646, ('The Godfather', 'Pacino, Al')
 -->
 
 <script type="module" src="https://unpkg.com/@remywang/snip@0/snip.js"></script>
