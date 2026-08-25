@@ -11,7 +11,7 @@ index.html: README.md gh-alerts.html
 tutorial/index.html: tutorial/index.md
 	pandoc tutorial/index.md \
 	  -V mainfont=sans-serif \
-	  --from gfm+alerts --to html5 \
+	  --from gfm+alerts+fenced_divs --to html5 \
 	  --include-in-header=gh-alerts.html \
 	  --metadata pagetitle="Prela Tutorial" \
 	  -s -o tutorial/index.html

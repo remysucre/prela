@@ -2,7 +2,7 @@
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head>
   <meta charset="utf-8" />
-  <meta name="generator" content="pandoc 3.10.2" />
+  <meta name="generator" content="pandoc 3.10" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
   <title>Prela Tutorial</title>
   <style>
@@ -42,6 +42,7 @@
       body {
         background-color: transparent;
         color: black;
+        font-size: 12pt;
       }
       p, h2, h3 {
         orphans: 3;
@@ -267,79 +268,32 @@
 <header id="title-block-header">
 <h1 class="title">Prela Tutorial</h1>
 </header>
-<p>Hello! If you've been looking to learn more about <a
-href="https://github.com/remysucre/prela">Prela</a>, a new query
-language developed by the <a href="https://remy.wang/">Wang Lab</a> at
-UCLA, you've come to the right place! Prela is a clean, efficient
-language that outdoes many query language competitors.</p>
-<p>In this interactive tutorial, we'll go step by step through Prela's
-operators, explaining the idea behind each one and showing exactly what
-it computes. Prela queries are Rust code, so they need to be compiled
-ahead of time and can't be run live in a page like this one. Instead,
-for each operator below we've paired a small, honest reimplementation in
-plain Python, code you can read, run, and edit right here in your
-browser, to make each operator's semantics concrete instead of
-abstract.</p>
-<p>We're aiming to explain even the technical parts in as simple and
-easy-to-read way as possible. If something feels like a lot, that's on
-us to fix, not on you.</p>
-<p>Before you start, it's helpful to have some familiarity with:</p>
-<ul>
-<li>Python</li>
-<li>SQL</li>
-</ul>
-<div class="note">
-<div class="title">
-<p>Note</p>
-</div>
-<p>This tutorial is designed to act like a Jupyter notebook, changes in
-a cell may affect following cells!</p>
-</div>
-<p>Every operator below is really two things: a plain function that does
-the actual computation on lists of <code>(key, value)</code> pairs, and
-a small <code>Rel</code> class that wraps those pairs so you can chain
-operators with dot-syntax, <code>r.select(s)</code> instead of
-<code>select(r, s)</code>. Here is a portion of the <code>Rel</code>
-class, so you can get a feel of how the functions we'll be looking at in
-the rest of the tutorial fit logically together:</p>
+<p><a href="https://prela-lang.org">Prela</a> is a new query language
+being developed at the <a href="https://remy.wang">RePL lab</a> at UCLA.
+The language is quite different from SQL, but its key ideas are very
+simple and (we think) elegant. In this short tutorial, we will build a
+toy version of Prela in Python to understand its core principles. By the
+end of this tutorial, you will understand how the following query
+works:</p>
 <div class="sourceCode" id="cb1"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Rel:</span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>    <span class="kw">def</span> <span class="fu">__init__</span>(<span class="va">self</span>, pairs: <span class="bu">list</span>):</span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>        <span class="va">self</span>.pairs <span class="op">=</span> pairs</span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>    <span class="kw">def</span> select(<span class="va">self</span>, other):</span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>        r <span class="op">=</span> <span class="va">self</span>.pairs</span>
-<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>        s <span class="op">=</span> other.pairs</span>
-<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> Rel(select(r, s))</span>
-<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>    <span class="kw">def</span> where(<span class="va">self</span>, other):</span>
-<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>        r <span class="op">=</span> <span class="va">self</span>.pairs</span>
-<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>        s <span class="op">=</span> other.pairs</span>
-<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> Rel(where(r, s))</span>
-<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>    <span class="kw">def</span> <span class="fu">__repr__</span>(<span class="va">self</span>):</span>
-<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="ss">f&quot;Rel(</span><span class="sc">{</span><span class="va">self</span><span class="sc">.</span>pairs<span class="sc">!r}</span><span class="ss">)&quot;</span></span>
-<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>    <span class="kw">def</span> <span class="fu">__eq__</span>(<span class="va">self</span>, other):</span>
-<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="bu">isinstance</span>(other, Rel) <span class="kw">and</span> <span class="bu">set</span>(<span class="va">self</span>.pairs) <span class="op">==</span> <span class="bu">set</span>(other.pairs)</span></code></pre></div>
-<p>Each method unwraps two <code>Rel</code>s down to their raw
-pair-lists (<code>self.pairs</code>, <code>other.pairs</code>), calls
-the real function (the one you'll actually see explained below), and
-wraps the result back into a <code>Rel</code> so it can be chained
-further.</p>
+class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>(movie.where(company.s(country).eq(<span class="st">&quot;[us]&quot;</span>)</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>             <span class="op">&amp;</span> keyword.eq(<span class="st">&quot;character-name-in-title&quot;</span>))</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>      .select(title <span class="op">&amp;</span> cast.s(person).s(alias).s(text)))</span></code></pre></div>
+<p>You can probably already guess what it's doing: the query finds every
+movie produced by an American company and has a character name in its
+title, and outputs the title along with the alias for each cast member.
+Note that the <a
+href="https://github.com/gregrahn/join-order-benchmark/blob/master/16b.sql">equivalent
+query in SQL</a> spans over 20 lines.</p>
 <div class="note">
 <div class="title">
 <p>Note</p>
 </div>
-<p><code>r.select(s)</code> and <code>select(r, s)</code> end up doing
-the same work, but they're not the same function. When you call a method
-with <code>object.method(arg)</code>, Python automatically passes
-<code>object</code> in as the method's first parameter (conventionally
-called <code>self</code>), you never write it yourself. So,
-<code>movie.select(title)</code> really means "call
-<code>.select()</code> with <code>self=movie</code> and
-<code>other=title</code>", it just looks like one argument because the
-first one is supplied by the dot.</p>
+<p>This tutorial uses <a href="https://remy.wang/snip/">snip</a> to
+connect code cells into a notebook-like environment,<a href="#fn1"
+class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a> so
+you can edit the code in one cell and see it reflected in a later
+cell!</p>
 </div>
 <script id="rel-class" type="text/plain">
 class Rel:
@@ -351,200 +305,370 @@ class Rel:
         s = other.pairs
         return Rel(select(r, s))
 
+    def s(self, other):
+        return self.select(other)
+
     def where(self, other):
         r = self.pairs
         s = other.pairs
         return Rel(where(r, s))
 
+    def __call__(self, x):
+        return call(self.pairs, x)
+
     def eq(self, v):
         return Rel(eq(self.pairs, v))
 
-    def ne(self, v):
-        return Rel(ne(self.pairs, v))
-
-    def gt(self, v):
-        return Rel(gt(self.pairs, v))
-
-    def lt(self, v):
-        return Rel(lt(self.pairs, v))
-
-    def ge(self, v):
-        return Rel(ge(self.pairs, v))
-
-    def le(self, v):
-        return Rel(le(self.pairs, v))
-
-    def between(self, lo, hi):
-        return Rel(between(self.pairs, lo, hi))
+    def __and__(self, other):
+        return Rel(and_(self.pairs, other.pairs))
 
     def __repr__(self):
-        return f"Rel({self.pairs!r})"
+        if not self.pairs:
+            return "(empty)"
+        return "\n".join(f"{x}, {y}" for x, y in self.pairs)
 
     def __eq__(self, other):
         return isinstance(other, Rel) and set(self.pairs) == set(other.pairs)
 </script>
 
-<p>Let's load some data:</p>
+<p>The first special thing about Prela is that there are only
+<em>binary</em> relations, i.e., tables with two columns. That may sound
+very limiting at first, but it's easy to "binarize" a wide table with
+multiple columns. Suppose we have a table of movies:</p>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>title</th>
+<th>year</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>646</td>
+<td>The Godfather</td>
+<td>1972</td>
+</tr>
+<tr>
+<td>478</td>
+<td>Seven Samurai</td>
+<td>1954</td>
+</tr>
+<tr>
+<td>583</td>
+<td>Casablanca</td>
+<td>1942</td>
+</tr>
+</tbody>
+</table>
+<p>We can "shred" the 3-column table into 3 binary relations, each
+mapping the row number to the column value:</p>
 <div class="sourceCode" id="cb2"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>movie <span class="op">=</span> Rel([(<span class="dv">0</span>, <span class="dv">0</span>),</span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>             (<span class="dv">1</span>, <span class="dv">1</span>),</span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>             (<span class="dv">2</span>, <span class="dv">2</span>)])</span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>title <span class="op">=</span> Rel([(<span class="dv">0</span>, <span class="st">&quot;Jaws&quot;</span>),</span>
-<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>             (<span class="dv">1</span>, <span class="st">&quot;Alien&quot;</span>),</span>
-<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>             (<span class="dv">2</span>, <span class="st">&quot;Tron&quot;</span>)])</span></code></pre></div>
+class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>movie <span class="op">=</span> Rel([(<span class="dv">646</span>, <span class="dv">0</span>),</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>             (<span class="dv">478</span>, <span class="dv">1</span>),</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>             (<span class="dv">583</span>, <span class="dv">2</span>)])</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>title <span class="op">=</span> Rel([(<span class="dv">0</span>, <span class="st">&quot;The Godfather&quot;</span>),</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>             (<span class="dv">1</span>, <span class="st">&quot;Seven Samurai&quot;</span>),</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>             (<span class="dv">2</span>, <span class="st">&quot;Casablanca&quot;</span>)])</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>year  <span class="op">=</span> Rel([(<span class="dv">0</span>, <span class="dv">1972</span>),</span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>             (<span class="dv">1</span>, <span class="dv">1954</span>),</span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a>             (<span class="dv">2</span>, <span class="dv">1942</span>)])</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial" setup="rel-class" hide-run></run-snip></p>
-<p><code>.select</code> is relation composition. It's Prela's unified
-equivalent of SQL's projection and join, since a foreign key is just
-another relation to compose with:</p>
+<p>The <code>movie</code>, <code>title</code>, and <code>year</code>
+relations above represent the <code>ID</code>, <code>title</code>, and
+<code>year</code> columns of the original table, respectively. Note how
+the row number comes first in <code>title</code> and <code>year</code>,
+but second in <code>movie</code> (which is also not called
+<code>ID</code>). The reason for this will become clear later.</p>
+<p>The motivation for focusing on binary relations is that they
+generalize functions. Functions are very powerful and are the building
+blocks of programs. This is because functions <em>compose</em>, and the
+composition of binary relations turns out to generalize function
+composition.</p>
+<p>That is all very abstract, so let's go back to our examples. First, a
+binary relation is just a function that can "return" multiple results
+for every input. Because our relations are all finite, we can implement
+"calling" a relation by building a dictionary, then lookig up the
+argument from the dict:</p>
 <div class="sourceCode" id="cb3"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> select(r, s):</span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  result <span class="op">=</span> []</span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="cf">for</span> x, yr <span class="kw">in</span> r:</span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> ys, z <span class="kw">in</span> s:</span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>      <span class="cf">if</span> yr <span class="op">==</span> ys:</span>
-<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>        result.append((x, z))</span>
-<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> result</span></code></pre></div>
+class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> call(r, x):</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  d <span class="op">=</span> {}</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="cf">for</span> k, v <span class="kw">in</span> r:</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>    d.setdefault(k, []).append(v)</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> d.get(x, [])</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial" hide-run></run-snip></p>
-<p>This would look like
-<code>SELECT r.x, s.z FROM r, s WHERE r.y = s.y</code> in SQL. However,
-unlike SQL, which splits "read a column" (<code>SELECT</code>) and "walk
-a foreign key" (<code>JOIN ... ON</code>) into two different syntaxes,
-Prela treats both as the same operation: chaining two
-<code>.select()</code> calls does the work of a <code>JOIN ... ON</code>
-plus a <code>SELECT</code>.</p>
-<p>For example:</p>
+<p>With a little bit of Python magic,<a href="#fn2" class="footnote-ref"
+id="fnref2" role="doc-noteref"><sup>2</sup></a> we can call the
+relations like so:</p>
 <div class="sourceCode" id="cb4"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.select(title))</span></code></pre></div>
+class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie(<span class="dv">646</span>), title(<span class="dv">0</span>), year(<span class="dv">0</span>))</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
-<p>Moving on: the method you'll likely be using most often is the
-<code>.where()</code> method (<code>.with()</code> in Prela).
-<code>.where()</code> is the filtering method, and is a great example
-showing Prela's readability. Imagine this query: <em>movie.where(title
-has an "o")</em> (not real syntax, just the idea). In the English
-language, this can be written:</p>
-<p>Find all movies with an "o" in their title.</p>
-<p>Reading the code is essentially reading English! Here's how it
-works:</p>
+<p>The results come back wrapped in lists because in general, a relation
+can map an input to multiple outputs.</p>
+<p>We're now ready to introduce the first and most important operator in
+Prela, the relational composition. Functional composition works by
+applying one function first, then applying the other one to the output.
+Relation composition is similar, and just applies the second relation to
+every output of the first. Relation composition is spelt as
+<code>select</code> in Prela:</p>
 <div class="sourceCode" id="cb5"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> where(r, s):</span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  keys <span class="op">=</span> { y <span class="cf">for</span> y, _ <span class="kw">in</span> s }</span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, y) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">if</span> y <span class="kw">in</span> keys ]</span></code></pre></div>
+class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> select(r, s):</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, z) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">for</span> z <span class="kw">in</span> call(s, y) ]</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial" hide-run></run-snip></p>
-<p>In SQL:
-<code>SELECT r.x, r.y FROM r WHERE r.y IN (SELECT x FROM s)</code>. Note
-that <code>.where()</code> only restricts which rows of <code>r</code>
-you keep, and doesn't pull in any of <code>s</code>'s own columns,
-that's what <code>.select</code> is for. The two are often chained
-together: narrow down with <code>.where()</code>, then
-<code>.select</code> across to fetch a related column.</p>
-<p>For example, keep only the titles that contain the letter "o", once
-you've got the set of titles you're checking against, the actual
-restriction is just one line:</p>
+<p>In other words, we join <code>r</code> and <code>s</code> on the
+second column of <code>r</code> and the first column of <code>s</code>,
+then keep the first column of <code>r</code> and second column of
+<code>s</code>; in SQL:</p>
 <div class="sourceCode" id="cb6"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>has_o <span class="op">=</span> Rel([(<span class="st">&quot;Tron&quot;</span>, <span class="dv">1</span>)])</span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(title.where(has_o))</span></code></pre></div>
-<p><run-snip lang="python" session="tutorial"></run-snip></p>
-<p>We'll start with the most basic comparators. <code>.eq()</code>,
-short for equals, and <code>.ne()</code>, short for not equals, test for
-equivalency, narrowing a relation down to just the pairs whose value
-matches (or doesn't match) whatever you pass in:</p>
+class="sourceCode sql"><code class="sourceCode sql"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="kw">SELECT</span> r.x, s.z </span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>  <span class="kw">FROM</span> r, s </span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a> <span class="kw">WHERE</span> r.y <span class="op">=</span> s.y</span></code></pre></div>
+<p>Using our example, the query below composes <code>movie</code> with
+<code>title</code> to get a relation mapping each movie ID to its
+title:<a href="#fn3" class="footnote-ref" id="fnref3"
+role="doc-noteref"><sup>3</sup></a></p>
 <div class="sourceCode" id="cb7"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> eq(r, v):</span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, y) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">if</span> y <span class="op">==</span> v ]</span>
-<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> ne(r, v):</span>
-<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, y) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">if</span> y <span class="op">!=</span> v ]</span></code></pre></div>
-<p><run-snip lang="python" session="tutorial" hide-run></run-snip></p>
-<p>This would look like <code>title = 'Tron'</code> in SQL. On its own,
-<code>.eq()</code> just narrows the relation, remember
-<code>.where()</code>? That's how we turn a narrowed relation into
-WHERE-clause behavior: <code>.eq()</code> picks out the row we care
-about, and <code>.where()</code> uses that to filter which rows of some
-other relation we keep.</p>
+class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.select(title))</span></code></pre></div>
+<p><run-snip lang="python" session="tutorial"></run-snip></p>
+<p>Try changing <code>title</code> to <code>year</code> and see what you
+get. The power of composition really shows when we chain together
+multiple <code>.select</code> calls. Suppose we add a foreign key column
+mapping each movie to its production company, and another table for
+movie companies:</p>
+<div class="columns">
+<div class="column" style="width:50%;">
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>title</th>
+<th>year</th>
+<th>company</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>...</td>
+<td>...</td>
+<td>...</td>
+<td>0</td>
+</tr>
+<tr>
+<td>...</td>
+<td>...</td>
+<td>...</td>
+<td>1</td>
+</tr>
+<tr>
+<td>...</td>
+<td>...</td>
+<td>...</td>
+<td>2</td>
+</tr>
+</tbody>
+</table>
+</div><div class="column" style="width:50%;">
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>name</th>
+<th>country</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>Paramount</td>
+<td>[us]</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Toho</td>
+<td>[jp]</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Warner Bros.</td>
+<td>[us]</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<p>Shredding these the same way gives us four more relations:</p>
 <div class="sourceCode" id="cb8"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(title.eq(<span class="st">&quot;Tron&quot;</span>))</span></code></pre></div>
-<p><run-snip lang="python" session="tutorial"></run-snip></p>
-<p>And chained together with <code>.where()</code>, keeping only the
-movie whose title is exactly "Tron":</p>
+class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>company <span class="op">=</span> Rel([(<span class="dv">0</span>, <span class="dv">0</span>),</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">1</span>, <span class="dv">1</span>),</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">2</span>, <span class="dv">2</span>)])</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>id2row  <span class="op">=</span> Rel([(<span class="dv">0</span>, <span class="dv">0</span>),</span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">1</span>, <span class="dv">1</span>),</span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">2</span>, <span class="dv">2</span>)])</span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a>name    <span class="op">=</span> Rel([(<span class="dv">0</span>, <span class="st">&quot;Paramount&quot;</span>),</span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">1</span>, <span class="st">&quot;Toho&quot;</span>),</span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">2</span>, <span class="st">&quot;Warner Bros.&quot;</span>)])</span>
+<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a>country <span class="op">=</span> Rel([(<span class="dv">0</span>, <span class="st">&quot;[us]&quot;</span>),</span>
+<span id="cb8-14"><a href="#cb8-14" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">1</span>, <span class="st">&quot;[jp]&quot;</span>),</span>
+<span id="cb8-15"><a href="#cb8-15" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">2</span>, <span class="st">&quot;[us]&quot;</span>)])</span></code></pre></div>
+<p><run-snip lang="python" session="tutorial" hide-run></run-snip></p>
+<p>Then, we can find the country of a movie's production company by a
+chain of <code>.select</code> calls, where we abbreviate with
+<code>.s</code>:</p>
 <div class="sourceCode" id="cb9"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.where(title.eq(<span class="st">&quot;Tron&quot;</span>)))</span></code></pre></div>
+class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.s(company).s(id2row).s(country))</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
-<p><code>.ne()</code> is <code>.eq()</code>'s counterpart, same idea,
-opposite direction:</p>
+<p>Because joining via a foreign key almost always require "resolving"
+an ID to a row, Prela automatically inserts that step so one can write
+the following,<a href="#fn4" class="footnote-ref" id="fnref4"
+role="doc-noteref"><sup>4</sup></a> which reads just like "a movie's
+company's country"!</p>
 <div class="sourceCode" id="cb10"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(title.ne(<span class="st">&quot;Tron&quot;</span>))</span></code></pre></div>
+class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.s(company).s(country))</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
-<p>Next up are the relational comparators: <code>.gt()</code>,
-<code>.lt()</code>, <code>.ge()</code>, <code>.le()</code>. Yup, you
-guessed it, greater than, less than, greater than or equal to, less than
-or equal to. We're comparing every value in the relation against the
-argument:</p>
+<p>Our company IDs happen to be their own row numbers, which makes
+<code>id2row</code> the identity relation --- try deleting
+<code>.s(id2row)</code> from the cell above and you will get the same
+answer. This is also what happened in
+<code>cast.s(person).s(alias).s(text)</code> on the last line of the
+snippet in the beginning of the tutorial.</p>
+<p>So far every query has returned a single column of values. To select
+<em>multiple</em> attributes, we introduce the <code>&amp;</code>
+operator.</p>
+<p>Where <code>.select</code> matches the second column of
+<code>r</code> against the first column of <code>s</code>,
+<code>&amp;</code> joins <code>r</code> and <code>s</code> on the first
+column of <em>both</em>, then pairs up their second columns:</p>
 <div class="sourceCode" id="cb11"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> gt(r, v):</span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, y) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">if</span> y <span class="op">&gt;</span> v ]</span>
-<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> lt(r, v):</span>
-<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, y) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">if</span> y <span class="op">&lt;</span> v ]</span>
-<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> ge(r, v):</span>
-<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, y) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">if</span> y <span class="op">&gt;=</span> v ]</span>
-<span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb11-10"><a href="#cb11-10" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> le(r, v):</span>
-<span id="cb11-11"><a href="#cb11-11" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, y) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">if</span> y <span class="op">&lt;=</span> v ]</span></code></pre></div>
+class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> and_(r, s):</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, (y, z)) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">for</span> z <span class="kw">in</span> call(s, x) ]</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial" hide-run></run-snip></p>
-<p><code>movie</code>'s values are already plain numbers, so we can use
-it directly, no text column needed this time. <code>movie.gt(0)</code>
-would look like <code>SELECT * FROM movie WHERE movie.y &gt; 0</code> in
-SQL:</p>
+<p>So <code>title &amp; year</code> maps every movie row to both of its
+attributes at once:</p>
 <div class="sourceCode" id="cb12"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.gt(<span class="dv">0</span>))</span></code></pre></div>
+class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(title <span class="op">&amp;</span> year)</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
-<p><code>.lt()</code>, <code>.ge()</code>, and <code>.le()</code> all
-work exactly the same way, just with the comparison flipped:</p>
+<p>Note that the result is still a binary relation, <code>&amp;</code>
+simply nests the values into a tuple. That means we can keep composing
+it like any other relation, which is how a query returns more than one
+column:</p>
 <div class="sourceCode" id="cb13"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.lt(<span class="dv">2</span>))</span>
-<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.ge(<span class="dv">1</span>))</span>
-<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.le(<span class="dv">1</span>))</span></code></pre></div>
+class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.select(title <span class="op">&amp;</span> year))</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
-<p><code>.during(lo, hi)</code> checks a half-open range:
-<code>lo &lt;= x &lt; hi</code>, inclusive of the start, exclusive of
-the end. That's exactly the shape you want for date buckets: "Q3 1993"
-is <code>date.during(19930701, 19931001)</code>, everything from July
-1st up to, but not including, October 1st.</p>
-<div class="note">
-<div class="title">
-<p>Note</p>
-</div>
-<p>This particular example needs a date-valued column, which our toy
-dataset doesn't have, so it's shown for reference only and isn't a live
-cell below.</p>
-</div>
+<p>Next, we need a way to say <em>which</em> rows we want. The predicate
+<code>.eq(v)</code> filters a relation, keeping only the pairs whose
+second column equals <code>v</code>:</p>
 <div class="sourceCode" id="cb14"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> during(r, lo, hi):</span>
-<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, y) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">if</span> lo <span class="op">&lt;=</span> y <span class="op">&lt;</span> hi ]</span></code></pre></div>
-<p><code>.between(lo, hi)</code> checks a closed range:
-<code>lo &lt;= x &lt;= hi</code>, inclusive on both ends, matching SQL's
-<code>BETWEEN</code> exactly. Unlike <code>.during()</code> above, this
-one works fine on our own data, since <code>movie</code>'s values are
-perfectly good numbers to test a closed range against:</p>
-<div class="sourceCode" id="cb15"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> between(r, lo, hi):</span>
-<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, y) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">if</span> lo <span class="op">&lt;=</span> y <span class="op">&lt;=</span> hi ]</span></code></pre></div>
+class="sourceCode python"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> eq(r, v):</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, y) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">if</span> y <span class="op">==</span> v ]</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial" hide-run></run-snip></p>
-<p>In SQL:
-<code>SELECT * FROM movie WHERE movie.y BETWEEN 0 AND 1</code>.</p>
-<div class="sourceCode" id="cb16"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.between(<span class="dv">0</span>, <span class="dv">1</span>))</span></code></pre></div>
+<p>On its own, <code>.eq</code> only narrows the relation it is applied
+to. The query below still maps movie rows to countries, just no longer
+all of them:</p>
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(company.s(country).eq(<span class="st">&quot;[us]&quot;</span>))</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
-<p>This is especially worth contrasting explicitly since they look
-almost identical: <code>.during(lo, hi)</code> excludes <code>hi</code>,
-<code>.between(lo, hi)</code> includes it. In other words:
-<code>.during()</code> is built for "up to the start of the next
-period," <code>.between()</code> is built for "up to and including this
-exact value."</p>
+<p>Finally, the <em>restriction</em> operator <code>.where</code> takes
+a predicate like the one above and filters another relation with it.</p>
+<div class="sourceCode" id="cb16"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> where(r, s):</span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>  keys <span class="op">=</span> { k <span class="cf">for</span> k, _ <span class="kw">in</span> s }</span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> [ (x, y) <span class="cf">for</span> x, y <span class="kw">in</span> r <span class="cf">if</span> y <span class="kw">in</span> keys ]</span></code></pre></div>
+<p><run-snip lang="python" session="tutorial" hide-run></run-snip></p>
+<p>Handing our predicate to <code>.where</code> turns it into a filter
+on movies:</p>
+<div class="sourceCode" id="cb17"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>american <span class="op">=</span> company.s(country).eq(<span class="st">&quot;[us]&quot;</span>)</span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.where(american))</span></code></pre></div>
+<p><run-snip lang="python" session="tutorial"></run-snip></p>
+<p>Reading the two lines together gives us "movies where the company's
+country is [us]", which is once again very close to plain English.</p>
+<p>One last trick: becuase <code>&amp;</code> joins its arguments, it
+doubles as logical conjunction once nested inside a
+<code>.where</code>:</p>
+<div class="sourceCode" id="cb18"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.where(american <span class="op">&amp;</span> year.eq(<span class="dv">1942</span>)))</span></code></pre></div>
+<p><run-snip lang="python" session="tutorial"></run-snip></p>
+<p>Only Casablanca is American <em>and</em> from 1942. Putting it all
+together, <code>.select</code> then fetches whatever columns we want to
+see for the movies that survived the filter:</p>
+<div class="sourceCode" id="cb19"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.where(american <span class="op">&amp;</span> year.eq(<span class="dv">1942</span>)).select(title <span class="op">&amp;</span> year))</span></code></pre></div>
+<p><run-snip lang="python" session="tutorial"></run-snip></p>
+<p>We can even push the predicate into the <code>select</code> clause
+for a cleaner query:</p>
+<div class="sourceCode" id="cb20"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.where(american).select(title <span class="op">&amp;</span> year.eq(<span class="dv">1942</span>)))</span></code></pre></div>
+<p><run-snip lang="python" session="tutorial"></run-snip></p>
+<p>And that's pretty much the whole language! Prela also supports
+grouping and aggregation, and we are working a full documentation for
+the language. As an excercise,<a href="#fn5" class="footnote-ref"
+id="fnref5" role="doc-noteref"><sup>5</sup></a> you can try to define
+the necessary relations so that the snippet at the top runs. If you run
+into issues, try to break down the query - every subexpression in Prela
+is a valid query.</p>
+<div class="sourceCode" id="cb21"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="co"># keyword = ...</span></span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="co"># ...</span></span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.where(company.s(country).eq(<span class="st">&quot;[us]&quot;</span>)</span>
+<span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a>                  <span class="op">&amp;</span> keyword.eq(<span class="st">&quot;character-name-in-title&quot;</span>))</span>
+<span id="cb21-6"><a href="#cb21-6" aria-hidden="true" tabindex="-1"></a>          .select(title <span class="op">&amp;</span> cast.s(person).s(alias).s(text)))</span></code></pre></div>
+<p><run-snip lang="python" session="tutorial"></run-snip></p>
+<!-- Solution: `cast` is deliberately multi-valued, giving The Godfather two
+     cast members and therefore two rows of output.
+
+keyword = Rel([(0, "character-name-in-title"),
+               (1, "samurai"),
+               (2, "wwii")])
+
+cast    = Rel([(0, 0),
+               (0, 1),
+               (2, 2)])
+
+person  = Rel([(0, 0), (1, 1), (2, 2)])
+
+alias   = Rel([(0, 0), (1, 1), (2, 2)])
+
+text    = Rel([(0, "Brando, Marlon"),
+               (1, "Pacino, Al"),
+               (2, "Bogart, Humphrey")])
+
+print(movie.where(company.s(country).eq("[us]")
+                  & keyword.eq("character-name-in-title"))
+           .select(title & cast.s(person).s(alias).s(text)))
+
+which prints:
+
+646, ('The Godfather', 'Brando, Marlon')
+646, ('The Godfather', 'Pacino, Al')
+-->
+
 <script type="module" src="https://unpkg.com/@remywang/snip@0/snip.js"></script>
 
-<p>Try removing <code>(2, "Tron")</code> from <code>title</code> and
-re-run the cell above.</p>
+<section id="footnotes" class="footnotes footnotes-end-of-document"
+role="doc-endnotes">
+<hr />
+<ol>
+<li id="fn1"><p>Different from e.g. Jupyter, snip always executes from
+the beginning from scratch to avoid corrupted state.<a href="#fnref1"
+class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn2"><p>We're just forwarding <code>Rel.__call__</code> to
+<code>call()</code>.<a href="#fnref2" class="footnote-back"
+role="doc-backlink">↩︎</a></p></li>
+<li id="fn3"><p>The <code>.select</code> method syntax uses the same
+trick of forwarding <code>Rel.select</code> to <code>select()</code>.<a
+href="#fnref3" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn4"><p>Here we cheat by using the row number as company IDs.<a
+href="#fnref4" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn5"><p>A solution is hidden <em>somewhere</em> on this page
+;)<a href="#fnref5" class="footnote-back"
+role="doc-backlink">↩︎</a></p></li>
+</ol>
+</section>
 </body>
 </html>

@@ -2,75 +2,30 @@
 title:  'Prela Tutorial'
 ...
 
-Hello! If you've been looking to learn more about
-[Prela](https://github.com/remysucre/prela), a new query language
-developed by the [Wang Lab](https://remy.wang/) at UCLA, you've come to
-the right place! Prela is a clean, efficient language that outdoes many
-query language competitors.
-
-In this interactive tutorial, we'll go step by step through Prela's
-operators, explaining the idea behind each one and showing exactly what
-it computes. Prela queries are Rust code, so they need to be compiled
-ahead of time and can't be run live in a page like this one. Instead, for
-each operator below we've paired a small, honest reimplementation in
-plain Python, code you can read, run, and edit right here in your
-browser, to make each operator's semantics concrete instead of abstract.
-
-We're aiming to explain even the technical parts in as simple and
-easy-to-read way as possible. If something feels like a lot, that's on us
-to fix, not on you.
-
-Before you start, it's helpful to have some familiarity with:
-
-- Python
-- SQL
-
-> [!NOTE]
-> This tutorial is designed to act like a Jupyter notebook, changes in a
-> cell may affect following cells!
-
-Every operator below is really two things: a plain function that does the
-actual computation on lists of `(key, value)` pairs, and a small `Rel`
-class that wraps those pairs so you can chain operators with dot-syntax,
-`r.select(s)` instead of `select(r, s)`. Here is a portion of the `Rel`
-class, so you can get a feel of how the functions we'll be looking at in
-the rest of the tutorial fit logically together:
+[Prela](https://prela-lang.org) is a new query language being developed
+ at the [RePL lab](https://remy.wang) at UCLA.
+The language is quite different from SQL, but its key ideas
+ are very simple and (we think) elegant.
+In this short tutorial, we will build a toy version of Prela
+ in Python to understand its core principles.
+By the end of this tutorial, you will understand how the following query works:
 
 ```python
-class Rel:
-    def __init__(self, pairs: list):
-        self.pairs = pairs
-
-    def select(self, other):
-        r = self.pairs
-        s = other.pairs
-        return Rel(select(r, s))
-
-    def where(self, other):
-        r = self.pairs
-        s = other.pairs
-        return Rel(where(r, s))
-
-    def __repr__(self):
-        return f"Rel({self.pairs!r})"
-
-    def __eq__(self, other):
-        return isinstance(other, Rel) and set(self.pairs) == set(other.pairs)
+(movie.where(company.s(country).eq("[us]")
+             & keyword.eq("character-name-in-title"))
+      .select(title & cast.s(person).s(alias).s(text)))
 ```
 
-Each method unwraps two `Rel`s down to their raw pair-lists
-(`self.pairs`, `other.pairs`), calls the real function (the one you'll
-actually see explained below), and wraps the result back into a `Rel` so
-it can be chained further.
+You can probably already guess what it's doing: the query finds every movie
+ produced by an American company and has a character name in its title,
+ and outputs the title along with the alias for each cast member.
+Note that the [equivalent query in SQL](https://github.com/gregrahn/join-order-benchmark/blob/master/16b.sql) spans over 20 lines.
 
 > [!NOTE]
-> `r.select(s)` and `select(r, s)` end up doing the same work, but
-> they're not the same function. When you call a method with
-> `object.method(arg)`, Python automatically passes `object` in as the
-> method's first parameter (conventionally called `self`), you never
-> write it yourself. So, `movie.select(title)` really means "call
-> `.select()` with `self=movie` and `other=title`", it just looks like
-> one argument because the first one is supplied by the dot.
+> This tutorial uses [snip](https://remy.wang/snip/) to connect code cells into a notebook-like
+> environment,[^1] so you can edit the code in one cell and see it reflected in a later cell!
+
+[^1]: Different from e.g. Jupyter, snip always executes from the beginning from scratch to avoid corrupted state.
 
 <script id="rel-class" type="text/plain">
 class Rel:
@@ -82,231 +37,342 @@ class Rel:
         s = other.pairs
         return Rel(select(r, s))
 
+    def s(self, other):
+        return self.select(other)
+
     def where(self, other):
         r = self.pairs
         s = other.pairs
         return Rel(where(r, s))
 
+    def __call__(self, x):
+        return call(self.pairs, x)
+
     def eq(self, v):
         return Rel(eq(self.pairs, v))
 
-    def ne(self, v):
-        return Rel(ne(self.pairs, v))
-
-    def gt(self, v):
-        return Rel(gt(self.pairs, v))
-
-    def lt(self, v):
-        return Rel(lt(self.pairs, v))
-
-    def ge(self, v):
-        return Rel(ge(self.pairs, v))
-
-    def le(self, v):
-        return Rel(le(self.pairs, v))
-
-    def between(self, lo, hi):
-        return Rel(between(self.pairs, lo, hi))
+    def __and__(self, other):
+        return Rel(and_(self.pairs, other.pairs))
 
     def __repr__(self):
-        return f"Rel({self.pairs!r})"
+        if not self.pairs:
+            return "(empty)"
+        return "\n".join(f"{x}, {y}" for x, y in self.pairs)
 
     def __eq__(self, other):
         return isinstance(other, Rel) and set(self.pairs) == set(other.pairs)
 </script>
 
+The first special thing about Prela is that there are only *binary* relations,
+ i.e., tables with two columns.
+That may sound very limiting at first, but it's easy to "binarize" a wide table
+ with multiple columns.
+Suppose we have a table of movies:
 
-Let's load some data: 
+| ID  | title         | year |
+|-----|---------------|------|
+| 646 | The Godfather | 1972 |
+| 478 | Seven Samurai | 1954 |
+| 583 | Casablanca    | 1942 |
+
+We can "shred" the 3-column table into 3 binary relations, each mapping the row number to the column value:
 
 ```python
-movie = Rel([(0, 0),
-             (1, 1),
-             (2, 2)])
-title = Rel([(0, "Jaws"),
-             (1, "Alien"),
-             (2, "Tron")])
+movie = Rel([(646, 0),
+             (478, 1),
+             (583, 2)])
+
+title = Rel([(0, "The Godfather"),
+             (1, "Seven Samurai"),
+             (2, "Casablanca")])
+
+year  = Rel([(0, 1972),
+             (1, 1954),
+             (2, 1942)])
 ```
 <run-snip lang="python" session="tutorial" setup="rel-class" hide-run></run-snip>
 
-`.select` is relation composition. It's Prela's unified equivalent of
-SQL's projection and join, since a foreign key is just another relation
-to compose with:
+The `movie`, `title`, and `year` relations above represent the `ID`, `title`, and `year`
+  columns of the original table, respectively.
+Note how the row number comes first in `title` and `year`, but second in `movie` (which is also not called `ID`).
+The reason for this will become clear later.
+
+The motivation for focusing on binary relations is that they generalize functions.
+Functions are very powerful and are the building blocks of programs.
+This is because functions *compose*, and the composition of binary relations turns out
+ to generalize function composition.
+
+That is all very abstract, so let's go back to our examples.
+First, a binary relation is just a function that can "return" multiple results for every input.
+Because our relations are all finite, we can implement "calling" a relation
+ by building a dictionary, then lookig up the argument from the dict:
 
 ```python
-def select(r, s):
-  result = []
-  for x, yr in r:
-    for ys, z in s:
-      if yr == ys:
-        result.append((x, z))
-  return result
+def call(r, x):
+  d = {}
+  for k, v in r:
+    d.setdefault(k, []).append(v)
+  return d.get(x, [])
 ```
 <run-snip lang="python" session="tutorial" hide-run></run-snip>
 
-This would look like `SELECT r.x, s.z FROM r, s WHERE r.y = s.y` in SQL.
-However, unlike SQL, which splits "read a column" (`SELECT`) and "walk a
-foreign key" (`JOIN ... ON`) into two different syntaxes, Prela treats
-both as the same operation: chaining two `.select()` calls does the work
-of a `JOIN ... ON` plus a `SELECT`.
+With a little bit of Python magic,[^2] we can call the relations like so: 
 
-For example: 
+[^2]: We're just forwarding `Rel.__call__` to `call()`. 
+
+```python
+print(movie(646), title(0), year(0))
+```
+<run-snip lang="python" session="tutorial"></run-snip>
+
+The results come back wrapped in lists because in general,
+ a relation can map an input to multiple outputs.
+
+We're now ready to introduce the first and most important
+ operator in Prela, the relational composition.
+Functional composition works by applying one function first, then applying
+ the other one to the output.
+Relation composition is similar, and just applies the second relation
+ to every output of the first.
+Relation composition is spelt as `select` in Prela:
+
+```python
+def select(r, s):
+  return [ (x, z) for x, y in r for z in call(s, y) ]
+```
+<run-snip lang="python" session="tutorial" hide-run></run-snip>
+
+In other words, we join `r` and `s` on the second column of `r`
+ and the first column of `s`,
+ then keep the first column of `r` and second column of `s`;
+ in SQL: 
+
+```sql
+SELECT r.x, s.z 
+  FROM r, s 
+ WHERE r.y = s.y
+```
+
+Using our example, the query below composes `movie` with `title`
+ to get a relation mapping each movie ID to its title:[^3]
+
+[^3]: The `.select` method syntax uses the same trick of forwarding `Rel.select` to `select()`.
 
 ```python
 print(movie.select(title))
 ```
 <run-snip lang="python" session="tutorial"></run-snip>
 
-Moving on: the method you'll likely be using most often is the `.where()`
-method (`.with()` in Prela). `.where()` is the filtering method, and is a
-great example showing Prela's readability. Imagine this query:
-*movie.where(title has an "o")* (not real syntax, just the idea). In the
-English language, this can be written:
+Try changing `title` to `year` and see what you get.
+The power of composition really shows when we chain together multiple `.select` calls.
+Suppose we add a foreign key column mapping each movie to its production company,
+ and another table for movie companies:
 
-Find all movies with an "o" in their title.
+::::: {.columns}
+::: {.column width="50%"}
+| ID  | title | year | company |
+|-----|-------|------|---------|
+| ... | ...   | ...  | 0       |
+| ... | ...   | ...  | 1       |
+| ... | ...   | ...  | 2       |
 
-Reading the code is essentially reading English! Here's how it works:
+:::
+::: {.column width="50%"}
+| ID | name         | country |
+|----|--------------|---------|
+| 0  | Paramount    | [us]    |
+| 1  | Toho         | [jp]    |
+| 2  | Warner Bros. | [us]    |
+
+:::
+:::::
+
+Shredding these the same way gives us four more relations:
 
 ```python
-def where(r, s):
-  keys = { y for y, _ in s }
-  return [ (x, y) for x, y in r if y in keys ]
+company = Rel([(0, 0),
+               (1, 1),
+               (2, 2)])
+
+id2row  = Rel([(0, 0),
+               (1, 1),
+               (2, 2)])
+
+name    = Rel([(0, "Paramount"),
+               (1, "Toho"),
+               (2, "Warner Bros.")])
+
+country = Rel([(0, "[us]"),
+               (1, "[jp]"),
+               (2, "[us]")])
 ```
 <run-snip lang="python" session="tutorial" hide-run></run-snip>
 
-In SQL: `SELECT r.x, r.y FROM r WHERE r.y IN (SELECT x FROM s)`. Note that
-`.where()` only restricts which rows of `r` you keep, and doesn't pull in
-any of `s`'s own columns, that's what `.select` is for. The two are often
-chained together: narrow down with `.where()`, then `.select` across to
-fetch a related column.
-
-For example, keep only the titles that contain the letter "o", once
-you've got the set of titles you're checking against, the actual
-restriction is just one line:
+Then, we can find the country of a movie's production company by a chain of `.select` calls,
+ where we abbreviate with `.s`:
 
 ```python
-has_o = Rel([("Tron", 1)])
-print(title.where(has_o))
+print(movie.s(company).s(id2row).s(country))
 ```
 <run-snip lang="python" session="tutorial"></run-snip>
 
-We'll start with the most basic comparators. `.eq()`, short for equals,
-and `.ne()`, short for not equals, test for equivalency, narrowing a
-relation down to just the pairs whose value matches (or doesn't match)
-whatever you pass in:
+Because joining via a foreign key almost always require "resolving" an ID to a row,
+ Prela automatically inserts that step so one can write the following,[^4]
+ which reads just like "a movie's company's country"!
+
+[^4]: Here we cheat by using the row number as company IDs.
+
+```python
+print(movie.s(company).s(country))
+```
+<run-snip lang="python" session="tutorial"></run-snip>
+
+Our company IDs happen to be their own row numbers, which makes `id2row` the
+ identity relation --- try deleting `.s(id2row)` from the cell above and you
+ will get the same answer.
+This is also what happened in `cast.s(person).s(alias).s(text)` 
+ on the last line of the snippet in the beginning of the tutorial.
+
+
+So far every query has returned a single column of values.
+To select *multiple* attributes, we introduce the `&` operator.
+
+Where `.select` matches the second column of `r` against the first column of
+ `s`, `&` joins `r` and `s` on the first column of *both*, then pairs up their
+ second columns:
+
+```python
+def and_(r, s):
+  return [ (x, (y, z)) for x, y in r for z in call(s, x) ]
+```
+<run-snip lang="python" session="tutorial" hide-run></run-snip>
+
+So `title & year` maps every movie row to both of its attributes at once:
+
+```python
+print(title & year)
+```
+<run-snip lang="python" session="tutorial"></run-snip>
+
+Note that the result is still a binary relation, `&` simply nests the values
+ into a tuple.
+That means we can keep composing it like any other relation, which is how a
+ query returns more than one column:
+
+```python
+print(movie.select(title & year))
+```
+<run-snip lang="python" session="tutorial"></run-snip>
+
+Next, we need a way to say *which* rows we want.
+The predicate `.eq(v)` filters a relation, keeping only the pairs whose second
+ column equals `v`:
 
 ```python
 def eq(r, v):
   return [ (x, y) for x, y in r if y == v ]
-
-def ne(r, v):
-  return [ (x, y) for x, y in r if y != v ]
 ```
 <run-snip lang="python" session="tutorial" hide-run></run-snip>
 
-This would look like `title = 'Tron'` in SQL. On its own, `.eq()` just
-narrows the relation, remember `.where()`? That's how we turn a narrowed
-relation into WHERE-clause behavior: `.eq()` picks out the row we care
-about, and `.where()` uses that to filter which rows of some other
-relation we keep.
+On its own, `.eq` only narrows the relation it is applied to.
+The query below still maps movie rows to countries, just no longer all of them:
 
 ```python
-print(title.eq("Tron"))
+print(company.s(country).eq("[us]"))
 ```
 <run-snip lang="python" session="tutorial"></run-snip>
 
-And chained together with `.where()`, keeping only the movie whose title
-is exactly "Tron":
+Finally, the *restriction* operator `.where` takes a predicate like the one above and
+ filters another relation with it.
 
 ```python
-print(movie.where(title.eq("Tron")))
-```
-<run-snip lang="python" session="tutorial"></run-snip>
-
-`.ne()` is `.eq()`'s counterpart, same idea, opposite direction:
-
-```python
-print(title.ne("Tron"))
-```
-<run-snip lang="python" session="tutorial"></run-snip>
-
-Next up are the relational comparators: `.gt()`, `.lt()`, `.ge()`,
-`.le()`. Yup, you guessed it, greater than, less than, greater than or
-equal to, less than or equal to. We're comparing every value in the
-relation against the argument:
-
-```python
-def gt(r, v):
-  return [ (x, y) for x, y in r if y > v ]
-
-def lt(r, v):
-  return [ (x, y) for x, y in r if y < v ]
-
-def ge(r, v):
-  return [ (x, y) for x, y in r if y >= v ]
-
-def le(r, v):
-  return [ (x, y) for x, y in r if y <= v ]
+def where(r, s):
+  keys = { k for k, _ in s }
+  return [ (x, y) for x, y in r if y in keys ]
 ```
 <run-snip lang="python" session="tutorial" hide-run></run-snip>
 
-`movie`'s values are already plain numbers, so we can use it directly,
-no text column needed this time. `movie.gt(0)` would look like
-`SELECT * FROM movie WHERE movie.y > 0` in SQL:
+Handing our predicate to `.where` turns it into a filter on movies:
 
 ```python
-print(movie.gt(0))
+american = company.s(country).eq("[us]")
+print(movie.where(american))
 ```
 <run-snip lang="python" session="tutorial"></run-snip>
 
-`.lt()`, `.ge()`, and `.le()` all work exactly the same way, just with
-the comparison flipped:
+Reading the two lines together gives us "movies where the company's country
+ is [us]", which is once again very close to plain English.
+
+One last trick: becuase `&` joins its arguments,
+ it doubles as logical conjunction once nested inside a `.where`:
 
 ```python
-print(movie.lt(2))
-print(movie.ge(1))
-print(movie.le(1))
+print(movie.where(american & year.eq(1942)))
 ```
 <run-snip lang="python" session="tutorial"></run-snip>
 
-`.during(lo, hi)` checks a half-open range: `lo <= x < hi`, inclusive of
-the start, exclusive of the end. That's exactly the shape you want for
-date buckets: "Q3 1993" is `date.during(19930701, 19931001)`, everything
-from July 1st up to, but not including, October 1st.
-
-> [!NOTE]
-> This particular example needs a date-valued column, which our toy
-> dataset doesn't have, so it's shown for reference only and isn't a
-> live cell below.
+Only Casablanca is American *and* from 1942.
+Putting it all together, `.select` then fetches whatever columns we want to
+ see for the movies that survived the filter:
 
 ```python
-def during(r, lo, hi):
-  return [ (x, y) for x, y in r if lo <= y < hi ]
-```
-
-`.between(lo, hi)` checks a closed range: `lo <= x <= hi`, inclusive on
-both ends, matching SQL's `BETWEEN` exactly. Unlike `.during()` above,
-this one works fine on our own data, since `movie`'s values are perfectly
-good numbers to test a closed range against:
-
-```python
-def between(r, lo, hi):
-  return [ (x, y) for x, y in r if lo <= y <= hi ]
-```
-<run-snip lang="python" session="tutorial" hide-run></run-snip>
-
-In SQL: `SELECT * FROM movie WHERE movie.y BETWEEN 0 AND 1`.
-
-```python
-print(movie.between(0, 1))
+print(movie.where(american & year.eq(1942)).select(title & year))
 ```
 <run-snip lang="python" session="tutorial"></run-snip>
 
-This is especially worth contrasting explicitly since they look almost
-identical: `.during(lo, hi)` excludes `hi`, `.between(lo, hi)` includes
-it. In other words: `.during()` is built for "up to the start of the next
-period," `.between()` is built for "up to and including this exact
-value."
+We can even push the predicate into the `select` clause
+ for a cleaner query:
+
+```python
+print(movie.where(american).select(title & year.eq(1942)))
+```
+<run-snip lang="python" session="tutorial"></run-snip>
+
+And that's pretty much the whole language!
+Prela also supports grouping and aggregation, and we are working a full documentation for the language.
+As an excercise,[^5] you can try to define the necessary relations so that the
+ snippet at the top runs.
+If you run into issues, try to break down the query - every subexpression in Prela is a valid query.
+
+[^5]: A solution is hidden *somewhere* on this page ;)
+
+```python
+# keyword = ...
+# ...
+
+print(movie.where(company.s(country).eq("[us]")
+                  & keyword.eq("character-name-in-title"))
+          .select(title & cast.s(person).s(alias).s(text)))
+```
+<run-snip lang="python" session="tutorial"></run-snip>
+
+<!-- Solution: `cast` is deliberately multi-valued, giving The Godfather two
+     cast members and therefore two rows of output.
+
+keyword = Rel([(0, "character-name-in-title"),
+               (1, "samurai"),
+               (2, "wwii")])
+
+cast    = Rel([(0, 0),
+               (0, 1),
+               (2, 2)])
+
+person  = Rel([(0, 0), (1, 1), (2, 2)])
+
+alias   = Rel([(0, 0), (1, 1), (2, 2)])
+
+text    = Rel([(0, "Brando, Marlon"),
+               (1, "Pacino, Al"),
+               (2, "Bogart, Humphrey")])
+
+print(movie.where(company.s(country).eq("[us]")
+                  & keyword.eq("character-name-in-title"))
+           .select(title & cast.s(person).s(alias).s(text)))
+
+which prints:
+
+646, ('The Godfather', 'Brando, Marlon')
+646, ('The Godfather', 'Pacino, Al')
+-->
 
 <script type="module" src="https://unpkg.com/@remywang/snip@0/snip.js"></script>
-
-Try removing `(2, "Tron")` from `title` and re-run the cell above.
