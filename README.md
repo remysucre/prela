@@ -19,7 +19,7 @@ This gives the user complete control over all aspects of query planning,
  including join ordering, operator pushdown, materialization, and selection of physical data structures.
 Nevertheless, the most idiomatic way to write a query already performs well in our experiments. 
 
-> [!NOTE]
+> [!WARNING]
 > Prela is a research prototype in early development. 
 > Expect constant and sweeping changes to both language design and implementation.
 
