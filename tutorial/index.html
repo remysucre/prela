@@ -512,10 +512,7 @@ company's country"!</p>
 <div class="sourceCode" id="cb8"><pre
 class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.s(company).s(country))</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
-<p>Our company IDs happen to be their own row numbers, which makes
-<code>id2row</code> the identity relation --- try deleting
-<code>.s(id2row)</code> from the cell above and you will get the same
-answer. This is also what happened in
+<p>This is also what happened in
 <code>cast.s(person).s(alias).s(text)</code> on the last line of the
 snippet in the beginning of the tutorial.</p>
 <p>So far every query has returned a single column of values. To select

@@ -205,9 +205,6 @@ print(movie.s(company).s(country))
 ```
 <run-snip lang="python" session="tutorial"></run-snip>
 
-Our company IDs happen to be their own row numbers, which makes `id2row` the
- identity relation --- try deleting `.s(id2row)` from the cell above and you
- will get the same answer.
 This is also what happened in `cast.s(person).s(alias).s(text)` 
  on the last line of the snippet in the beginning of the tutorial.
 
