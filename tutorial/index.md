@@ -328,8 +328,6 @@ We are working a full documentation for the language,
 As an excercise,[^5] you can try to define the necessary relations so that the
  snippet at the top runs.
 
-A self-contained Python program for our toy Prela can be found [here](https://github.com/remysucre/prela/blob/main/tutorial/prela.py).
-
 [^5]: A solution is hidden *somewhere* on this page ;)
 
 ```python
@@ -341,6 +339,8 @@ print(movie.where(company.s(country).eq("[us]") &
           .select(title & cast.s(person).s(alias).s(text)))
 ```
 <run-snip lang="python" session="tutorial"></run-snip>
+
+A self-contained Python program for our toy Prela can be found [here](https://github.com/remysucre/prela/blob/main/tutorial/prela.py).
 
 <!-- Solution:
 
