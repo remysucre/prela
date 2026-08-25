@@ -1,9 +1,9 @@
 ---
-title:  'Prela Tutorial'
+title:  'Prela in 11 Lines of Code'
 ...
 
 [Prela](https://prela-lang.org) is a new query language being developed
- at the [RePL lab](https://remy.wang) at UCLA.
+ at UCLA [RePL](https://remy.wang).
 The language is quite different from SQL, but its key ideas
  are very simple and (in our opinion) elegant.
 In this short tutorial, we will build a toy version of Prela
