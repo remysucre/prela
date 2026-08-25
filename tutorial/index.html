@@ -396,12 +396,15 @@ up the value:</p>
 class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="bu">dict</span>(movie)[<span class="dv">646</span>], <span class="bu">dict</span>(title)[<span class="dv">0</span>], <span class="bu">dict</span>(year)[<span class="dv">0</span>])</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
 <p>We're now ready to introduce the first and most important operator in
-Prela, the relational composition. Functional composition works by
-applying one function first, then applying the other one to the output.
-Relation composition is similar, and just applies the second relation to
-the output of the first, skipping the inputs <code>s</code> has no
-output for. Relation composition is spelt as <code>select</code> in
-Prela:</p>
+Prela, the relation composition. Function composition works by applying
+one function first, then applying the other one to the output. The
+composition of two relations <code>r</code> and <code>s</code> is itself
+a relation, first mapping <code>x</code> with <code>r</code> to get some
+<code>y</code>, then map <code>y</code> with <code>s</code> for the
+final "output". This can be implemented by turning <code>s</code> into a
+dictionary <code>d</code>, iterating the <code>(x, y)</code> pairs in
+<code>r</code>, and finally outputting <code>(x, d[y])</code> if
+<code>y</code> is found in <code>d</code>:</p>
 <div class="sourceCode" id="cb4"><pre
 class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> select(r, s):</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  d <span class="op">=</span> <span class="bu">dict</span>(s)</span>

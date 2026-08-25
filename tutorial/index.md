@@ -117,12 +117,15 @@ print(dict(movie)[646], dict(title)[0], dict(year)[0])
 <run-snip lang="python" session="tutorial"></run-snip>
 
 We're now ready to introduce the first and most important
- operator in Prela, the relational composition.
-Functional composition works by applying one function first, then applying
+ operator in Prela, the relation composition.
+Function composition works by applying one function first, then applying
  the other one to the output.
-Relation composition is similar, and just applies the second relation
- to the output of the first, skipping the inputs `s` has no output for.
-Relation composition is spelt as `select` in Prela:
+The composition of two relations `r` and `s` is itself a relation,
+ first mapping `x` with `r` to get some `y`, then
+ map `y` with `s` for the final "output".
+This can be implemented by turning `s` into a dictionary `d`,
+ iterating the `(x, y)` pairs in `r`,
+ and finally outputting `(x, d[y])` if `y` is found in `d`:
 
 ```python
 def select(r, s):
