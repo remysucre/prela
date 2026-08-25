@@ -3,12 +3,12 @@ title:  'Prela in 11 Lines of Code'
 ...
 
 [Prela](https://prela-lang.org) is a new query language being developed
- at UCLA [RePL](https://remy.wang).
+ at UCLA [RePL](https://repl.la).
 The language is quite different from SQL, but its key ideas
- are very simple and (in our opinion) elegant.
+ are very simple.
 In this short tutorial, we will build a toy version of Prela
  in Python to understand its core principles.
-By the end of this tutorial, you will understand how the following query works:
+By the end of this tutorial, you will know how the following query works:
 
 ```python
 movie.where(company.s(country).eq("[us]") &
@@ -20,12 +20,6 @@ You can probably already guess what it's doing: the query finds every movie
  produced by an American company and has a character name in its title,
  and outputs the title along with the alias for each cast member.
 Note that the [equivalent query in SQL](https://github.com/gregrahn/join-order-benchmark/blob/master/16b.sql) spans over 20 lines.
-
-> [!TIP]
-> This tutorial uses [snip](https://remy.wang/snip/) to connect code cells into a notebook-like
-> environment,[^1] changes made in one cell are reflected in later cells.
-
-[^1]: Different from e.g. Jupyter, snip always executes from the beginning from scratch to avoid corrupted state.
 
 <script id="rel-class" type="text/plain">
 class Rel:
@@ -91,6 +85,12 @@ year  = Rel([(0, 1972),
              (2, 1942)])
 ```
 <run-snip lang="python" session="tutorial" setup="rel-class" hide-run></run-snip>
+
+> [!TIP]
+> This tutorial uses [snip](https://remy.wang/snip/) to connect code cells into a notebook-like
+> environment,[^1] changes made in one cell are reflected in later cells.
+
+[^1]: Different from e.g. Jupyter, snip always executes from the beginning from scratch to avoid corrupted state.
 
 The `movie`, `title`, and `year` relations above represent the `ID`, `title`, and `year`
   columns of the original table, respectively.

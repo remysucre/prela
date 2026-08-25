@@ -269,12 +269,11 @@
 <h1 class="title">Prela in 11 Lines of Code</h1>
 </header>
 <p><a href="https://prela-lang.org">Prela</a> is a new query language
-being developed at UCLA <a href="https://remy.wang">RePL</a>. The
-language is quite different from SQL, but its key ideas are very simple
-and (in our opinion) elegant. In this short tutorial, we will build a
-toy version of Prela in Python to understand its core principles. By the
-end of this tutorial, you will understand how the following query
-works:</p>
+being developed at UCLA <a href="https://repl.la">RePL</a>. The language
+is quite different from SQL, but its key ideas are very simple. In this
+short tutorial, we will build a toy version of Prela in Python to
+understand its core principles. By the end of this tutorial, you will
+know how the following query works:</p>
 <div class="sourceCode" id="cb1"><pre
 class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>movie.where(company.s(country).eq(<span class="st">&quot;[us]&quot;</span>) <span class="op">&amp;</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>            keyword.eq(<span class="st">&quot;character-name-in-title&quot;</span>))</span>
@@ -285,15 +284,6 @@ title, and outputs the title along with the alias for each cast member.
 Note that the <a
 href="https://github.com/gregrahn/join-order-benchmark/blob/master/16b.sql">equivalent
 query in SQL</a> spans over 20 lines.</p>
-<div class="tip">
-<div class="title">
-<p>Tip</p>
-</div>
-<p>This tutorial uses <a href="https://remy.wang/snip/">snip</a> to
-connect code cells into a notebook-like environment,<a href="#fn1"
-class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a>
-changes made in one cell are reflected in later cells.</p>
-</div>
 <script id="rel-class" type="text/plain">
 class Rel:
     def __init__(self, pairs: list):
@@ -375,6 +365,15 @@ class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a hr
 <span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>             (<span class="dv">1</span>, <span class="dv">1954</span>),</span>
 <span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a>             (<span class="dv">2</span>, <span class="dv">1942</span>)])</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial" setup="rel-class" hide-run></run-snip></p>
+<div class="tip">
+<div class="title">
+<p>Tip</p>
+</div>
+<p>This tutorial uses <a href="https://remy.wang/snip/">snip</a> to
+connect code cells into a notebook-like environment,<a href="#fn1"
+class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a>
+changes made in one cell are reflected in later cells.</p>
+</div>
 <p>The <code>movie</code>, <code>title</code>, and <code>year</code>
 relations above represent the <code>ID</code>, <code>title</code>, and
 <code>year</code> columns of the original table, respectively. Note how
