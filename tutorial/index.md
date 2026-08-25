@@ -5,7 +5,7 @@ title:  'Prela Tutorial'
 [Prela](https://prela-lang.org) is a new query language being developed
  at the [RePL lab](https://remy.wang) at UCLA.
 The language is quite different from SQL, but its key ideas
- are very simple and (we think) elegant.
+ are very simple and (in our opinion) elegant.
 In this short tutorial, we will build a toy version of Prela
  in Python to understand its core principles.
 By the end of this tutorial, you will understand how the following query works:
