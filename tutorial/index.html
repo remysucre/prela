@@ -350,8 +350,10 @@ multiple columns. Suppose we have a table of movies:</p>
 </tr>
 </tbody>
 </table>
-<p>We can decompose the 3-column table into 3 binary relations, each
-mapping the row number to the column value:</p>
+<p>We can decompose the 3-column table into 3 binary relations,<a
+href="#fn1" class="footnote-ref" id="fnref1"
+role="doc-noteref"><sup>1</sup></a> each mapping the row number to the
+column value:</p>
 <div class="sourceCode" id="cb2"><pre
 class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>movie <span class="op">=</span> Rel([(<span class="dv">646</span>, <span class="dv">0</span>),</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>             (<span class="dv">478</span>, <span class="dv">1</span>),</span>
@@ -370,8 +372,8 @@ class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a hr
 <p>Tip</p>
 </div>
 <p>This tutorial uses <a href="https://remy.wang/snip/">snip</a> to
-connect code cells into a notebook-like environment,<a href="#fn1"
-class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a>
+connect code cells into a notebook-like environment,<a href="#fn2"
+class="footnote-ref" id="fnref2" role="doc-noteref"><sup>2</sup></a>
 changes made in one cell are reflected in later cells.</p>
 </div>
 <p>The <code>movie</code>, <code>title</code>, and <code>year</code>
@@ -411,8 +413,8 @@ class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a hr
 <p><run-snip lang="python" session="tutorial" hide-run></run-snip></p>
 <p>Using our example, the query below composes <code>movie</code> with
 <code>title</code> to get a relation mapping each movie ID to its
-title:<a href="#fn2" class="footnote-ref" id="fnref2"
-role="doc-noteref"><sup>2</sup></a></p>
+title:<a href="#fn3" class="footnote-ref" id="fnref3"
+role="doc-noteref"><sup>3</sup></a></p>
 <div class="sourceCode" id="cb5"><pre
 class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.select(title))</span></code></pre></div>
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
@@ -508,8 +510,8 @@ class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a hr
 <p><run-snip lang="python" session="tutorial"></run-snip></p>
 <p>Because joining via a foreign key almost always require "resolving"
 an ID to a row, Prela automatically inserts that step so one can write
-the following,<a href="#fn3" class="footnote-ref" id="fnref3"
-role="doc-noteref"><sup>3</sup></a> which reads just like "a movie's
+the following,<a href="#fn4" class="footnote-ref" id="fnref4"
+role="doc-noteref"><sup>4</sup></a> which reads just like "a movie's
 company's country"!</p>
 <div class="sourceCode" id="cb8"><pre
 class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(movie.s(company).s(country))</span></code></pre></div>
@@ -599,8 +601,8 @@ class="sourceCode python"><code class="sourceCode python"><span id="cb19-1"><a h
 grouping and aggregation, and other common operators. We are working a
 full documentation for the language, so for now you can refer to our <a
 href="https://arxiv.org/abs/2607.26356">paper</a> for more details. As
-an excercise,<a href="#fn4" class="footnote-ref" id="fnref4"
-role="doc-noteref"><sup>4</sup></a> you can try to define the necessary
+an excercise,<a href="#fn5" class="footnote-ref" id="fnref5"
+role="doc-noteref"><sup>5</sup></a> you can try to define the necessary
 relations so that the snippet at the top runs.</p>
 <div class="sourceCode" id="cb20"><pre
 class="sourceCode python"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="co"># keyword = ...</span></span>
@@ -643,16 +645,22 @@ which prints:
 role="doc-endnotes">
 <hr />
 <ol>
-<li id="fn1"><p>Different from e.g. Jupyter, snip always executes from
-the beginning from scratch to avoid corrupted state.<a href="#fnref1"
+<li id="fn1"><p>This is also known as <a
+href="https://en.wikipedia.org/wiki/Sixth_normal_form">6NF</a>
+decomposition. If you're concerned this would introduce overheads, check
+out <a href="https://remy.wang/blog/cps.html">this post</a> to see how
+Prela compiles away the indirection with CPS.<a href="#fnref1"
 class="footnote-back" role="doc-backlink">↩︎</a></p></li>
-<li id="fn2"><p>The <code>.select</code> method syntax uses the same
+<li id="fn2"><p>Different from e.g. Jupyter, snip always executes from
+the beginning from scratch to avoid corrupted state.<a href="#fnref2"
+class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn3"><p>The <code>.select</code> method syntax uses the same
 trick of forwarding <code>Rel.select</code> to <code>select()</code>.<a
-href="#fnref2" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
-<li id="fn3"><p>Here we cheat by using the row number as company IDs.<a
 href="#fnref3" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
-<li id="fn4"><p>A solution is hidden <em>somewhere</em> on this page
-;)<a href="#fnref4" class="footnote-back"
+<li id="fn4"><p>Here we cheat by using the row number as company IDs.<a
+href="#fnref4" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn5"><p>A solution is hidden <em>somewhere</em> on this page
+;)<a href="#fnref5" class="footnote-back"
 role="doc-backlink">↩︎</a></p></li>
 </ol>
 </section>

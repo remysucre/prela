@@ -69,7 +69,9 @@ Suppose we have a table of movies:
 | 478 | Seven Samurai | 1954 |
 | 583 | Casablanca    | 1942 |
 
-We can decompose the 3-column table into 3 binary relations, each mapping the row number to the column value:
+We can decompose the 3-column table into 3 binary relations,[^6] each mapping the row number to the column value:
+
+[^6]: This is also known as [6NF](https://en.wikipedia.org/wiki/Sixth_normal_form) decomposition. If you're concerned this would introduce overheads, check out [this post](https://remy.wang/blog/cps.html) to see how Prela compiles away the indirection with CPS.
 
 ```python
 movie = Rel([(646, 0),
