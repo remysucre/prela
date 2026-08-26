@@ -27,7 +27,7 @@ Nevertheless, the most idiomatic way to write a query already performs well in o
 ### Tutorial
 
 If you're ready to learn Prela, check out [this interactive tutorial](https://prela-lang.org/tutorial/) that
- implements a simplified version of the langauge in 11 lines of Python.
+ implements a simplified version of the langauge in 11 lines of code.
 
 ### Examples
 
