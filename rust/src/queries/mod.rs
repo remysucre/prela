@@ -1,8 +1,13 @@
 // All 113 JOB queries — one entry per Julia _q(name, oracle) block —
 // plus the method-chain demo. Each chunk file owns one slice of
-// queries.jl; ALL stitches them together. Queries read the typed schema's
-// global `OnceLock` store (src/job_schema.rs), so runners take no data
-// argument — call `job_schema::job_init` once before running.
+// queries.jl; ALL stitches them together.
+//
+// Each query takes the loaded database and opens by destructuring the
+// entities it touches (`let Movie { title, keyword, .. } = &db.movie;`).
+// The bindings are the relations themselves, so the combinators hang off
+// them directly. `db` is `&'static` (main leaks it once), which is why the
+// plans these functions return carry no lifetime and `ENTRIES` can stay a
+// `const` array of fn pointers.
 
 pub mod helpers;
 pub mod sets;
@@ -15,7 +20,7 @@ mod t4;
 mod t5;
 mod t6;
 
-pub type Entry = crate::Entry;
+pub type Entry = crate::Entry<crate::job_schema::Job>;
 
 pub fn all_queries() -> Vec<Entry> {
     [

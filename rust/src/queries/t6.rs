@@ -6,358 +6,561 @@ use crate::queries::helpers::{min_row, Row};
 use crate::queries::sets::{genre6, kw7, link3, murder4, nordic9, nordic10, voice3, voice4, writer5};
 use super::helpers::{film_or_warner_co, follow_link};
 
-fn co_28() -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive + Probe {
+fn co_28(db: &'static Job) -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive + Probe {
+    let Movie { company, .. } = &db.movie;
+    let Company { country, note: company_note, .. } = &db.company;
     company.with(country.ne("[us]")
-            .and(Company::note.nrx(r"\(USA\)"))
-            .and(Company::note.rx(r"\(200.*\)")))
+            .and(company_note.nrx(r"\(USA\)"))
+            .and(company_note.rx(r"\(200.*\)")))
 }
 
-fn dt_28ac() -> impl Query<R = Id<Data>, D = Id<Movie>> + Drive + Probe {
-    data.with(Data::ty.eq("rating")
-         .and(Data::text.lt("8.5")))
+fn dt_28ac(db: &'static Job) -> impl Query<R = Id<Data>, D = Id<Movie>> + Drive + Probe {
+    let Movie { data, .. } = &db.movie;
+    let Data { text: data_text, ty: data_ty, .. } = &db.data;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    data.with(data_ty.select(infotype_text).eq("rating")
+         .and(data_text.lt("8.5")))
 }
 
-fn dt_28b() -> impl Query<R = Id<Data>, D = Id<Movie>> + Drive + Probe {
-    data.with(Data::ty.eq("rating")
-         .and(Data::text.gt("6.5")))
+fn dt_28b(db: &'static Job) -> impl Query<R = Id<Data>, D = Id<Movie>> + Drive + Probe {
+    let Movie { data, .. } = &db.movie;
+    let Data { text: data_text, ty: data_ty, .. } = &db.data;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    data.with(data_ty.select(infotype_text).eq("rating")
+         .and(data_text.gt("6.5")))
 }
 
 // Conjunct trees (∧ = Prod) — consumed via `member` only, so the value
 // type stays opaque (`impl Query<D = Id<Info>> + Probe`).
-fn gf_horror() -> impl Query<D = Id<Info>> + Probe {
-    Info::ty.eq("genres")
-        .and(Info::info.is_in(["Horror", "Thriller"]))
+fn gf_horror(db: &'static Job) -> impl Query<D = Id<Info>> + Probe {
+    let Info { info: info_info, ty: info_ty, .. } = &db.info;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    info_ty.select(infotype_text).eq("genres")
+        .and(info_info.is_in(["Horror", "Thriller"]))
 }
 
-fn gf_genre6() -> impl Query<D = Id<Info>> + Probe {
-    Info::ty.eq("genres")
-        .and(Info::info.is_in(genre6()))
+fn gf_genre6(db: &'static Job) -> impl Query<D = Id<Info>> + Probe {
+    let Info { info: info_info, ty: info_ty, .. } = &db.info;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    info_ty.select(infotype_text).eq("genres")
+        .and(info_info.is_in(genre6()))
 }
 
-fn qlink_33a() -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe {
-    link.with(MovieLink::ty.is_in(link3())
-         .and(target.with(kind.eq("tv series")
+fn qlink_33a(db: &'static Job) -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe {
+    let Movie { kind, production_year, company, data, link, .. } = &db.movie;
+    let Data { text: data_text, ty: data_ty, .. } = &db.data;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    let Kind { text: kind_text, .. } = &db.kind;
+    let LinkType { text: linktype_text, .. } = &db.link_type;
+    let MovieLink { target, ty: movielink_ty, .. } = &db.movie_link;
+    link.with(movielink_ty.select(linktype_text).is_in(link3())
+         .and(target.with(kind.select(kind_text).eq("tv series")
                      .and(company)
-                     .and(data.with(Data::ty.eq("rating")
-                               .and(Data::text.lt("3.0"))))
+                     .and(data.with(data_ty.select(infotype_text).eq("rating")
+                               .and(data_text.lt("3.0"))))
                      .and(production_year.ge(2005))
                      .and(production_year.le(2008)))))
 }
 
-fn qlink_33b() -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe {
-    link.with(MovieLink::ty.rx(r"follow")
-         .and(target.with(kind.eq("tv series")
+fn qlink_33b(db: &'static Job) -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe {
+    let Movie { kind, production_year, company, data, link, .. } = &db.movie;
+    let Data { text: data_text, ty: data_ty, .. } = &db.data;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    let Kind { text: kind_text, .. } = &db.kind;
+    let LinkType { text: linktype_text, .. } = &db.link_type;
+    let MovieLink { target, ty: movielink_ty, .. } = &db.movie_link;
+    link.with(movielink_ty.select(linktype_text).rx(r"follow")
+         .and(target.with(kind.select(kind_text).eq("tv series")
                      .and(company)
-                     .and(data.with(Data::ty.eq("rating")
-                               .and(Data::text.lt("3.0"))))
+                     .and(data.with(data_ty.select(infotype_text).eq("rating")
+                               .and(data_text.lt("3.0"))))
                      .and(production_year.eq(2007)))))
 }
 
-fn qlink_33c() -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe {
-    link.with(MovieLink::ty.is_in(link3())
-         .and(target.with(kind.is_in(["tv series", "episode"])
+fn qlink_33c(db: &'static Job) -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe {
+    let Movie { kind, production_year, company, data, link, .. } = &db.movie;
+    let Data { text: data_text, ty: data_ty, .. } = &db.data;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    let Kind { text: kind_text, .. } = &db.kind;
+    let LinkType { text: linktype_text, .. } = &db.link_type;
+    let MovieLink { target, ty: movielink_ty, .. } = &db.movie_link;
+    link.with(movielink_ty.select(linktype_text).is_in(link3())
+         .and(target.with(kind.select(kind_text).is_in(["tv series", "episode"])
                      .and(company)
-                     .and(data.with(Data::ty.eq("rating")
-                               .and(Data::text.lt("3.5"))))
+                     .and(data.with(data_ty.select(infotype_text).eq("rating")
+                               .and(data_text.lt("3.5"))))
                      .and(production_year.ge(2000))
                      .and(production_year.le(2010)))))
 }
 
 pub const ENTRIES: &[super::Entry] = &[
-    ("27a", "Det Danske Filminstitut || followed by || Spår i mörker", || min_row(q27a())),
-    ("27b", "Filmlance International AB || followed by || Vita nätter", || min_row(q27b())),
-    ("27c", "Det Danske Filminstitut || followed by || Spår i mörker", || min_row(q27c())),
-    ("28a", "01 Distribuzione || 2.9 || (#1.1)", || min_row(q28a())),
-    ("28b", "20th Century Fox || 6.6 || (#1.1)", || min_row(q28b())),
-    ("28c", "01 Distribuzione || 1.9 || (#1.1)", || min_row(q28c())),
-    ("29a", "Queen || Andrews, Julie || Shrek 2", || min_row(q29a())),
-    ("29b", "Queen || Andrews, Julie || Shrek 2", || min_row(q29b())),
-    ("29c", "Lola || Andrews, Julie || Hoodwinked!", || min_row(q29c())),
-    ("30a", "Horror || 100356 || 16 Blocks || Abrams, J.J.", || min_row(q30a())),
-    ("30b", "Horror || 194782 || Freddy vs. Jason || Shannon, Damian", || min_row(q30b())),
-    ("30c", "Action || 100356 || $ || Abernathy, Lewis", || min_row(q30c())),
-    ("31a", "Horror || 1040 || 2001 Maniacs || Agnew, Jim", || min_row(q31a())),
-    ("31b", "Horror || 129755 || Saw || Bousman, Darren Lynn", || min_row(q31b())),
-    ("31c", "Action || 1008 || 11:14 || Abraham, Brad", || min_row(q31c())),
-    ("32a", "(empty)", || min_row(q32a())),
-    ("32b", "alternate language version of || 12 oz. Mouse || 'Angel': Season 2 Overview", || min_row(q32b())),
-    ("33a", "495 Productions || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila", || min_row(q33a())),
-    ("33b", "MTV Netherlands || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila", || min_row(q33b())),
-    ("33c", "2BE || 495 Productions || 1.3 || 1.0 || A Double Shot at Love || A Double Shot at Love", || min_row(q33c())),
+    ("27a", "Det Danske Filminstitut || followed by || Spår i mörker", |db| min_row(q27a(db))),
+    ("27b", "Filmlance International AB || followed by || Vita nätter", |db| min_row(q27b(db))),
+    ("27c", "Det Danske Filminstitut || followed by || Spår i mörker", |db| min_row(q27c(db))),
+    ("28a", "01 Distribuzione || 2.9 || (#1.1)", |db| min_row(q28a(db))),
+    ("28b", "20th Century Fox || 6.6 || (#1.1)", |db| min_row(q28b(db))),
+    ("28c", "01 Distribuzione || 1.9 || (#1.1)", |db| min_row(q28c(db))),
+    ("29a", "Queen || Andrews, Julie || Shrek 2", |db| min_row(q29a(db))),
+    ("29b", "Queen || Andrews, Julie || Shrek 2", |db| min_row(q29b(db))),
+    ("29c", "Lola || Andrews, Julie || Hoodwinked!", |db| min_row(q29c(db))),
+    ("30a", "Horror || 100356 || 16 Blocks || Abrams, J.J.", |db| min_row(q30a(db))),
+    ("30b", "Horror || 194782 || Freddy vs. Jason || Shannon, Damian", |db| min_row(q30b(db))),
+    ("30c", "Action || 100356 || $ || Abernathy, Lewis", |db| min_row(q30c(db))),
+    ("31a", "Horror || 1040 || 2001 Maniacs || Agnew, Jim", |db| min_row(q31a(db))),
+    ("31b", "Horror || 129755 || Saw || Bousman, Darren Lynn", |db| min_row(q31b(db))),
+    ("31c", "Action || 1008 || 11:14 || Abraham, Brad", |db| min_row(q31c(db))),
+    ("32a", "(empty)", |db| min_row(q32a(db))),
+    ("32b", "alternate language version of || 12 oz. Mouse || 'Angel': Season 2 Overview", |db| min_row(q32b(db))),
+    ("33a", "495 Productions || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila", |db| min_row(q33a(db))),
+    ("33b", "MTV Netherlands || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila", |db| min_row(q33b(db))),
+    ("33c", "2BE || 495 Productions || 1.3 || 1.0 || A Double Shot at Love || A Double Shot at Love", |db| min_row(q33c(db))),
 ];
 
-fn q27a() -> impl Drive<R: Row> {
+fn q27a(db: &'static Job) -> impl Drive<R: Row> {
+    let Movie { title, production_year, keyword, info, complete_cast, link, .. } = &db.movie;
+    let CompCastType { text: compcasttype_text, .. } = &db.comp_cast_type;
+    let Company { name: company_name, .. } = &db.company;
+    let CompleteCast { status, subject, .. } = &db.complete_cast;
+    let Info { info: info_info, .. } = &db.info;
+    let Keyword { text: keyword_text, .. } = &db.keyword;
+    let movie = db.movie.all();
     movie.with(link
-          .and(keyword.eq("sequel"))
+          .and(keyword.select(keyword_text).eq("sequel"))
           .and(production_year.between(1950, 2000))
-          .and(info.select(Info::info.is_in(["Sweden", "Germany", "Swedish", "German"])))
-          .and(complete_cast.select(subject.is_in(["cast", "crew"])
-                               .and(status.eq("complete"))))
-          .and(follow_link()))
-       .select(film_or_warner_co().name()
-          .and(follow_link())
+          .and(info.select(info_info.is_in(["Sweden", "Germany", "Swedish", "German"])))
+          .and(complete_cast.select(subject.select(compcasttype_text).is_in(["cast", "crew"])
+                               .and(status.select(compcasttype_text).eq("complete"))))
+          .and(follow_link(db)))
+       .select(film_or_warner_co(db).select(company_name)
+          .and(follow_link(db))
           .and(title))
 }
 
-fn q27b() -> impl Drive<R: Row> {
+fn q27b(db: &'static Job) -> impl Drive<R: Row> {
+    let Movie { title, production_year, keyword, info, complete_cast, link, .. } = &db.movie;
+    let CompCastType { text: compcasttype_text, .. } = &db.comp_cast_type;
+    let Company { name: company_name, .. } = &db.company;
+    let CompleteCast { status, subject, .. } = &db.complete_cast;
+    let Info { info: info_info, .. } = &db.info;
+    let Keyword { text: keyword_text, .. } = &db.keyword;
+    let movie = db.movie.all();
     movie.with(link
-          .and(keyword.eq("sequel"))
+          .and(keyword.select(keyword_text).eq("sequel"))
           .and(production_year.eq(1998))
-          .and(info.select(Info::info.is_in(["Sweden", "Germany", "Swedish", "German"])))
-          .and(complete_cast.select(subject.is_in(["cast", "crew"])
-                               .and(status.eq("complete"))))
-          .and(follow_link()))
-       .select(film_or_warner_co().name()
-          .and(follow_link())
+          .and(info.select(info_info.is_in(["Sweden", "Germany", "Swedish", "German"])))
+          .and(complete_cast.select(subject.select(compcasttype_text).is_in(["cast", "crew"])
+                               .and(status.select(compcasttype_text).eq("complete"))))
+          .and(follow_link(db)))
+       .select(film_or_warner_co(db).select(company_name)
+          .and(follow_link(db))
           .and(title))
 }
 
-fn q27c() -> impl Drive<R: Row> {
+fn q27c(db: &'static Job) -> impl Drive<R: Row> {
+    let Movie { title, production_year, keyword, info, complete_cast, link, .. } = &db.movie;
+    let CompCastType { text: compcasttype_text, .. } = &db.comp_cast_type;
+    let Company { name: company_name, .. } = &db.company;
+    let CompleteCast { status, subject, .. } = &db.complete_cast;
+    let Info { info: info_info, .. } = &db.info;
+    let Keyword { text: keyword_text, .. } = &db.keyword;
+    let movie = db.movie.all();
     movie.with(link
-          .and(keyword.eq("sequel"))
+          .and(keyword.select(keyword_text).eq("sequel"))
           .and(production_year.between(1950, 2010))
-          .and(info.select(Info::info.is_in(nordic9())))
-          .and(complete_cast.select(subject.eq("cast")
-                               .and(status.rx(r"^complete"))))
-          .and(follow_link()))
-       .select(film_or_warner_co().name()
-          .and(follow_link())
+          .and(info.select(info_info.is_in(nordic9())))
+          .and(complete_cast.select(subject.select(compcasttype_text).eq("cast")
+                               .and(status.select(compcasttype_text).rx(r"^complete"))))
+          .and(follow_link(db)))
+       .select(film_or_warner_co(db).select(company_name)
+          .and(follow_link(db))
           .and(title))
 }
 
-fn q28a() -> impl Drive<R: Row> {
-    movie.with(complete_cast.select(subject.eq("crew")
-                               .and(status.ne("complete+verified")))
-          .and(co_28())
-          .and(info.select(Info::ty.eq("countries")
-                      .and(Info::info.is_in(nordic10()))))
-          .and(dt_28ac())
-          .and(keyword.is_in(murder4()))
-          .and(kind.is_in(["movie", "episode"]))
+fn q28a(db: &'static Job) -> impl Drive<R: Row> {
+    let Movie { title, kind, production_year, keyword, info, complete_cast, .. } = &db.movie;
+    let CompCastType { text: compcasttype_text, .. } = &db.comp_cast_type;
+    let Company { name: company_name, .. } = &db.company;
+    let CompleteCast { status, subject, .. } = &db.complete_cast;
+    let Data { text: data_text, .. } = &db.data;
+    let Info { info: info_info, ty: info_ty, .. } = &db.info;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    let Keyword { text: keyword_text, .. } = &db.keyword;
+    let Kind { text: kind_text, .. } = &db.kind;
+    let movie = db.movie.all();
+    movie.with(complete_cast.select(subject.select(compcasttype_text).eq("crew")
+                               .and(status.select(compcasttype_text).ne("complete+verified")))
+          .and(co_28(db))
+          .and(info.select(info_ty.select(infotype_text).eq("countries")
+                      .and(info_info.is_in(nordic10()))))
+          .and(dt_28ac(db))
+          .and(keyword.select(keyword_text).is_in(murder4()))
+          .and(kind.select(kind_text).is_in(["movie", "episode"]))
           .and(production_year.gt(2000)))
-       .select(co_28().name()
-          .and(dt_28ac().text())
+       .select(co_28(db).select(company_name)
+          .and(dt_28ac(db).select(data_text))
           .and(title))
 }
 
-fn q28b() -> impl Drive<R: Row> {
-    movie.with(complete_cast.select(subject.eq("crew")
-                               .and(status.ne("complete+verified")))
-          .and(co_28())
-          .and(info.select(Info::ty.eq("countries")
-                      .and(Info::info.is_in(["Sweden", "Germany", "Swedish", "German"]))))
-          .and(dt_28b())
-          .and(keyword.is_in(murder4()))
-          .and(kind.is_in(["movie", "episode"]))
+fn q28b(db: &'static Job) -> impl Drive<R: Row> {
+    let Movie { title, kind, production_year, keyword, info, complete_cast, .. } = &db.movie;
+    let CompCastType { text: compcasttype_text, .. } = &db.comp_cast_type;
+    let Company { name: company_name, .. } = &db.company;
+    let CompleteCast { status, subject, .. } = &db.complete_cast;
+    let Data { text: data_text, .. } = &db.data;
+    let Info { info: info_info, ty: info_ty, .. } = &db.info;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    let Keyword { text: keyword_text, .. } = &db.keyword;
+    let Kind { text: kind_text, .. } = &db.kind;
+    let movie = db.movie.all();
+    movie.with(complete_cast.select(subject.select(compcasttype_text).eq("crew")
+                               .and(status.select(compcasttype_text).ne("complete+verified")))
+          .and(co_28(db))
+          .and(info.select(info_ty.select(infotype_text).eq("countries")
+                      .and(info_info.is_in(["Sweden", "Germany", "Swedish", "German"]))))
+          .and(dt_28b(db))
+          .and(keyword.select(keyword_text).is_in(murder4()))
+          .and(kind.select(kind_text).is_in(["movie", "episode"]))
           .and(production_year.gt(2005)))
-       .select(co_28().name()
-          .and(dt_28b().text())
+       .select(co_28(db).select(company_name)
+          .and(dt_28b(db).select(data_text))
           .and(title))
 }
 
-fn q28c() -> impl Drive<R: Row> {
-    movie.with(complete_cast.select(subject.eq("cast")
-                               .and(status.eq("complete")))
-          .and(co_28())
-          .and(info.select(Info::ty.eq("countries")
-                      .and(Info::info.is_in(nordic10()))))
-          .and(dt_28ac())
-          .and(keyword.is_in(murder4()))
-          .and(kind.is_in(["movie", "episode"]))
+fn q28c(db: &'static Job) -> impl Drive<R: Row> {
+    let Movie { title, kind, production_year, keyword, info, complete_cast, .. } = &db.movie;
+    let CompCastType { text: compcasttype_text, .. } = &db.comp_cast_type;
+    let Company { name: company_name, .. } = &db.company;
+    let CompleteCast { status, subject, .. } = &db.complete_cast;
+    let Data { text: data_text, .. } = &db.data;
+    let Info { info: info_info, ty: info_ty, .. } = &db.info;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    let Keyword { text: keyword_text, .. } = &db.keyword;
+    let Kind { text: kind_text, .. } = &db.kind;
+    let movie = db.movie.all();
+    movie.with(complete_cast.select(subject.select(compcasttype_text).eq("cast")
+                               .and(status.select(compcasttype_text).eq("complete")))
+          .and(co_28(db))
+          .and(info.select(info_ty.select(infotype_text).eq("countries")
+                      .and(info_info.is_in(nordic10()))))
+          .and(dt_28ac(db))
+          .and(keyword.select(keyword_text).is_in(murder4()))
+          .and(kind.select(kind_text).is_in(["movie", "episode"]))
           .and(production_year.gt(2005)))
-       .select(co_28().name()
-          .and(dt_28ac().text())
+       .select(co_28(db).select(company_name)
+          .and(dt_28ac(db).select(data_text))
           .and(title))
 }
 
-fn q29a() -> impl Drive<R: Row> {
-    movie.with(complete_cast.select(subject.eq("cast")
-                               .and(status.eq("complete+verified")))
-          .and(company.country().eq("[us]"))
-          .and(info.select(Info::ty.eq("release dates")
-                      .and(Info::info.rx(r"^Japan:.*200|^USA:.*200"))))
-          .and(keyword.eq("computer-animation"))
+fn q29a(db: &'static Job) -> impl Drive<R: Row> {
+    let Movie { title, production_year, keyword, company, cast, info, complete_cast, .. } = &db.movie;
+    let Cast { person, role, note: cast_note, character, .. } = &db.cast;
+    let Character { text: character_text, .. } = &db.character;
+    let CompCastType { text: compcasttype_text, .. } = &db.comp_cast_type;
+    let Company { country, .. } = &db.company;
+    let CompleteCast { status, subject, .. } = &db.complete_cast;
+    let Info { info: info_info, ty: info_ty, .. } = &db.info;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    let Keyword { text: keyword_text, .. } = &db.keyword;
+    let Person { name: person_name, gender, alias, bio, .. } = &db.person;
+    let PersonInfo { ty: personinfo_ty, .. } = &db.person_info;
+    let RoleType { text: roletype_text, .. } = &db.role_type;
+    let movie = db.movie.all();
+    movie.with(complete_cast.select(subject.select(compcasttype_text).eq("cast")
+                               .and(status.select(compcasttype_text).eq("complete+verified")))
+          .and(company.select(country).eq("[us]"))
+          .and(info.select(info_ty.select(infotype_text).eq("release dates")
+                      .and(info_info.rx(r"^Japan:.*200|^USA:.*200"))))
+          .and(keyword.select(keyword_text).eq("computer-animation"))
           .and(title.eq("Shrek 2"))
           .and(production_year.ge(2000))
           .and(production_year.le(2010)))
        .select(cast
-             .with(Cast::note.is_in(voice3())
-              .and(role.eq("actress"))
-              .and(character.eq("Queen"))
+             .with(cast_note.is_in(voice3())
+              .and(role.select(roletype_text).eq("actress"))
+              .and(character.select(character_text).eq("Queen"))
               .and(person.with(gender.eq("f")
-                          .and(Person::name.rx(r"An"))
+                          .and(person_name.rx(r"An"))
                           .and(alias)
-                          .and(bio.select(PersonInfo::ty.eq("trivia"))))))
-             .select(character.text()
-                .and(person.name()))
+                          .and(bio.select(personinfo_ty.select(infotype_text).eq("trivia"))))))
+             .select(character.select(character_text)
+                .and(person.select(person_name)))
           .and(title))
 }
 
-fn q29b() -> impl Drive<R: Row> {
-    movie.with(complete_cast.select(subject.eq("cast")
-                               .and(status.eq("complete+verified")))
-          .and(company.country().eq("[us]"))
-          .and(info.select(Info::ty.eq("release dates")
-                      .and(Info::info.rx(r"^USA:.*200"))))
-          .and(keyword.eq("computer-animation"))
+fn q29b(db: &'static Job) -> impl Drive<R: Row> {
+    let Movie { title, production_year, keyword, company, cast, info, complete_cast, .. } = &db.movie;
+    let Cast { person, role, note: cast_note, character, .. } = &db.cast;
+    let Character { text: character_text, .. } = &db.character;
+    let CompCastType { text: compcasttype_text, .. } = &db.comp_cast_type;
+    let Company { country, .. } = &db.company;
+    let CompleteCast { status, subject, .. } = &db.complete_cast;
+    let Info { info: info_info, ty: info_ty, .. } = &db.info;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    let Keyword { text: keyword_text, .. } = &db.keyword;
+    let Person { name: person_name, gender, alias, bio, .. } = &db.person;
+    let PersonInfo { ty: personinfo_ty, .. } = &db.person_info;
+    let RoleType { text: roletype_text, .. } = &db.role_type;
+    let movie = db.movie.all();
+    movie.with(complete_cast.select(subject.select(compcasttype_text).eq("cast")
+                               .and(status.select(compcasttype_text).eq("complete+verified")))
+          .and(company.select(country).eq("[us]"))
+          .and(info.select(info_ty.select(infotype_text).eq("release dates")
+                      .and(info_info.rx(r"^USA:.*200"))))
+          .and(keyword.select(keyword_text).eq("computer-animation"))
           .and(title.eq("Shrek 2"))
           .and(production_year.ge(2000))
           .and(production_year.le(2005)))
        .select(cast
-             .with(Cast::note.is_in(voice3())
-              .and(role.eq("actress"))
-              .and(character.eq("Queen"))
+             .with(cast_note.is_in(voice3())
+              .and(role.select(roletype_text).eq("actress"))
+              .and(character.select(character_text).eq("Queen"))
               .and(person.with(gender.eq("f")
-                          .and(Person::name.rx(r"An"))
+                          .and(person_name.rx(r"An"))
                           .and(alias)
-                          .and(bio.select(PersonInfo::ty.eq("height"))))))
-             .select(character.text()
-                .and(person.name()))
+                          .and(bio.select(personinfo_ty.select(infotype_text).eq("height"))))))
+             .select(character.select(character_text)
+                .and(person.select(person_name)))
           .and(title))
 }
 
-fn q29c() -> impl Drive<R: Row> {
-    movie.with(complete_cast.select(subject.eq("cast")
-                               .and(status.eq("complete+verified")))
-          .and(company.country().eq("[us]"))
-          .and(info.select(Info::ty.eq("release dates")
-                      .and(Info::info.rx(r"^Japan:.*200|^USA:.*200"))))
-          .and(keyword.eq("computer-animation"))
+fn q29c(db: &'static Job) -> impl Drive<R: Row> {
+    let Movie { title, production_year, keyword, company, cast, info, complete_cast, .. } = &db.movie;
+    let Cast { person, role, note: cast_note, character, .. } = &db.cast;
+    let Character { text: character_text, .. } = &db.character;
+    let CompCastType { text: compcasttype_text, .. } = &db.comp_cast_type;
+    let Company { country, .. } = &db.company;
+    let CompleteCast { status, subject, .. } = &db.complete_cast;
+    let Info { info: info_info, ty: info_ty, .. } = &db.info;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    let Keyword { text: keyword_text, .. } = &db.keyword;
+    let Person { name: person_name, gender, alias, bio, .. } = &db.person;
+    let PersonInfo { ty: personinfo_ty, .. } = &db.person_info;
+    let RoleType { text: roletype_text, .. } = &db.role_type;
+    let movie = db.movie.all();
+    movie.with(complete_cast.select(subject.select(compcasttype_text).eq("cast")
+                               .and(status.select(compcasttype_text).eq("complete+verified")))
+          .and(company.select(country).eq("[us]"))
+          .and(info.select(info_ty.select(infotype_text).eq("release dates")
+                      .and(info_info.rx(r"^Japan:.*200|^USA:.*200"))))
+          .and(keyword.select(keyword_text).eq("computer-animation"))
           .and(production_year.ge(2000))
           .and(production_year.le(2010)))
        .select(cast
-             .with(Cast::note.is_in(voice4())
-              .and(role.eq("actress"))
+             .with(cast_note.is_in(voice4())
+              .and(role.select(roletype_text).eq("actress"))
               .and(person.with(gender.eq("f")
-                          .and(Person::name.rx(r"An"))
+                          .and(person_name.rx(r"An"))
                           .and(alias)
-                          .and(bio.select(PersonInfo::ty.eq("trivia"))))))
-             .select(character.text()
-                .and(person.name()))
+                          .and(bio.select(personinfo_ty.select(infotype_text).eq("trivia"))))))
+             .select(character.select(character_text)
+                .and(person.select(person_name)))
           .and(title))
 }
 
-fn q30a() -> impl Drive<R: Row> {
-    movie.with(complete_cast.select(subject.is_in(["cast", "crew"])
-                               .and(status.eq("complete+verified")))
-          .and(info.with(gf_horror()))
-          .and(keyword.is_in(kw7()))
+fn q30a(db: &'static Job) -> impl Drive<R: Row> {
+    let Movie { title, production_year, keyword, cast, info, data, complete_cast, .. } = &db.movie;
+    let Cast { person, note: cast_note, .. } = &db.cast;
+    let CompCastType { text: compcasttype_text, .. } = &db.comp_cast_type;
+    let CompleteCast { status, subject, .. } = &db.complete_cast;
+    let Data { text: data_text, ty: data_ty, .. } = &db.data;
+    let Info { info: info_info, .. } = &db.info;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    let Keyword { text: keyword_text, .. } = &db.keyword;
+    let Person { name: person_name, gender, .. } = &db.person;
+    let movie = db.movie.all();
+    movie.with(complete_cast.select(subject.select(compcasttype_text).is_in(["cast", "crew"])
+                               .and(status.select(compcasttype_text).eq("complete+verified")))
+          .and(info.with(gf_horror(db)))
+          .and(keyword.select(keyword_text).is_in(kw7()))
           .and(production_year.gt(2000)))
-       .select(info.with(gf_horror()).info()
-          .and(data.with(Data::ty.eq("votes")).text())
+       .select(info.with(gf_horror(db)).select(info_info)
+          .and(data.with(data_ty.select(infotype_text).eq("votes")).select(data_text))
           .and(title)
-          .and(cast.with(Cast::note.is_in(writer5())
-                    .and(person.with(gender.eq("m")))).person().name()))
+          .and(cast.with(cast_note.is_in(writer5())
+                    .and(person.with(gender.eq("m")))).select(person).select(person_name)))
 }
 
-fn q30b() -> impl Drive<R: Row> {
-    movie.with(complete_cast.select(subject.is_in(["cast", "crew"])
-                               .and(status.eq("complete+verified")))
-          .and(info.with(gf_horror()))
-          .and(keyword.is_in(kw7()))
+fn q30b(db: &'static Job) -> impl Drive<R: Row> {
+    let Movie { title, production_year, keyword, cast, info, data, complete_cast, .. } = &db.movie;
+    let Cast { person, note: cast_note, .. } = &db.cast;
+    let CompCastType { text: compcasttype_text, .. } = &db.comp_cast_type;
+    let CompleteCast { status, subject, .. } = &db.complete_cast;
+    let Data { text: data_text, ty: data_ty, .. } = &db.data;
+    let Info { info: info_info, .. } = &db.info;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    let Keyword { text: keyword_text, .. } = &db.keyword;
+    let Person { name: person_name, gender, .. } = &db.person;
+    let movie = db.movie.all();
+    movie.with(complete_cast.select(subject.select(compcasttype_text).is_in(["cast", "crew"])
+                               .and(status.select(compcasttype_text).eq("complete+verified")))
+          .and(info.with(gf_horror(db)))
+          .and(keyword.select(keyword_text).is_in(kw7()))
           .and(production_year.gt(2000))
           .and(title.rx(r"Freddy|Jason|^Saw")))
-       .select(info.with(gf_horror()).info()
-          .and(data.with(Data::ty.eq("votes")).text())
+       .select(info.with(gf_horror(db)).select(info_info)
+          .and(data.with(data_ty.select(infotype_text).eq("votes")).select(data_text))
           .and(title)
-          .and(cast.with(Cast::note.is_in(writer5())
-                    .and(person.with(gender.eq("m")))).person().name()))
+          .and(cast.with(cast_note.is_in(writer5())
+                    .and(person.with(gender.eq("m")))).select(person).select(person_name)))
 }
 
-fn q30c() -> impl Drive<R: Row> {
-    movie.with(complete_cast.select(subject.eq("cast")
-                               .and(status.eq("complete+verified")))
-          .and(info.with(gf_genre6()))
-          .and(keyword.is_in(kw7())))
-       .select(info.with(gf_genre6()).info()
-          .and(data.with(Data::ty.eq("votes")).text())
+fn q30c(db: &'static Job) -> impl Drive<R: Row> {
+    let Movie { title, keyword, cast, info, data, complete_cast, .. } = &db.movie;
+    let Cast { person, note: cast_note, .. } = &db.cast;
+    let CompCastType { text: compcasttype_text, .. } = &db.comp_cast_type;
+    let CompleteCast { status, subject, .. } = &db.complete_cast;
+    let Data { text: data_text, ty: data_ty, .. } = &db.data;
+    let Info { info: info_info, .. } = &db.info;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    let Keyword { text: keyword_text, .. } = &db.keyword;
+    let Person { name: person_name, gender, .. } = &db.person;
+    let movie = db.movie.all();
+    movie.with(complete_cast.select(subject.select(compcasttype_text).eq("cast")
+                               .and(status.select(compcasttype_text).eq("complete+verified")))
+          .and(info.with(gf_genre6(db)))
+          .and(keyword.select(keyword_text).is_in(kw7())))
+       .select(info.with(gf_genre6(db)).select(info_info)
+          .and(data.with(data_ty.select(infotype_text).eq("votes")).select(data_text))
           .and(title)
-          .and(cast.with(Cast::note.is_in(writer5())
-                    .and(person.with(gender.eq("m")))).person().name()))
+          .and(cast.with(cast_note.is_in(writer5())
+                    .and(person.with(gender.eq("m")))).select(person).select(person_name)))
 }
 
-fn q31a() -> impl Drive<R: Row> {
-    movie.with(company.rx(r"^Lionsgate")
-          .and(info.with(gf_horror()))
-          .and(keyword.is_in(kw7())))
-       .select(info.with(gf_horror()).info()
-          .and(data.with(Data::ty.eq("votes")).text())
+fn q31a(db: &'static Job) -> impl Drive<R: Row> {
+    let Movie { title, keyword, company, cast, info, data, .. } = &db.movie;
+    let Cast { person, note: cast_note, .. } = &db.cast;
+    let Company { name: company_name, .. } = &db.company;
+    let Data { text: data_text, ty: data_ty, .. } = &db.data;
+    let Info { info: info_info, .. } = &db.info;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    let Keyword { text: keyword_text, .. } = &db.keyword;
+    let Person { name: person_name, gender, .. } = &db.person;
+    let movie = db.movie.all();
+    movie.with(company.select(company_name).rx(r"^Lionsgate")
+          .and(info.with(gf_horror(db)))
+          .and(keyword.select(keyword_text).is_in(kw7())))
+       .select(info.with(gf_horror(db)).select(info_info)
+          .and(data.with(data_ty.select(infotype_text).eq("votes")).select(data_text))
           .and(title)
-          .and(cast.with(Cast::note.is_in(writer5())
-                    .and(person.with(gender.eq("m")))).person().name()))
+          .and(cast.with(cast_note.is_in(writer5())
+                    .and(person.with(gender.eq("m")))).select(person).select(person_name)))
 }
 
-fn q31b() -> impl Drive<R: Row> {
-    movie.with(company.select(Company::name.rx(r"^Lionsgate")
-                         .and(Company::note.rx(r"\(Blu-ray\)")))
-          .and(info.with(gf_horror()))
-          .and(keyword.is_in(kw7()))
+fn q31b(db: &'static Job) -> impl Drive<R: Row> {
+    let Movie { title, production_year, keyword, company, cast, info, data, .. } = &db.movie;
+    let Cast { person, note: cast_note, .. } = &db.cast;
+    let Company { name: company_name, note: company_note, .. } = &db.company;
+    let Data { text: data_text, ty: data_ty, .. } = &db.data;
+    let Info { info: info_info, .. } = &db.info;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    let Keyword { text: keyword_text, .. } = &db.keyword;
+    let Person { name: person_name, gender, .. } = &db.person;
+    let movie = db.movie.all();
+    movie.with(company.select(company_name.rx(r"^Lionsgate")
+                         .and(company_note.rx(r"\(Blu-ray\)")))
+          .and(info.with(gf_horror(db)))
+          .and(keyword.select(keyword_text).is_in(kw7()))
           .and(production_year.gt(2000))
           .and(title.rx(r"Freddy|Jason|^Saw")))
-       .select(info.with(gf_horror()).info()
-          .and(data.with(Data::ty.eq("votes")).text())
+       .select(info.with(gf_horror(db)).select(info_info)
+          .and(data.with(data_ty.select(infotype_text).eq("votes")).select(data_text))
           .and(title)
-          .and(cast.with(Cast::note.is_in(writer5())
-                    .and(person.with(gender.eq("m")))).person().name()))
+          .and(cast.with(cast_note.is_in(writer5())
+                    .and(person.with(gender.eq("m")))).select(person).select(person_name)))
 }
 
-fn q31c() -> impl Drive<R: Row> {
-    movie.with(company.rx(r"^Lionsgate")
-          .and(info.with(gf_genre6()))
-          .and(keyword.is_in(kw7())))
-       .select(info.with(gf_genre6()).info()
-          .and(data.with(Data::ty.eq("votes")).text())
+fn q31c(db: &'static Job) -> impl Drive<R: Row> {
+    let Movie { title, keyword, company, cast, info, data, .. } = &db.movie;
+    let Cast { person, note: cast_note, .. } = &db.cast;
+    let Company { name: company_name, .. } = &db.company;
+    let Data { text: data_text, ty: data_ty, .. } = &db.data;
+    let Info { info: info_info, .. } = &db.info;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    let Keyword { text: keyword_text, .. } = &db.keyword;
+    let Person { name: person_name, .. } = &db.person;
+    let movie = db.movie.all();
+    movie.with(company.select(company_name).rx(r"^Lionsgate")
+          .and(info.with(gf_genre6(db)))
+          .and(keyword.select(keyword_text).is_in(kw7())))
+       .select(info.with(gf_genre6(db)).select(info_info)
+          .and(data.with(data_ty.select(infotype_text).eq("votes")).select(data_text))
           .and(title)
-          .and(cast.with(Cast::note.is_in(writer5())).person().name()))
+          .and(cast.with(cast_note.is_in(writer5())).select(person).select(person_name)))
 }
 
 // q32a/q32b differ only in the keyword constant.
-fn q32(kw: &'static str) -> impl Drive<R: Row> {
+fn q32(db: &'static Job, kw: &'static str) -> impl Drive<R: Row> {
+    let Movie { title, keyword, link, .. } = &db.movie;
+    let Keyword { text: keyword_text, .. } = &db.keyword;
+    let LinkType { text: linktype_text, .. } = &db.link_type;
+    let MovieLink { target, ty: movielink_ty, .. } = &db.movie_link;
+    let movie = db.movie.all();
     movie.with(link
-          .and(keyword.eq(kw)))
-       .select(link.ty().text()
+          .and(keyword.select(keyword_text).eq(kw)))
+       .select(link.select(movielink_ty).select(linktype_text)
           .and(title)
-          .and(link.target().title()))
+          .and(link.select(target).select(title)))
 }
 
-fn q32a() -> impl Drive<R: Row> { q32("10,000-mile-club") }
-fn q32b() -> impl Drive<R: Row> { q32("character-name-in-title") }
+fn q32a(db: &'static Job) -> impl Drive<R: Row> { q32(db, "10,000-mile-club") }
+fn q32b(db: &'static Job) -> impl Drive<R: Row> { q32(db, "character-name-in-title") }
 
-fn q33a() -> impl Drive<R: Row> {
-    movie.with(kind.eq("tv series")
-          .and(company.country().eq("[us]"))
-          .and(qlink_33a()))
-       .select(company.with(country.eq("[us]")).name()
-          .and(qlink_33a().target().company().name())
-          .and(data.with(Data::ty.eq("rating")).text())
-          .and(qlink_33a().target().select(data.with(Data::ty.eq("rating")
-                                                .and(Data::text.lt("3.0"))).text()))
+fn q33a(db: &'static Job) -> impl Drive<R: Row> {
+    let Movie { title, kind, company, data, .. } = &db.movie;
+    let Company { name: company_name, country, .. } = &db.company;
+    let Data { text: data_text, ty: data_ty, .. } = &db.data;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    let Kind { text: kind_text, .. } = &db.kind;
+    let MovieLink { target, .. } = &db.movie_link;
+    let movie = db.movie.all();
+    movie.with(kind.select(kind_text).eq("tv series")
+          .and(company.select(country).eq("[us]"))
+          .and(qlink_33a(db)))
+       .select(company.with(country.eq("[us]")).select(company_name)
+          .and(qlink_33a(db).select(target).select(company).select(company_name))
+          .and(data.with(data_ty.select(infotype_text).eq("rating")).select(data_text))
+          .and(qlink_33a(db).select(target).select(data.with(data_ty.select(infotype_text).eq("rating")
+                                                .and(data_text.lt("3.0"))).select(data_text)))
           .and(title)
-          .and(qlink_33a().target().title()))
+          .and(qlink_33a(db).select(target).select(title)))
 }
 
-fn q33b() -> impl Drive<R: Row> {
-    movie.with(kind.eq("tv series")
-          .and(company.country().eq("[nl]"))
-          .and(qlink_33b()))
-       .select(company.with(country.eq("[nl]")).name()
-          .and(qlink_33b().target().company().name())
-          .and(data.with(Data::ty.eq("rating")).text())
-          .and(qlink_33b().target().select(data.with(Data::ty.eq("rating")
-                                                .and(Data::text.lt("3.0"))).text()))
+fn q33b(db: &'static Job) -> impl Drive<R: Row> {
+    let Movie { title, kind, company, data, .. } = &db.movie;
+    let Company { name: company_name, country, .. } = &db.company;
+    let Data { text: data_text, ty: data_ty, .. } = &db.data;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    let Kind { text: kind_text, .. } = &db.kind;
+    let MovieLink { target, .. } = &db.movie_link;
+    let movie = db.movie.all();
+    movie.with(kind.select(kind_text).eq("tv series")
+          .and(company.select(country).eq("[nl]"))
+          .and(qlink_33b(db)))
+       .select(company.with(country.eq("[nl]")).select(company_name)
+          .and(qlink_33b(db).select(target).select(company).select(company_name))
+          .and(data.with(data_ty.select(infotype_text).eq("rating")).select(data_text))
+          .and(qlink_33b(db).select(target).select(data.with(data_ty.select(infotype_text).eq("rating")
+                                                .and(data_text.lt("3.0"))).select(data_text)))
           .and(title)
-          .and(qlink_33b().target().title()))
+          .and(qlink_33b(db).select(target).select(title)))
 }
 
-fn q33c() -> impl Drive<R: Row> {
-    movie.with(kind.is_in(["tv series", "episode"])
-          .and(company.country().ne("[us]"))
-          .and(qlink_33c()))
-       .select(company.with(country.ne("[us]")).name()
-          .and(qlink_33c().target().company().name())
-          .and(data.with(Data::ty.eq("rating")).text())
-          .and(qlink_33c().target().select(data.with(Data::ty.eq("rating")
-                                                .and(Data::text.lt("3.5"))).text()))
+fn q33c(db: &'static Job) -> impl Drive<R: Row> {
+    let Movie { title, kind, company, data, .. } = &db.movie;
+    let Company { name: company_name, country, .. } = &db.company;
+    let Data { text: data_text, ty: data_ty, .. } = &db.data;
+    let InfoType { text: infotype_text, .. } = &db.info_type;
+    let Kind { text: kind_text, .. } = &db.kind;
+    let MovieLink { target, .. } = &db.movie_link;
+    let movie = db.movie.all();
+    movie.with(kind.select(kind_text).is_in(["tv series", "episode"])
+          .and(company.select(country).ne("[us]"))
+          .and(qlink_33c(db)))
+       .select(company.with(country.ne("[us]")).select(company_name)
+          .and(qlink_33c(db).select(target).select(company).select(company_name))
+          .and(data.with(data_ty.select(infotype_text).eq("rating")).select(data_text))
+          .and(qlink_33c(db).select(target).select(data.with(data_ty.select(infotype_text).eq("rating")
+                                                .and(data_text.lt("3.5"))).select(data_text)))
           .and(title)
-          .and(qlink_33c().target().title()))
+          .and(qlink_33c(db).select(target).select(title)))
 }
