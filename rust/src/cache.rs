@@ -1,5 +1,5 @@
-// Cache-format-v2 readers, consumed by the `schema!`-generated loaders
-// (src/job_schema.rs, src/tpch_schema.rs). The format is specified in src/format.rs and
+// Cache-format-v2 readers, consumed through src/loader.rs by the struct
+// schemas (src/job_schema.rs, src/tpch_schema.rs). The format is specified in src/format.rs and
 // produced by the `regen` binary (`cargo run --release --features regen
 // --bin regen -- {job|tpch} ...`), which absorbs ALL load-time
 // transformation: ids are stored 0-based with `NO_ID` holes baked in,
@@ -35,8 +35,8 @@ fn mmap_static(path: &Path) -> &'static [u8] {
 }
 
 /// mmap `<dir>/<name>.bin`, validate the v2 header against `kind`, return
-/// (n, m, full bytes). The `schema!` macro builds `name` with `stringify!`
-/// — field names are filenames, verbatim.
+/// (n, m, full bytes). `name` is the schema's `<Entity>_<field>` string —
+/// field names are filenames, verbatim.
 fn open_in(dir: &Path, name: &str, kind: u32) -> (usize, usize, &'static [u8]) {
     let path = dir.join(format!("{name}.bin"));
     let bytes = mmap_static(&path);
@@ -64,7 +64,7 @@ fn cast_slice<T>(bytes: &'static [u8], off: usize, len: usize) -> &'static [T] {
 // ===== dense columns (one value per 0-based id) ==========================
 // The `_in` readers are dir-parameterized and generic over the key domain
 // `D: Dense` (and, for FK columns, the value entity tag `T`) — the typed
-// `schema!` layer instantiates them with `D = Id<E>`; the legacy wrappers
+// `Loader` instantiates them with `D = Id<E>`; the legacy wrappers
 // below pin `D = usize` and the default `../cache` dir.
 
 /// Dense i64 column (scalars; dates are pre-parsed yyyymmdd).

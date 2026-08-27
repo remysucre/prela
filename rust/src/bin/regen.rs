@@ -42,23 +42,23 @@ macro_rules! t {
 }
 
 // ===== schema manifest check =============================================
-// The `schema!` declarations (src/job_schema.rs, src/tpch_schema.rs) are
-// the source of truth for WHAT the cache contains: regen records every
-// file it writes and, after a run, checks the set against the schema's
-// generated MANIFEST — name for name (field names are filenames, verbatim)
-// and header kind for kind. Drift in either direction fails the regen run
-// loudly.
+// The struct schemas (src/job_schema.rs, src/tpch_schema.rs) are the source
+// of truth for WHAT the cache contains: regen records every file it writes
+// and, after a run, checks the set against the schema's `manifest()` — name
+// for name (field names are filenames, verbatim) and header kind for kind.
+// Drift in either direction fails the regen run loudly.
+//
+// `manifest()` is produced by running the schema's own `build` body against
+// a recording loader that reads nothing (src/loader.rs), so the list cannot
+// fall out of step with the structs the engine will actually load.
 
 fn verify_manifest(
     cache_dir: &Path,
     written: &[String],
-    manifest: &[(&str, &str, u32)],
+    manifest: Vec<(String, u32)>,
     suite: &str,
 ) {
-    let expected: HashMap<String, u32> = manifest
-        .iter()
-        .map(|&(e, f, k)| (format!("{e}_{f}"), k))
-        .collect();
+    let expected: HashMap<String, u32> = manifest.into_iter().collect();
     for name in written {
         assert!(
             expected.contains_key(name),
@@ -530,7 +530,7 @@ fn run_tpch(parquet_dir: &Path, cache_dir: &Path) {
     t!(tpch_dense_str(&o("Lineitem_shipmode"),  &p("lineitem"), "l_id", "l_shipmode",     -1));
     t!(tpch_dense_str(&o("Lineitem_comment"),   &p("lineitem"), "l_id", "l_comment",      -1));
 
-    verify_manifest(cache_dir, &written.into_inner(), prela::tpch_schema::MANIFEST, "tpch");
+    verify_manifest(cache_dir, &written.into_inner(), prela::tpch_schema::manifest(), "tpch");
 }
 
 // ======================== JOB ========================
@@ -1099,7 +1099,7 @@ fn run_job(parquet_dir: &Path, cache_dir: &Path) {
     // v1 leftovers that v2 never reads (Cast_movie was write-only even in v1)
     let _ = std::fs::remove_file(cache_dir.join("Cast_movie.bin"));
 
-    verify_manifest(cache_dir, &written.into_inner(), prela::job_schema::MANIFEST, "job");
+    verify_manifest(cache_dir, &written.into_inner(), prela::job_schema::manifest(), "job");
 }
 
 fn main() {
