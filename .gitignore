@@ -2,9 +2,13 @@
 cache/
 # Per-scale-factor caches (e.g. sf=1 regenerated for oracle-matching runs).
 cache-sf*/
+# TPC-H parquet + the data/cache symlink that `bench/setup_tpch.sh` writes.
+data/
 
 # Rust build artifacts
 rust/target/
+schema_experiments/target/
+schema_sandbox/target/
 
 # Zig build artifacts
 zig/zig-out/
