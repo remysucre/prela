@@ -10,10 +10,10 @@
 pub mod cache;
 pub mod engine;
 pub mod format;
+pub mod job_queries;
 pub mod job_schema;
 pub mod loader;
-pub mod queries;
-pub mod tpch;
+pub mod tpch_queries;
 pub mod tpch_schema;
 
 /// A registered query: (name, expected output, runner).

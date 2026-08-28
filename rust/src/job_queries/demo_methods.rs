@@ -2,12 +2,14 @@
 // `cargo asm` always has a known symbol to inspect.
 
 use crate::engine::*;
+use crate::job_queries::helpers::{Row, min_row};
 use crate::job_schema::*;
-use crate::queries::helpers::{min_row, Row};
 
-pub const ENTRIES: &[super::Entry] = &[
-    ("6a/method", "marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert", |db| min_row(q6a_methods(db))),
-];
+pub const ENTRIES: &[super::Entry] = &[(
+    "6a/method",
+    "marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert",
+    |db| min_row(q6a_methods(db)),
+)];
 
 // q6a — movie : (year > 2010) ∧ (keyword == "marvel-...")
 //             → (keyword == "marvel-...") × title
@@ -31,17 +33,30 @@ pub const ENTRIES: &[super::Entry] = &[
 //   .with    restriction (Julia `:`) — keep rows whose value is a member
 //   .eq / .ne / .gt / .lt / .ge / .le / .is_in / .rx / .nrx  predicates
 pub fn q6a_methods(db: &'static Job) -> impl Drive<R: Row> {
-    let Movie { title, production_year, keyword, cast, .. } = &db.movie;
+    let Movie {
+        title,
+        production_year,
+        keyword,
+        cast,
+        ..
+    } = &db.movie;
     let Cast { person, .. } = &db.cast;
-    let Keyword { text: keyword_text, .. } = &db.keyword;
-    let Person { name: person_name, .. } = &db.person;
+    let Keyword {
+        text: keyword_text, ..
+    } = &db.keyword;
+    let Person {
+        name: person_name, ..
+    } = &db.person;
     let movie = db.movie.all();
     let kw_marvel = || keyword.select(keyword_text).eq("marvel-cinematic-universe");
     let q = movie
-        .with(production_year.gt(2010)
-         .and(kw_marvel()))
-        .select(kw_marvel()
-         .and(title)
-         .and(cast.select(person).select(person_name).rx(r"Downey.*Robert")));
+        .with(production_year.gt(2010).and(kw_marvel()))
+        .select(
+            kw_marvel().and(title).and(
+                cast.select(person)
+                    .select(person_name)
+                    .rx(r"Downey.*Robert"),
+            ),
+        );
     q
 }
