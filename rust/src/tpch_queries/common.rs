@@ -82,7 +82,7 @@ fn q1(db: &'static Tpch) -> String {
         quantity, extendedprice, discount, tax, ..
     } = &db.lineitem;
 
-    let grouped = db.lineitem.all()
+    let grouped = db.lineitem
             .with(shipdate.le(19980902))
         .group_by(returnflag.and(l_status))
           .select(quantity.and(extendedprice).and(discount).and(tax))
@@ -110,7 +110,7 @@ const Q6: &str = "123141078.23";
 fn q6(db: &'static Tpch) -> String {
     let Lineitem { shipdate, discount, quantity, extendedprice, .. } = &db.lineitem;
 
-    let sum = db.lineitem.all()
+    let sum = db.lineitem
         .with(shipdate.during(19940101, 19950101)
          .and(discount.between(0.05, 0.07))
          .and(quantity.lt(24.0)))
@@ -150,7 +150,7 @@ fn q14(db: &'static Tpch) -> String {
     let Lineitem { shipdate, extendedprice, discount, part: l_part, .. } = &db.lineitem;
     let Part { ty: p_ty, .. } = &db.part;
 
-    let (promo, total) = db.lineitem.all()
+    let (promo, total) = db.lineitem
                .with(shipdate.during(19950901, 19951001))
              .select(extendedprice.and(discount).and(l_part.select(p_ty)))
         .unwrap_fold((0.0, 0.0), |(p, t), ((e, dc), typ)| {
@@ -182,7 +182,7 @@ fn q3(db: &'static Tpch) -> String {
     let Order { date: o_date, customer: o_customer, shippriority, .. } = &db.order;
     let Customer { mktsegment, .. } = &db.customer;
 
-    let revenue = db.lineitem.all()
+    let revenue = db.lineitem
         .with(shipdate.gt(19950315)
          .and(l_order.select(o_date).lt(19950315))
          .and(l_order.select(o_customer).select(mktsegment).eq("BUILDING")))
@@ -214,10 +214,10 @@ fn q4(db: &'static Tpch) -> String {
     let Lineitem { commitdate, receiptdate, order: l_order, .. } = &db.lineitem;
     let Order { date: o_date, priority, .. } = &db.order;
 
-    let late_order = db.lineitem.all()
+    let late_order = db.lineitem
         .with(commitdate.and(receiptdate).filt(|(c, r)| c < r))
         .select(l_order).collect::<MatSet<_>>();
-    let counts = db.orders()
+    let counts = db.order
         .with(o_date.during(19930701, 19931001))
         .with(late_order)
         .group_by(priority)
@@ -250,7 +250,7 @@ fn q5(db: &'static Tpch) -> String {
     let Nation { name: n_name, region: n_region, .. } = &db.nation;
     let Region { name: r_name, .. } = &db.region;
 
-    let result = db.lineitem.all()
+    let result = db.lineitem
         .with(l_order.select(o_date).during(19940101, 19950101))
         .group_by(l_supplier.select(s_nation).with(n_region.select(r_name).eq("ASIA"))
             .and(l_order.select(o_customer).select(c_nation))
@@ -274,7 +274,7 @@ fn q7(db: &'static Tpch) -> String {
     let Supplier { nation: s_nation, .. } = &db.supplier;
     let Nation { name: n_name, .. } = &db.nation;
 
-    let result = db.lineitem.all()
+    let result = db.lineitem
         .group_by(shipdate.between(19950101, 19961231).map(|d: i64| d / 10000)
             .and(l_supplier.select(s_nation).select(n_name)
                 .and(l_order.select(o_customer).select(c_nation).select(n_name))
@@ -309,7 +309,7 @@ fn q8(db: &'static Tpch) -> String {
     let Region { name: r_name, .. } = &db.region;
     let Part { ty: p_ty, .. } = &db.part;
 
-    let result = db.lineitem.all()
+    let result = db.lineitem
         .with(l_part.select(p_ty).eq("ECONOMY ANODIZED STEEL"))
         .group_by(l_order.with(o_customer.select(c_nation).select(n_region).select(r_name).eq("AMERICA"))
             .select(o_date.between(19950101, 19961231)).map(|d: i64| d / 10000))
@@ -336,7 +336,7 @@ fn q9(db: &'static Tpch) -> String {
     let Supplier { nation: s_nation, .. } = &db.supplier;
     let Nation { name: n_name, .. } = &db.nation;
 
-    let sc: HashIdx<_, _> = db.partsupp.all()
+    let sc: HashIdx<_, _> = db.partsupp
         .group_by(ps_part.with(p_name.filt(|n: &str| n.contains("green")))
                   .and(ps_supplier))
         .select(supplycost)
@@ -345,7 +345,7 @@ fn q9(db: &'static Tpch) -> String {
     // The `sc` probe misses on non-green parts, so restricting the receiver
     // by it culls ~95% of the scan before the group key's nation/year
     // navigation; the payload re-probes it for the cost value.
-    let result = db.lineitem.all()
+    let result = db.lineitem
         .with(&cost_per_li)
         .group_by(l_supplier.select(s_nation).select(n_name)
             .and(l_order.select(o_date).map(|d: i64| d / 10000)))
@@ -366,7 +366,7 @@ fn q10(db: &'static Tpch) -> String {
                    address: c_address, phone: c_phone, comment: c_comment, .. } = &db.customer;
     let Nation { name: n_name, .. } = &db.nation;
 
-    let revenue = db.lineitem.all()
+    let revenue = db.lineitem
         .with(returnflag.eq("R")
          .and(l_order.select(o_date).during(19931001, 19940101)))
         .group_by(l_order.select(o_customer))
@@ -396,7 +396,7 @@ fn q11(db: &'static Tpch) -> String {
     let Supplier { nation: s_nation, .. } = &db.supplier;
     let Nation { name: n_name, .. } = &db.nation;
 
-    let value_per_part = db.partsupp.all()
+    let value_per_part = db.partsupp
         .with(ps_supplier.select(s_nation).select(n_name).eq("GERMANY"))
         .group_by(ps_part)
         .select(supplycost.and(availqty))
@@ -418,7 +418,7 @@ fn q12(db: &'static Tpch) -> String {
     let Lineitem { shipmode, shipdate, commitdate, receiptdate, order: l_order, .. } = &db.lineitem;
     let Order { priority, .. } = &db.order;
 
-    let result = db.lineitem.all()
+    let result = db.lineitem
         .with(shipmode.is_in(["MAIL", "SHIP"])
          .and(shipdate.and(commitdate).and(receiptdate).filt(|((s, c), r)| s < c && c < r))
          .and(receiptdate.during(19940101, 19950101)))
@@ -437,11 +437,11 @@ fn q12(db: &'static Tpch) -> String {
 // ---------- Q13 — customer distribution (LEFT JOIN) ----------
 
 fn q13(db: &'static Tpch) -> String {
-    // `db.orders()` is a SPARSE universe — driving it skips the orderkey-gap
+    // `&db.order` is a SPARSE universe — driving it skips the orderkey-gap
     // holes, so the group key is the bare customer FK, no per-row validity guard.
     let Order { comment: o_comment, customer: o_customer, .. } = &db.order;
 
-    let count_per_cust = db.orders()
+    let count_per_cust = db.order
         .with(o_comment.nrx("special.*requests"))
         .group_by(o_customer)
         .dense_fold_outer(db.customer.all().n, 0_i64, |a, _| a + 1);
@@ -459,7 +459,7 @@ fn q15(db: &'static Tpch) -> String {
     let Lineitem { shipdate, supplier: l_supplier, extendedprice, discount, .. } = &db.lineitem;
     let Supplier { name: s_name, address: s_address, phone: s_phone, .. } = &db.supplier;
 
-    let revenue = db.lineitem.all()
+    let revenue = db.lineitem
         .with(shipdate.during(19960101, 19960401))
         .group_by(l_supplier)
         .select(extendedprice.and(discount))
@@ -483,7 +483,7 @@ fn q16(db: &'static Tpch) -> String {
     let Part { brand, ty: p_ty, size, .. } = &db.part;
     let Supplier { comment: s_comment, .. } = &db.supplier;
 
-    let counts = db.partsupp.all()
+    let counts = db.partsupp
         .with(ps_part.with(brand.ne("Brand#45")
                              .and(p_ty.filt(|s: &str| !s.starts_with("MEDIUM POLISHED")))
                              .and(size.is_in([49, 14, 23, 45, 19, 3, 36, 9])))
@@ -508,11 +508,11 @@ fn q17(db: &'static Tpch) -> String {
     let Lineitem { part: l_part, quantity, extendedprice, .. } = &db.lineitem;
     let Part { brand, container, .. } = &db.part;
 
-    let tpp: HashIdx<_, _> = db.lineitem.all().group_by(l_part).select(quantity)
+    let tpp: HashIdx<_, _> = db.lineitem.group_by(l_part).select(quantity)
         .fold((0.0_f64, 0_i64), |(s, n), q| (s + q, n + 1))
         .map(|(s, n)| 0.2 * s / n as f64)
         .collect();
-    let sum = db.lineitem.all()
+    let sum = db.lineitem
         .with(l_part.with(brand.eq("Brand#23").and(container.eq("MED BOX")))
          .and(quantity.and(l_part.select(&tpp)).filt(|(q, t)| q < t)))
         .select(extendedprice)
@@ -531,7 +531,7 @@ fn q18(db: &'static Tpch) -> String {
     let Order { totalprice, date: o_date, customer: o_customer, .. } = &db.order;
     let Customer { name: c_name, .. } = &db.customer;
 
-    let result = db.lineitem.all().group_by(l_order).select(quantity)
+    let result = db.lineitem.group_by(l_order).select(quantity)
         .fold(0.0_f64, |a, q| a + q)
         .gt(300.0)
         .and(totalprice.and(o_date)
@@ -570,7 +570,7 @@ fn q19(db: &'static Tpch) -> String {
         });
     // shipmode / shipinstruct are common to all three branches, so they sit
     // outside `pred` as shared conjuncts.
-    let sum = db.lineitem.all()
+    let sum = db.lineitem
         .with(shipmode.is_in(["AIR", "AIR REG"])
          .and(shipinstruct.eq("DELIVER IN PERSON"))
          .and(pred))
@@ -592,7 +592,7 @@ fn q20(db: &'static Tpch) -> String {
     let Supplier { name: s_name, address: s_address, nation: s_nation, .. } = &db.supplier;
     let Nation { name: n_name, .. } = &db.nation;
 
-    let sum_qty = db.lineitem.all()
+    let sum_qty = db.lineitem
         .with(shipdate.during(19940101, 19950101))
         .group_by(l_part.and(l_supplier))
         .select(quantity)
@@ -602,8 +602,8 @@ fn q20(db: &'static Tpch) -> String {
     // driveable dense set — drive the qualifying suppliers and filter to
     // CANADA, rather than scanning the whole supplier universe.
     let qual_supps = Bitset::over(
-        db.supplier.all(),
-        &db.partsupp.all()
+        &db.supplier,
+        &db.partsupp
             .with(ps_part.select(p_name).filt(|n: &str| n.starts_with("forest"))
              .and(availqty.map(|q| q as f64).and(threshold).filt(|(a, t)| a > t)))
             .select(ps_supplier),
@@ -629,9 +629,9 @@ fn q21(db: &'static Tpch) -> String {
     let Supplier { name: s_name, nation: s_nation, .. } = &db.supplier;
     let Nation { name: n_name, .. } = &db.nation;
 
-    let late = db.lineitem.all().with(commitdate.and(receiptdate).filt(|(c, r)| c < r));
+    let late = db.lineitem.with(commitdate.and(receiptdate).filt(|(c, r)| c < r));
     // multi_supp: order has >1 distinct supplier across all its lines.
-    let multi_supp = db.lineitem.all().group_by(l_order)
+    let multi_supp = db.lineitem.group_by(l_order)
         .select(l_supplier).count_distinct().gt(1);
     // only_late: among the order's LATE lines, exactly one distinct supplier.
     let only_late = (&late).group_by(l_order)
@@ -661,7 +661,7 @@ fn q22(db: &'static Tpch) -> String {
 
     let prefix = c_phone.map(|p: &str| &p[..2]);
     let codes = ["13","31","23","29","30","18","17"];
-    let prefix_ok = db.customer.all().with((&prefix).is_in(codes));
+    let prefix_ok = db.customer.with((&prefix).is_in(codes));
     // Scalar subquery: avg balance over positive-balance prefix-ok customers.
     let (sum_p, cnt_p) = (&prefix_ok).with(c_acctbal.gt(0.0))
         .select(c_acctbal)
@@ -692,7 +692,7 @@ fn q2(db: &'static Tpch) -> String {
     let Nation { name: n_name, region: n_region, .. } = &db.nation;
     let Region { name: r_name, .. } = &db.region;
 
-    let eu_ps = db.partsupp.all()
+    let eu_ps = db.partsupp
         .with(ps_supplier.select(s_nation).select(n_region).select(r_name).eq("EUROPE"));
     // Correlated min: cheapest EUROPE supplycost per part.
     let min_per_part = (&eu_ps)

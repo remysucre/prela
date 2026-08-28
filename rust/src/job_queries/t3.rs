@@ -94,8 +94,7 @@ fn q7a(db: &'static Job) -> impl Drive<R: Row> {
         note: personinfo_note,
         ..
     } = &db.person_info;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             production_year.ge(1980).and(production_year.le(1995)).and(
                 linked_by
@@ -171,8 +170,7 @@ fn q7b(db: &'static Job) -> impl Drive<R: Row> {
         note: personinfo_note,
         ..
     } = &db.person_info;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             production_year.ge(1980).and(production_year.le(1984)).and(
                 linked_by
@@ -253,8 +251,7 @@ fn q7c(db: &'static Job) -> impl Drive<R: Row> {
         info: personinfo_info,
         ..
     } = &db.person_info;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(production_year.ge(1980).and(production_year.le(2010)).and(
             linked_by.select(movielink_ty).select(linktype_text).is_in([
                 "references",
@@ -316,8 +313,7 @@ fn q8a(db: &'static Job) -> impl Drive<R: Row> {
         text: roletype_text,
         ..
     } = &db.role_type;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             company.select(
                 country
@@ -371,8 +367,7 @@ fn q8b(db: &'static Job) -> impl Drive<R: Row> {
         text: roletype_text,
         ..
     } = &db.role_type;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             company
                 .select(
@@ -418,8 +413,7 @@ fn q8cd(db: &'static Job, role_: &'static str) -> impl Drive<R: Row> {
         text: roletype_text,
         ..
     } = &db.role_type;
-    let movie = db.movie.all();
-    movie.with(company.select(country).eq("[us]")).select(
+    db.movie.with(company.select(country).eq("[us]")).select(
         cast.with(role.select(roletype_text).eq(role_))
             .select(person)
             .select(alias)
@@ -472,8 +466,7 @@ fn q9a(db: &'static Job) -> impl Drive<R: Row> {
         text: roletype_text,
         ..
     } = &db.role_type;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             company
                 .select(
@@ -538,8 +531,7 @@ fn q9b(db: &'static Job) -> impl Drive<R: Row> {
         text: roletype_text,
         ..
     } = &db.role_type;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             company
                 .select(
@@ -601,8 +593,7 @@ fn q9c(db: &'static Job) -> impl Drive<R: Row> {
         text: roletype_text,
         ..
     } = &db.role_type;
-    let movie = db.movie.all();
-    movie.with(company.select(country).eq("[us]")).select(
+    db.movie.with(company.select(country).eq("[us]")).select(
         cast.with(
             cast_note
                 .is_in(voice4())
@@ -652,8 +643,7 @@ fn q9d(db: &'static Job) -> impl Drive<R: Row> {
         text: roletype_text,
         ..
     } = &db.role_type;
-    let movie = db.movie.all();
-    movie.with(company.select(country).eq("[us]")).select(
+    db.movie.with(company.select(country).eq("[us]")).select(
         cast.with(
             cast_note
                 .is_in(voice4())
@@ -694,8 +684,7 @@ fn q10a(db: &'static Job) -> impl Drive<R: Row> {
         text: roletype_text,
         ..
     } = &db.role_type;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             company
                 .select(country)
@@ -738,8 +727,7 @@ fn q10b(db: &'static Job) -> impl Drive<R: Row> {
         text: roletype_text,
         ..
     } = &db.role_type;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             company
                 .select(country)
@@ -776,8 +764,7 @@ fn q10c(db: &'static Job) -> impl Drive<R: Row> {
         ..
     } = &db.character;
     let Company { country, .. } = &db.company;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             company
                 .select(country)

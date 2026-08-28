@@ -31,7 +31,7 @@ fn q1(db: &'static Tpch) -> String {
 
     let mut rows: Vec<(usize, (f64, f64, f64, f64, f64, i64))> = Vec::new();
 
-    db.lineitem.all()
+    db.lineitem
         .with(shipdate.le(19980902))
         .group_by(
             returnflag
@@ -80,13 +80,13 @@ fn q2(db: &'static Tpch) -> String {
 
     let eu = || ps_supplier.select(s_nation).select(n_region).select(r_name).eq("EUROPE");
 
-    let min_per_part = db.partsupp.all()
+    let min_per_part = db.partsupp
         .with(eu())
         .group_by(ps_part)
         .select(supplycost)
         .dense_fold(db.part.all().n, f64::INFINITY, |a, c| if c < a { c } else { a });
 
-    db.partsupp.all()
+    db.partsupp
         .with(eu())
         .with(
             ps_part
@@ -139,11 +139,11 @@ fn q4(db: &'static Tpch) -> String {
     let Order { date: o_date, priority, .. } = &db.order;
 
     let mut rows: Vec<(&str, i64)> = Vec::new();
-    db.orders()
+    db.order
         .with(o_date.during(19930701, 19931001))
         .with(Bitset::over(
-            db.orders(),
-            db.lineitem.all()
+            &db.order,
+            db.lineitem
                 .with(commitdate.and(receiptdate).filt(|(c, r)| c < r))
                 .select(l_order),
         ))
@@ -169,16 +169,16 @@ fn q9(db: &'static Tpch) -> String {
     let mut rows: Vec<((&str, i64), f64)> = Vec::new();
 
     let green_parts = Bitset::over(
-        db.part.all(),
-        &db.part.all().with(p_name.filt(|n: &str| n.contains("green"))),
+        &db.part,
+        &db.part.with(p_name.filt(|n: &str| n.contains("green"))),
     );
 
-    let sc: HashIdx<_, _> = db.partsupp.all()
+    let sc: HashIdx<_, _> = db.partsupp
         .group_by(ps_part.select(&green_parts).and(ps_supplier))
         .select(supplycost)
         .collect();
 
-    db.lineitem.all()
+    db.lineitem
         .with(l_part.select(&green_parts))
         .group_by(
             l_supplier
@@ -209,7 +209,7 @@ fn q12(db: &'static Tpch) -> String {
     let Lineitem { receiptdate, shipmode, shipdate, commitdate, order: l_order, .. } = &db.lineitem;
     let Order { priority, .. } = &db.order;
 
-    let result = db.lineitem.all()
+    let result = db.lineitem
         .with(
             receiptdate
                 .during(19940101, 19950101)
@@ -244,7 +244,7 @@ fn q13(db: &'static Tpch) -> String {
     let mut n_with = 0i64;
     let n_cust = db.customer.all().n;
 
-    db.orders()
+    db.order
         .with(
             o_customer
                 .filt(|c| c != Dense::NONE)
@@ -281,19 +281,19 @@ fn q17(db: &'static Tpch) -> String {
 
     let qual_parts = || {
         Bitset::over(
-            db.part.all(),
-            &db.part.all().with(brand.eq("Brand#23").and(container.eq("MED BOX"))),
+            &db.part,
+            &db.part.with(brand.eq("Brand#23").and(container.eq("MED BOX"))),
         )
     };
 
-    let tpp: HashIdx<_, _> = db.lineitem.all()
+    let tpp: HashIdx<_, _> = db.lineitem
         .group_by(l_part.with(qual_parts())) // restrict to qual parts
         .select(quantity)
         .fold((0.0_f64, 0_i64), |(s, n), q| (s + q, n + 1))
         .map(|(s, n)| 0.2 * s / n as f64)
         .collect();
 
-    let sum = db.lineitem.all()
+    let sum = db.lineitem
         .with(
             l_part
                 .with(qual_parts())
@@ -318,7 +318,7 @@ fn q18(db: &'static Tpch) -> String {
 
     let mut rows: Vec<(Id<Order>, (f64, ((f64, i64), (&str, Id<Customer>))))> = Vec::new();
 
-    db.lineitem.all()
+    db.lineitem
         .group_by(l_order)
         .select(quantity)
         .dense_fold(db.order.n_slots(), 0.0_f64, |a, q| a + q)
@@ -394,7 +394,7 @@ fn q21(db: &'static Tpch) -> String {
         (q21_note(all, s), if c < r { q21_note(late, s) } else { late })
     };
 
-    let state = db.lineitem.all()
+    let state = db.lineitem
         .group_by(l_order)
         .select(l_supplier
            .and(commitdate)
@@ -402,11 +402,11 @@ fn q21(db: &'static Tpch) -> String {
         .dense_fold(db.order.n_slots(), (0, 0), track);
 
     let saudi = Bitset::over(
-        db.supplier.all(),
-        &db.supplier.all().with(s_nation.select(n_name).eq("SAUDI ARABIA")),
+        &db.supplier,
+        &db.supplier.with(s_nation.select(n_name).eq("SAUDI ARABIA")),
     );
 
-    db.lineitem.all()
+    db.lineitem
         .with(l_supplier.select(&saudi))
         .with(commitdate.and(receiptdate).filt(|(c, r)| c < r))
         .with(l_order.select(o_status.eq("F").and(
@@ -435,7 +435,7 @@ fn q22(db: &'static Tpch) -> String {
     let prefix = c_phone.map(|p: &str| &p[..2]);
     let codes = ["13", "31", "23", "29", "30", "18", "17"];
 
-    let (sum_p, cnt_p) = db.customer.all()
+    let (sum_p, cnt_p) = db.customer
         .with((&prefix).is_in(codes))
         .with(c_acctbal.gt(0.0))
         .select(c_acctbal)
@@ -444,10 +444,10 @@ fn q22(db: &'static Tpch) -> String {
 
     let mut rows: Vec<(&str, (i64, f64))> = Vec::new();
 
-    db.customer.all()
+    db.customer
         .with((&prefix).is_in(codes))
         .with(c_acctbal.gt(avg))
-        .minus(Bitset::over(db.customer.all(), o_customer))
+        .minus(Bitset::over(&db.customer, o_customer))
         .group_by(&prefix)
         .select(c_acctbal)
         .fold((0_i64, 0.0_f64), |(cnt, sm), ab| {

@@ -72,7 +72,7 @@ pub fn min_row<Q: Drive>(q: Q) -> String where Q::R: Row {
 /// Keywords whose text matches `re`.
 pub fn kw_rx(db: &'static Job, re: &str) -> Bitset<Id<Keyword>> {
     let Keyword { text: keyword_text, .. } = &db.keyword;
-    Bitset::over(db.keyword.all(), keyword_text.rx(re).inv())
+    Bitset::over(&db.keyword, keyword_text.rx(re).inv())
 }
 
 /// Companies named *Film*/*Warner*, non-Polish production companies without

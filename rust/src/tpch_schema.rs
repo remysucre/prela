@@ -1,4 +1,4 @@
-use crate::engine::{Bitset, Id, SparseUniverse, Universe};
+use crate::engine::{Bitset, Id, IntoQuery, SparseUniverse, Universe};
 use crate::loader::{Col, Loader, Str, sparse_mask};
 use std::path::Path;
 use std::sync::OnceLock;
@@ -66,6 +66,12 @@ pub struct Order {
     pub clerk: Col<Order, Str>,
     pub shippriority: Col<Order, i64>,
     pub comment: Col<Order, Str>,
+    /// Derived, not loaded: which order slots are live. The one non-column
+    /// field on an entity — `Order::all()` needs it, and `all()` only gets
+    /// `&self`. Built on first use and leaked, because `SparseUniverse`
+    /// holds `&'static Bitset` (the same reason `MultiRel` holds `&'static`
+    /// slices).
+    valid: OnceLock<&'static Bitset<Id<Order>>>,
 }
 
 pub struct Lineitem {
@@ -142,6 +148,53 @@ impl Order {
     pub fn n_slots(&self) -> usize {
         self.customer.n_keys()
     }
+
+    /// The drivable universe of orders: `0..n_slots` with the orderkey gaps
+    /// masked out, so a drive never emits a hole. Unlike every other
+    /// entity's `all()` this is a `SparseUniverse`, and the mask costs one
+    /// pass over `Order_customer` the first time it is asked for.
+    #[inline]
+    pub fn all(&self) -> SparseUniverse<Id<Order>> {
+        // A hole is a slot whose customer FK regen filled with NO_ID.
+        let mask = self.valid.get_or_init(|| sparse_mask(&self.customer));
+        SparseUniverse::new(self.n_slots(), mask)
+    }
+}
+
+// =====================================================================
+// Entity-as-query
+// =====================================================================
+//
+// `QueryExt` is blanket-implemented over `IntoQuery`, so teaching an entity
+// struct to become its own universe is enough to make it drivable directly:
+// `db.part.select(..)` is `db.part.all().select(..)`, resolved by autoref on
+// `&Part`. `all()` remains the explicit spelling — and the one to reach for
+// when you want the `Universe` itself, e.g. for its `.n`.
+//
+// No coherence clash with `impl<Q: Query> IntoQuery for Q`: an entity struct
+// is not itself a `Query`.
+
+macro_rules! entity_query {
+    ($($E:ident => $U:ident),* $(,)?) => {$(
+        impl IntoQuery for &$E {
+            type Q = $U<Id<$E>>;
+            #[inline(always)]
+            fn iq(self) -> Self::Q {
+                self.all()
+            }
+        }
+    )*};
+}
+
+entity_query! {
+    Region => Universe,
+    Nation => Universe,
+    Supplier => Universe,
+    Customer => Universe,
+    Part => Universe,
+    PartSupp => Universe,
+    Order => SparseUniverse,
+    Lineitem => Universe,
 }
 
 // =====================================================================
@@ -157,25 +210,6 @@ pub struct Tpch {
     pub partsupp: PartSupp,
     pub order: Order,
     pub lineitem: Lineitem,
-    /// Derived, not loaded: which order slots are live. Built on first use
-    /// and leaked, because `SparseUniverse` holds `&'static Bitset` — the
-    /// same reason `MultiRel` holds `&'static` slices. Keeping it here
-    /// rather than on `Order` leaves the entity structs pure columns.
-    order_valid: OnceLock<&'static Bitset<Id<Order>>>,
-}
-
-impl Tpch {
-    /// The drivable universe of orders: `0..n_slots` with the orderkey
-    /// gaps masked out, so a drive never emits a hole. `db.orders()` is to
-    /// `Order` what `db.part.all()` is to `Part`.
-    #[inline]
-    pub fn orders(&self) -> SparseUniverse<Id<Order>> {
-        let mask = self
-            .order_valid
-            // A hole is a slot whose customer FK regen filled with NO_ID.
-            .get_or_init(|| sparse_mask(&self.order.customer));
-        SparseUniverse::new(self.order.n_slots(), mask)
-    }
 }
 
 // =====================================================================
@@ -236,6 +270,7 @@ fn build(l: &mut Loader) -> Tpch {
             clerk: l.strs("Order_clerk"),
             shippriority: l.i64s("Order_shippriority"),
             comment: l.strs("Order_comment"),
+            valid: OnceLock::new(),
         },
         lineitem: Lineitem {
             order: l.ids("Lineitem_order"),
@@ -255,7 +290,6 @@ fn build(l: &mut Loader) -> Tpch {
             shipmode: l.strs("Lineitem_shipmode"),
             comment: l.strs("Lineitem_comment"),
         },
-        order_valid: OnceLock::new(),
     }
 }
 
@@ -267,4 +301,36 @@ pub fn manifest() -> Vec<(String, u32)> {
     let mut l = Loader::probing();
     let _ = build(&mut l);
     l.manifest()
+}
+
+// =====================================================================
+// Tests
+// =====================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::{Drive, QueryExt};
+
+    /// Compile-only: every entity drives directly, without `.all()`, and
+    /// `Order` does it through its sparse universe. The body never runs —
+    /// the point is that it type-checks.
+    #[allow(dead_code)]
+    fn entities_are_queries(db: &Tpch) {
+        db.region.select(&db.region.name).drive(|_, _: Str| {});
+        db.nation.select(&db.nation.name).drive(|_, _: Str| {});
+        db.supplier.select(&db.supplier.acctbal).drive(|_, _: f64| {});
+        db.customer.select(&db.customer.name).drive(|_, _: Str| {});
+        db.part.select(&db.part.size).drive(|_, _: i64| {});
+        db.partsupp
+            .select(&db.partsupp.supplycost)
+            .drive(|_, _: f64| {});
+        db.order.select(&db.order.totalprice).drive(|_, _: f64| {});
+        db.lineitem.select(&db.lineitem.quantity).drive(|_, _: f64| {});
+
+        // Composing across entities still works from the bare struct.
+        db.lineitem
+            .select((&db.lineitem.order).select(&db.order.totalprice))
+            .drive(|_, _: f64| {});
+    }
 }

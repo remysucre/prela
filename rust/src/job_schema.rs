@@ -1,4 +1,4 @@
-use crate::engine::{Id, Universe};
+use crate::engine::{Id, IntoQuery, Universe};
 use crate::loader::{Col, Loader, Set, Str};
 use std::path::Path;
 
@@ -223,6 +223,53 @@ impl CompCastType {
 }
 
 // =====================================================================
+// Entity-as-query
+// =====================================================================
+//
+// `QueryExt` is blanket-implemented over `IntoQuery`, so teaching an entity
+// struct to become its own universe is enough to make it drivable directly:
+// `db.movie.select(..)` is `db.movie.all().select(..)`, resolved by autoref
+// on `&Movie`. `all()` remains the explicit spelling — and the one to reach
+// for when you want the `Universe` itself, e.g. for its `.n`.
+//
+// No coherence clash with `impl<Q: Query> IntoQuery for Q`: an entity struct
+// is not itself a `Query`.
+
+macro_rules! entity_query {
+    ($($E:ident),* $(,)?) => {$(
+        impl IntoQuery for &$E {
+            type Q = Universe<Id<$E>>;
+            #[inline(always)]
+            fn iq(self) -> Self::Q {
+                self.all()
+            }
+        }
+    )*};
+}
+
+entity_query! {
+    Movie,
+    Cast,
+    Person,
+    Keyword,
+    Kind,
+    RoleType,
+    Character,
+    Company,
+    CompanyType,
+    Info,
+    InfoType,
+    Data,
+    PersonInfo,
+    AkaName,
+    AkaTitle,
+    MovieLink,
+    LinkType,
+    CompleteCast,
+    CompCastType,
+}
+
+// =====================================================================
 // The database
 // =====================================================================
 
@@ -362,7 +409,7 @@ mod tests {
     use crate::engine::{Drive, Probe, QueryExt};
 
     /// Full load against the real cache, cross-checked column-by-column
-    /// against the untyped v2 readers (lengths AND a value spot check
+    /// against the untyped cache readers (lengths AND a value spot check
     /// through the `repr(transparent)` id reinterpret). Skipped when the
     /// cache isn't present (CI without regen output).
     #[test]

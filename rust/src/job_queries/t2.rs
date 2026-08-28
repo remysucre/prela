@@ -111,8 +111,7 @@ fn q22d(db: &'static Job) -> impl Drive<R: Row> {
     let Kind {
         text: kind_text, ..
     } = &db.kind;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             info.select(
                 info_ty
@@ -168,8 +167,7 @@ fn q5b(db: &'static Job) -> impl Drive<R: Row> {
     let Info {
         info: info_info, ..
     } = &db.info;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             company
                 .select(
@@ -206,8 +204,7 @@ fn q5c(db: &'static Job) -> impl Drive<R: Row> {
     let Info {
         info: info_info, ..
     } = &db.info;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             company
                 .select(
@@ -248,8 +245,7 @@ fn q15a(db: &'static Job) -> impl Drive<R: Row> {
         text: infotype_text,
         ..
     } = &db.info_type;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             production_year
                 .gt(2000)
@@ -303,8 +299,7 @@ fn q15b(db: &'static Job) -> impl Drive<R: Row> {
         text: infotype_text,
         ..
     } = &db.info_type;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             company
                 .select(
@@ -353,8 +348,7 @@ fn q15c(db: &'static Job) -> impl Drive<R: Row> {
         text: infotype_text,
         ..
     } = &db.info_type;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             company
                 .select(country)
@@ -400,8 +394,7 @@ fn q15d(db: &'static Job) -> impl Drive<R: Row> {
         text: infotype_text,
         ..
     } = &db.info_type;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             company
                 .select(country)
@@ -443,8 +436,7 @@ fn q11c(db: &'static Job) -> impl Drive<R: Row> {
     let Keyword {
         text: keyword_text, ..
     } = &db.keyword;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             keyword
                 .select(keyword_text)
@@ -493,8 +485,7 @@ fn q11d(db: &'static Job) -> impl Drive<R: Row> {
     let Keyword {
         text: keyword_text, ..
     } = &db.keyword;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             keyword
                 .select(keyword_text)
@@ -551,8 +542,7 @@ fn q13d(db: &'static Job) -> impl Drive<R: Row> {
     let Kind {
         text: kind_text, ..
     } = &db.kind;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             kind.select(kind_text).eq("movie").and(
                 info.select(info_ty)
@@ -595,13 +585,12 @@ fn q6_marvel(db: &'static Job, year: i64) -> impl Drive<R: Row> {
     let Person {
         name: person_name, ..
     } = &db.person;
-    let movie = db.movie.all();
     let kw = || keyword.select(keyword_text).eq("marvel-cinematic-universe");
     let downey = cast
         .select(person)
         .select(person_name)
         .rx(r"Downey.*Robert");
-    movie
+    db.movie
         .with(production_year.gt(year).and(kw()))
         .select(kw().and(title).and(downey))
 }
@@ -621,13 +610,12 @@ fn q6_comic(db: &'static Job, year: i64) -> impl Drive<R: Row> {
     let Person {
         name: person_name, ..
     } = &db.person;
-    let movie = db.movie.all();
     let kw = || keyword.select(keyword_text).is_in(kw8());
     let downey = cast
         .select(person)
         .select(person_name)
         .rx(r"Downey.*Robert");
-    movie
+    db.movie
         .with(production_year.gt(year).and(kw()))
         .select(kw().and(title).and(downey))
 }
@@ -663,10 +651,9 @@ fn q6f(db: &'static Job) -> impl Drive<R: Row> {
     let Person {
         name: person_name, ..
     } = &db.person;
-    let movie = db.movie.all();
     let kw = || keyword.select(keyword_text).is_in(kw8());
     let cast_name = cast.select(person).select(person_name);
-    movie
+    db.movie
         .with(production_year.gt(2000).and(kw()))
         .select(kw().and(title).and(cast_name))
 }

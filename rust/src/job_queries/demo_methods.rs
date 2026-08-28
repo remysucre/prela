@@ -47,9 +47,8 @@ pub fn q6a_methods(db: &'static Job) -> impl Drive<R: Row> {
     let Person {
         name: person_name, ..
     } = &db.person;
-    let movie = db.movie.all();
     let kw_marvel = || keyword.select(keyword_text).eq("marvel-cinematic-universe");
-    let q = movie
+    let q = db.movie
         .with(production_year.gt(2010).and(kw_marvel()))
         .select(
             kw_marvel().and(title).and(

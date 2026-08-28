@@ -52,8 +52,7 @@ fn q16ad(db: &'static Job, lo: i64) -> impl Drive<R: Row> {
         text: keyword_text, ..
     } = &db.keyword;
     let Person { alias, .. } = &db.person;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             company
                 .select(country)
@@ -94,8 +93,7 @@ fn q16b(db: &'static Job) -> impl Drive<R: Row> {
         text: keyword_text, ..
     } = &db.keyword;
     let Person { alias, .. } = &db.person;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             company
                 .select(country)
@@ -128,8 +126,7 @@ fn q16c(db: &'static Job) -> impl Drive<R: Row> {
         text: keyword_text, ..
     } = &db.keyword;
     let Person { alias, .. } = &db.person;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             company
                 .select(country)
@@ -160,8 +157,7 @@ fn q17a(db: &'static Job) -> impl Drive<R: Row> {
     let Person {
         name: person_name, ..
     } = &db.person;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             company
                 .select(country)
@@ -186,8 +182,7 @@ fn q17_any_co(db: &'static Job, re: &str) -> impl Drive<R: Row> {
     let Person {
         name: person_name, ..
     } = &db.person;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(company.and(keyword.select(keyword_text).eq("character-name-in-title")))
         .select(cast.select(person).select(person_name).rx(re))
 }
@@ -220,8 +215,7 @@ fn q17e(db: &'static Job) -> impl Drive<R: Row> {
     let Person {
         name: person_name, ..
     } = &db.person;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             company
                 .select(country)
@@ -269,8 +263,7 @@ fn q18a(db: &'static Job) -> impl Drive<R: Row> {
         gender,
         ..
     } = &db.person;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             ib_18a(db).and(
                 cast.select(
@@ -337,8 +330,7 @@ fn q18b(db: &'static Job) -> impl Drive<R: Row> {
         ..
     } = &db.info_type;
     let Person { gender, .. } = &db.person;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             info.with(gf_18b(db))
                 .and(production_year.ge(2008))
@@ -409,8 +401,7 @@ fn q18c(db: &'static Job) -> impl Drive<R: Row> {
         ..
     } = &db.info_type;
     let Person { gender, .. } = &db.person;
-    let movie = db.movie.all();
-    movie
+    db.movie
         .with(
             info.with(gf_18c(db)).and(
                 cast.select(
