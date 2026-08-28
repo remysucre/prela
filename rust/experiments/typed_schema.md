@@ -26,7 +26,7 @@ Design notes, as planned:
   entity's first column). `pub` on a field explicitly grants a bare
   accessor fn; every field gets an entity-qualified one (`Data::type_()`).
 - Id-valued columns are **bulk-reinterpreted**: `Id<E>` is
-  `repr(transparent)` over `usize`, so `cast_slice::<Id<T>>` reads the v2
+  `repr(transparent)` over `usize`, so `cast_slice::<Id<T>>` reads the
   cache words as tagged ids directly (chosen over per-element map — zero
   conversion cost, same one `unsafe` already used for `usize`).
 - `type_`-style raw-keyword fields stringify with the trailing underscore;
@@ -134,7 +134,7 @@ lto=fat, codegen-units=1, M-series):
   --features regen`: clean, **zero warnings** (the pre-existing `Id::new`
   dead-code warning is consumed by `Dense::from_idx`).
 - `cargo test`: **21/21** (18 existing + 3 new: typed fixture composition
-  & `.p()` elision; `schema!` round-trip over a synthetic v2 cache dir
+  & `.p()` elision; `schema!` round-trip over a synthetic cache dir
   incl. the `type_` filename trim and the `Id` bulk reinterpret;
   full `job_init` parity vs the untyped loaders — universe sizes, column
   lengths, value spot-check, end-to-end count equality).

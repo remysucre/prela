@@ -1,4 +1,4 @@
-// Regenerate the binary cache (format v2 — see src/format.rs) from parquet:
+// Regenerate the binary cache (format — see src/format.rs) from parquet:
 //
 //   cargo run --release --features regen --bin regen -- job  [../../jobdata/parquet] [../cache]
 //   cargo run --release --features regen --bin regen -- tpch [../cache/tpch] [../cache]
@@ -7,8 +7,7 @@
 // here, FK holes are filled with NO_ID, dates are parsed to yyyymmdd i64,
 // strings are laid out as offsets+bytes, and multi-valued columns are
 // built into CSR — the engine loaders (src/cache.rs) just mmap and bulk
-// copy/slice. (The v1 pair-stream format, inherited from the retired
-// Julia engine — julia-engine branch — is gone.)
+// copy/slice.
 //
 // TPC-H expects clean DuckDB-exported parquet: all-BIGINT integer columns,
 // DOUBLE for money, VARCHAR for strings (dates pre-formatted as ISO
@@ -18,7 +17,7 @@
 // the pair semantics of the retired Julia loader (julia-engine branch,
 // JOB.jl `load_all!`): one pass per source table buffers every derived
 // column's pairs in RAM; once all tables are read, the entity universe
-// sizes are computed (the same max-id formulas the v1 runtime loader
+// sizes are computed (the same max-id formulas the Julia runtime loader
 // used) and each column is finalized to its dense/CSR layout and written.
 
 use prela::format::*;
@@ -110,11 +109,11 @@ fn pad_after_offsets(f: &mut BufWriter<File>, n: usize) {
 // ===== column buffers ====================================================
 // Pairs are buffered with INTERNAL (0-based) u32 keys; values are 8-byte
 // words — a 0-based id, a raw i64 bit pattern, or an f64 bit pattern
-// (the finalize call's kind says which). The finalizers reproduce the v1
-// runtime loader's semantics exactly: dense scatter is last-write-wins
-// and panics on a key outside the universe (v1 `VecRel::from_pairs`);
-// CSR drops out-of-universe keys and keeps per-key stream order
-// (v1 `MultiRel::from_pairs`).
+// (the finalize call's kind says which). The finalizers reproduce the
+// Julia runtime loader's semantics exactly: dense scatter is
+// last-write-wins and panics on a key outside the universe (its
+// `VecRel::from_pairs`); CSR drops out-of-universe keys and keeps
+// per-key stream order (its `MultiRel::from_pairs`).
 
 fn internal_key(k: i64) -> u32 {
     debug_assert!((0..u32::MAX as i64).contains(&k), "key {k} out of u32 range");
@@ -351,7 +350,7 @@ fn str_col<'a>(batch: &'a RecordBatch, pos: usize) -> StrCol<'a> {
 // ======================== TPC-H ========================
 //
 // All columns are dense; every parquet row contributes a pair (NULL
-// strings become "", matching the v1 writer). Key spaces: suppkey /
+// strings become "", matching the Julia writer). Key spaces: suppkey /
 // custkey / partkey / orderkey / synthetic ps_id / l_id are 1-based in
 // the parquet (internal = raw − 1); regionkey / nationkey are 0-based
 // (internal = raw). The orderkey space is sparse — the dense scatter
@@ -546,9 +545,9 @@ fn run_tpch(parquet_dir: &Path, cache_dir: &Path) {
 //     (last-write-wins on duplicate keys; lookup misses skip the pair);
 //   - ids are 1-based in the parquet; the −1 shift to internal ids
 //     happens HERE (push sites), not at engine load time;
-//   - entity universe sizes use the same max-id formulas the v1 runtime
-//     loader used, so dense hole-filling and CSR out-of-range dropping
-//     reproduce the v1 in-memory state bit-for-bit.
+//   - entity universe sizes use the same max-id formulas the Julia
+//     runtime loader used, so dense hole-filling and CSR out-of-range
+//     dropping reproduce its in-memory state bit-for-bit.
 
 /// All JOB column buffers, filled by the table passes below and written
 /// out once the universe sizes are known.
@@ -924,7 +923,8 @@ fn read_job(parquet_dir: &Path) -> Job {
 
     // ---- cast_info (Cast) — the big one (~36M rows) ----
     // Columns: id, person_id, movie_id, person_role_id, note, nr_order, role_id(6).
-    // (v1 also wrote a Cast_movie file; no loader ever read it — dropped.)
+    // (the Julia loader also wrote a Cast_movie file; nothing ever read
+    // it — dropped.)
     eprintln!("cast_info");
     t!({
         let (reader, pos) = open_cols(&p("cast_info"), &[0, 1, 2, 3, 4, 6]);
@@ -974,7 +974,7 @@ fn run_job(parquet_dir: &Path, cache_dir: &Path) {
         ($f:ident) => { j.$f.take().unwrap() };
     }
 
-    // ---- entity sizes (same max-id formulas as the v1 runtime loader) ----
+    // ---- entity sizes (same max-id formulas as the Julia runtime loader) ----
     eprintln!("universe sizes");
     let n_movie = j.movie_title.as_ref().unwrap().n_from_keys()
         .max(j.movielink_target.as_ref().unwrap().n_from_vals());
@@ -1096,7 +1096,8 @@ fn run_job(parquet_dir: &Path, cache_dir: &Path) {
         take!(compcasttype_kind).write_dense(&o("CompCastType_text"), n_ccktype);
     });
 
-    // v1 leftovers that v2 never reads (Cast_movie was write-only even in v1)
+    // leftover from the Julia loader, which nothing reads (it was
+    // write-only there too)
     let _ = std::fs::remove_file(cache_dir.join("Cast_movie.bin"));
 
     verify_manifest(cache_dir, &written.into_inner(), prela::job_schema::manifest(), "job");

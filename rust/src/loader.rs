@@ -11,7 +11,7 @@
 // `Loader` exists for two reasons beyond terseness.
 //
 // FIRST, it keeps the declared type and the cache reader together. Each
-// method names one physical column kind and delegates to the matching v2
+// method names one physical column kind and delegates to the matching
 // reader in src/cache.rs; picking the wrong method is caught at load, by
 // `parse_header`, with the file name in the message.
 //
@@ -161,7 +161,7 @@ pub fn sparse_mask<T: Dense, E: 'static>(fk: &VecRel<T, Id<E>>) -> &'static Bits
 }
 
 // =====================================================================
-// Tests — a toy struct schema over a synthetic v2 cache.
+// Tests — a toy struct schema over a synthetic cache.
 // =====================================================================
 //
 // These replace the two `schema!` tests that went away with the macro
@@ -235,9 +235,9 @@ mod tests {
         l.manifest()
     }
 
-    // ----- synthetic v2 files (same writers the schema! tests used) ------
+    // ----- synthetic cache files (same writers the schema! tests used) ---
 
-    fn write_v2(dir: &PathBuf, name: &str, head: [u8; HEADER_LEN], payload: &[u8]) {
+    fn write_col(dir: &PathBuf, name: &str, head: [u8; HEADER_LEN], payload: &[u8]) {
         let mut f = File::create(dir.join(format!("{name}.bin"))).unwrap();
         f.write_all(&head).unwrap();
         f.write_all(payload).unwrap();
@@ -287,25 +287,25 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         let (h, p) = dense_str(&["Alien", "Blade", "Solaris"]);
-        write_v2(&dir, "Film_ftitle", h, &p);
+        write_col(&dir, "Film_ftitle", h, &p);
         let (h, p) = dense_words(&[1979, 1998, 1972]);
-        write_v2(&dir, "Film_year", h, &p);
+        write_col(&dir, "Film_year", h, &p);
         // rows 0,2 → genre 1 ("scifi"); row 1 → genre 0 ("action")
         let (h, p) = dense_words(&[1, 0, 1]);
-        write_v2(&dir, "Film_genre", h, &p);
+        write_col(&dir, "Film_genre", h, &p);
         // film 0 → tags {0,1}; film 1 → {1}; film 2 → {}
         let (h, p) = csr_words(&[0, 2, 3, 3], &[0, 1, 1]);
-        write_v2(&dir, "Film_tags", h, &p);
+        write_col(&dir, "Film_tags", h, &p);
 
         let (h, p) = dense_str(&["action", "scifi"]);
-        write_v2(&dir, "Genre_gname", h, &p);
+        write_col(&dir, "Genre_gname", h, &p);
         let (h, p) = dense_str(&["broad", "narrow"]);
-        write_v2(&dir, "Genre_ty", h, &p);
+        write_col(&dir, "Genre_ty", h, &p);
 
         let (h, p) = dense_str(&["cult", "classic"]);
-        write_v2(&dir, "Tag_tag", h, &p);
+        write_col(&dir, "Tag_tag", h, &p);
         let (h, p) = csr_words(&[0, 1, 3], &[0, 0, 1]);
-        write_v2(&dir, "Tag_films", h, &p);
+        write_col(&dir, "Tag_films", h, &p);
 
         dir
     }
