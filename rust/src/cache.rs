@@ -1,13 +1,10 @@
-// Cache-format-v2 readers, consumed by the `schema!`-generated loaders
-// (src/job_schema.rs, src/tpch_schema.rs). The format is specified in src/format.rs and
+// Cache readers, consumed through src/loader.rs by the struct
+// schemas (src/job_schema.rs, src/tpch_schema.rs). The format is specified in src/format.rs and
 // produced by the `regen` binary (`cargo run --release --features regen
 // --bin regen -- {job|tpch} ...`), which absorbs ALL load-time
 // transformation: ids are stored 0-based with `NO_ID` holes baked in,
 // dates pre-parsed to yyyymmdd i64, strings laid out as offsets+bytes,
 // multi columns as CSR. Loading is mmap + header check + bulk copy/slice.
-// (The v1 pair-stream format and its load-time shift/scatter/bucketing —
-// inherited from the retired Julia engine, julia-engine branch — are gone;
-// a v1 file fails the magic check loudly.)
 //
 // Strings and CSR payloads are returned as `&'static` borrows — the mmap
 // is leaked, so the bytes live for the program. No per-string allocation.
@@ -34,9 +31,9 @@ fn mmap_static(path: &Path) -> &'static [u8] {
     &**leaked
 }
 
-/// mmap `<dir>/<name>.bin`, validate the v2 header against `kind`, return
-/// (n, m, full bytes). The `schema!` macro builds `name` with `stringify!`
-/// — field names are filenames, verbatim.
+/// mmap `<dir>/<name>.bin`, validate the header against `kind`, return
+/// (n, m, full bytes). `name` is the schema's `<Entity>_<field>` string —
+/// field names are filenames, verbatim.
 fn open_in(dir: &Path, name: &str, kind: u32) -> (usize, usize, &'static [u8]) {
     let path = dir.join(format!("{name}.bin"));
     let bytes = mmap_static(&path);
@@ -64,7 +61,7 @@ fn cast_slice<T>(bytes: &'static [u8], off: usize, len: usize) -> &'static [T] {
 // ===== dense columns (one value per 0-based id) ==========================
 // The `_in` readers are dir-parameterized and generic over the key domain
 // `D: Dense` (and, for FK columns, the value entity tag `T`) — the typed
-// `schema!` layer instantiates them with `D = Id<E>`; the legacy wrappers
+// `Loader` instantiates them with `D = Id<E>`; the legacy wrappers
 // below pin `D = usize` and the default `../cache` dir.
 
 /// Dense i64 column (scalars; dates are pre-parsed yyyymmdd).
@@ -251,13 +248,13 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "stale v1 cache")]
-    fn v1_file_fails_loudly() {
-        // a v1 file starts with its u64 pair count — no magic
+    #[should_panic(expected = "not a prela cache file")]
+    fn foreign_file_fails_loudly() {
+        // no magic at the front — raw words where a header should be
         let mut payload = Vec::new();
         payload.extend_from_slice(&3u64.to_le_bytes());
         payload.extend_from_slice(&[0u8; 48]);
-        let p = write_file("v1.bin", [0u8; HEADER_LEN], &[]);
+        let p = write_file("foreign.bin", [0u8; HEADER_LEN], &[]);
         std::fs::write(&p, &payload).unwrap();
         open_at(&p, KIND_DENSE_I64);
     }

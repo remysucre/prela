@@ -1,11 +1,9 @@
-// Cache format v2 — the shared spec between the writer (`regen`, which
+// The cache format — the shared spec between the writer (`regen`, which
 // includes this file via `#[path]`) and the reader (src/cache.rs). The
 // cache stores FINAL physical layouts: 0-based ids with `NO_ID` holes
 // baked in, dates pre-parsed to yyyymmdd i64, strings as offsets+bytes,
 // multi-valued columns as CSR. Loading is mmap + header check + bulk
-// copy/slice — no per-pair work. (Format v1 — the Julia-era 1-based
-// (i64, i64) pair streams — is gone; see the julia-engine branch for the
-// historic implementation.)
+// copy/slice — no per-pair work.
 //
 // Every `<Entity>_<field>.bin` file is:
 //
@@ -34,8 +32,8 @@
 //                  row i = strings off[i]..off[i+1]; string j =
 //                  bytes[boff[j]..boff[j+1]]
 //
-// A v1 file starts with its u64 pair count, which can never collide with
-// the magic — stale caches fail loudly at the magic check.
+// Anything that is not one of these files fails loudly at the magic check
+// rather than being read as garbage.
 
 pub const MAGIC: [u8; 8] = *b"prela2\0\0";
 pub const HEADER_LEN: usize = 32;
@@ -68,14 +66,14 @@ pub fn header(kind: u32, n: u64, m: u64) -> [u8; HEADER_LEN] {
     h
 }
 
-/// Parse + validate a v2 header. Loud failure on anything unexpected: an
-/// old 1-based v1 cache silently read as v2 would be an off-by-one
+/// Parse + validate a header. Loud failure on anything unexpected: a file
+/// that is not a cache file, read as one, would be a silent off-by-one
 /// disaster, so a bad magic aborts with the regen instruction.
 #[allow(dead_code)] // reader side (prela binary only)
 pub fn parse_header(bytes: &[u8], expect_kind: u32, what: &str) -> (usize, usize) {
     if bytes.len() < HEADER_LEN || bytes[0..8] != MAGIC {
         panic!(
-            "{what}: not a cache-format-v2 file (stale v1 cache?) — \
+            "{what}: not a prela cache file (stale or corrupt cache?) — \
              rerun `regen job` / `regen tpch`"
         );
     }

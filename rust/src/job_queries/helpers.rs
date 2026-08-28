@@ -57,7 +57,7 @@ pub fn min_row<Q: Drive>(q: Q) -> String where Q::R: Row {
 // whole movie universe. The predicate only ever looks at the keyword, so
 // resolve it up front instead: one pass over the 134k-row text column
 // (~0.1 ms) into a bitset over the keyword id space, after which the
-// per-pair test is a bit lookup. Spelled `keyword.with(kw_rx(r"sequel"))`.
+// per-pair test is a bit lookup. Spelled `keyword.with(kw_rx(db, r"sequel"))`.
 //
 // `inv` is what puts the ids in value position — `Bitset::over` sets a bit
 // per emitted VALUE, and the text column is keyed BY id — and in drive
@@ -70,25 +70,30 @@ pub fn min_row<Q: Drive>(q: Q) -> String where Q::R: Row {
 // reach for this second.
 
 /// Keywords whose text matches `re`.
-pub fn kw_rx(re: &str) -> Bitset<Id<Keyword>> {
-    Bitset::over(
-        Universe::<Id<Keyword>>::new(Keyword::text.iq().n_keys()),
-        Keyword::text.rx(re).inv(),
-    )
+pub fn kw_rx(db: &'static Job, re: &str) -> Bitset<Id<Keyword>> {
+    let Keyword { text: keyword_text, .. } = &db.keyword;
+    Bitset::over(&db.keyword, keyword_text.rx(re).inv())
 }
 
 /// Companies named *Film*/*Warner*, non-Polish production companies without
 /// a note — the `co` binding of queries 21a-c and 27a-c.
-pub fn film_or_warner_co() -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive + Probe {
+pub fn film_or_warner_co(db: &'static Job) -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive + Probe {
+    let Movie { company, .. } = &db.movie;
+    let Company { name: company_name, country, note: company_note, ty: company_ty, .. } = &db.company;
+    let CompanyType { text: companytype_text, .. } = &db.company_type;
     company.with(country.ne("[pl]")
-            .and(Company::name.rx(r"Film|Warner"))
-            .and(Company::ty.eq("production companies").minus(Company::note)))
+            .and(company_name.rx(r"Film|Warner"))
+            .and(company_ty.select(companytype_text).eq("production companies").minus(company_note)))
 }
 
 /// The link-type label ("followed by", …) of each movie's "follow"-typed
 /// links — the `lk` binding of queries 21a-c and 27a-c. String-valued like
-/// Julia's `link → (MovieLink.type ~ r"follow")` (whose primary elision
-/// composes through to `LinkType.link`), so output products use it directly.
-pub fn follow_link() -> impl Query<D = Id<Movie>, R = &'static str> + Drive + Probe {
-    link.select(MovieLink::ty.rx(r"follow"))
+/// Julia's `link → (MovieLink.type ~ r"follow")`, which composes through to
+/// the link type's label; here that hop is the explicit
+/// `.select(linktype_text)`, so output products use the result directly.
+pub fn follow_link(db: &'static Job) -> impl Query<D = Id<Movie>, R = &'static str> + Drive + Probe {
+    let Movie { link, .. } = &db.movie;
+    let LinkType { text: linktype_text, .. } = &db.link_type;
+    let MovieLink { ty: movielink_ty, .. } = &db.movie_link;
+    link.select(movielink_ty.select(linktype_text).rx(r"follow"))
 }
