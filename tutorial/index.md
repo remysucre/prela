@@ -103,8 +103,8 @@ The motivation for focusing on binary relations is that they generalize function
 Functions are powerful because they *compose*,
  making them the building blocks of programs.
 A function maps every input to a unique output,
- where as a relation can map an input to multiple different outputs.
-In a sense, a relation can be viewed as a *nondeterministic* function.
+ where as a binary relation can map an input to multiple different outputs.
+In a sense, a binary relation can be viewed as a *nondeterministic* function.
 
 That is all very abstract, so let's go back to our examples.
 To keep things simple, we will focus on
