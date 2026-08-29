@@ -2,6 +2,7 @@ all: index.html tutorial/index.html
 
 index.html: README.md gh-alerts.html
 	pandoc README.md \
+	  -V mainfont=palatino,serif \
 	  --from gfm+alerts --to html5 \
 	  --include-in-header=gh-alerts.html \
 	  --metadata pagetitle="Prela" \
@@ -10,7 +11,7 @@ index.html: README.md gh-alerts.html
 
 tutorial/index.html: tutorial/index.md
 	pandoc tutorial/index.md \
-	  -V mainfont=sans-serif \
+	  -V mainfont=palatino,serif \
 	  --from gfm+alerts+fenced_divs --to html5 \
 	  --include-in-header=gh-alerts.html \
 	  --metadata pagetitle="Prela Tutorial" \
