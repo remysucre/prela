@@ -1,5 +1,5 @@
 ---
-title:  'Prela in 11 Lines of Code'
+title:  'A Better SQL in 11 Lines of Code'
 ...
 
 [Prela](https://prela-lang.org) is a new query language being developed
