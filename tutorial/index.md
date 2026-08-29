@@ -104,7 +104,8 @@ Functions are powerful because they *compose*,
  making them the building blocks of programs.
 A function maps every input to a unique output,
  where as a binary relation can map an input to multiple different outputs.
-In a sense, a binary relation can be viewed as a *nondeterministic* function.
+In a sense, a binary relation can be viewed as a *nondeterministic* function,
+ and we can compose them just like how we compose functions.
 
 That is all very abstract, so let's go back to our examples.
 To keep things simple, we will focus on
