@@ -4,9 +4,7 @@ use smallvec::SmallVec;
 use std::hash::Hash;
 use std::marker::PhantomData;
 
-/// Default inline capacity for the probe-index buckets. Most TPC-H
-/// foreign-key relations are 1:1 or 1:few (e.g. lineitems-per-order ≈ 4),
-/// so this size keeps the common case inline + heap-free.
+/// Default inline capacity for the probe-index buckets.
 type SVec<T> = SmallVec<[T; 4]>;
 
 // ==================
@@ -22,7 +20,6 @@ pub trait Drive: Query {
     fn drive<K: FnMut(Self::D, Self::R)>(&self, k: K);
 }
 
-/// Domain-membership test — "is `x` in the domain of this relation?".
 pub trait Member: Query {
     fn member(&self, x: Self::D) -> bool;
 }
@@ -49,7 +46,6 @@ pub type DOf<T> = <<T as IntoQuery>::Q as Query>::D;
 /// The value type of what `T` resolves to (`<T::Q as Query>::R`).
 pub type ROf<T> = <<T as IntoQuery>::Q as Query>::R;
 
-// blanket: &T inherits T's modes.
 impl<T: Query + ?Sized> Query for &T {
     type D = T::D;
     type R = T::R;
@@ -133,9 +129,6 @@ impl Dense for usize {
     }
 }
 
-/// Phantom-typed entity id (the Julia engine's `ID{E}`). `repr(transparent)`
-/// over `usize`, so typed id columns can be reinterpreted in bulk from the
-/// cache's word arrays.
 #[repr(transparent)]
 pub struct Id<E: 'static>(pub usize, pub PhantomData<E>);
 
@@ -145,7 +138,7 @@ impl<E> Id<E> {
         Id(i, PhantomData)
     }
 }
-// Manual impls: `derive` would wrongly require bounds on the phantom `E`.
+
 impl<E> Copy for Id<E> {}
 impl<E> Clone for Id<E> {
     #[inline(always)]
@@ -166,8 +159,7 @@ impl<E> Hash for Id<E> {
         self.0.hash(h)
     }
 }
-// Ids are dense indexes; index order is the (arbitrary but total) order
-// used by sinks like `count_distinct`'s sort+dedup.
+
 impl<E> PartialOrd for Id<E> {
     #[inline(always)]
     fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
@@ -197,28 +189,12 @@ impl<E: 'static> Dense for Id<E> {
     }
 }
 
-// ===== primary-field elision (Julia's `==` on an entity value) ==========
-// A comparison on an entity-valued query auto-navigates to the entity's
-// PRIMARY (first-declared) scalar field before comparing — `keyword.eq("x")`
-// ≡ `keyword.text().eq("x")`. The dispatch is on the RECEIVER's value type,
-// not the argument: `Field` carries a GAT holding the (concrete) elided
-// QUERY — `Q` for a scalar, `Compose<Q, &Primary>` for an `Id<E>` — while the
-// comparator's closure stays method-level RPITIT. (The earlier dead end put
-// the closure in the GAT, which is impossible; keeping the GAT query-only is
-// the way through.) Scalar columns elide to identity, so explicit navigation
-// (`kind.text().eq(..)`) keeps working unchanged.
-
-/// An entity tag whose first-declared field is scalar — `schema!` emits this.
-/// `'static` is load-bearing: `Id<E: 'static>`, and `Col`/`primary` are
-/// `&'static`.
 pub trait Primary: 'static + Sized {
     type Scalar: Copy;
     type Col: Query<D = Id<Self>, R = Self::Scalar>;
     fn primary() -> &'static Self::Col;
 }
 
-/// A relation's VALUE type, and how a comparison on it elides: scalars are the
-/// identity; entity ids navigate to their primary column.
 pub trait Field: Copy {
     type Scalar: Copy;
     type Elided<Q: Query<R = Self>>: Query<R = Self::Scalar>;
@@ -248,8 +224,7 @@ impl Field for &'static str {
         q
     }
 }
-// Untyped escape hatch: `usize`-valued columns (the pre-schema loaders) keep
-// `.eq` available, identity-elided.
+
 impl Field for usize {
     type Scalar = usize;
     type Elided<Q: Query<R = usize>> = Q;
@@ -270,9 +245,7 @@ impl<E: Primary> Field for Id<E> {
     }
 }
 
-/// The elided value type a comparison on `T` ends up comparing.
 pub type Sc<T> = <ROf<T> as Field>::Scalar;
-/// The query a comparison on `T` filters, after primary elision.
 pub type Elided<T> = <ROf<T> as Field>::Elided<<T as IntoQuery>::Q>;
 
 pub struct VecRel<R: Copy, D: Dense = usize> {
@@ -294,10 +267,7 @@ impl<R: Copy, D: Dense> VecRel<R, D> {
 
 pub struct MultiRel<R: Copy + 'static, D: Dense = usize> {
     pub _d: PhantomData<D>,
-    /// CSR row offsets, length n+1 (u32: every cached column's value count
-    /// fits, and half-width offsets halve the footprint of sparse rows).
     pub offsets: &'static [u32],
-    /// All rows' values, concatenated in key order.
     pub values: &'static [R],
 }
 
@@ -313,7 +283,6 @@ impl<R: Copy + Default, D: Dense> VecRel<R, D> {
 }
 
 impl<R: Copy + 'static, D: Dense> MultiRel<R, D> {
-    /// Wrap existing CSR arrays (the cache loaders' zero-copy path).
     pub fn from_csr(offsets: &'static [u32], values: &'static [R]) -> Self {
         assert!(!offsets.is_empty(), "CSR offsets must have length n+1");
         assert_eq!(*offsets.last().unwrap() as usize, values.len());
@@ -329,9 +298,6 @@ impl<R: Copy + 'static, D: Dense> MultiRel<R, D> {
         self.offsets.len() - 1
     }
 
-    /// Build CSR from a pair stream — small-data constructor for unit
-    /// tests (the backing Vecs are leaked). Pairs with `k >= n` are
-    /// dropped; per-key value order follows the stream.
     #[cfg(test)]
     pub fn from_pairs(n: usize, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
         let mut buckets: Vec<Vec<R>> = (0..n).map(|_| Vec::new()).collect();
@@ -354,12 +320,8 @@ impl<R: Copy + 'static, D: Dense> MultiRel<R, D> {
         }
     }
 
-    /// Row slice for key `x` — empty for missing/out-of-universe keys
-    /// (`NO_ID` included: it fails the `x < n` check like any other
-    /// out-of-range id).
     #[inline(always)]
     fn row(&self, x: usize) -> &'static [R] {
-        // `x < len-1`, not `x+1 < len`: x = NO_ID must not overflow.
         if x < self.offsets.len() - 1 {
             &self.values[self.offsets[x] as usize..self.offsets[x + 1] as usize]
         } else {
@@ -479,7 +441,6 @@ impl<D: Dense> Probe for Universe<D> {
 }
 
 // ===== Ident — the identity ENTITY TABLE `Id<E> → Id<E>` ================
-// The `id → row` map for a DENSE entity, where the external id IS the row.
 
 pub struct Ident<E: 'static>(pub PhantomData<E>);
 impl<E> Ident<E> {
@@ -516,12 +477,6 @@ impl<E: 'static> Probe for Ident<E> {
 }
 
 // ===== non-dense entities: Key<E> + DictTable =============================
-// The general entity table, for an entity whose external ids are NOT a dense
-// `0..n`.
-
-/// External, possibly non-dense / non-contiguous id of entity `E` — distinct
-/// from `Id<E>` (the dense ROW index). Manual `Copy/Eq/Hash` like `Id<E>`
-/// (`derive` would wrongly bound the phantom `E`).
 #[repr(transparent)]
 pub struct Key<E: 'static>(pub u64, pub PhantomData<E>);
 impl<E> Key<E> {
@@ -569,8 +524,6 @@ impl<E: 'static> DictTable<E> {
                 .collect(),
         }
     }
-    /// Build from the entity's i64 external-id column (`row → external id`),
-    /// the inverse `external id → row`. Used by the schema macro at load.
     pub fn from_i64(keys: &[i64]) -> Self {
         DictTable {
             map: keys
