@@ -1,4 +1,4 @@
-use crate::engine::{Bitset, Id, IntoQuery, SparseUniverse, Universe};
+use crate::engine::{Bitset, Id, IntoQuery, Primary, SparseUniverse, Universe};
 use crate::loader::{Col, Loader, Str, sparse_mask};
 use std::path::Path;
 use std::sync::OnceLock;
@@ -195,6 +195,37 @@ entity_query! {
     PartSupp => Universe,
     Order => SparseUniverse,
     Lineitem => Universe,
+}
+
+macro_rules! primary {
+    ($Db:ty; $($E:ident, $STATIC:ident, $dbfield:ident . $field:ident, $Scalar:ty);* $(;)?) => {
+        $(
+            static $STATIC: OnceLock<&'static Col<$E, $Scalar>> = OnceLock::new();
+            impl Primary for $E {
+                type Scalar = $Scalar;
+                type Col = Col<$E, $Scalar>;
+                #[inline]
+                fn primary() -> &'static Self::Col {
+                    $STATIC.get().expect("primary column read before load()")
+                }
+            }
+        )*
+
+        pub fn register_primaries(db: &'static $Db) {
+            $(
+                let _ = $STATIC.set(&db.$dbfield.$field);
+            )*
+        }
+    };
+}
+
+primary! {
+    Tpch;
+    Region, REGION_PRIMARY, region.name, Str;
+    Nation, NATION_PRIMARY, nation.name, Str;
+    Supplier, SUPPLIER_PRIMARY, supplier.name, Str;
+    Customer, CUSTOMER_PRIMARY, customer.name, Str;
+    Part, PART_PRIMARY, part.name, Str;
 }
 
 // =====================================================================

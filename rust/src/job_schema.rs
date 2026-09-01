@@ -1,6 +1,7 @@
-use crate::engine::{Id, IntoQuery, Universe};
+use crate::engine::{Id, IntoQuery, Primary, Universe};
 use crate::loader::{Col, Loader, Set, Str};
 use std::path::Path;
+use std::sync::OnceLock;
 
 // =====================================================================
 // Entities
@@ -269,6 +270,48 @@ entity_query! {
     CompCastType,
 }
 
+macro_rules! primary {
+    ($Db:ty; $($E:ident, $STATIC:ident, $dbfield:ident . $field:ident, $Scalar:ty);* $(;)?) => {
+        $(
+            static $STATIC: OnceLock<&'static Col<$E, $Scalar>> = OnceLock::new();
+            impl Primary for $E {
+                type Scalar = $Scalar;
+                type Col = Col<$E, $Scalar>;
+                #[inline]
+                fn primary() -> &'static Self::Col {
+                    $STATIC.get().expect("primary column read before load()")
+                }
+            }
+        )*
+
+        pub fn register_primaries(db: &'static $Db) {
+            $(
+                let _ = $STATIC.set(&db.$dbfield.$field);
+            )*
+        }
+    };
+}
+
+primary! {
+    Job;
+    Movie, MOVIE_PRIMARY, movie.title, Str;
+    Person, PERSON_PRIMARY, person.name, Str;
+    Keyword, KEYWORD_PRIMARY, keyword.text, Str;
+    Kind, KIND_PRIMARY, kind.text, Str;
+    RoleType, ROLE_TYPE_PRIMARY, role_type.text, Str;
+    Character, CHARACTER_PRIMARY, character.text, Str;
+    Company, COMPANY_PRIMARY, company.name, Str;
+    CompanyType, COMPANY_TYPE_PRIMARY, company_type.text, Str;
+    Info, INFO_PRIMARY, info.info, Str;
+    InfoType, INFO_TYPE_PRIMARY, info_type.text, Str;
+    Data, DATA_PRIMARY, data.text, Str;
+    PersonInfo, PERSON_INFO_PRIMARY, person_info.info, Str;
+    AkaName, AKA_NAME_PRIMARY, aka_name.text, Str;
+    AkaTitle, AKA_TITLE_PRIMARY, aka_title.text, Str;
+    LinkType, LINK_TYPE_PRIMARY, link_type.text, Str;
+    CompCastType, COMP_CAST_TYPE_PRIMARY, comp_cast_type.text, Str;
+}
+
 // =====================================================================
 // The database
 // =====================================================================
@@ -458,6 +501,34 @@ mod tests {
             .with((&mk).select(&kk).eq("movie"))
             .drive(|_, _| n_untyped += 1);
         assert_eq!(n_typed, n_untyped);
+    }
+
+    #[test]
+    fn primary_elision_matches_explicit_select() {
+        let dir = Path::new("../cache");
+        if !dir.join("Movie_title.bin").exists() {
+            eprintln!("skipping: ../cache not present (run `regen job`)");
+            return;
+        }
+        let db: &'static Job = Box::leak(Box::new(load(dir)));
+        register_primaries(db);
+
+        let Movie { kind, .. } = &db.movie;
+        let mut n_elided = 0usize;
+        db.movie
+            .all()
+            .with(kind.eq("movie"))
+            .drive(|_, _| n_elided += 1);
+
+        let Kind { text: kind_text } = &db.kind;
+        let mut n_explicit = 0usize;
+        db.movie
+            .all()
+            .with(kind.select(kind_text).eq("movie"))
+            .drive(|_, _| n_explicit += 1);
+
+        assert_eq!(n_elided, n_explicit);
+        assert!(n_elided > 0);
     }
 
     /// The manifest lists every column exactly once and matches the file
