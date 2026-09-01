@@ -491,7 +491,6 @@ mod tests {
         let Kind { text: kind_text } = &db.kind;
         let mut n_typed = 0usize;
         db.movie
-            .all()
             .with(kind.select(kind_text).eq("movie"))
             .drive(|_, _| n_typed += 1);
         let kk = load_strs("Kind_text");
@@ -516,14 +515,12 @@ mod tests {
         let Movie { kind, .. } = &db.movie;
         let mut n_elided = 0usize;
         db.movie
-            .all()
             .with(kind.eq("movie"))
             .drive(|_, _| n_elided += 1);
 
         let Kind { text: kind_text } = &db.kind;
         let mut n_explicit = 0usize;
         db.movie
-            .all()
             .with(kind.select(kind_text).eq("movie"))
             .drive(|_, _| n_explicit += 1);
 
