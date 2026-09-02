@@ -12,9 +12,9 @@
 // Two spellings changed with the schema macro. Navigation is `.select(col)`
 // rather than a generated method (`order.date()` → `l_order.select(o_date)`),
 // and comparing a foreign key against a label is written out rather than
-// elided through `Primary` (`Nation::region.eq("ASIA")` →
+// elided through `Value` (`Nation::region.eq("ASIA")` →
 // `n_region.select(r_name).eq("ASIA")`) — there is no global for a
-// no-argument `primary()` to read.
+// no-argument `value()` to read.
 //
 // Short oracle strings are inlined as consts; long ones live in the repo at
 // ../oracles/tpch/Q*.txt and are loaded once by `oracle()`.
@@ -444,7 +444,7 @@ fn q13(db: &'static Tpch) -> String {
     let count_per_cust = db.order
         .with(o_comment.nrx("special.*requests"))
         .group_by(o_customer)
-        .dense_fold_outer(db.customer.all().n, 0_i64, |a, _| a + 1);
+        .dense_fold_outer(db.customer.key.n, 0_i64, |a, _| a + 1);
     // Histogram: invert (c_count ← customer) and count customers per c_count.
     let dist = count_per_cust.inv().fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(i64, i64)> = Vec::new();

@@ -1,0 +1,13 @@
+[package]
+name = "prela-macros"
+version = "0.1.0"
+edition = "2024"
+description = "The `#[entity]` attribute for prela's struct-declared schemas."
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = "2"

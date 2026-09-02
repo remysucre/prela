@@ -41,6 +41,24 @@ fn open_in(dir: &Path, name: &str, kind: u32) -> (usize, usize, &'static [u8]) {
     (n, m, bytes)
 }
 
+/// Domain size of `<dir>/<name>.bin` from its header alone — no mmap, no
+/// kind check. This sizes an entity's `key` off one of its columns without
+/// loading the column twice.
+pub fn n_dom_in(dir: &Path, name: &str) -> usize {
+    use std::io::Read;
+    let path = dir.join(format!("{name}.bin"));
+    let mut head = [0u8; HEADER_LEN];
+    File::open(&path)
+        .and_then(|mut f| f.read_exact(&mut head))
+        .unwrap_or_else(|e| {
+            panic!("open cache file {path:?}: {e} — run `regen job` / `regen tpch` first")
+        });
+    if head[0..8] != MAGIC {
+        panic!("{path:?}: not a prela cache file (stale or corrupt cache?) — rerun `regen`");
+    }
+    u64::from_le_bytes(head[16..24].try_into().unwrap()) as usize
+}
+
 /// mmap `<name>.bin` under the default `../cache` dir (test cross-check).
 #[cfg(test)]
 fn open(name: &str, kind: u32) -> (usize, usize, &'static [u8]) {

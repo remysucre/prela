@@ -1,4 +1,4 @@
-use crate::engine::{Id, IntoQuery, Primary, Universe};
+use crate::engine::{Id, IntoQuery, Universe, Value};
 use crate::loader::{Col, Loader, Set, Str};
 use std::path::Path;
 use std::sync::OnceLock;
@@ -6,8 +6,18 @@ use std::sync::OnceLock;
 // =====================================================================
 // Entities
 // =====================================================================
+//
+// An entity struct reads like a SQL table: the first field `key` is the
+// identity column over the entity's ids (its id space, sized at load), and
+// every other field is a column keyed by those ids. `#[derive(IntoQuery)]`
+// implements `IntoQuery for &Self` by returning `key`, and `QueryExt` is
+// blanket-implemented over `IntoQuery`, so an entity drives directly:
+// `db.movie.select(..)` resolves by autoref on `&Movie`. Reach for
+// `db.movie.key` itself when you want the `Universe`, e.g. for its `.n`.
 
+#[derive(IntoQuery)]
 pub struct Movie {
+    pub key: Universe<Id<Movie>>,
     pub title: Col<Movie, Str>,
     pub kind: Col<Movie, Id<Kind>>,
     pub production_year: Set<Movie, i64>,
@@ -23,14 +33,18 @@ pub struct Movie {
     pub aka: Set<Movie, Id<AkaTitle>>,
 }
 
+#[derive(IntoQuery)]
 pub struct Cast {
+    pub key: Universe<Id<Cast>>,
     pub person: Col<Cast, Id<Person>>,
     pub role: Col<Cast, Id<RoleType>>,
     pub note: Set<Cast, Str>,
     pub character: Set<Cast, Id<Character>>,
 }
 
+#[derive(IntoQuery)]
 pub struct Person {
+    pub key: Universe<Id<Person>>,
     pub name: Col<Person, Str>,
     pub gender: Set<Person, Str>,
     pub alias: Set<Person, Id<AkaName>>,
@@ -38,253 +52,119 @@ pub struct Person {
     pub name_pcode_cf: Set<Person, Str>,
 }
 
+#[derive(IntoQuery)]
 pub struct Keyword {
+    pub key: Universe<Id<Keyword>>,
     pub text: Col<Keyword, Str>,
 }
+#[derive(IntoQuery)]
 pub struct Kind {
+    pub key: Universe<Id<Kind>>,
     pub text: Col<Kind, Str>,
 }
+#[derive(IntoQuery)]
 pub struct RoleType {
+    pub key: Universe<Id<RoleType>>,
     pub text: Col<RoleType, Str>,
 }
+#[derive(IntoQuery)]
 pub struct Character {
+    pub key: Universe<Id<Character>>,
     pub text: Col<Character, Str>,
 }
 
+#[derive(IntoQuery)]
 pub struct Company {
+    pub key: Universe<Id<Company>>,
     pub name: Col<Company, Str>,
     pub country: Set<Company, Str>,
     pub note: Set<Company, Str>,
     pub ty: Col<Company, Id<CompanyType>>,
 }
+#[derive(IntoQuery)]
 pub struct CompanyType {
+    pub key: Universe<Id<CompanyType>>,
     pub text: Col<CompanyType, Str>,
 }
 
+#[derive(IntoQuery)]
 pub struct Info {
+    pub key: Universe<Id<Info>>,
     pub info: Col<Info, Str>,
     pub ty: Col<Info, Id<InfoType>>,
     pub note: Set<Info, Str>,
 }
+#[derive(IntoQuery)]
 pub struct InfoType {
+    pub key: Universe<Id<InfoType>>,
     pub text: Col<InfoType, Str>,
 }
 
+#[derive(IntoQuery)]
 pub struct Data {
+    pub key: Universe<Id<Data>>,
     pub text: Col<Data, Str>,
     pub ty: Col<Data, Id<InfoType>>,
 }
 
+#[derive(IntoQuery)]
 pub struct PersonInfo {
+    pub key: Universe<Id<PersonInfo>>,
     pub info: Col<PersonInfo, Str>,
     pub ty: Col<PersonInfo, Id<InfoType>>,
     pub note: Set<PersonInfo, Str>,
 }
 
+#[derive(IntoQuery)]
 pub struct AkaName {
+    pub key: Universe<Id<AkaName>>,
     pub text: Col<AkaName, Str>,
 }
+#[derive(IntoQuery)]
 pub struct AkaTitle {
+    pub key: Universe<Id<AkaTitle>>,
     pub text: Col<AkaTitle, Str>,
 }
 
+#[derive(IntoQuery)]
 pub struct MovieLink {
+    pub key: Universe<Id<MovieLink>>,
     pub target: Col<MovieLink, Id<Movie>>,
     pub ty: Col<MovieLink, Id<LinkType>>,
 }
+#[derive(IntoQuery)]
 pub struct LinkType {
+    pub key: Universe<Id<LinkType>>,
     pub text: Col<LinkType, Str>,
 }
 
+#[derive(IntoQuery)]
 pub struct CompleteCast {
+    pub key: Universe<Id<CompleteCast>>,
     pub status: Col<CompleteCast, Id<CompCastType>>,
     pub subject: Col<CompleteCast, Id<CompCastType>>,
 }
+#[derive(IntoQuery)]
 pub struct CompCastType {
+    pub key: Universe<Id<CompCastType>>,
     pub text: Col<CompCastType, Str>,
 }
 
-// =====================================================================
-// Universes
-// =====================================================================
-
-impl Movie {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<Movie>> {
-        Universe::new(self.title.n_keys())
-    }
-}
-impl Cast {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<Cast>> {
-        Universe::new(self.person.n_keys())
-    }
-}
-impl Person {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<Person>> {
-        Universe::new(self.name.n_keys())
-    }
-}
-impl Keyword {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<Keyword>> {
-        Universe::new(self.text.n_keys())
-    }
-}
-impl Kind {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<Kind>> {
-        Universe::new(self.text.n_keys())
-    }
-}
-impl RoleType {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<RoleType>> {
-        Universe::new(self.text.n_keys())
-    }
-}
-impl Character {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<Character>> {
-        Universe::new(self.text.n_keys())
-    }
-}
-impl Company {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<Company>> {
-        Universe::new(self.name.n_keys())
-    }
-}
-impl CompanyType {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<CompanyType>> {
-        Universe::new(self.text.n_keys())
-    }
-}
-impl Info {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<Info>> {
-        Universe::new(self.info.n_keys())
-    }
-}
-impl InfoType {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<InfoType>> {
-        Universe::new(self.text.n_keys())
-    }
-}
-impl Data {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<Data>> {
-        Universe::new(self.text.n_keys())
-    }
-}
-impl PersonInfo {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<PersonInfo>> {
-        Universe::new(self.info.n_keys())
-    }
-}
-impl AkaName {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<AkaName>> {
-        Universe::new(self.text.n_keys())
-    }
-}
-impl AkaTitle {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<AkaTitle>> {
-        Universe::new(self.text.n_keys())
-    }
-}
-impl MovieLink {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<MovieLink>> {
-        Universe::new(self.target.n_keys())
-    }
-}
-impl LinkType {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<LinkType>> {
-        Universe::new(self.text.n_keys())
-    }
-}
-impl CompleteCast {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<CompleteCast>> {
-        Universe::new(self.status.n_keys())
-    }
-}
-impl CompCastType {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<CompCastType>> {
-        Universe::new(self.text.n_keys())
-    }
-}
-
-// =====================================================================
-// Entity-as-query
-// =====================================================================
-//
-// `QueryExt` is blanket-implemented over `IntoQuery`, so teaching an entity
-// struct to become its own universe is enough to make it drivable directly:
-// `db.movie.select(..)` is `db.movie.all().select(..)`, resolved by autoref
-// on `&Movie`. `all()` remains the explicit spelling — and the one to reach
-// for when you want the `Universe` itself, e.g. for its `.n`.
-//
-// No coherence clash with `impl<Q: Query> IntoQuery for Q`: an entity struct
-// is not itself a `Query`.
-
-macro_rules! entity_query {
-    ($($E:ident),* $(,)?) => {$(
-        impl IntoQuery for &$E {
-            type Q = Universe<Id<$E>>;
-            #[inline(always)]
-            fn iq(self) -> Self::Q {
-                self.all()
-            }
-        }
-    )*};
-}
-
-entity_query! {
-    Movie,
-    Cast,
-    Person,
-    Keyword,
-    Kind,
-    RoleType,
-    Character,
-    Company,
-    CompanyType,
-    Info,
-    InfoType,
-    Data,
-    PersonInfo,
-    AkaName,
-    AkaTitle,
-    MovieLink,
-    LinkType,
-    CompleteCast,
-    CompCastType,
-}
-
-macro_rules! primary {
+macro_rules! value {
     ($Db:ty; $($E:ident, $STATIC:ident, $dbfield:ident . $field:ident, $Scalar:ty);* $(;)?) => {
         $(
             static $STATIC: OnceLock<&'static Col<$E, $Scalar>> = OnceLock::new();
-            impl Primary for $E {
+            impl Value for $E {
                 type Scalar = $Scalar;
                 type Col = Col<$E, $Scalar>;
                 #[inline]
-                fn primary() -> &'static Self::Col {
-                    $STATIC.get().expect("primary column read before load()")
+                fn value() -> &'static Self::Col {
+                    $STATIC.get().expect("value column read before load()")
                 }
             }
         )*
 
-        pub fn register_primaries(db: &'static $Db) {
+        pub fn register_values(db: &'static $Db) {
             $(
                 let _ = $STATIC.set(&db.$dbfield.$field);
             )*
@@ -292,24 +172,24 @@ macro_rules! primary {
     };
 }
 
-primary! {
+value! {
     Job;
-    Movie, MOVIE_PRIMARY, movie.title, Str;
-    Person, PERSON_PRIMARY, person.name, Str;
-    Keyword, KEYWORD_PRIMARY, keyword.text, Str;
-    Kind, KIND_PRIMARY, kind.text, Str;
-    RoleType, ROLE_TYPE_PRIMARY, role_type.text, Str;
-    Character, CHARACTER_PRIMARY, character.text, Str;
-    Company, COMPANY_PRIMARY, company.name, Str;
-    CompanyType, COMPANY_TYPE_PRIMARY, company_type.text, Str;
-    Info, INFO_PRIMARY, info.info, Str;
-    InfoType, INFO_TYPE_PRIMARY, info_type.text, Str;
-    Data, DATA_PRIMARY, data.text, Str;
-    PersonInfo, PERSON_INFO_PRIMARY, person_info.info, Str;
-    AkaName, AKA_NAME_PRIMARY, aka_name.text, Str;
-    AkaTitle, AKA_TITLE_PRIMARY, aka_title.text, Str;
-    LinkType, LINK_TYPE_PRIMARY, link_type.text, Str;
-    CompCastType, COMP_CAST_TYPE_PRIMARY, comp_cast_type.text, Str;
+    Movie, MOVIE_VALUE, movie.title, Str;
+    Person, PERSON_VALUE, person.name, Str;
+    Keyword, KEYWORD_VALUE, keyword.text, Str;
+    Kind, KIND_VALUE, kind.text, Str;
+    RoleType, ROLE_TYPE_VALUE, role_type.text, Str;
+    Character, CHARACTER_VALUE, character.text, Str;
+    Company, COMPANY_VALUE, company.name, Str;
+    CompanyType, COMPANY_TYPE_VALUE, company_type.text, Str;
+    Info, INFO_VALUE, info.info, Str;
+    InfoType, INFO_TYPE_VALUE, info_type.text, Str;
+    Data, DATA_VALUE, data.text, Str;
+    PersonInfo, PERSON_INFO_VALUE, person_info.info, Str;
+    AkaName, AKA_NAME_VALUE, aka_name.text, Str;
+    AkaTitle, AKA_TITLE_VALUE, aka_title.text, Str;
+    LinkType, LINK_TYPE_VALUE, link_type.text, Str;
+    CompCastType, COMP_CAST_TYPE_VALUE, comp_cast_type.text, Str;
 }
 
 // =====================================================================
@@ -345,6 +225,7 @@ pub struct Job {
 fn build(l: &mut Loader) -> Job {
     Job {
         movie: Movie {
+            key: l.key("Movie_title"),
             title: l.strs("Movie_title"),
             kind: l.ids("Movie_kind"),
             production_year: l.multi_i64("Movie_production_year"),
@@ -360,12 +241,14 @@ fn build(l: &mut Loader) -> Job {
             aka: l.multi_ids("Movie_aka"),
         },
         cast: Cast {
+            key: l.key("Cast_person"),
             person: l.ids("Cast_person"),
             role: l.ids("Cast_role"),
             note: l.multi_strs("Cast_note"),
             character: l.multi_ids("Cast_character"),
         },
         person: Person {
+            key: l.key("Person_name"),
             name: l.strs("Person_name"),
             gender: l.multi_strs("Person_gender"),
             alias: l.multi_ids("Person_alias"),
@@ -373,61 +256,77 @@ fn build(l: &mut Loader) -> Job {
             name_pcode_cf: l.multi_strs("Person_name_pcode_cf"),
         },
         keyword: Keyword {
+            key: l.key("Keyword_text"),
             text: l.strs("Keyword_text"),
         },
         kind: Kind {
+            key: l.key("Kind_text"),
             text: l.strs("Kind_text"),
         },
         role_type: RoleType {
+            key: l.key("RoleType_text"),
             text: l.strs("RoleType_text"),
         },
         character: Character {
+            key: l.key("Character_text"),
             text: l.strs("Character_text"),
         },
         company: Company {
+            key: l.key("Company_name"),
             name: l.strs("Company_name"),
             country: l.multi_strs("Company_country"),
             note: l.multi_strs("Company_note"),
             ty: l.ids("Company_ty"),
         },
         company_type: CompanyType {
+            key: l.key("CompanyType_text"),
             text: l.strs("CompanyType_text"),
         },
         info: Info {
+            key: l.key("Info_info"),
             info: l.strs("Info_info"),
             ty: l.ids("Info_ty"),
             note: l.multi_strs("Info_note"),
         },
         info_type: InfoType {
+            key: l.key("InfoType_text"),
             text: l.strs("InfoType_text"),
         },
         data: Data {
+            key: l.key("Data_text"),
             text: l.strs("Data_text"),
             ty: l.ids("Data_ty"),
         },
         person_info: PersonInfo {
+            key: l.key("PersonInfo_info"),
             info: l.strs("PersonInfo_info"),
             ty: l.ids("PersonInfo_ty"),
             note: l.multi_strs("PersonInfo_note"),
         },
         aka_name: AkaName {
+            key: l.key("AkaName_text"),
             text: l.strs("AkaName_text"),
         },
         aka_title: AkaTitle {
+            key: l.key("AkaTitle_text"),
             text: l.strs("AkaTitle_text"),
         },
         movie_link: MovieLink {
+            key: l.key("MovieLink_target"),
             target: l.ids("MovieLink_target"),
             ty: l.ids("MovieLink_ty"),
         },
         link_type: LinkType {
+            key: l.key("LinkType_text"),
             text: l.strs("LinkType_text"),
         },
         complete_cast: CompleteCast {
+            key: l.key("CompleteCast_status"),
             status: l.ids("CompleteCast_status"),
             subject: l.ids("CompleteCast_subject"),
         },
         comp_cast_type: CompCastType {
+            key: l.key("CompCastType_text"),
             text: l.strs("CompCastType_text"),
         },
     }
@@ -464,31 +363,31 @@ mod tests {
         }
         let db = load(dir);
 
-        // universe sizes = the naming column's key count
-        assert_eq!(db.movie.all().n, load_strs("Movie_title").n_keys());
-        assert_eq!(db.person.all().n, load_strs("Person_name").n_keys());
+        // key columns are sized by the value column's domain
+        assert_eq!(db.movie.key.n, load_strs("Movie_title").n_dom());
+        assert_eq!(db.person.key.n, load_strs("Person_name").n_dom());
 
         // dense str / dense id / CSR id columns
-        assert_eq!(db.movie.title.n_keys(), load_strs("Movie_title").n_keys());
-        assert_eq!(db.movie.kind.n_keys(), load_ids("Movie_kind").n_keys());
+        assert_eq!(db.movie.title.n_dom(), load_strs("Movie_title").n_dom());
+        assert_eq!(db.movie.kind.n_dom(), load_ids("Movie_kind").n_dom());
         assert_eq!(
-            db.movie.keyword.n_keys(),
-            load_multi_ids("Movie_keyword").n_keys()
+            db.movie.keyword.n_dom(),
+            load_multi_ids("Movie_keyword").n_dom()
         );
-        assert_eq!(db.data.ty.n_keys(), load_ids("Data_ty").n_keys());
+        assert_eq!(db.data.ty.n_dom(), load_ids("Data_ty").n_dom());
 
         // value parity through the bulk reinterpret: typed Id<Kind> indexes
         // equal the untyped words, row for row (first 1000 rows).
         let untyped = load_ids("Movie_kind");
-        for i in 0..1000.min(untyped.n_keys()) {
+        for i in 0..1000.min(untyped.n_dom()) {
             let mut got = None;
             (&db.movie.kind).probe(Id::new(i), |k| got = Some(k.0));
-            assert_eq!(got, Some(untyped.values[i]));
+            assert_eq!(got, Some(untyped.v[i]));
         }
 
         // a typed end-to-end drive matches the untyped one
         let Movie { kind, .. } = &db.movie;
-        let Kind { text: kind_text } = &db.kind;
+        let Kind { text: kind_text, .. } = &db.kind;
         let mut n_typed = 0usize;
         db.movie
             .with(kind.select(kind_text).eq("movie"))
@@ -496,21 +395,21 @@ mod tests {
         let kk = load_strs("Kind_text");
         let mk = load_ids("Movie_kind");
         let mut n_untyped = 0usize;
-        crate::engine::Universe::<usize>::new(mk.n_keys())
+        crate::engine::Universe::<usize>::new(mk.n_dom())
             .with((&mk).select(&kk).eq("movie"))
             .drive(|_, _| n_untyped += 1);
         assert_eq!(n_typed, n_untyped);
     }
 
     #[test]
-    fn primary_elision_matches_explicit_select() {
+    fn value_elision_matches_explicit_select() {
         let dir = Path::new("../cache");
         if !dir.join("Movie_title.bin").exists() {
             eprintln!("skipping: ../cache not present (run `regen job`)");
             return;
         }
         let db: &'static Job = Box::leak(Box::new(load(dir)));
-        register_primaries(db);
+        register_values(db);
 
         let Movie { kind, .. } = &db.movie;
         let mut n_elided = 0usize;
@@ -518,7 +417,7 @@ mod tests {
             .with(kind.eq("movie"))
             .drive(|_, _| n_elided += 1);
 
-        let Kind { text: kind_text } = &db.kind;
+        let Kind { text: kind_text, .. } = &db.kind;
         let mut n_explicit = 0usize;
         db.movie
             .with(kind.select(kind_text).eq("movie"))

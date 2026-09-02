@@ -33,6 +33,10 @@ pub trait IntoQuery {
     type Q: Query;
     fn iq(self) -> Self::Q;
 }
+/// `#[derive(IntoQuery)]` for a schema struct with a `key` field:
+/// implements the trait for `&Self` by returning `key`. Same name as the
+/// trait, so one `use` imports both — see `macros/src/lib.rs`.
+pub use prela_macros::IntoQuery;
 impl<Q: Query> IntoQuery for Q {
     type Q = Q;
     #[inline(always)]
@@ -88,14 +92,14 @@ impl<T: Member + ?Sized> Member for &T {
 // to nothing for free.
 //
 // `VecRel<R>` — total 1:1 relation; entity-id → R (one value per id).
-// INVARIANT: an FK-valued column over a gappy key space (holes that a query
+// INVARIANT: an FK-valued column over a gappy domain (holes that a query
 // can drive or probe, e.g. TPC-H ord_customer over the sparse orderkey
 // domain) holds `NO_ID` in the holes — a default-0 hole would alias entity
 // 0, which is a live id. (regen bakes the fill in; non-FK holes are
 // `Default`: 0 / 0.0 / "".)
-// `MultiRel<R>` — multi-valued / partial; CSR over the dense key space:
-// row i = `values[offsets[i]..offsets[i+1]]`, empty range for missing
-// keys. The slices are `&'static` — in production they point into the
+// `MultiRel<R>` — multi-valued / partial; CSR over the dense domain:
+// row i = `v[offsets[i]..offsets[i+1]]`, empty range for a domain element
+// with no rows. The slices are `&'static` — in production they point into the
 // leaked cache mmap (zero-copy); `from_pairs` (unit tests) leaks two small
 // Vecs to the same effect.
 
@@ -189,10 +193,13 @@ impl<E: 'static> Dense for Id<E> {
     }
 }
 
-pub trait Primary: 'static + Sized {
+/// An entity's payload: the column an `Id<Self>` stands for when it is
+/// compared against a scalar. `kind.eq("movie")` elides to
+/// `kind.select(Kind::value()).eq("movie")` — see `Field for Id<E>`.
+pub trait Value: 'static + Sized {
     type Scalar: Copy;
     type Col: Query<D = Id<Self>, R = Self::Scalar>;
-    fn primary() -> &'static Self::Col;
+    fn value() -> &'static Self::Col;
 }
 
 pub trait Field: Copy {
@@ -233,14 +240,14 @@ impl Field for usize {
         q
     }
 }
-impl<E: Primary> Field for Id<E> {
+impl<E: Value> Field for Id<E> {
     type Scalar = E::Scalar;
     type Elided<Q: Query<R = Id<E>>> = Compose<Q, &'static E::Col>;
     #[inline(always)]
     fn elide<Q: Query<R = Id<E>>>(q: Q) -> Compose<Q, &'static E::Col> {
         Compose {
             a: q,
-            b: E::primary(),
+            b: E::value(),
         }
     }
 }
@@ -249,26 +256,27 @@ pub type Sc<T> = <ROf<T> as Field>::Scalar;
 pub type Elided<T> = <ROf<T> as Field>::Elided<<T as IntoQuery>::Q>;
 
 pub struct VecRel<R: Copy, D: Dense = usize> {
-    pub values: Vec<R>,
+    pub v: Vec<R>,
     pub _d: PhantomData<D>,
 }
 
 impl<R: Copy, D: Dense> VecRel<R, D> {
     pub fn new(values: Vec<R>) -> Self {
         VecRel {
-            values,
+            v: values,
             _d: PhantomData,
         }
     }
-    pub fn n_keys(&self) -> usize {
-        self.values.len()
+    /// Size of the domain: one slot per entity id.
+    pub fn n_dom(&self) -> usize {
+        self.v.len()
     }
 }
 
 pub struct MultiRel<R: Copy + 'static, D: Dense = usize> {
     pub _d: PhantomData<D>,
     pub offsets: &'static [u32],
-    pub values: &'static [R],
+    pub v: &'static [R],
 }
 
 #[cfg(test)]
@@ -288,13 +296,14 @@ impl<R: Copy + 'static, D: Dense> MultiRel<R, D> {
         assert_eq!(*offsets.last().unwrap() as usize, values.len());
         MultiRel {
             offsets,
-            values,
+            v: values,
             _d: PhantomData,
         }
     }
 
+    /// Size of the domain: one row (possibly empty) per entity id.
     #[allow(dead_code)]
-    pub fn n_keys(&self) -> usize {
+    pub fn n_dom(&self) -> usize {
         self.offsets.len() - 1
     }
 
@@ -315,7 +324,7 @@ impl<R: Copy + 'static, D: Dense> MultiRel<R, D> {
         }
         MultiRel {
             offsets: Vec::leak(offsets),
-            values: Vec::leak(values),
+            v: Vec::leak(values),
             _d: PhantomData,
         }
     }
@@ -323,7 +332,7 @@ impl<R: Copy + 'static, D: Dense> MultiRel<R, D> {
     #[inline(always)]
     fn row(&self, x: usize) -> &'static [R] {
         if x < self.offsets.len() - 1 {
-            &self.values[self.offsets[x] as usize..self.offsets[x + 1] as usize]
+            &self.v[self.offsets[x] as usize..self.offsets[x + 1] as usize]
         } else {
             &[]
         }
@@ -337,27 +346,27 @@ impl<R: Copy, D: Dense> Query for VecRel<R, D> {
 impl<R: Copy, D: Dense> Drive for VecRel<R, D> {
     #[inline(always)]
     fn drive<K: FnMut(D, R)>(&self, mut k: K) {
-        for (i, &v) in self.values.iter().enumerate() {
-            k(D::from_idx(i), v);
+        for (i, &r) in self.v.iter().enumerate() {
+            k(D::from_idx(i), r);
         }
     }
 }
 impl<R: Copy, D: Dense> Member for VecRel<R, D> {
     #[inline(always)]
     fn member(&self, x: D) -> bool {
-        x.idx() < self.values.len()
+        x.idx() < self.v.len()
     }
 }
 impl<R: Copy, D: Dense> Probe for VecRel<R, D> {
     #[inline(always)]
     fn probe<K: FnMut(R)>(&self, x: D, mut k: K) {
-        if let Some(&v) = self.values.get(x.idx()) {
-            k(v);
+        if let Some(&r) = self.v.get(x.idx()) {
+            k(r);
         }
     }
     #[inline(always)]
     fn probe_any<K: FnMut(R) -> bool>(&self, x: D, mut k: K) -> bool {
-        self.values.get(x.idx()).is_some_and(|&v| k(v))
+        self.v.get(x.idx()).is_some_and(|&r| k(r))
     }
 }
 
@@ -369,8 +378,8 @@ impl<R: Copy, D: Dense> Drive for MultiRel<R, D> {
     #[inline(always)]
     fn drive<K: FnMut(D, R)>(&self, mut k: K) {
         for (i, w) in self.offsets.windows(2).enumerate() {
-            for &v in &self.values[w[0] as usize..w[1] as usize] {
-                k(D::from_idx(i), v);
+            for &r in &self.v[w[0] as usize..w[1] as usize] {
+                k(D::from_idx(i), r);
             }
         }
     }
@@ -1019,6 +1028,7 @@ impl<D: Dense> Bitset<D> {
 // compile time, so the dense `Universe::drive` loop is untouched — no shared
 // branch to de-optimise its closure inlining.
 
+#[derive(Copy, Clone)]
 pub struct SparseUniverse<D: Dense> {
     pub n: usize,
     pub valid: &'static Bitset<D>,
@@ -1197,8 +1207,8 @@ impl<S: Copy, D: Dense> DenseFold<S, D> {
 
     /// Like `build`, but the result emits the identity `init` for keys that
     /// never matched — the left-outer-join aggregate. Correct ONLY when
-    /// `0..n` is exactly the key universe (every slot a real key); with a
-    /// sparse/packed key space this fabricates rows for absent keys.
+    /// `0..n` is exactly the domain (every slot a real id); with a
+    /// sparse/packed domain this fabricates rows for absent ids.
     pub fn build_outer<Q, OP>(q: Q, n: usize, init: S, op: OP) -> Self
     where
         Q: Drive<D = D>,
@@ -1384,8 +1394,8 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    // Predicate filters — all elide the primary field (scalar = identity)
-    // then compare; see the `Field`/`Primary` traits above.
+    // Predicate filters — all elide the value column (scalar = identity)
+    // then compare; see the `Field`/`Value` traits above.
     #[inline(always)]
     fn eq(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
     where
@@ -1861,7 +1871,7 @@ mod tests {
     #[test]
     fn diff_is_value_bearing_and_key_based() {
         let c = cast();
-        let u1 = Universe::new(1); // key set {0}
+        let u1 = Universe::new(1); // domain {0}
         // value-bearing lhs: pairs pass through with their VALUES; the
         // exclusion test is on the KEY (film id), not the value
         let dd = (&c).minus(u1);
@@ -1949,12 +1959,12 @@ mod tests {
         // Person: non-dense external ids {100,205,9899} → rows {0,1,2}; names.
         let person_table = DictTable::<Person>::from_keys(&[100, 205, 9899]);
         let person_name: VecRel<&str, Id<Person>> = VecRel {
-            values: vec!["Nolan", "Kubrick", "Tarkovsky"],
+            v: vec!["Nolan", "Kubrick", "Tarkovsky"],
             _d: PhantomData,
         };
         // Movie.director : FK storing the EXTERNAL person key.
         let director: VecRel<Key<Person>, Id<Movie>> = VecRel {
-            values: vec![Key::new(205), Key::new(100), Key::new(9899)],
+            v: vec![Key::new(205), Key::new(100), Key::new(9899)],
             _d: PhantomData,
         };
         let movies = Universe::<Id<Movie>>::new(3);
@@ -1972,7 +1982,7 @@ mod tests {
         // A DANGLING key (no such person) drops out via the table's probe miss;
         // the table works in `with` (semijoin) position too.
         let director2: VecRel<Key<Person>, Id<Movie>> = VecRel {
-            values: vec![Key::new(205), Key::new(404), Key::new(9899)],
+            v: vec![Key::new(205), Key::new(404), Key::new(9899)],
             _d: PhantomData,
         };
         let live = (&movies).with((&director2).select(&person_table));
@@ -1991,11 +2001,11 @@ mod tests {
         struct Person;
         let person_table = DictTable::<Person>::from_keys(&[100, 205, 9899]);
         let country: VecRel<&str, Id<Person>> = VecRel {
-            values: vec!["US", "UK", "RU"],
+            v: vec!["US", "UK", "RU"],
             _d: PhantomData,
         };
         let director: VecRel<Key<Person>, Id<Movie>> = VecRel {
-            values: vec![Key::new(205), Key::new(100), Key::new(9899), Key::new(100)],
+            v: vec![Key::new(205), Key::new(100), Key::new(9899), Key::new(100)],
             _d: PhantomData,
         };
         let movies = Universe::<Id<Movie>>::new(4);
@@ -2016,14 +2026,14 @@ mod tests {
         struct Movie;
         struct Person;
         let name: VecRel<&str, Id<Person>> = VecRel {
-            values: vec!["Nolan", "Kubrick"],
+            v: vec!["Nolan", "Kubrick"],
             _d: PhantomData,
         };
         let movies = Universe::<Id<Movie>>::new(2);
 
         // dense: FK stores the row Id directly; entity table is Ident.
         let fk_dense: VecRel<Id<Person>, Id<Movie>> = VecRel {
-            values: vec![Id::from_idx(1), Id::from_idx(0)],
+            v: vec![Id::from_idx(1), Id::from_idx(0)],
             _d: PhantomData,
         };
         let mut d = Vec::new();
@@ -2037,7 +2047,7 @@ mod tests {
         // non-dense: same logical mapping via external keys + a DictTable.
         let table = DictTable::<Person>::from_keys(&[100, 205]); // row0=key100, row1=key205
         let fk_keys: VecRel<Key<Person>, Id<Movie>> = VecRel {
-            values: vec![Key::new(205), Key::new(100)],
+            v: vec![Key::new(205), Key::new(100)],
             _d: PhantomData,
         };
         let mut nd = Vec::new();

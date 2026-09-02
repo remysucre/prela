@@ -1,24 +1,43 @@
-use crate::engine::{Bitset, Id, IntoQuery, Primary, SparseUniverse, Universe};
-use crate::loader::{Col, Loader, Str, sparse_mask};
+use crate::engine::{Id, IntoQuery, SparseUniverse, Universe, Value};
+use crate::loader::{Col, Loader, Str, sparse_key};
 use std::path::Path;
 use std::sync::OnceLock;
 
 // =====================================================================
 // Entities
 // =====================================================================
+//
+// An entity struct reads like a SQL table: the first field `key` is the
+// identity column over the entity's ids (its id space, sized at load), and
+// every other field is a column keyed by those ids. `#[derive(IntoQuery)]`
+// implements `IntoQuery for &Self` by returning `key`, and `QueryExt` is
+// blanket-implemented over `IntoQuery`, so an entity drives directly:
+// `db.part.select(..)` resolves by autoref on `&Part`. Reach for
+// `db.part.key` itself when you want the `Universe`, e.g. for its `.n`.
+//
+// `Order` is the exception: TPC-H leaves the orderkey range gappy, so its
+// key is a `SparseUniverse` — `0..n` with the holes masked out, so a drive
+// never emits one. Its `.n` counts slots INCLUDING holes (about 4× the live
+// orders), which is what a `dense_fold` over orders is sized by.
 
+#[derive(IntoQuery)]
 pub struct Region {
+    pub key: Universe<Id<Region>>,
     pub name: Col<Region, Str>,
     pub comment: Col<Region, Str>,
 }
 
+#[derive(IntoQuery)]
 pub struct Nation {
+    pub key: Universe<Id<Nation>>,
     pub name: Col<Nation, Str>,
     pub region: Col<Nation, Id<Region>>,
     pub comment: Col<Nation, Str>,
 }
 
+#[derive(IntoQuery)]
 pub struct Supplier {
+    pub key: Universe<Id<Supplier>>,
     pub name: Col<Supplier, Str>,
     pub address: Col<Supplier, Str>,
     pub nation: Col<Supplier, Id<Nation>>,
@@ -27,7 +46,9 @@ pub struct Supplier {
     pub comment: Col<Supplier, Str>,
 }
 
+#[derive(IntoQuery)]
 pub struct Customer {
+    pub key: Universe<Id<Customer>>,
     pub name: Col<Customer, Str>,
     pub address: Col<Customer, Str>,
     pub nation: Col<Customer, Id<Nation>>,
@@ -37,7 +58,9 @@ pub struct Customer {
     pub comment: Col<Customer, Str>,
 }
 
+#[derive(IntoQuery)]
 pub struct Part {
+    pub key: Universe<Id<Part>>,
     pub name: Col<Part, Str>,
     pub mfgr: Col<Part, Str>,
     pub brand: Col<Part, Str>,
@@ -49,7 +72,9 @@ pub struct Part {
     pub comment: Col<Part, Str>,
 }
 
+#[derive(IntoQuery)]
 pub struct PartSupp {
+    pub key: Universe<Id<PartSupp>>,
     pub part: Col<PartSupp, Id<Part>>,
     pub supplier: Col<PartSupp, Id<Supplier>>,
     pub availqty: Col<PartSupp, i64>,
@@ -57,7 +82,9 @@ pub struct PartSupp {
     pub comment: Col<PartSupp, Str>,
 }
 
+#[derive(IntoQuery)]
 pub struct Order {
+    pub key: SparseUniverse<Id<Order>>,
     pub customer: Col<Order, Id<Customer>>,
     pub status: Col<Order, Str>,
     pub totalprice: Col<Order, f64>,
@@ -66,15 +93,11 @@ pub struct Order {
     pub clerk: Col<Order, Str>,
     pub shippriority: Col<Order, i64>,
     pub comment: Col<Order, Str>,
-    /// Derived, not loaded: which order slots are live. The one non-column
-    /// field on an entity — `Order::all()` needs it, and `all()` only gets
-    /// `&self`. Built on first use and leaked, because `SparseUniverse`
-    /// holds `&'static Bitset` (the same reason `MultiRel` holds `&'static`
-    /// slices).
-    valid: OnceLock<&'static Bitset<Id<Order>>>,
 }
 
+#[derive(IntoQuery)]
 pub struct Lineitem {
+    pub key: Universe<Id<Lineitem>>,
     pub order: Col<Lineitem, Id<Order>>,
     pub part: Col<Lineitem, Id<Part>>,
     pub supplier: Col<Lineitem, Id<Supplier>>,
@@ -93,125 +116,21 @@ pub struct Lineitem {
     pub comment: Col<Lineitem, Str>,
 }
 
-// =====================================================================
-// Universes
-// =====================================================================
-
-impl Region {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<Region>> {
-        Universe::new(self.name.n_keys())
-    }
-}
-impl Nation {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<Nation>> {
-        Universe::new(self.name.n_keys())
-    }
-}
-impl Supplier {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<Supplier>> {
-        Universe::new(self.name.n_keys())
-    }
-}
-impl Customer {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<Customer>> {
-        Universe::new(self.name.n_keys())
-    }
-}
-impl Part {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<Part>> {
-        Universe::new(self.name.n_keys())
-    }
-}
-impl PartSupp {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<PartSupp>> {
-        Universe::new(self.part.n_keys())
-    }
-}
-impl Lineitem {
-    #[inline]
-    pub fn all(&self) -> Universe<Id<Lineitem>> {
-        Universe::new(self.order.n_keys())
-    }
-}
-
-impl Order {
-    /// Size of the id space INCLUDING holes — TPC-H leaves the orderkey
-    /// range gappy, so this is about 4× the number of live orders. It is
-    /// what a `dense_fold` over orders must be sized by.
-    #[inline]
-    pub fn n_slots(&self) -> usize {
-        self.customer.n_keys()
-    }
-
-    /// The drivable universe of orders: `0..n_slots` with the orderkey gaps
-    /// masked out, so a drive never emits a hole. Unlike every other
-    /// entity's `all()` this is a `SparseUniverse`, and the mask costs one
-    /// pass over `Order_customer` the first time it is asked for.
-    #[inline]
-    pub fn all(&self) -> SparseUniverse<Id<Order>> {
-        // A hole is a slot whose customer FK regen filled with NO_ID.
-        let mask = self.valid.get_or_init(|| sparse_mask(&self.customer));
-        SparseUniverse::new(self.n_slots(), mask)
-    }
-}
-
-// =====================================================================
-// Entity-as-query
-// =====================================================================
-//
-// `QueryExt` is blanket-implemented over `IntoQuery`, so teaching an entity
-// struct to become its own universe is enough to make it drivable directly:
-// `db.part.select(..)` is `db.part.all().select(..)`, resolved by autoref on
-// `&Part`. `all()` remains the explicit spelling — and the one to reach for
-// when you want the `Universe` itself, e.g. for its `.n`.
-//
-// No coherence clash with `impl<Q: Query> IntoQuery for Q`: an entity struct
-// is not itself a `Query`.
-
-macro_rules! entity_query {
-    ($($E:ident => $U:ident),* $(,)?) => {$(
-        impl IntoQuery for &$E {
-            type Q = $U<Id<$E>>;
-            #[inline(always)]
-            fn iq(self) -> Self::Q {
-                self.all()
-            }
-        }
-    )*};
-}
-
-entity_query! {
-    Region => Universe,
-    Nation => Universe,
-    Supplier => Universe,
-    Customer => Universe,
-    Part => Universe,
-    PartSupp => Universe,
-    Order => SparseUniverse,
-    Lineitem => Universe,
-}
-
-macro_rules! primary {
+macro_rules! value {
     ($Db:ty; $($E:ident, $STATIC:ident, $dbfield:ident . $field:ident, $Scalar:ty);* $(;)?) => {
         $(
             static $STATIC: OnceLock<&'static Col<$E, $Scalar>> = OnceLock::new();
-            impl Primary for $E {
+            impl Value for $E {
                 type Scalar = $Scalar;
                 type Col = Col<$E, $Scalar>;
                 #[inline]
-                fn primary() -> &'static Self::Col {
-                    $STATIC.get().expect("primary column read before load()")
+                fn value() -> &'static Self::Col {
+                    $STATIC.get().expect("value column read before load()")
                 }
             }
         )*
 
-        pub fn register_primaries(db: &'static $Db) {
+        pub fn register_values(db: &'static $Db) {
             $(
                 let _ = $STATIC.set(&db.$dbfield.$field);
             )*
@@ -219,13 +138,13 @@ macro_rules! primary {
     };
 }
 
-primary! {
+value! {
     Tpch;
-    Region, REGION_PRIMARY, region.name, Str;
-    Nation, NATION_PRIMARY, nation.name, Str;
-    Supplier, SUPPLIER_PRIMARY, supplier.name, Str;
-    Customer, CUSTOMER_PRIMARY, customer.name, Str;
-    Part, PART_PRIMARY, part.name, Str;
+    Region, REGION_VALUE, region.name, Str;
+    Nation, NATION_VALUE, nation.name, Str;
+    Supplier, SUPPLIER_VALUE, supplier.name, Str;
+    Customer, CUSTOMER_VALUE, customer.name, Str;
+    Part, PART_VALUE, part.name, Str;
 }
 
 // =====================================================================
@@ -250,15 +169,18 @@ pub struct Tpch {
 fn build(l: &mut Loader) -> Tpch {
     Tpch {
         region: Region {
+            key: l.key("Region_name"),
             name: l.strs("Region_name"),
             comment: l.strs("Region_comment"),
         },
         nation: Nation {
+            key: l.key("Nation_name"),
             name: l.strs("Nation_name"),
             region: l.ids("Nation_region"),
             comment: l.strs("Nation_comment"),
         },
         supplier: Supplier {
+            key: l.key("Supplier_name"),
             name: l.strs("Supplier_name"),
             address: l.strs("Supplier_address"),
             nation: l.ids("Supplier_nation"),
@@ -267,6 +189,7 @@ fn build(l: &mut Loader) -> Tpch {
             comment: l.strs("Supplier_comment"),
         },
         customer: Customer {
+            key: l.key("Customer_name"),
             name: l.strs("Customer_name"),
             address: l.strs("Customer_address"),
             nation: l.ids("Customer_nation"),
@@ -276,6 +199,7 @@ fn build(l: &mut Loader) -> Tpch {
             comment: l.strs("Customer_comment"),
         },
         part: Part {
+            key: l.key("Part_name"),
             name: l.strs("Part_name"),
             mfgr: l.strs("Part_mfgr"),
             brand: l.strs("Part_brand"),
@@ -286,24 +210,31 @@ fn build(l: &mut Loader) -> Tpch {
             comment: l.strs("Part_comment"),
         },
         partsupp: PartSupp {
+            key: l.key("PartSupp_part"),
             part: l.ids("PartSupp_part"),
             supplier: l.ids("PartSupp_supplier"),
             availqty: l.i64s("PartSupp_availqty"),
             supplycost: l.f64s("PartSupp_supplycost"),
             comment: l.strs("PartSupp_comment"),
         },
-        order: Order {
-            customer: l.ids("Order_customer"),
-            status: l.strs("Order_status"),
-            totalprice: l.f64s("Order_totalprice"),
-            date: l.i64s("Order_date"),
-            priority: l.strs("Order_priority"),
-            clerk: l.strs("Order_clerk"),
-            shippriority: l.i64s("Order_shippriority"),
-            comment: l.strs("Order_comment"),
-            valid: OnceLock::new(),
+        order: {
+            // A hole is a slot whose customer FK regen filled with NO_ID;
+            // the key is that column's domain with those masked out.
+            let customer = l.ids("Order_customer");
+            Order {
+                key: sparse_key(&customer),
+                customer,
+                status: l.strs("Order_status"),
+                totalprice: l.f64s("Order_totalprice"),
+                date: l.i64s("Order_date"),
+                priority: l.strs("Order_priority"),
+                clerk: l.strs("Order_clerk"),
+                shippriority: l.i64s("Order_shippriority"),
+                comment: l.strs("Order_comment"),
+            }
         },
         lineitem: Lineitem {
+            key: l.key("Lineitem_order"),
             order: l.ids("Lineitem_order"),
             part: l.ids("Lineitem_part"),
             supplier: l.ids("Lineitem_supplier"),
@@ -343,8 +274,8 @@ mod tests {
     use super::*;
     use crate::engine::{Drive, QueryExt};
 
-    /// Compile-only: every entity drives directly, without `.all()`, and
-    /// `Order` does it through its sparse universe. The body never runs —
+    /// Compile-only: every entity drives directly off its `key`, and
+    /// `Order` does it through its sparse one. The body never runs —
     /// the point is that it type-checks.
     #[allow(dead_code)]
     fn entities_are_queries(db: &Tpch) {

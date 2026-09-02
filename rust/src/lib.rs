@@ -7,6 +7,10 @@
 //     cache from parquet and verifies its outputs against those schemas'
 //     `manifest()` lists.
 
+// `#[derive(IntoQuery)]` (macros/) expands to `::prela::engine::..` paths so it works
+// from any crate; this alias makes them resolve inside prela itself too.
+extern crate self as prela;
+
 pub mod cache;
 pub mod engine;
 pub mod format;

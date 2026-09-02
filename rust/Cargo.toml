@@ -4,7 +4,11 @@ version = "0.1.0"
 edition = "2024"
 default-run = "prela"
 
+[workspace]
+members = ["macros"]
+
 [dependencies]
+prela-macros = { path = "macros" }
 ahash    = "0.8"
 memchr   = "2"
 memmap2  = "0.9"

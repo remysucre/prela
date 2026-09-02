@@ -6187,9 +6187,9 @@ fn q33c(db: &'static Job) -> impl Drive<R: Row> {
 //            the same Compose — no keyset projection), and also how you
 //            navigate: `cast.select(person).select(person_name)` walks
 //            Movie → Cast → Person → name, one column per hop
-//   .select(keyword_text)  the ID→label hop that `Primary` used to elide
+//   .select(keyword_text)  the ID→value hop that `Value` used to elide
 //            behind `keyword.eq(..)`; with no global store to read the
-//            primary column from, it is written out
+//            value column from, it is written out
 //   .and(b)    product (×)
 //   .and     ∧ — alias for the product; conjunct trees are consumed via
 //            the flat short-circuit `member` (restriction = `.with`)
