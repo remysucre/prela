@@ -97,8 +97,8 @@ fn run_job() {
     eprintln!(
         "load: {:.2}s  (movie n={}, person n={})",
         t.elapsed().as_secs_f32(),
-        db.movie.key.n,
-        db.person.key.n
+        db.movie.id.n,
+        db.person.id.n
     );
 
     let qs = job_queries::all_queries();
@@ -128,9 +128,9 @@ fn run_tpch() {
     eprintln!(
         "load: {:.2}s  (li n={}, ord n={}, ps n={})",
         t.elapsed().as_secs_f32(),
-        db.lineitem.key.n,
-        db.order.key.n,
-        db.partsupp.key.n
+        db.lineitem.id.n,
+        db.order.id.n,
+        db.partsupp.id.n
     );
 
     // QS=idiomatic|optimized (default optimized)

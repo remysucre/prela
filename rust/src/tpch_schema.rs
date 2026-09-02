@@ -1,118 +1,127 @@
-use crate::engine::{Id, IntoQuery, SparseUniverse, Universe};
-use crate::loader::{Col, Loader, Str, sparse_key};
+use crate::engine::{Id, IntoQuery};
+use crate::loader::{Col, Key, Loader, SparseKey, Str, sparse_key};
 use std::path::Path;
 
 // =====================================================================
 // Entities
 // =====================================================================
 //
-// An entity struct reads like a SQL table: the first field `key` is the
-// identity column over the entity's ids (its id space, sized at load), and
-// every other field is a column keyed by those ids. `#[derive(IntoQuery)]`
-// implements `IntoQuery for &Self` by returning `key`, and `QueryExt` is
+// An entity struct reads like a SQL table: `id` is the primary key — the
+// identity column over the entity's ids, its id space sized at load — and
+// every other field is a column keyed by those ids, with `Self` naming the
+// entity. `#[derive(IntoQuery)]` implements `IntoQuery for &Self` by
+// returning the `#[primary_key]` field, and `QueryExt` is
 // blanket-implemented over `IntoQuery`, so an entity drives directly:
 // `db.part.select(..)` resolves by autoref on `&Part`. Reach for
-// `db.part.key` itself when you want the `Universe`, e.g. for its `.n`.
+// `db.part.id` itself when you want the `Universe`, e.g. for its `.n`.
 //
 // `Order` is the exception: TPC-H leaves the orderkey range gappy, so its
-// key is a `SparseUniverse` — `0..n` with the holes masked out, so a drive
+// primary key is a `SparseKey` — `0..n` with the holes masked out, so a drive
 // never emits one. Its `.n` counts slots INCLUDING holes (about 4× the live
 // orders), which is what a `dense_fold` over orders is sized by.
 
 #[derive(IntoQuery)]
 pub struct Region {
-    pub key: Universe<Id<Region>>,
-    pub name: Col<Region, Str>,
-    pub comment: Col<Region, Str>,
+    #[primary_key]
+    pub id: Key<Self>,
+    pub name: Col<Self, Str>,
+    pub comment: Col<Self, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct Nation {
-    pub key: Universe<Id<Nation>>,
-    pub name: Col<Nation, Str>,
-    pub region: Col<Nation, Id<Region>>,
-    pub comment: Col<Nation, Str>,
+    #[primary_key]
+    pub id: Key<Self>,
+    pub name: Col<Self, Str>,
+    pub region: Col<Self, Id<Region>>,
+    pub comment: Col<Self, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct Supplier {
-    pub key: Universe<Id<Supplier>>,
-    pub name: Col<Supplier, Str>,
-    pub address: Col<Supplier, Str>,
-    pub nation: Col<Supplier, Id<Nation>>,
-    pub phone: Col<Supplier, Str>,
-    pub acctbal: Col<Supplier, f64>,
-    pub comment: Col<Supplier, Str>,
+    #[primary_key]
+    pub id: Key<Self>,
+    pub name: Col<Self, Str>,
+    pub address: Col<Self, Str>,
+    pub nation: Col<Self, Id<Nation>>,
+    pub phone: Col<Self, Str>,
+    pub acctbal: Col<Self, f64>,
+    pub comment: Col<Self, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct Customer {
-    pub key: Universe<Id<Customer>>,
-    pub name: Col<Customer, Str>,
-    pub address: Col<Customer, Str>,
-    pub nation: Col<Customer, Id<Nation>>,
-    pub phone: Col<Customer, Str>,
-    pub acctbal: Col<Customer, f64>,
-    pub mktsegment: Col<Customer, Str>,
-    pub comment: Col<Customer, Str>,
+    #[primary_key]
+    pub id: Key<Self>,
+    pub name: Col<Self, Str>,
+    pub address: Col<Self, Str>,
+    pub nation: Col<Self, Id<Nation>>,
+    pub phone: Col<Self, Str>,
+    pub acctbal: Col<Self, f64>,
+    pub mktsegment: Col<Self, Str>,
+    pub comment: Col<Self, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct Part {
-    pub key: Universe<Id<Part>>,
-    pub name: Col<Part, Str>,
-    pub mfgr: Col<Part, Str>,
-    pub brand: Col<Part, Str>,
+    #[primary_key]
+    pub id: Key<Self>,
+    pub name: Col<Self, Str>,
+    pub mfgr: Col<Self, Str>,
+    pub brand: Col<Self, Str>,
     /// `type` is a keyword; the cache file is `Part_ty.bin`.
-    pub ty: Col<Part, Str>,
-    pub size: Col<Part, i64>,
-    pub container: Col<Part, Str>,
-    pub retailprice: Col<Part, f64>,
-    pub comment: Col<Part, Str>,
+    pub ty: Col<Self, Str>,
+    pub size: Col<Self, i64>,
+    pub container: Col<Self, Str>,
+    pub retailprice: Col<Self, f64>,
+    pub comment: Col<Self, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct PartSupp {
-    pub key: Universe<Id<PartSupp>>,
-    pub part: Col<PartSupp, Id<Part>>,
-    pub supplier: Col<PartSupp, Id<Supplier>>,
-    pub availqty: Col<PartSupp, i64>,
-    pub supplycost: Col<PartSupp, f64>,
-    pub comment: Col<PartSupp, Str>,
+    #[primary_key]
+    pub id: Key<Self>,
+    pub part: Col<Self, Id<Part>>,
+    pub supplier: Col<Self, Id<Supplier>>,
+    pub availqty: Col<Self, i64>,
+    pub supplycost: Col<Self, f64>,
+    pub comment: Col<Self, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct Order {
-    pub key: SparseUniverse<Id<Order>>,
-    pub customer: Col<Order, Id<Customer>>,
-    pub status: Col<Order, Str>,
-    pub totalprice: Col<Order, f64>,
-    pub date: Col<Order, i64>,
-    pub priority: Col<Order, Str>,
-    pub clerk: Col<Order, Str>,
-    pub shippriority: Col<Order, i64>,
-    pub comment: Col<Order, Str>,
+    #[primary_key]
+    pub id: SparseKey<Self>,
+    pub customer: Col<Self, Id<Customer>>,
+    pub status: Col<Self, Str>,
+    pub totalprice: Col<Self, f64>,
+    pub date: Col<Self, i64>,
+    pub priority: Col<Self, Str>,
+    pub clerk: Col<Self, Str>,
+    pub shippriority: Col<Self, i64>,
+    pub comment: Col<Self, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct Lineitem {
-    pub key: Universe<Id<Lineitem>>,
-    pub order: Col<Lineitem, Id<Order>>,
-    pub part: Col<Lineitem, Id<Part>>,
-    pub supplier: Col<Lineitem, Id<Supplier>>,
-    pub number: Col<Lineitem, i64>,
-    pub quantity: Col<Lineitem, f64>,
-    pub extendedprice: Col<Lineitem, f64>,
-    pub discount: Col<Lineitem, f64>,
-    pub tax: Col<Lineitem, f64>,
-    pub returnflag: Col<Lineitem, Str>,
-    pub status: Col<Lineitem, Str>,
-    pub shipdate: Col<Lineitem, i64>,
-    pub commitdate: Col<Lineitem, i64>,
-    pub receiptdate: Col<Lineitem, i64>,
-    pub shipinstruct: Col<Lineitem, Str>,
-    pub shipmode: Col<Lineitem, Str>,
-    pub comment: Col<Lineitem, Str>,
+    #[primary_key]
+    pub id: Key<Self>,
+    pub order: Col<Self, Id<Order>>,
+    pub part: Col<Self, Id<Part>>,
+    pub supplier: Col<Self, Id<Supplier>>,
+    pub number: Col<Self, i64>,
+    pub quantity: Col<Self, f64>,
+    pub extendedprice: Col<Self, f64>,
+    pub discount: Col<Self, f64>,
+    pub tax: Col<Self, f64>,
+    pub returnflag: Col<Self, Str>,
+    pub status: Col<Self, Str>,
+    pub shipdate: Col<Self, i64>,
+    pub commitdate: Col<Self, i64>,
+    pub receiptdate: Col<Self, i64>,
+    pub shipinstruct: Col<Self, Str>,
+    pub shipmode: Col<Self, Str>,
+    pub comment: Col<Self, Str>,
 }
 
 // =====================================================================
@@ -137,18 +146,18 @@ pub struct Tpch {
 fn build(l: &mut Loader) -> Tpch {
     Tpch {
         region: Region {
-            key: l.key("Region_name"),
+            id: l.key("Region_name"),
             name: l.strs("Region_name"),
             comment: l.strs("Region_comment"),
         },
         nation: Nation {
-            key: l.key("Nation_name"),
+            id: l.key("Nation_name"),
             name: l.strs("Nation_name"),
             region: l.ids("Nation_region"),
             comment: l.strs("Nation_comment"),
         },
         supplier: Supplier {
-            key: l.key("Supplier_name"),
+            id: l.key("Supplier_name"),
             name: l.strs("Supplier_name"),
             address: l.strs("Supplier_address"),
             nation: l.ids("Supplier_nation"),
@@ -157,7 +166,7 @@ fn build(l: &mut Loader) -> Tpch {
             comment: l.strs("Supplier_comment"),
         },
         customer: Customer {
-            key: l.key("Customer_name"),
+            id: l.key("Customer_name"),
             name: l.strs("Customer_name"),
             address: l.strs("Customer_address"),
             nation: l.ids("Customer_nation"),
@@ -167,7 +176,7 @@ fn build(l: &mut Loader) -> Tpch {
             comment: l.strs("Customer_comment"),
         },
         part: Part {
-            key: l.key("Part_name"),
+            id: l.key("Part_name"),
             name: l.strs("Part_name"),
             mfgr: l.strs("Part_mfgr"),
             brand: l.strs("Part_brand"),
@@ -178,7 +187,7 @@ fn build(l: &mut Loader) -> Tpch {
             comment: l.strs("Part_comment"),
         },
         partsupp: PartSupp {
-            key: l.key("PartSupp_part"),
+            id: l.key("PartSupp_part"),
             part: l.ids("PartSupp_part"),
             supplier: l.ids("PartSupp_supplier"),
             availqty: l.i64s("PartSupp_availqty"),
@@ -187,10 +196,10 @@ fn build(l: &mut Loader) -> Tpch {
         },
         order: {
             // A hole is a slot whose customer FK regen filled with NO_ID;
-            // the key is that column's domain with those masked out.
+            // the id space is that column's domain with those masked out.
             let customer = l.ids("Order_customer");
             Order {
-                key: sparse_key(&customer),
+                id: sparse_key(&customer),
                 customer,
                 status: l.strs("Order_status"),
                 totalprice: l.f64s("Order_totalprice"),
@@ -202,7 +211,7 @@ fn build(l: &mut Loader) -> Tpch {
             }
         },
         lineitem: Lineitem {
-            key: l.key("Lineitem_order"),
+            id: l.key("Lineitem_order"),
             order: l.ids("Lineitem_order"),
             part: l.ids("Lineitem_part"),
             supplier: l.ids("Lineitem_supplier"),
@@ -242,7 +251,7 @@ mod tests {
     use super::*;
     use crate::engine::{Drive, QueryExt};
 
-    /// Compile-only: every entity drives directly off its `key`, and
+    /// Compile-only: every entity drives directly off its primary key, and
     /// `Order` does it through its sparse one. The body never runs —
     /// the point is that it type-checks.
     #[allow(dead_code)]

@@ -2,14 +2,14 @@
 //
 // A schema is a set of plain Rust structs whose fields hold the relations
 // themselves (src/job_schema.rs, src/tpch_schema.rs). An entity struct
-// reads like a SQL table: its first field `key` is the identity column
-// over its ids, the rest are its columns, and `#[derive(IntoQuery)]` makes
-// `&Entity` a query over `key`. Filling one in is a struct literal, one
-// call per field:
+// reads like a SQL table: `#[primary_key] id: Key<Self>` is the identity
+// column over its ids, the rest are its columns with `Self` as domain, and
+// `#[derive(IntoQuery)]` makes `&Entity` a query over the primary key.
+// Filling one in is a struct literal, one call per field:
 //
 //     fn build(l: &mut Loader) -> Tpch {
 //         Tpch { region: Region {
-//             key: l.key("Region_name"),
+//             id: l.key("Region_name"),
 //             name: l.strs("Region_name"), ..
 //         }, .. }
 //     }
@@ -47,6 +47,10 @@ pub type Str = &'static str;
 pub type Col<E, T> = VecRel<T, Id<E>>;
 /// A set-valued (CSR) column of entity `E`.
 pub type Set<E, T> = MultiRel<T, Id<E>>;
+/// The primary key of a densely-addressed entity `E`: its ids, `0..n`.
+pub type Key<E> = Universe<Id<E>>;
+/// The primary key of an entity whose id range has holes.
+pub type SparseKey<E> = SparseUniverse<Id<E>>;
 /// A dictionary-encoded column of entity `E`: what SQL normalises into a
 /// lookup table (`kind_type`) is here just a `T`-valued column, stored as
 /// codes plus a table.
@@ -124,13 +128,13 @@ impl<'a> Loader<'a> {
         self.dir
     }
 
-    // ===== the entity's key =============================================
+    // ===== the entity's primary key =====================================
 
-    /// The identity column of a dense entity: `Universe<Id<E>>` sized by
+    /// The primary key of a dense entity: `Key<E>` sized by
     /// the domain of column `name` — any dense column of `E` will do; by
     /// convention its value column. Only the header is read, and nothing is
     /// recorded: the column is already in the manifest under its own load.
-    pub fn key<E: 'static>(&self, name: &str) -> Universe<Id<E>> {
+    pub fn key<E: 'static>(&self, name: &str) -> Key<E> {
         match self.dir {
             Some(dir) => Universe::new(cache::n_dom_in(dir, name)),
             None => Universe::new(0),
@@ -244,12 +248,12 @@ fn empty_csr<R: Copy + 'static, D: Dense>() -> MultiRel<R, D> {
 /// (engine.rs:1069): a lifetime there would propagate into every query
 /// type built over it. Callers cache it in a `OnceLock` so it is built
 /// once per process.
-/// The identity column of an entity whose id range has holes:
-/// `SparseUniverse<Id<E>>` over the slots `0..fk.n_dom()`, masked to those
+/// The primary key of an entity whose id range has holes:
+/// `SparseKey<E>` over the slots `0..fk.n_dom()`, masked to those
 /// whose foreign key `fk` is a real target (`NO_ID` marks a hole). One pass
 /// over `fk` at load; the mask is leaked because `SparseUniverse` holds
 /// `&'static Bitset` (the same reason `MultiRel` holds `&'static` slices).
-pub fn sparse_key<T: Dense, E: 'static>(fk: &VecRel<T, Id<E>>) -> SparseUniverse<Id<E>> {
+pub fn sparse_key<T: Dense, E: 'static>(fk: &VecRel<T, Id<E>>) -> SparseKey<E> {
     let mask: &'static Bitset<Id<E>> = Box::leak(Box::new(Bitset::validity(&fk.v)));
     SparseUniverse::new(fk.n_dom(), mask)
 }
@@ -266,7 +270,7 @@ pub fn sparse_key<T: Dense, E: 'static>(fk: &VecRel<T, Id<E>>) -> SparseUniverse
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{Drive, IntoQuery, QueryExt, Universe};
+    use crate::engine::{Drive, IntoQuery, QueryExt};
     use crate::format::{HEADER_LEN, align8, header};
     use std::fs::File;
     use std::io::Write;
@@ -276,23 +280,26 @@ mod tests {
 
     #[derive(IntoQuery)]
     pub struct Film {
-        pub key: Universe<Id<Film>>,
-        pub ftitle: Col<Film, Str>,
-        pub year: Col<Film, i64>,
-        pub genre: Col<Film, Id<Genre>>,
-        pub tags: Set<Film, Id<Tag>>,
+        #[primary_key]
+        pub id: Key<Self>,
+        pub ftitle: Col<Self, Str>,
+        pub year: Col<Self, i64>,
+        pub genre: Col<Self, Id<Genre>>,
+        pub tags: Set<Self, Id<Tag>>,
     }
     #[derive(IntoQuery)]
     pub struct Genre {
-        pub key: Universe<Id<Genre>>,
-        pub gname: Col<Genre, Str>,
-        pub ty: Col<Genre, Str>,
+        #[primary_key]
+        pub id: Key<Self>,
+        pub gname: Col<Self, Str>,
+        pub ty: Col<Self, Str>,
     }
     #[derive(IntoQuery)]
     pub struct Tag {
-        pub key: Universe<Id<Tag>>,
-        pub tag: Col<Tag, Str>,
-        pub films: Set<Tag, Id<Film>>,
+        #[primary_key]
+        pub id: Key<Self>,
+        pub tag: Col<Self, Str>,
+        pub films: Set<Self, Id<Film>>,
     }
     pub struct Toy {
         pub film: Film,
@@ -303,19 +310,19 @@ mod tests {
     fn build(l: &mut Loader) -> Toy {
         Toy {
             film: Film {
-                key: l.key("Film_ftitle"),
+                id: l.key("Film_ftitle"),
                 ftitle: l.strs("Film_ftitle"),
                 year: l.i64s("Film_year"),
                 genre: l.ids("Film_genre"),
                 tags: l.multi_ids("Film_tags"),
             },
             genre: Genre {
-                key: l.key("Genre_gname"),
+                id: l.key("Genre_gname"),
                 gname: l.strs("Genre_gname"),
                 ty: l.strs("Genre_ty"),
             },
             tag: Tag {
-                key: l.key("Tag_tag"),
+                id: l.key("Tag_tag"),
                 tag: l.strs("Tag_tag"),
                 films: l.multi_ids("Tag_films"),
             },
@@ -413,7 +420,7 @@ mod tests {
     fn struct_schema_loads_types_and_composes() {
         let db = load(&fixture("compose"));
         let Film {
-            key: _,
+            id: _,
             ftitle,
             year,
             genre,
@@ -422,10 +429,10 @@ mod tests {
         let Genre { gname, ty: gty, .. } = &db.genre;
         let Tag { tag, films, .. } = &db.tag;
 
-        // the key columns are sized off the value columns
-        assert_eq!(db.film.key.n, 3);
-        assert_eq!(db.genre.key.n, 2);
-        assert_eq!(db.tag.key.n, 2);
+        // primary keys are sized off the value columns
+        assert_eq!(db.film.id.n, 3);
+        assert_eq!(db.genre.id.n, 2);
+        assert_eq!(db.tag.id.n, 2);
 
         assert_eq!(ftitle.n_dom(), 3);
         assert_eq!(year.n_dom(), 3);

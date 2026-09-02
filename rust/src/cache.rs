@@ -42,7 +42,7 @@ fn open_in(dir: &Path, name: &str, kind: u32) -> (usize, usize, &'static [u8]) {
 }
 
 /// Domain size of `<dir>/<name>.bin` from its header alone — no mmap, no
-/// kind check. This sizes an entity's `key` off one of its columns without
+/// kind check. This sizes an entity's primary key off one of its columns without
 /// loading the column twice.
 pub fn n_dom_in(dir: &Path, name: &str) -> usize {
     use std::io::Read;

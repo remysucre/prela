@@ -444,7 +444,7 @@ fn q13(db: &'static Tpch) -> String {
     let count_per_cust = db.order
         .with(o_comment.nrx("special.*requests"))
         .group_by(o_customer)
-        .dense_fold_outer(db.customer.key.n, 0_i64, |a, _| a + 1);
+        .dense_fold_outer(db.customer.id.n, 0_i64, |a, _| a + 1);
     // Histogram: invert (c_count ← customer) and count customers per c_count.
     let dist = count_per_cust.inv().fold(0_i64, |a, _| a + 1);
     let mut rows: Vec<(i64, i64)> = Vec::new();

@@ -1,18 +1,19 @@
-use crate::engine::{Id, IntoQuery, Universe};
-use crate::loader::{Col, Dict, DictSet, Loader, Set, Str};
+use crate::engine::{Id, IntoQuery};
+use crate::loader::{Col, Dict, DictSet, Key, Loader, Set, Str};
 use std::path::Path;
 
 // =====================================================================
 // Entities
 // =====================================================================
 //
-// An entity struct reads like a SQL table: the first field `key` is the
-// identity column over the entity's ids (its id space, sized at load), and
-// every other field is a column keyed by those ids. `#[derive(IntoQuery)]`
-// implements `IntoQuery for &Self` by returning `key`, and `QueryExt` is
+// An entity struct reads like a SQL table: `id` is the primary key — the
+// identity column over the entity's ids, its id space sized at load — and
+// every other field is a column keyed by those ids, with `Self` naming the
+// entity. `#[derive(IntoQuery)]` implements `IntoQuery for &Self` by
+// returning the `#[primary_key]` field, and `QueryExt` is
 // blanket-implemented over `IntoQuery`, so an entity drives directly:
 // `db.movie.select(..)` resolves by autoref on `&Movie`. Reach for
-// `db.movie.key` itself when you want the `Universe`, e.g. for its `.n`.
+// `db.movie.id` itself when you want the `Universe`, e.g. for its `.n`.
 //
 // JOB's lookup tables — kind_type, role_type, char_name, keyword,
 // company_type, info_type, aka_name, aka_title, link_type, comp_cast_type —
@@ -25,85 +26,94 @@ use std::path::Path;
 
 #[derive(IntoQuery)]
 pub struct Movie {
-    pub key: Universe<Id<Movie>>,
-    pub title: Col<Movie, Str>,
-    pub kind: Dict<Movie, Str>,
-    pub production_year: Set<Movie, i64>,
-    pub episode_nr: Set<Movie, i64>,
-    pub keyword: DictSet<Movie, Str>,
-    pub company: Set<Movie, Id<Company>>,
-    pub cast: Set<Movie, Id<Cast>>,
-    pub info: Set<Movie, Id<Info>>,
-    pub data: Set<Movie, Id<Data>>,
-    pub complete_cast: Set<Movie, Id<CompleteCast>>,
-    pub link: Set<Movie, Id<MovieLink>>,
-    pub linked_by: Set<Movie, Id<MovieLink>>,
-    pub aka: DictSet<Movie, Str>,
+    #[primary_key]
+    pub id: Key<Self>,
+    pub title: Col<Self, Str>,
+    pub kind: Dict<Self, Str>,
+    pub production_year: Set<Self, i64>,
+    pub episode_nr: Set<Self, i64>,
+    pub keyword: DictSet<Self, Str>,
+    pub company: Set<Self, Id<Company>>,
+    pub cast: Set<Self, Id<Cast>>,
+    pub info: Set<Self, Id<Info>>,
+    pub data: Set<Self, Id<Data>>,
+    pub complete_cast: Set<Self, Id<CompleteCast>>,
+    pub link: Set<Self, Id<MovieLink>>,
+    pub linked_by: Set<Self, Id<MovieLink>>,
+    pub aka: DictSet<Self, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct Cast {
-    pub key: Universe<Id<Cast>>,
-    pub person: Col<Cast, Id<Person>>,
-    pub role: Dict<Cast, Str>,
-    pub note: Set<Cast, Str>,
-    pub character: DictSet<Cast, Str>,
+    #[primary_key]
+    pub id: Key<Self>,
+    pub person: Col<Self, Id<Person>>,
+    pub role: Dict<Self, Str>,
+    pub note: Set<Self, Str>,
+    pub character: DictSet<Self, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct Person {
-    pub key: Universe<Id<Person>>,
-    pub name: Col<Person, Str>,
-    pub gender: Set<Person, Str>,
-    pub alias: DictSet<Person, Str>,
-    pub bio: Set<Person, Id<PersonInfo>>,
-    pub name_pcode_cf: Set<Person, Str>,
+    #[primary_key]
+    pub id: Key<Self>,
+    pub name: Col<Self, Str>,
+    pub gender: Set<Self, Str>,
+    pub alias: DictSet<Self, Str>,
+    pub bio: Set<Self, Id<PersonInfo>>,
+    pub name_pcode_cf: Set<Self, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct Company {
-    pub key: Universe<Id<Company>>,
-    pub name: Col<Company, Str>,
-    pub country: Set<Company, Str>,
-    pub note: Set<Company, Str>,
-    pub ty: Dict<Company, Str>,
+    #[primary_key]
+    pub id: Key<Self>,
+    pub name: Col<Self, Str>,
+    pub country: Set<Self, Str>,
+    pub note: Set<Self, Str>,
+    pub ty: Dict<Self, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct Info {
-    pub key: Universe<Id<Info>>,
-    pub info: Col<Info, Str>,
-    pub ty: Dict<Info, Str>,
-    pub note: Set<Info, Str>,
+    #[primary_key]
+    pub id: Key<Self>,
+    pub info: Col<Self, Str>,
+    pub ty: Dict<Self, Str>,
+    pub note: Set<Self, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct Data {
-    pub key: Universe<Id<Data>>,
-    pub text: Col<Data, Str>,
-    pub ty: Dict<Data, Str>,
+    #[primary_key]
+    pub id: Key<Self>,
+    pub text: Col<Self, Str>,
+    pub ty: Dict<Self, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct PersonInfo {
-    pub key: Universe<Id<PersonInfo>>,
-    pub info: Col<PersonInfo, Str>,
-    pub ty: Dict<PersonInfo, Str>,
-    pub note: Set<PersonInfo, Str>,
+    #[primary_key]
+    pub id: Key<Self>,
+    pub info: Col<Self, Str>,
+    pub ty: Dict<Self, Str>,
+    pub note: Set<Self, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct MovieLink {
-    pub key: Universe<Id<MovieLink>>,
-    pub target: Col<MovieLink, Id<Movie>>,
-    pub ty: Dict<MovieLink, Str>,
+    #[primary_key]
+    pub id: Key<Self>,
+    pub target: Col<Self, Id<Movie>>,
+    pub ty: Dict<Self, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct CompleteCast {
-    pub key: Universe<Id<CompleteCast>>,
-    pub status: Dict<CompleteCast, Str>,
-    pub subject: Dict<CompleteCast, Str>,
+    #[primary_key]
+    pub id: Key<Self>,
+    pub status: Dict<Self, Str>,
+    pub subject: Dict<Self, Str>,
 }
 
 // =====================================================================
@@ -129,7 +139,7 @@ pub struct Job {
 fn build(l: &mut Loader) -> Job {
     Job {
         movie: Movie {
-            key: l.key("Movie_title"),
+            id: l.key("Movie_title"),
             title: l.strs("Movie_title"),
             kind: l.dict("Movie_kind", "Kind_text"),
             production_year: l.multi_i64("Movie_production_year"),
@@ -145,14 +155,14 @@ fn build(l: &mut Loader) -> Job {
             aka: l.multi_dict("Movie_aka", "AkaTitle_text"),
         },
         cast: Cast {
-            key: l.key("Cast_person"),
+            id: l.key("Cast_person"),
             person: l.ids("Cast_person"),
             role: l.dict("Cast_role", "RoleType_text"),
             note: l.multi_strs("Cast_note"),
             character: l.multi_dict("Cast_character", "Character_text"),
         },
         person: Person {
-            key: l.key("Person_name"),
+            id: l.key("Person_name"),
             name: l.strs("Person_name"),
             gender: l.multi_strs("Person_gender"),
             alias: l.multi_dict("Person_alias", "AkaName_text"),
@@ -160,36 +170,36 @@ fn build(l: &mut Loader) -> Job {
             name_pcode_cf: l.multi_strs("Person_name_pcode_cf"),
         },
         company: Company {
-            key: l.key("Company_name"),
+            id: l.key("Company_name"),
             name: l.strs("Company_name"),
             country: l.multi_strs("Company_country"),
             note: l.multi_strs("Company_note"),
             ty: l.dict("Company_ty", "CompanyType_text"),
         },
         info: Info {
-            key: l.key("Info_info"),
+            id: l.key("Info_info"),
             info: l.strs("Info_info"),
             ty: l.dict("Info_ty", "InfoType_text"),
             note: l.multi_strs("Info_note"),
         },
         data: Data {
-            key: l.key("Data_text"),
+            id: l.key("Data_text"),
             text: l.strs("Data_text"),
             ty: l.dict("Data_ty", "InfoType_text"),
         },
         person_info: PersonInfo {
-            key: l.key("PersonInfo_info"),
+            id: l.key("PersonInfo_info"),
             info: l.strs("PersonInfo_info"),
             ty: l.dict("PersonInfo_ty", "InfoType_text"),
             note: l.multi_strs("PersonInfo_note"),
         },
         movie_link: MovieLink {
-            key: l.key("MovieLink_target"),
+            id: l.key("MovieLink_target"),
             target: l.ids("MovieLink_target"),
             ty: l.dict("MovieLink_ty", "LinkType_text"),
         },
         complete_cast: CompleteCast {
-            key: l.key("CompleteCast_status"),
+            id: l.key("CompleteCast_status"),
             status: l.dict("CompleteCast_status", "CompCastType_text"),
             subject: l.dict("CompleteCast_subject", "CompCastType_text"),
         },
@@ -227,9 +237,9 @@ mod tests {
         }
         let db = load(dir);
 
-        // key columns are sized by the value column's domain
-        assert_eq!(db.movie.key.n, load_strs("Movie_title").n_dom());
-        assert_eq!(db.person.key.n, load_strs("Person_name").n_dom());
+        // primary keys are sized by the value column's domain
+        assert_eq!(db.movie.id.n, load_strs("Movie_title").n_dom());
+        assert_eq!(db.person.id.n, load_strs("Person_name").n_dom());
 
         // dense str / dictionary / CSR id columns
         assert_eq!(db.movie.title.n_dom(), load_strs("Movie_title").n_dom());

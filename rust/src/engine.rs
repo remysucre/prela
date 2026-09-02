@@ -33,9 +33,9 @@ pub trait IntoQuery {
     type Q: Query;
     fn iq(self) -> Self::Q;
 }
-/// `#[derive(IntoQuery)]` for a schema struct with a `key` field:
-/// implements the trait for `&Self` by returning `key`. Same name as the
-/// trait, so one `use` imports both — see `macros/src/lib.rs`.
+/// `#[derive(IntoQuery)]` for a schema struct with a `#[primary_key]`
+/// field: implements the trait for `&Self` by returning it. Same name as
+/// the trait, so one `use` imports both — see `macros/src/lib.rs`.
 pub use prela_macros::IntoQuery;
 impl<Q: Query> IntoQuery for Q {
     type Q = Q;

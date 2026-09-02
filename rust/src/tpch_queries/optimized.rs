@@ -84,7 +84,7 @@ fn q2(db: &'static Tpch) -> String {
         .with(eu())
         .group_by(ps_part)
         .select(supplycost)
-        .dense_fold(db.part.key.n, f64::INFINITY, |a, c| if c < a { c } else { a });
+        .dense_fold(db.part.id.n, f64::INFINITY, |a, c| if c < a { c } else { a });
 
     db.partsupp
         .with(eu())
@@ -242,7 +242,7 @@ fn q13(db: &'static Tpch) -> String {
     let f_special = memmem::Finder::new("special");
     let mut dist: HashMap<i64, i64> = HashMap::new();
     let mut n_with = 0i64;
-    let n_cust = db.customer.key.n;
+    let n_cust = db.customer.id.n;
 
     db.order
         .with(
@@ -321,7 +321,7 @@ fn q18(db: &'static Tpch) -> String {
     db.lineitem
         .group_by(l_order)
         .select(quantity)
-        .dense_fold(db.order.key.n, 0.0_f64, |a, q| a + q)
+        .dense_fold(db.order.id.n, 0.0_f64, |a, q| a + q)
         .gt(300.0)
         .and(
             totalprice
@@ -399,7 +399,7 @@ fn q21(db: &'static Tpch) -> String {
         .select(l_supplier
            .and(commitdate)
            .and(receiptdate))
-        .dense_fold(db.order.key.n, (0, 0), track);
+        .dense_fold(db.order.id.n, (0, 0), track);
 
     let saudi = Bitset::over(
         &db.supplier,
