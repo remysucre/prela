@@ -32,7 +32,7 @@
 // This replaces the `MANIFEST` const that `schema!` used to generate.
 
 use crate::cache;
-use crate::engine::{Bitset, Dense, Id, MultiRel, SparseUniverse, Universe, VecRel};
+use crate::engine::{Bitset, Dense, DictMultiRel, DictRel, Id, MultiRel, SparseUniverse, Universe, VecRel};
 use crate::format::{KIND_CSR_STR, KIND_CSR_WORDS, KIND_DENSE_F64, KIND_DENSE_I64, KIND_DENSE_STR};
 use std::path::Path;
 
@@ -47,6 +47,11 @@ pub type Str = &'static str;
 pub type Col<E, T> = VecRel<T, Id<E>>;
 /// A set-valued (CSR) column of entity `E`.
 pub type Set<E, T> = MultiRel<T, Id<E>>;
+/// A dictionary-encoded string column of entity `E`: what SQL normalises
+/// into a lookup table (`kind_type`) is here just a `Str`-valued column.
+pub type Dict<E> = DictRel<Id<E>>;
+/// A set-valued dictionary-encoded string column of entity `E`.
+pub type DictSet<E> = DictMultiRel<Id<E>>;
 
 /// Reads columns and remembers which ones it read.
 ///
@@ -82,7 +87,13 @@ impl<'a> Loader<'a> {
 
     #[inline]
     fn note(&mut self, name: &str, kind: u32) -> Option<&'a Path> {
-        self.seen.push((name.to_string(), kind));
+        // A dictionary shared by several columns (`InfoType_text` under
+        // `Info.ty`, `Data.ty`, `PersonInfo.ty`) is read more than once but
+        // is one cache file; the manifest lists each file once.
+        match self.seen.iter().find(|(n, _)| n == name) {
+            Some((_, k)) => assert_eq!(*k, kind, "{name} declared with two different kinds"),
+            None => self.seen.push((name.to_string(), kind)),
+        }
         self.dir
     }
 
@@ -133,6 +144,35 @@ impl<'a> Loader<'a> {
     pub fn ids<T: 'static, E: 'static>(&mut self, name: &str) -> Col<E, Id<T>> {
         match self.note(name, KIND_DENSE_I64) {
             Some(dir) => cache::load_ids_in(dir, name),
+            None => VecRel::new(Vec::new()),
+        }
+    }
+
+    // ===== dictionary-encoded string columns ============================
+
+    /// One string per id: `codes` is a dense word column of codes into the
+    /// string table `strs` (`l.dict("Movie_kind", "Kind_text")`).
+    pub fn dict<E: 'static>(&mut self, codes: &str, strs: &str) -> Dict<E> {
+        let c = match self.note(codes, KIND_DENSE_I64) {
+            Some(dir) => cache::load_words_in(dir, codes),
+            None => VecRel::new(Vec::new()),
+        };
+        DictRel::new(c, self.dict_strs(strs))
+    }
+
+    /// Zero or more strings per id: `codes` is a CSR word column.
+    pub fn multi_dict<E: 'static>(&mut self, codes: &str, strs: &str) -> DictSet<E> {
+        let c = match self.note(codes, KIND_CSR_WORDS) {
+            Some(dir) => cache::load_multi_words_in(dir, codes),
+            None => empty_csr(),
+        };
+        DictMultiRel::new(c, self.dict_strs(strs))
+    }
+
+    /// The string table of a dictionary column, keyed by code.
+    fn dict_strs(&mut self, name: &str) -> VecRel<Str, usize> {
+        match self.note(name, KIND_DENSE_STR) {
+            Some(dir) => cache::load_strs_in(dir, name),
             None => VecRel::new(Vec::new()),
         }
     }

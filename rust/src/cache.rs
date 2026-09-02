@@ -148,6 +148,19 @@ fn strs_from_offsets(offsets: &'static [u32], data: &'static [u8]) -> Vec<&'stat
 
 // ===== CSR multi columns ================================================
 
+/// Dense word column read as raw `usize` codes (dictionary codes into a
+/// `strs` table); `NO_ID` holes stay `NO_ID` and fail the lookup.
+pub fn load_words_in<D: Dense>(dir: &Path, name: &str) -> VecRel<usize, D> {
+    let (n, _, bytes) = open_in(dir, name, KIND_DENSE_I64);
+    VecRel::new(cast_slice::<usize>(bytes, HEADER_LEN, n).to_vec())
+}
+
+/// CSR with 8-byte word values read as raw `usize` codes.
+pub fn load_multi_words_in<D: Dense>(dir: &Path, name: &str) -> MultiRel<usize, D> {
+    let (offsets, values) = csr_words::<usize>(dir, name);
+    MultiRel::from_csr(offsets, values)
+}
+
 /// CSR with 8-byte word values, read as 0-based ids tagged with the value
 /// entity `T` (same bulk-reinterpret as `load_ids_in`). Zero-copy: offsets
 /// and values are slices into the leaked mmap.

@@ -34,35 +34,40 @@
 //! `key: Universe<Id<Part>>` for a dense entity, `key:
 //! SparseUniverse<Id<Order>>` for a gappy one. The derive only asks that
 //! the type be `Copy` and a `Query`.
-
+//!
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput, Fields, parse_macro_input};
+
+/// The named fields of a non-generic struct, or a compile error.
+fn named_fields<'a>(
+    input: &'a DeriveInput,
+    derive: &str,
+) -> Result<&'a syn::punctuated::Punctuated<syn::Field, syn::Token![,]>, TokenStream> {
+    let err = |msg: String| {
+        Err(syn::Error::new_spanned(&input.ident, msg)
+            .to_compile_error()
+            .into())
+    };
+    if !input.generics.params.is_empty() {
+        return err(format!("{derive}: an entity struct takes no generics"));
+    }
+    match &input.data {
+        Data::Struct(s) => match &s.fields {
+            Fields::Named(f) => Ok(&f.named),
+            _ => err(format!("{derive} needs a struct with named fields")),
+        },
+        _ => err(format!("{derive} applies to a struct")),
+    }
+}
 
 #[proc_macro_derive(IntoQuery)]
 pub fn derive_into_query(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
     let name = &input.ident;
-
-    if !input.generics.params.is_empty() {
-        return syn::Error::new_spanned(&input.generics, "an entity struct takes no generics")
-            .to_compile_error()
-            .into();
-    }
-    let fields = match &input.data {
-        Data::Struct(s) => match &s.fields {
-            Fields::Named(f) => &f.named,
-            _ => {
-                return syn::Error::new_spanned(name, "IntoQuery needs a struct with named fields")
-                    .to_compile_error()
-                    .into();
-            }
-        },
-        _ => {
-            return syn::Error::new_spanned(name, "IntoQuery applies to a struct")
-                .to_compile_error()
-                .into();
-        }
+    let fields = match named_fields(&input, "IntoQuery") {
+        Ok(f) => f,
+        Err(e) => return e,
     };
     let Some(key) = fields
         .iter()

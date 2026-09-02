@@ -193,67 +193,7 @@ impl<E: 'static> Dense for Id<E> {
     }
 }
 
-/// An entity's payload: the column an `Id<Self>` stands for when it is
-/// compared against a scalar. `kind.eq("movie")` elides to
-/// `kind.select(Kind::value()).eq("movie")` — see `Field for Id<E>`.
-pub trait Value: 'static + Sized {
-    type Scalar: Copy;
-    type Col: Query<D = Id<Self>, R = Self::Scalar>;
-    fn value() -> &'static Self::Col;
-}
 
-pub trait Field: Copy {
-    type Scalar: Copy;
-    type Elided<Q: Query<R = Self>>: Query<R = Self::Scalar>;
-    fn elide<Q: Query<R = Self>>(q: Q) -> Self::Elided<Q>;
-}
-impl Field for i64 {
-    type Scalar = i64;
-    type Elided<Q: Query<R = i64>> = Q;
-    #[inline(always)]
-    fn elide<Q: Query<R = i64>>(q: Q) -> Q {
-        q
-    }
-}
-impl Field for f64 {
-    type Scalar = f64;
-    type Elided<Q: Query<R = f64>> = Q;
-    #[inline(always)]
-    fn elide<Q: Query<R = f64>>(q: Q) -> Q {
-        q
-    }
-}
-impl Field for &'static str {
-    type Scalar = &'static str;
-    type Elided<Q: Query<R = &'static str>> = Q;
-    #[inline(always)]
-    fn elide<Q: Query<R = &'static str>>(q: Q) -> Q {
-        q
-    }
-}
-
-impl Field for usize {
-    type Scalar = usize;
-    type Elided<Q: Query<R = usize>> = Q;
-    #[inline(always)]
-    fn elide<Q: Query<R = usize>>(q: Q) -> Q {
-        q
-    }
-}
-impl<E: Value> Field for Id<E> {
-    type Scalar = E::Scalar;
-    type Elided<Q: Query<R = Id<E>>> = Compose<Q, &'static E::Col>;
-    #[inline(always)]
-    fn elide<Q: Query<R = Id<E>>>(q: Q) -> Compose<Q, &'static E::Col> {
-        Compose {
-            a: q,
-            b: E::value(),
-        }
-    }
-}
-
-pub type Sc<T> = <ROf<T> as Field>::Scalar;
-pub type Elided<T> = <ROf<T> as Field>::Elided<<T as IntoQuery>::Q>;
 
 pub struct VecRel<R: Copy, D: Dense = usize> {
     pub v: Vec<R>,
@@ -400,6 +340,142 @@ impl<R: Copy, D: Dense> Probe for MultiRel<R, D> {
     #[inline(always)]
     fn probe_any<K: FnMut(R) -> bool>(&self, x: D, mut k: K) -> bool {
         self.row(x.idx()).iter().any(|&v| k(v))
+    }
+}
+
+// ===== DictRel / DictMultiRel — dictionary-encoded string columns ========
+//
+// A string column stored as `codes` (one per id, or CSR) plus `strs` (one
+// per code). Logically it is the relation id → Str: probing an id looks up
+// its code's string, and predicates apply to the string, so a schema writes
+// `kind: Dict<Movie>` and a query writes `kind.eq("movie")`. Physically it
+// is the SQL lookup table (`kind_type`) folded into the column that
+// referenced it — the cache files are unchanged (`Movie_kind` codes,
+// `Kind_text` strings), only the schema stops treating `Kind` as an entity.
+//
+// Codes are `usize`, so a code that is a hole (`NO_ID`) fails the `strs`
+// bounds check and the id probes to nothing, exactly like an FK hole.
+//
+// The dictionary stays reachable for the one optimisation that needs it:
+// `rx_dict` runs a regex once over `strs` into a bitset over codes and
+// then tests each pair by bit lookup, instead of once per pair.
+
+pub struct DictRel<D: Dense> {
+    pub codes: VecRel<usize, D>,
+    pub strs: VecRel<&'static str, usize>,
+}
+
+impl<D: Dense> DictRel<D> {
+    pub fn new(codes: VecRel<usize, D>, strs: VecRel<&'static str, usize>) -> Self {
+        DictRel { codes, strs }
+    }
+    /// Size of the domain: one slot per entity id.
+    pub fn n_dom(&self) -> usize {
+        self.codes.n_dom()
+    }
+    /// The ids whose string matches `re`, with the string as value. One
+    /// regex pass over the dictionary, then a bit test per id.
+    pub fn rx_dict(&self, re: &str) -> Compose<Restrict<&VecRel<usize, D>, Bitset<usize>>, &VecRel<&'static str, usize>> {
+        (&self.codes).with(dict_mask(&self.strs, re)).select(&self.strs)
+    }
+}
+
+impl<D: Dense> Query for DictRel<D> {
+    type D = D;
+    type R = &'static str;
+}
+impl<D: Dense> Drive for DictRel<D> {
+    #[inline(always)]
+    fn drive<K: FnMut(D, &'static str)>(&self, mut k: K) {
+        for (i, &c) in self.codes.v.iter().enumerate() {
+            if let Some(&s) = self.strs.v.get(c) {
+                k(D::from_idx(i), s);
+            }
+        }
+    }
+}
+impl<D: Dense> Member for DictRel<D> {
+    #[inline(always)]
+    fn member(&self, x: D) -> bool {
+        self.codes.v.get(x.idx()).is_some_and(|&c| c < self.strs.v.len())
+    }
+}
+impl<D: Dense> Probe for DictRel<D> {
+    #[inline(always)]
+    fn probe<K: FnMut(&'static str)>(&self, x: D, mut k: K) {
+        if let Some(&c) = self.codes.v.get(x.idx()) {
+            if let Some(&s) = self.strs.v.get(c) {
+                k(s);
+            }
+        }
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut(&'static str) -> bool>(&self, x: D, mut k: K) -> bool {
+        match self.codes.v.get(x.idx()) {
+            Some(&c) => self.strs.v.get(c).is_some_and(|&s| k(s)),
+            None => false,
+        }
+    }
+}
+
+pub struct DictMultiRel<D: Dense> {
+    pub codes: MultiRel<usize, D>,
+    pub strs: VecRel<&'static str, usize>,
+}
+
+impl<D: Dense> DictMultiRel<D> {
+    pub fn new(codes: MultiRel<usize, D>, strs: VecRel<&'static str, usize>) -> Self {
+        DictMultiRel { codes, strs }
+    }
+    /// Size of the domain: one row (possibly empty) per entity id.
+    pub fn n_dom(&self) -> usize {
+        self.codes.n_dom()
+    }
+    /// The (id, string) pairs whose string matches `re`. One regex pass
+    /// over the dictionary, then a bit test per pair — the difference
+    /// between ~0.1 ms and a regex call per movie-keyword pair.
+    pub fn rx_dict(&self, re: &str) -> Compose<Restrict<&MultiRel<usize, D>, Bitset<usize>>, &VecRel<&'static str, usize>> {
+        (&self.codes).with(dict_mask(&self.strs, re)).select(&self.strs)
+    }
+}
+
+/// Bitset over the codes of `strs` whose string matches `re`.
+fn dict_mask(strs: &VecRel<&'static str, usize>, re: &str) -> Bitset<usize> {
+    Bitset::over(Universe::<usize>::new(strs.n_dom()), strs.rx(re).inv())
+}
+
+impl<D: Dense> Query for DictMultiRel<D> {
+    type D = D;
+    type R = &'static str;
+}
+impl<D: Dense> Drive for DictMultiRel<D> {
+    #[inline(always)]
+    fn drive<K: FnMut(D, &'static str)>(&self, mut k: K) {
+        self.codes.drive(|d, c| {
+            if let Some(&s) = self.strs.v.get(c) {
+                k(d, s);
+            }
+        });
+    }
+}
+impl<D: Dense> Member for DictMultiRel<D> {
+    #[inline(always)]
+    fn member(&self, x: D) -> bool {
+        self.codes.probe_any(x, |c| c < self.strs.v.len())
+    }
+}
+impl<D: Dense> Probe for DictMultiRel<D> {
+    #[inline(always)]
+    fn probe<K: FnMut(&'static str)>(&self, x: D, mut k: K) {
+        self.codes.probe(x, |c| {
+            if let Some(&s) = self.strs.v.get(c) {
+                k(s);
+            }
+        });
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut(&'static str) -> bool>(&self, x: D, mut k: K) -> bool {
+        self.codes.probe_any(x, |c| self.strs.v.get(c).is_some_and(|&s| k(s)))
     }
 }
 
@@ -1394,98 +1470,91 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    // Predicate filters — all elide the value column (scalar = identity)
-    // then compare; see the `Field`/`Value` traits above.
+    // Predicate filters over the query's range. A dictionary-encoded string
+    // column (`DictRel`) already has range `Str`, so `kind.eq("movie")`
+    // needs no hop to a lookup table.
     #[inline(always)]
-    fn eq(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    fn eq(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
-        ROf<Self>: Field,
-        Sc<Self>: PartialEq,
+        ROf<Self>: PartialEq,
     {
         Filter {
-            a: <ROf<Self> as Field>::elide(self.iq()),
+            a: self.iq(),
             p: move |x| x == v,
         }
     }
     #[inline(always)]
-    fn ne(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    fn ne(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
-        ROf<Self>: Field,
-        Sc<Self>: PartialEq,
+        ROf<Self>: PartialEq,
     {
         Filter {
-            a: <ROf<Self> as Field>::elide(self.iq()),
+            a: self.iq(),
             p: move |x| x != v,
         }
     }
     #[inline(always)]
-    fn gt(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    fn gt(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
-        ROf<Self>: Field,
-        Sc<Self>: PartialOrd,
+        ROf<Self>: PartialOrd,
     {
         Filter {
-            a: <ROf<Self> as Field>::elide(self.iq()),
+            a: self.iq(),
             p: move |x| x > v,
         }
     }
     #[inline(always)]
-    fn lt(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    fn lt(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
-        ROf<Self>: Field,
-        Sc<Self>: PartialOrd,
+        ROf<Self>: PartialOrd,
     {
         Filter {
-            a: <ROf<Self> as Field>::elide(self.iq()),
+            a: self.iq(),
             p: move |x| x < v,
         }
     }
     #[inline(always)]
-    fn ge(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    fn ge(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
-        ROf<Self>: Field,
-        Sc<Self>: PartialOrd,
+        ROf<Self>: PartialOrd,
     {
         Filter {
-            a: <ROf<Self> as Field>::elide(self.iq()),
+            a: self.iq(),
             p: move |x| x >= v,
         }
     }
     #[inline(always)]
-    fn le(self, v: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    fn le(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
-        ROf<Self>: Field,
-        Sc<Self>: PartialOrd,
+        ROf<Self>: PartialOrd,
     {
         Filter {
-            a: <ROf<Self> as Field>::elide(self.iq()),
+            a: self.iq(),
             p: move |x| x <= v,
         }
     }
     #[inline(always)]
-    fn in_v(self, vs: Vec<Sc<Self>>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    fn in_v(self, vs: Vec<ROf<Self>>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
-        ROf<Self>: Field,
-        Sc<Self>: PartialEq,
+        ROf<Self>: PartialEq,
     {
         Filter {
-            a: <ROf<Self> as Field>::elide(self.iq()),
+            a: self.iq(),
             p: move |x| vs.iter().any(|&v| v == x),
         }
     }
     /// `in_v` over any `IntoIterator`
     #[inline(always)]
-    fn is_in<I: IntoIterator<Item = Sc<Self>>>(
+    fn is_in<I: IntoIterator<Item = ROf<Self>>>(
         self,
         vs: I,
-    ) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    ) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
-        ROf<Self>: Field,
-        Sc<Self>: PartialEq,
+        ROf<Self>: PartialEq,
     {
-        let vs: Vec<Sc<Self>> = vs.into_iter().collect();
+        let vs: Vec<ROf<Self>> = vs.into_iter().collect();
         Filter {
-            a: <ROf<Self> as Field>::elide(self.iq()),
+            a: self.iq(),
             p: move |x| vs.iter().any(|&v| v == x),
         }
     }
@@ -1502,25 +1571,25 @@ pub trait QueryExt: IntoQuery + Sized {
     }
 
     #[inline(always)]
-    fn rx(self, re: &str) -> Filter<Elided<Self>, impl Fn(&'static str) -> bool>
+    fn rx(self, re: &str) -> Filter<Self::Q, impl Fn(&'static str) -> bool>
     where
-        ROf<Self>: Field<Scalar = &'static str>,
+        Self::Q: Query<R = &'static str>,
     {
         let re = Regex::new(re).unwrap();
         Filter {
-            a: <ROf<Self> as Field>::elide(self.iq()),
+            a: self.iq(),
             p: move |s| re.is_match(s),
         }
     }
 
     #[inline(always)]
-    fn nrx(self, re: &str) -> Filter<Elided<Self>, impl Fn(&'static str) -> bool>
+    fn nrx(self, re: &str) -> Filter<Self::Q, impl Fn(&'static str) -> bool>
     where
-        ROf<Self>: Field<Scalar = &'static str>,
+        Self::Q: Query<R = &'static str>,
     {
         let re = Regex::new(re).unwrap();
         Filter {
-            a: <ROf<Self> as Field>::elide(self.iq()),
+            a: self.iq(),
             p: move |s| !re.is_match(s),
         }
     }
@@ -1532,26 +1601,24 @@ pub trait QueryExt: IntoQuery + Sized {
 
     /// Half-open range `[lo, hi)` — Julia `during(lo, hi)`.
     #[inline(always)]
-    fn during(self, lo: Sc<Self>, hi: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    fn during(self, lo: ROf<Self>, hi: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
-        ROf<Self>: Field,
-        Sc<Self>: PartialOrd,
+        ROf<Self>: PartialOrd,
     {
         Filter {
-            a: <ROf<Self> as Field>::elide(self.iq()),
+            a: self.iq(),
             p: move |x| x >= lo && x < hi,
         }
     }
 
     /// Closed range `[lo, hi]` — Julia `lo..hi`.
     #[inline(always)]
-    fn between(self, lo: Sc<Self>, hi: Sc<Self>) -> Filter<Elided<Self>, impl Fn(Sc<Self>) -> bool>
+    fn between(self, lo: ROf<Self>, hi: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
-        ROf<Self>: Field,
-        Sc<Self>: PartialOrd,
+        ROf<Self>: PartialOrd,
     {
         Filter {
-            a: <ROf<Self> as Field>::elide(self.iq()),
+            a: self.iq(),
             p: move |x| x >= lo && x <= hi,
         }
     }

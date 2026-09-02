@@ -11,7 +11,7 @@
 // `const` array of fn pointers.
 
 use crate::engine::*;
-use crate::job_queries::helpers::{Row, film_or_warner_co, follow_link, kw_rx, min_row};
+use crate::job_queries::helpers::{Row, film_or_warner_co, follow_link, min_row};
 use crate::job_queries::sets::{
     genre6, kw7, kw8, kw10, link3, murder4, nordic8, nordic9, nordic10, voice3, voice4, writer5,
 };
@@ -390,13 +390,9 @@ fn q2(db: &'static Job, cc: &'static str) -> impl Drive<R: Row> {
         ..
     } = &db.movie;
     let Company { country, .. } = &db.company;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     db.movie
         .with(
             keyword
-                .select(keyword_text)
                 .eq("character-name-in-title")
                 .and(company.select(country).eq(cc)),
         )
@@ -427,13 +423,9 @@ fn q3b(db: &'static Job) -> impl Drive<R: Row> {
     let Info {
         info: info_info, ..
     } = &db.info;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     db.movie
         .with(
             keyword
-                .select(keyword_text)
                 .rx(r"sequel")
                 .and(info.select(info_info).eq("Bulgaria"))
                 .and(production_year.gt(2010)),
@@ -455,25 +447,12 @@ fn q4(db: &'static Job, year: i64, rating: &'static str) -> impl Drive<R: Row> {
         ty: data_ty,
         ..
     } = &db.data;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     db.movie
-        .with(
-            keyword
-                .with(kw_rx(db, r"sequel"))
-                .and(production_year.gt(year)),
-        )
+        .with(keyword.rx_dict(r"sequel").and(production_year.gt(year)))
         .select(
-            data.with(
-                data_ty
-                    .select(infotype_text)
-                    .eq("rating")
-                    .and(data_text.gt(rating)),
-            )
-            .select(data_text)
-            .and(title),
+            data.with(data_ty.eq("rating").and(data_text.gt(rating)))
+                .select(data_text)
+                .and(title),
         )
 }
 
@@ -501,10 +480,6 @@ fn q13a(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
     let Data {
         text: data_text,
         ty: data_ty,
@@ -515,32 +490,20 @@ fn q13a(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     db.movie
         .with(
             company
                 .select(
-                    country.eq("[de]").and(
-                        company_ty
-                            .select(companytype_text)
-                            .eq("production companies"),
-                    ),
+                    country
+                        .eq("[de]")
+                        .and(company_ty.eq("production companies")),
                 )
-                .and(kind.select(kind_text).eq("movie")),
+                .and(kind.eq("movie")),
         )
         .select(
-            info.with(info_ty.select(infotype_text).eq("release dates"))
+            info.with(info_ty.eq("release dates"))
                 .select(info_info)
-                .and(
-                    data.with(data_ty.select(infotype_text).eq("rating"))
-                        .select(data_text),
-                )
+                .and(data.with(data_ty.eq("rating")).select(data_text))
                 .and(title),
         )
 }
@@ -561,23 +524,12 @@ fn q11a(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
-    let LinkType {
-        text: linktype_text,
-        ..
-    } = &db.link_type;
     let MovieLink {
         ty: movielink_ty, ..
     } = &db.movie_link;
     db.movie
         .with(
-            link.and(keyword.select(keyword_text).eq("sequel"))
+            link.and(keyword.eq("sequel"))
                 .and(production_year.between(1950, 2000)),
         )
         .select(
@@ -586,19 +538,11 @@ fn q11a(db: &'static Job) -> impl Drive<R: Row> {
                     country
                         .ne("[pl]")
                         .and(company_name.rx(r"Film|Warner"))
-                        .and(
-                            company_ty
-                                .select(companytype_text)
-                                .eq("production companies"),
-                        )
+                        .and(company_ty.eq("production companies"))
                         .minus(company_note),
                 )
                 .select(company_name)
-                .and(
-                    link.select(movielink_ty)
-                        .select(linktype_text)
-                        .rx(r"follow"),
-                )
+                .and(link.select(movielink_ty).rx(r"follow"))
                 .and(title),
         )
 }
@@ -621,10 +565,6 @@ fn q22a(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
     let Data {
         text: data_text,
         ty: data_ty,
@@ -635,37 +575,22 @@ fn q22a(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     db.movie
         .with(
             info.select(
                 info_ty
-                    .select(infotype_text)
                     .eq("countries")
                     .and(info_info.is_in(["Germany", "German", "USA", "American"])),
             )
-            .and(keyword.select(keyword_text).is_in(murder4()))
+            .and(keyword.is_in(murder4()))
             .and(production_year.gt(2008))
-            .and(kind.select(kind_text).is_in(["movie", "episode"])),
+            .and(kind.is_in(["movie", "episode"])),
         )
         .select(
             title
                 .and(
-                    data.with(
-                        data_text
-                            .lt("7.0")
-                            .and(data_ty.select(infotype_text).eq("rating")),
-                    )
-                    .select(data_text),
+                    data.with(data_text.lt("7.0").and(data_ty.eq("rating")))
+                        .select(data_text),
                 )
                 .and(
                     company
@@ -674,11 +599,7 @@ fn q22a(db: &'static Job) -> impl Drive<R: Row> {
                                 .nrx(r"\(USA\)")
                                 .and(company_note.rx(r"\(200.*\)"))
                                 .and(country.ne("[us]"))
-                                .and(
-                                    company_ty
-                                        .select(companytype_text)
-                                        .eq("production companies"),
-                                ),
+                                .and(company_ty.eq("production companies")),
                         )
                         .select(company_name),
                 ),
@@ -698,26 +619,13 @@ fn q1a(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
     let Data { ty: data_ty, .. } = &db.data;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     db.movie
-        .with(
-            data.select(data_ty)
-                .select(infotype_text)
-                .eq("top 250 rank"),
-        )
+        .with(data.select(data_ty).eq("top 250 rank"))
         .select(
             company
                 .with(
                     company_ty
-                        .select(companytype_text)
                         .eq("production companies")
                         .and(company_note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)"))
                         .and(company_note.rx(r"\(co-production\)|\(presents\)")),
@@ -741,10 +649,6 @@ fn q5a(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
     let Info {
         info: info_info, ..
     } = &db.info;
@@ -753,7 +657,6 @@ fn q5a(db: &'static Job) -> impl Drive<R: Row> {
             company
                 .select(
                     company_ty
-                        .select(companytype_text)
                         .eq("production companies")
                         .and(company_note.rx(r"\(theatrical\)"))
                         .and(company_note.rx(r"\(France\)")),
@@ -779,10 +682,6 @@ fn q12a(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
     let Data {
         text: data_text,
         ty: data_ty,
@@ -793,15 +692,10 @@ fn q12a(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     db.movie
         .with(
             info.select(
                 info_ty
-                    .select(infotype_text)
                     .eq("genres")
                     .and(info_info.is_in(["Drama", "Horror"])),
             )
@@ -811,21 +705,14 @@ fn q12a(db: &'static Job) -> impl Drive<R: Row> {
         .select(
             company
                 .with(
-                    country.eq("[us]").and(
-                        company_ty
-                            .select(companytype_text)
-                            .eq("production companies"),
-                    ),
+                    country
+                        .eq("[us]")
+                        .and(company_ty.eq("production companies")),
                 )
                 .select(company_name)
                 .and(
-                    data.with(
-                        data_ty
-                            .select(infotype_text)
-                            .eq("rating")
-                            .and(data_text.gt("8.0")),
-                    )
-                    .select(data_text),
+                    data.with(data_ty.eq("rating").and(data_text.gt("8.0")))
+                        .select(data_text),
                 )
                 .and(title),
         )
@@ -851,49 +738,29 @@ fn q14a(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     db.movie
         .with(
             keyword
-                .select(keyword_text)
                 .is_in(murder4())
-                .and(kind.select(kind_text).eq("movie"))
-                .and(
-                    info.select(info_ty.select(infotype_text).eq("countries").and(
-                        info_info.is_in([
-                            "Sweden",
-                            "Norway",
-                            "Germany",
-                            "Denmark",
-                            "Swedish",
-                            "Denish",
-                            "Norwegian",
-                            "German",
-                            "USA",
-                            "American",
-                        ]),
-                    )),
-                )
+                .and(kind.eq("movie"))
+                .and(info.select(info_ty.eq("countries").and(info_info.is_in([
+                    "Sweden",
+                    "Norway",
+                    "Germany",
+                    "Denmark",
+                    "Swedish",
+                    "Denish",
+                    "Norwegian",
+                    "German",
+                    "USA",
+                    "American",
+                ]))))
                 .and(production_year.gt(2010)),
         )
         .select(
-            data.with(
-                data_ty
-                    .select(infotype_text)
-                    .eq("rating")
-                    .and(data_text.lt("8.5")),
-            )
-            .select(data_text)
-            .and(title),
+            data.with(data_ty.eq("rating").and(data_text.lt("8.5")))
+                .select(data_text)
+                .and(title),
         )
 }
 
@@ -910,19 +777,10 @@ fn q1b(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
     let Data { ty: data_ty, .. } = &db.data;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     db.movie
         .with(
             data.select(data_ty)
-                .select(infotype_text)
                 .eq("bottom 10 rank")
                 .and(production_year.ge(2005))
                 .and(production_year.le(2010)),
@@ -931,7 +789,6 @@ fn q1b(db: &'static Job) -> impl Drive<R: Row> {
             company
                 .with(
                     company_ty
-                        .select(companytype_text)
                         .eq("production companies")
                         .and(company_note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)")),
                 )
@@ -953,13 +810,9 @@ fn q3ac(db: &'static Job, countries: Vec<&'static str>, year: i64) -> impl Drive
     let Info {
         info: info_info, ..
     } = &db.info;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     db.movie
         .with(
             keyword
-                .select(keyword_text)
                 .rx(r"sequel")
                 .and(info.select(info_info).is_in(countries))
                 .and(production_year.gt(year)),
@@ -1005,23 +858,12 @@ fn q11b(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
-    let LinkType {
-        text: linktype_text,
-        ..
-    } = &db.link_type;
     let MovieLink {
         ty: movielink_ty, ..
     } = &db.movie_link;
     db.movie
         .with(
-            link.and(keyword.select(keyword_text).eq("sequel"))
+            link.and(keyword.eq("sequel"))
                 .and(production_year.eq(1998))
                 .and(title.rx(r"Money")),
         )
@@ -1031,19 +873,11 @@ fn q11b(db: &'static Job) -> impl Drive<R: Row> {
                     country
                         .ne("[pl]")
                         .and(company_name.rx(r"Film|Warner"))
-                        .and(
-                            company_ty
-                                .select(companytype_text)
-                                .eq("production companies"),
-                        )
+                        .and(company_ty.eq("production companies"))
                         .minus(company_note),
                 )
                 .select(company_name)
-                .and(
-                    link.select(movielink_ty)
-                        .select(linktype_text)
-                        .rx(r"follows"),
-                )
+                .and(link.select(movielink_ty).rx(r"follows"))
                 .and(title),
         )
 }
@@ -1063,49 +897,28 @@ fn q13b(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
     let Data {
         text: data_text,
         ty: data_ty,
         ..
     } = &db.data;
     let Info { ty: info_ty, .. } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     db.movie
         .with(
-            kind.select(kind_text)
-                .eq("movie")
-                .and(
-                    info.select(info_ty)
-                        .select(infotype_text)
-                        .eq("release dates"),
-                )
+            kind.eq("movie")
+                .and(info.select(info_ty).eq("release dates"))
                 .and(title.ne(""))
                 .and(title.rx(r"Champion|Loser")),
         )
         .select(
             company
                 .with(
-                    country.eq("[us]").and(
-                        company_ty
-                            .select(companytype_text)
-                            .eq("production companies"),
-                    ),
+                    country
+                        .eq("[us]")
+                        .and(company_ty.eq("production companies")),
                 )
                 .select(company_name)
-                .and(
-                    data.with(data_ty.select(infotype_text).eq("rating"))
-                        .select(data_text),
-                )
+                .and(data.with(data_ty.eq("rating")).select(data_text))
                 .and(title),
         )
 }
@@ -1123,19 +936,10 @@ fn q1c(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
     let Data { ty: data_ty, .. } = &db.data;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     db.movie
         .with(
             data.select(data_ty)
-                .select(infotype_text)
                 .eq("top 250 rank")
                 .and(production_year.gt(2010)),
         )
@@ -1143,7 +947,6 @@ fn q1c(db: &'static Job) -> impl Drive<R: Row> {
             company
                 .with(
                     company_ty
-                        .select(companytype_text)
                         .eq("production companies")
                         .and(company_note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)"))
                         .and(company_note.rx(r"\(co-production\)")),
@@ -1167,19 +970,10 @@ fn q1d(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
     let Data { ty: data_ty, .. } = &db.data;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     db.movie
         .with(
             data.select(data_ty)
-                .select(infotype_text)
                 .eq("bottom 10 rank")
                 .and(production_year.gt(2000)),
         )
@@ -1187,7 +981,6 @@ fn q1d(db: &'static Job) -> impl Drive<R: Row> {
             company
                 .with(
                     company_ty
-                        .select(companytype_text)
                         .eq("production companies")
                         .and(company_note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)")),
                 )
@@ -1211,43 +1004,25 @@ fn q12b(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
     let Data { ty: data_ty, .. } = &db.data;
     let Info {
         info: info_info,
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     db.movie
         .with(
             company
                 .select(
-                    country.eq("[us]").and(
-                        company_ty
-                            .select(companytype_text)
-                            .is_in(["production companies", "distributors"]),
-                    ),
+                    country
+                        .eq("[us]")
+                        .and(company_ty.is_in(["production companies", "distributors"])),
                 )
-                .and(
-                    data.select(data_ty)
-                        .select(infotype_text)
-                        .eq("bottom 10 rank"),
-                )
+                .and(data.select(data_ty).eq("bottom 10 rank"))
                 .and(production_year.gt(2000))
                 .and(title.rx(r"^Birdemic|Movie")),
         )
-        .select(
-            info.with(info_ty.select(infotype_text).eq("budget"))
-                .select(info_info)
-                .and(title),
-        )
+        .select(info.with(info_ty.eq("budget")).select(info_info).and(title))
 }
 
 fn q12c(db: &'static Job) -> impl Drive<R: Row> {
@@ -1265,10 +1040,6 @@ fn q12c(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
     let Data {
         text: data_text,
         ty: data_ty,
@@ -1279,15 +1050,10 @@ fn q12c(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     db.movie
         .with(
             info.select(
                 info_ty
-                    .select(infotype_text)
                     .eq("genres")
                     .and(info_info.is_in(["Drama", "Horror", "Western", "Family"])),
             )
@@ -1297,21 +1063,14 @@ fn q12c(db: &'static Job) -> impl Drive<R: Row> {
         .select(
             company
                 .with(
-                    country.eq("[us]").and(
-                        company_ty
-                            .select(companytype_text)
-                            .eq("production companies"),
-                    ),
+                    country
+                        .eq("[us]")
+                        .and(company_ty.eq("production companies")),
                 )
                 .select(company_name)
                 .and(
-                    data.with(
-                        data_ty
-                            .select(infotype_text)
-                            .eq("rating")
-                            .and(data_text.gt("7.0")),
-                    )
-                    .select(data_text),
+                    data.with(data_ty.eq("rating").and(data_text.gt("7.0")))
+                        .select(data_text),
                 )
                 .and(title),
         )
@@ -1332,49 +1091,28 @@ fn q13c(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
     let Data {
         text: data_text,
         ty: data_ty,
         ..
     } = &db.data;
     let Info { ty: info_ty, .. } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     db.movie
         .with(
-            kind.select(kind_text)
-                .eq("movie")
-                .and(
-                    info.select(info_ty)
-                        .select(infotype_text)
-                        .eq("release dates"),
-                )
+            kind.eq("movie")
+                .and(info.select(info_ty).eq("release dates"))
                 .and(title.ne(""))
                 .and(title.rx(r"^Champion|^Loser")),
         )
         .select(
             company
                 .with(
-                    country.eq("[us]").and(
-                        company_ty
-                            .select(companytype_text)
-                            .eq("production companies"),
-                    ),
+                    country
+                        .eq("[us]")
+                        .and(company_ty.eq("production companies")),
                 )
                 .select(company_name)
-                .and(
-                    data.with(data_ty.select(infotype_text).eq("rating"))
-                        .select(data_text),
-                )
+                .and(data.with(data_ty.eq("rating")).select(data_text))
                 .and(title),
         )
 }
@@ -1399,50 +1137,30 @@ fn q14b(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     db.movie
         .with(
             keyword
-                .select(keyword_text)
                 .is_in(["murder", "murder-in-title"])
-                .and(kind.select(kind_text).eq("movie"))
-                .and(
-                    info.select(info_ty.select(infotype_text).eq("countries").and(
-                        info_info.is_in([
-                            "Sweden",
-                            "Norway",
-                            "Germany",
-                            "Denmark",
-                            "Swedish",
-                            "Denish",
-                            "Norwegian",
-                            "German",
-                            "USA",
-                            "American",
-                        ]),
-                    )),
-                )
+                .and(kind.eq("movie"))
+                .and(info.select(info_ty.eq("countries").and(info_info.is_in([
+                    "Sweden",
+                    "Norway",
+                    "Germany",
+                    "Denmark",
+                    "Swedish",
+                    "Denish",
+                    "Norwegian",
+                    "German",
+                    "USA",
+                    "American",
+                ]))))
                 .and(production_year.gt(2010))
                 .and(title.rx(r"murder|Murder|Mord")),
         )
         .select(
-            data.with(
-                data_ty
-                    .select(infotype_text)
-                    .eq("rating")
-                    .and(data_text.gt("6.0")),
-            )
-            .select(data_text)
-            .and(title),
+            data.with(data_ty.eq("rating").and(data_text.gt("6.0")))
+                .select(data_text)
+                .and(title),
         )
 }
 
@@ -1466,41 +1184,18 @@ fn q14c(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     db.movie
         .with(
             keyword
-                .select(keyword_text)
                 .is_in(murder4())
-                .and(kind.select(kind_text).is_in(["movie", "episode"]))
-                .and(
-                    info.select(
-                        info_ty
-                            .select(infotype_text)
-                            .eq("countries")
-                            .and(info_info.is_in(nordic10())),
-                    ),
-                )
+                .and(kind.is_in(["movie", "episode"]))
+                .and(info.select(info_ty.eq("countries").and(info_info.is_in(nordic10()))))
                 .and(production_year.gt(2005)),
         )
         .select(
-            data.with(
-                data_ty
-                    .select(infotype_text)
-                    .eq("rating")
-                    .and(data_text.lt("8.5")),
-            )
-            .select(data_text)
-            .and(title),
+            data.with(data_ty.eq("rating").and(data_text.lt("8.5")))
+                .select(data_text)
+                .and(title),
         )
 }
 
@@ -1522,10 +1217,6 @@ fn q22b(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
     let Data {
         text: data_text,
         ty: data_ty,
@@ -1536,37 +1227,22 @@ fn q22b(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     db.movie
         .with(
             info.select(
                 info_ty
-                    .select(infotype_text)
                     .eq("countries")
                     .and(info_info.is_in(["Germany", "German", "USA", "American"])),
             )
-            .and(keyword.select(keyword_text).is_in(murder4()))
+            .and(keyword.is_in(murder4()))
             .and(production_year.gt(2009))
-            .and(kind.select(kind_text).is_in(["movie", "episode"])),
+            .and(kind.is_in(["movie", "episode"])),
         )
         .select(
             title
                 .and(
-                    data.with(
-                        data_text
-                            .lt("7.0")
-                            .and(data_ty.select(infotype_text).eq("rating")),
-                    )
-                    .select(data_text),
+                    data.with(data_text.lt("7.0").and(data_ty.eq("rating")))
+                        .select(data_text),
                 )
                 .and(
                     company
@@ -1575,11 +1251,7 @@ fn q22b(db: &'static Job) -> impl Drive<R: Row> {
                                 .nrx(r"\(USA\)")
                                 .and(company_note.rx(r"\(200.*\)"))
                                 .and(country.ne("[us]"))
-                                .and(
-                                    company_ty
-                                        .select(companytype_text)
-                                        .eq("production companies"),
-                                ),
+                                .and(company_ty.eq("production companies")),
                         )
                         .select(company_name),
                 ),
@@ -1604,10 +1276,6 @@ fn q22c(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
     let Data {
         text: data_text,
         ty: data_ty,
@@ -1618,37 +1286,18 @@ fn q22c(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     db.movie
         .with(
-            info.select(
-                info_ty
-                    .select(infotype_text)
-                    .eq("countries")
-                    .and(info_info.is_in(nordic10())),
-            )
-            .and(keyword.select(keyword_text).is_in(murder4()))
-            .and(production_year.gt(2005))
-            .and(kind.select(kind_text).is_in(["movie", "episode"])),
+            info.select(info_ty.eq("countries").and(info_info.is_in(nordic10())))
+                .and(keyword.is_in(murder4()))
+                .and(production_year.gt(2005))
+                .and(kind.is_in(["movie", "episode"])),
         )
         .select(
             title
                 .and(
-                    data.with(
-                        data_text
-                            .lt("8.5")
-                            .and(data_ty.select(infotype_text).eq("rating")),
-                    )
-                    .select(data_text),
+                    data.with(data_text.lt("8.5").and(data_ty.eq("rating")))
+                        .select(data_text),
                 )
                 .and(
                     company
@@ -1657,11 +1306,7 @@ fn q22c(db: &'static Job) -> impl Drive<R: Row> {
                                 .nrx(r"\(USA\)")
                                 .and(company_note.rx(r"\(200.*\)"))
                                 .and(country.ne("[us]"))
-                                .and(
-                                    company_ty
-                                        .select(companytype_text)
-                                        .eq("production companies"),
-                                ),
+                                .and(company_ty.eq("production companies")),
                         )
                         .select(company_name),
                 ),
@@ -1687,10 +1332,6 @@ fn q22d(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
     let Data {
         text: data_text,
         ty: data_ty,
@@ -1701,46 +1342,25 @@ fn q22d(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     db.movie
         .with(
-            info.select(
-                info_ty
-                    .select(infotype_text)
-                    .eq("countries")
-                    .and(info_info.is_in(nordic10())),
-            )
-            .and(keyword.select(keyword_text).is_in(murder4()))
-            .and(production_year.gt(2005))
-            .and(kind.select(kind_text).is_in(["movie", "episode"])),
+            info.select(info_ty.eq("countries").and(info_info.is_in(nordic10())))
+                .and(keyword.is_in(murder4()))
+                .and(production_year.gt(2005))
+                .and(kind.is_in(["movie", "episode"])),
         )
         .select(
             title
                 .and(
-                    data.with(
-                        data_text
-                            .lt("8.5")
-                            .and(data_ty.select(infotype_text).eq("rating")),
-                    )
-                    .select(data_text),
+                    data.with(data_text.lt("8.5").and(data_ty.eq("rating")))
+                        .select(data_text),
                 )
                 .and(
                     company
                         .with(
-                            country.ne("[us]").and(
-                                company_ty
-                                    .select(companytype_text)
-                                    .eq("production companies"),
-                            ),
+                            country
+                                .ne("[us]")
+                                .and(company_ty.eq("production companies")),
                         )
                         .select(company_name),
                 ),
@@ -1760,10 +1380,6 @@ fn q5b(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
     let Info {
         info: info_info, ..
     } = &db.info;
@@ -1772,7 +1388,6 @@ fn q5b(db: &'static Job) -> impl Drive<R: Row> {
             company
                 .select(
                     company_ty
-                        .select(companytype_text)
                         .eq("production companies")
                         .and(company_note.rx(r"\(VHS\)"))
                         .and(company_note.rx(r"\(USA\)"))
@@ -1797,10 +1412,6 @@ fn q5c(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
     let Info {
         info: info_info, ..
     } = &db.info;
@@ -1809,7 +1420,6 @@ fn q5c(db: &'static Job) -> impl Drive<R: Row> {
             company
                 .select(
                     company_ty
-                        .select(companytype_text)
                         .eq("production companies")
                         .and(company_note.nrx(r"\(TV\)"))
                         .and(company_note.rx(r"\(USA\)")),
@@ -1841,10 +1451,6 @@ fn q15a(db: &'static Job) -> impl Drive<R: Row> {
         note: info_note,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     db.movie
         .with(
             production_year
@@ -1863,7 +1469,6 @@ fn q15a(db: &'static Job) -> impl Drive<R: Row> {
         .select(
             info.with(
                 info_ty
-                    .select(infotype_text)
                     .eq("release dates")
                     .and(info_info.rx(r"^USA:.* 200"))
                     .and(info_note.rx(r"internet")),
@@ -1895,10 +1500,6 @@ fn q15b(db: &'static Job) -> impl Drive<R: Row> {
         note: info_note,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     db.movie
         .with(
             company
@@ -1917,7 +1518,6 @@ fn q15b(db: &'static Job) -> impl Drive<R: Row> {
         .select(
             info.with(
                 info_ty
-                    .select(infotype_text)
                     .eq("release dates")
                     .and(info_info.rx(r"^USA:.* 200"))
                     .and(info_note.rx(r"internet")),
@@ -1944,10 +1544,6 @@ fn q15c(db: &'static Job) -> impl Drive<R: Row> {
         note: info_note,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     db.movie
         .with(
             company
@@ -1960,7 +1556,6 @@ fn q15c(db: &'static Job) -> impl Drive<R: Row> {
         .select(
             info.with(
                 info_ty
-                    .select(infotype_text)
                     .eq("release dates")
                     .and(info_info.rx(r"^USA:.* 199|^USA:.* 200"))
                     .and(info_note.rx(r"internet")),
@@ -1980,37 +1575,22 @@ fn q15d(db: &'static Job) -> impl Drive<R: Row> {
         aka,
         ..
     } = &db.movie;
-    let AkaTitle {
-        text: akatitle_text,
-        ..
-    } = &db.aka_title;
     let Company { country, .. } = &db.company;
     let Info {
         ty: info_ty,
         note: info_note,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     db.movie
         .with(
             company
                 .select(country)
                 .eq("[us]")
                 .and(keyword)
-                .and(
-                    info.select(
-                        info_ty
-                            .select(infotype_text)
-                            .eq("release dates")
-                            .and(info_note.rx(r"internet")),
-                    ),
-                )
+                .and(info.select(info_ty.eq("release dates").and(info_note.rx(r"internet"))))
                 .and(production_year.gt(1990)),
         )
-        .select(aka.select(akatitle_text).and(title))
+        .select(aka.and(title))
 }
 
 fn q11c(db: &'static Job) -> impl Drive<R: Row> {
@@ -2029,17 +1609,9 @@ fn q11c(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     db.movie
         .with(
             keyword
-                .select(keyword_text)
                 .is_in(["sequel", "revenge", "based-on-novel"])
                 .and(production_year.gt(1950))
                 .and(link),
@@ -2050,11 +1622,7 @@ fn q11c(db: &'static Job) -> impl Drive<R: Row> {
                     country
                         .ne("[pl]")
                         .and(company_name.rx(r"^20th Century Fox|^Twentieth Century Fox"))
-                        .and(
-                            company_ty
-                                .select(companytype_text)
-                                .ne("production companies"),
-                        )
+                        .and(company_ty.ne("production companies"))
                         .and(company_note),
                 )
                 .select(company_name.and(company_note))
@@ -2078,17 +1646,9 @@ fn q11d(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     db.movie
         .with(
             keyword
-                .select(keyword_text)
                 .is_in(["sequel", "revenge", "based-on-novel"])
                 .and(production_year.gt(1950))
                 .and(link),
@@ -2098,11 +1658,7 @@ fn q11d(db: &'static Job) -> impl Drive<R: Row> {
                 .with(
                     country
                         .ne("[pl]")
-                        .and(
-                            company_ty
-                                .select(companytype_text)
-                                .ne("production companies"),
-                        )
+                        .and(company_ty.ne("production companies"))
                         .and(company_note),
                 )
                 .select(company_name.and(company_note))
@@ -2125,45 +1681,26 @@ fn q13d(db: &'static Job) -> impl Drive<R: Row> {
         ty: company_ty,
         ..
     } = &db.company;
-    let CompanyType {
-        text: companytype_text,
-        ..
-    } = &db.company_type;
     let Data {
         text: data_text,
         ty: data_ty,
         ..
     } = &db.data;
     let Info { ty: info_ty, .. } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     db.movie
         .with(
-            kind.select(kind_text).eq("movie").and(
-                info.select(info_ty)
-                    .select(infotype_text)
-                    .eq("release dates"),
-            ),
+            kind.eq("movie")
+                .and(info.select(info_ty).eq("release dates")),
         )
         .select(
             company
                 .with(
-                    country.eq("[us]").and(
-                        company_ty
-                            .select(companytype_text)
-                            .eq("production companies"),
-                    ),
+                    country
+                        .eq("[us]")
+                        .and(company_ty.eq("production companies")),
                 )
                 .select(company_name)
-                .and(
-                    data.with(data_ty.select(infotype_text).eq("rating"))
-                        .select(data_text),
-                )
+                .and(data.with(data_ty.eq("rating")).select(data_text))
                 .and(title),
         )
 }
@@ -2179,13 +1716,10 @@ fn q6_marvel(db: &'static Job, year: i64) -> impl Drive<R: Row> {
         ..
     } = &db.movie;
     let Cast { person, .. } = &db.cast;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name, ..
     } = &db.person;
-    let kw = || keyword.select(keyword_text).eq("marvel-cinematic-universe");
+    let kw = || keyword.eq("marvel-cinematic-universe");
     let downey = cast
         .select(person)
         .select(person_name)
@@ -2204,13 +1738,10 @@ fn q6_comic(db: &'static Job, year: i64) -> impl Drive<R: Row> {
         ..
     } = &db.movie;
     let Cast { person, .. } = &db.cast;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name, ..
     } = &db.person;
-    let kw = || keyword.select(keyword_text).is_in(kw8());
+    let kw = || keyword.is_in(kw8());
     let downey = cast
         .select(person)
         .select(person_name)
@@ -2245,13 +1776,10 @@ fn q6f(db: &'static Job) -> impl Drive<R: Row> {
         ..
     } = &db.movie;
     let Cast { person, .. } = &db.cast;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name, ..
     } = &db.person;
-    let kw = || keyword.select(keyword_text).is_in(kw8());
+    let kw = || keyword.is_in(kw8());
     let cast_name = cast.select(person).select(person_name);
     db.movie
         .with(production_year.gt(2000).and(kw()))
@@ -2268,18 +1796,7 @@ fn q7a(db: &'static Job) -> impl Drive<R: Row> {
         linked_by,
         ..
     } = &db.movie;
-    let AkaName {
-        text: akaname_text, ..
-    } = &db.aka_name;
     let Cast { person, .. } = &db.cast;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let LinkType {
-        text: linktype_text,
-        ..
-    } = &db.link_type;
     let MovieLink {
         ty: movielink_ty, ..
     } = &db.movie_link;
@@ -2298,19 +1815,16 @@ fn q7a(db: &'static Job) -> impl Drive<R: Row> {
     } = &db.person_info;
     db.movie
         .with(
-            production_year.ge(1980).and(production_year.le(1995)).and(
-                linked_by
-                    .select(movielink_ty)
-                    .select(linktype_text)
-                    .eq("features"),
-            ),
+            production_year
+                .ge(1980)
+                .and(production_year.le(1995))
+                .and(linked_by.select(movielink_ty).eq("features")),
         )
         .select(
             cast.select(
                 person
                     .with(
                         alias
-                            .select(akaname_text)
                             .rx(r"a")
                             .and(name_pcode_cf.ge("A"))
                             .and(name_pcode_cf.le("F"))
@@ -2324,7 +1838,6 @@ fn q7a(db: &'static Job) -> impl Drive<R: Row> {
                             .and(
                                 bio.select(
                                     personinfo_ty
-                                        .select(infotype_text)
                                         .eq("mini biography")
                                         .and(personinfo_note.eq("Volker Boehm")),
                                 ),
@@ -2344,18 +1857,7 @@ fn q7b(db: &'static Job) -> impl Drive<R: Row> {
         linked_by,
         ..
     } = &db.movie;
-    let AkaName {
-        text: akaname_text, ..
-    } = &db.aka_name;
     let Cast { person, .. } = &db.cast;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let LinkType {
-        text: linktype_text,
-        ..
-    } = &db.link_type;
     let MovieLink {
         ty: movielink_ty, ..
     } = &db.movie_link;
@@ -2374,26 +1876,22 @@ fn q7b(db: &'static Job) -> impl Drive<R: Row> {
     } = &db.person_info;
     db.movie
         .with(
-            production_year.ge(1980).and(production_year.le(1984)).and(
-                linked_by
-                    .select(movielink_ty)
-                    .select(linktype_text)
-                    .eq("features"),
-            ),
+            production_year
+                .ge(1980)
+                .and(production_year.le(1984))
+                .and(linked_by.select(movielink_ty).eq("features")),
         )
         .select(
             cast.select(
                 person
                     .with(
                         alias
-                            .select(akaname_text)
                             .rx(r"a")
                             .and(name_pcode_cf.rx(r"^D"))
                             .and(gender.eq("m"))
                             .and(
                                 bio.select(
                                     personinfo_ty
-                                        .select(infotype_text)
                                         .eq("mini biography")
                                         .and(personinfo_note.eq("Volker Boehm")),
                                 ),
@@ -2408,19 +1906,12 @@ fn q7b(db: &'static Job) -> impl Drive<R: Row> {
 // Conjunct tree (∧ = Prod) — consumed via `member` only, so the value
 // type stays opaque (`impl Query<D = Id<PersonInfo>> + Probe`).
 fn bio_filter_7c(db: &'static Job) -> impl Query<D = Id<PersonInfo>> + Probe {
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     let PersonInfo {
         ty: personinfo_ty,
         note: personinfo_note,
         ..
     } = &db.person_info;
-    personinfo_ty
-        .select(infotype_text)
-        .eq("mini biography")
-        .and(personinfo_note)
+    personinfo_ty.eq("mini biography").and(personinfo_note)
 }
 
 fn q7c(db: &'static Job) -> impl Drive<R: Row> {
@@ -2430,14 +1921,7 @@ fn q7c(db: &'static Job) -> impl Drive<R: Row> {
         linked_by,
         ..
     } = &db.movie;
-    let AkaName {
-        text: akaname_text, ..
-    } = &db.aka_name;
     let Cast { person, .. } = &db.cast;
-    let LinkType {
-        text: linktype_text,
-        ..
-    } = &db.link_type;
     let MovieLink {
         ty: movielink_ty, ..
     } = &db.movie_link;
@@ -2455,7 +1939,7 @@ fn q7c(db: &'static Job) -> impl Drive<R: Row> {
     } = &db.person_info;
     db.movie
         .with(production_year.ge(1980).and(production_year.le(2010)).and(
-            linked_by.select(movielink_ty).select(linktype_text).is_in([
+            linked_by.select(movielink_ty).is_in([
                 "references",
                 "referenced in",
                 "features",
@@ -2467,7 +1951,6 @@ fn q7c(db: &'static Job) -> impl Drive<R: Row> {
                 person
                     .with(
                         alias
-                            .select(akaname_text)
                             .rx(r"a|^A")
                             .and(name_pcode_cf.ge("A"))
                             .and(name_pcode_cf.le("F"))
@@ -2492,9 +1975,6 @@ fn q8a(db: &'static Job) -> impl Drive<R: Row> {
         cast,
         ..
     } = &db.movie;
-    let AkaName {
-        text: akaname_text, ..
-    } = &db.aka_name;
     let Cast {
         person,
         role,
@@ -2511,10 +1991,6 @@ fn q8a(db: &'static Job) -> impl Drive<R: Row> {
         alias,
         ..
     } = &db.person;
-    let RoleType {
-        text: roletype_text,
-        ..
-    } = &db.role_type;
     db.movie
         .with(
             company.select(
@@ -2528,12 +2004,11 @@ fn q8a(db: &'static Job) -> impl Drive<R: Row> {
             cast.with(
                 cast_note
                     .eq("(voice: English version)")
-                    .and(role.select(roletype_text).eq("actress"))
+                    .and(role.eq("actress"))
                     .and(person.with(person_name.rx(r"Yo").and(person_name.nrx(r"Yu")))),
             )
             .select(person)
             .select(alias)
-            .select(akaname_text)
             .and(title),
         )
 }
@@ -2546,9 +2021,6 @@ fn q8b(db: &'static Job) -> impl Drive<R: Row> {
         cast,
         ..
     } = &db.movie;
-    let AkaName {
-        text: akaname_text, ..
-    } = &db.aka_name;
     let Cast {
         person,
         role,
@@ -2565,10 +2037,6 @@ fn q8b(db: &'static Job) -> impl Drive<R: Row> {
         alias,
         ..
     } = &db.person;
-    let RoleType {
-        text: roletype_text,
-        ..
-    } = &db.role_type;
     db.movie
         .with(
             company
@@ -2587,12 +2055,11 @@ fn q8b(db: &'static Job) -> impl Drive<R: Row> {
             cast.with(
                 cast_note
                     .eq("(voice: English version)")
-                    .and(role.select(roletype_text).eq("actress"))
+                    .and(role.eq("actress"))
                     .and(person.with(person_name.rx(r"Yo").and(person_name.nrx(r"Yu")))),
             )
             .select(person)
             .select(alias)
-            .select(akaname_text)
             .and(title),
         )
 }
@@ -2605,21 +2072,13 @@ fn q8cd(db: &'static Job, role_: &'static str) -> impl Drive<R: Row> {
         cast,
         ..
     } = &db.movie;
-    let AkaName {
-        text: akaname_text, ..
-    } = &db.aka_name;
     let Cast { person, role, .. } = &db.cast;
     let Company { country, .. } = &db.company;
     let Person { alias, .. } = &db.person;
-    let RoleType {
-        text: roletype_text,
-        ..
-    } = &db.role_type;
     db.movie.with(company.select(country).eq("[us]")).select(
-        cast.with(role.select(roletype_text).eq(role_))
+        cast.with(role.eq(role_))
             .select(person)
             .select(alias)
-            .select(akaname_text)
             .and(title),
     )
 }
@@ -2639,9 +2098,6 @@ fn q9a(db: &'static Job) -> impl Drive<R: Row> {
         cast,
         ..
     } = &db.movie;
-    let AkaName {
-        text: akaname_text, ..
-    } = &db.aka_name;
     let Cast {
         person,
         role,
@@ -2649,10 +2105,6 @@ fn q9a(db: &'static Job) -> impl Drive<R: Row> {
         character,
         ..
     } = &db.cast;
-    let Character {
-        text: character_text,
-        ..
-    } = &db.character;
     let Company {
         country,
         note: company_note,
@@ -2664,10 +2116,6 @@ fn q9a(db: &'static Job) -> impl Drive<R: Row> {
         alias,
         ..
     } = &db.person;
-    let RoleType {
-        text: roletype_text,
-        ..
-    } = &db.role_type;
     db.movie
         .with(
             company
@@ -2683,15 +2131,10 @@ fn q9a(db: &'static Job) -> impl Drive<R: Row> {
             cast.with(
                 cast_note
                     .is_in(voice4())
-                    .and(role.select(roletype_text).eq("actress"))
+                    .and(role.eq("actress"))
                     .and(person.with(gender.eq("f").and(person_name.rx(r"Ang")))),
             )
-            .select(
-                person
-                    .select(alias)
-                    .select(akaname_text)
-                    .and(character.select(character_text)),
-            )
+            .select(person.select(alias).and(character))
             .and(title),
         )
 }
@@ -2704,9 +2147,6 @@ fn q9b(db: &'static Job) -> impl Drive<R: Row> {
         cast,
         ..
     } = &db.movie;
-    let AkaName {
-        text: akaname_text, ..
-    } = &db.aka_name;
     let Cast {
         person,
         role,
@@ -2714,10 +2154,6 @@ fn q9b(db: &'static Job) -> impl Drive<R: Row> {
         character,
         ..
     } = &db.cast;
-    let Character {
-        text: character_text,
-        ..
-    } = &db.character;
     let Company {
         country,
         note: company_note,
@@ -2729,10 +2165,6 @@ fn q9b(db: &'static Job) -> impl Drive<R: Row> {
         alias,
         ..
     } = &db.person;
-    let RoleType {
-        text: roletype_text,
-        ..
-    } = &db.role_type;
     db.movie
         .with(
             company
@@ -2749,14 +2181,13 @@ fn q9b(db: &'static Job) -> impl Drive<R: Row> {
             cast.with(
                 cast_note
                     .eq("(voice)")
-                    .and(role.select(roletype_text).eq("actress"))
+                    .and(role.eq("actress"))
                     .and(person.with(gender.eq("f").and(person_name.rx(r"Angel")))),
             )
             .select(
                 person
                     .select(alias)
-                    .select(akaname_text)
-                    .and(character.select(character_text))
+                    .and(character)
                     .and(person.select(person_name)),
             )
             .and(title),
@@ -2770,9 +2201,6 @@ fn q9c(db: &'static Job) -> impl Drive<R: Row> {
         cast,
         ..
     } = &db.movie;
-    let AkaName {
-        text: akaname_text, ..
-    } = &db.aka_name;
     let Cast {
         person,
         role,
@@ -2780,10 +2208,6 @@ fn q9c(db: &'static Job) -> impl Drive<R: Row> {
         character,
         ..
     } = &db.cast;
-    let Character {
-        text: character_text,
-        ..
-    } = &db.character;
     let Company { country, .. } = &db.company;
     let Person {
         name: person_name,
@@ -2791,22 +2215,17 @@ fn q9c(db: &'static Job) -> impl Drive<R: Row> {
         alias,
         ..
     } = &db.person;
-    let RoleType {
-        text: roletype_text,
-        ..
-    } = &db.role_type;
     db.movie.with(company.select(country).eq("[us]")).select(
         cast.with(
             cast_note
                 .is_in(voice4())
-                .and(role.select(roletype_text).eq("actress"))
+                .and(role.eq("actress"))
                 .and(person.with(gender.eq("f").and(person_name.rx(r"An")))),
         )
         .select(
             person
                 .select(alias)
-                .select(akaname_text)
-                .and(character.select(character_text))
+                .and(character)
                 .and(person.select(person_name)),
         )
         .and(title),
@@ -2820,9 +2239,6 @@ fn q9d(db: &'static Job) -> impl Drive<R: Row> {
         cast,
         ..
     } = &db.movie;
-    let AkaName {
-        text: akaname_text, ..
-    } = &db.aka_name;
     let Cast {
         person,
         role,
@@ -2830,10 +2246,6 @@ fn q9d(db: &'static Job) -> impl Drive<R: Row> {
         character,
         ..
     } = &db.cast;
-    let Character {
-        text: character_text,
-        ..
-    } = &db.character;
     let Company { country, .. } = &db.company;
     let Person {
         name: person_name,
@@ -2841,23 +2253,18 @@ fn q9d(db: &'static Job) -> impl Drive<R: Row> {
         alias,
         ..
     } = &db.person;
-    let RoleType {
-        text: roletype_text,
-        ..
-    } = &db.role_type;
     db.movie.with(company.select(country).eq("[us]")).select(
         cast.with(
             cast_note
                 .is_in(voice4())
-                .and(role.select(roletype_text).eq("actress"))
+                .and(role.eq("actress"))
                 .and(person.with(gender.eq("f"))),
         )
         .select(
             person
                 .select(alias)
-                .select(akaname_text)
                 .and(person.select(person_name))
-                .and(character.select(character_text)),
+                .and(character),
         )
         .and(title),
     )
@@ -2877,15 +2284,7 @@ fn q10a(db: &'static Job) -> impl Drive<R: Row> {
         character,
         ..
     } = &db.cast;
-    let Character {
-        text: character_text,
-        ..
-    } = &db.character;
     let Company { country, .. } = &db.company;
-    let RoleType {
-        text: roletype_text,
-        ..
-    } = &db.role_type;
     db.movie
         .with(
             company
@@ -2898,10 +2297,9 @@ fn q10a(db: &'static Job) -> impl Drive<R: Row> {
                 cast_note
                     .rx(r"\(voice\)")
                     .and(cast_note.rx(r"\(uncredited\)"))
-                    .and(role.select(roletype_text).eq("actor")),
+                    .and(role.eq("actor")),
             )
             .select(character)
-            .select(character_text)
             .and(title),
         )
 }
@@ -2920,15 +2318,7 @@ fn q10b(db: &'static Job) -> impl Drive<R: Row> {
         character,
         ..
     } = &db.cast;
-    let Character {
-        text: character_text,
-        ..
-    } = &db.character;
     let Company { country, .. } = &db.company;
-    let RoleType {
-        text: roletype_text,
-        ..
-    } = &db.role_type;
     db.movie
         .with(
             company
@@ -2937,14 +2327,9 @@ fn q10b(db: &'static Job) -> impl Drive<R: Row> {
                 .and(production_year.gt(2010)),
         )
         .select(
-            cast.with(
-                cast_note
-                    .rx(r"\(producer\)")
-                    .and(role.select(roletype_text).eq("actor")),
-            )
-            .select(character)
-            .select(character_text)
-            .and(title),
+            cast.with(cast_note.rx(r"\(producer\)").and(role.eq("actor")))
+                .select(character)
+                .and(title),
         )
 }
 
@@ -2961,10 +2346,6 @@ fn q10c(db: &'static Job) -> impl Drive<R: Row> {
         character,
         ..
     } = &db.cast;
-    let Character {
-        text: character_text,
-        ..
-    } = &db.character;
     let Company { country, .. } = &db.company;
     db.movie
         .with(
@@ -2976,7 +2357,6 @@ fn q10c(db: &'static Job) -> impl Drive<R: Row> {
         .select(
             cast.with(cast_note.rx(r"\(producer\)"))
                 .select(character)
-                .select(character_text)
                 .and(title),
         )
 }
@@ -2993,30 +2373,19 @@ fn q16ad(db: &'static Job, lo: i64) -> impl Drive<R: Row> {
         cast,
         ..
     } = &db.movie;
-    let AkaName {
-        text: akaname_text, ..
-    } = &db.aka_name;
     let Cast { person, .. } = &db.cast;
     let Company { country, .. } = &db.company;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person { alias, .. } = &db.person;
     db.movie
         .with(
             company
                 .select(country)
                 .eq("[us]")
-                .and(keyword.select(keyword_text).eq("character-name-in-title"))
+                .and(keyword.eq("character-name-in-title"))
                 .and(episode_nr.ge(lo))
                 .and(episode_nr.lt(100)),
         )
-        .select(
-            cast.select(person)
-                .select(alias)
-                .select(akaname_text)
-                .and(title),
-        )
+        .select(cast.select(person).select(alias).and(title))
 }
 
 fn q16a(db: &'static Job) -> impl Drive<R: Row> {
@@ -3034,28 +2403,17 @@ fn q16b(db: &'static Job) -> impl Drive<R: Row> {
         cast,
         ..
     } = &db.movie;
-    let AkaName {
-        text: akaname_text, ..
-    } = &db.aka_name;
     let Cast { person, .. } = &db.cast;
     let Company { country, .. } = &db.company;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person { alias, .. } = &db.person;
     db.movie
         .with(
             company
                 .select(country)
                 .eq("[us]")
-                .and(keyword.select(keyword_text).eq("character-name-in-title")),
+                .and(keyword.eq("character-name-in-title")),
         )
-        .select(
-            cast.select(person)
-                .select(alias)
-                .select(akaname_text)
-                .and(title),
-        )
+        .select(cast.select(person).select(alias).and(title))
 }
 
 fn q16c(db: &'static Job) -> impl Drive<R: Row> {
@@ -3067,29 +2425,18 @@ fn q16c(db: &'static Job) -> impl Drive<R: Row> {
         cast,
         ..
     } = &db.movie;
-    let AkaName {
-        text: akaname_text, ..
-    } = &db.aka_name;
     let Cast { person, .. } = &db.cast;
     let Company { country, .. } = &db.company;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person { alias, .. } = &db.person;
     db.movie
         .with(
             company
                 .select(country)
                 .eq("[us]")
-                .and(keyword.select(keyword_text).eq("character-name-in-title"))
+                .and(keyword.eq("character-name-in-title"))
                 .and(episode_nr.lt(100)),
         )
-        .select(
-            cast.select(person)
-                .select(alias)
-                .select(akaname_text)
-                .and(title),
-        )
+        .select(cast.select(person).select(alias).and(title))
 }
 
 fn q17a(db: &'static Job) -> impl Drive<R: Row> {
@@ -3101,9 +2448,6 @@ fn q17a(db: &'static Job) -> impl Drive<R: Row> {
     } = &db.movie;
     let Cast { person, .. } = &db.cast;
     let Company { country, .. } = &db.company;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name, ..
     } = &db.person;
@@ -3112,7 +2456,7 @@ fn q17a(db: &'static Job) -> impl Drive<R: Row> {
             company
                 .select(country)
                 .eq("[us]")
-                .and(keyword.select(keyword_text).eq("character-name-in-title")),
+                .and(keyword.eq("character-name-in-title")),
         )
         .select(cast.select(person).select(person_name).rx(r"^B"))
 }
@@ -3126,14 +2470,11 @@ fn q17_any_co(db: &'static Job, re: &str) -> impl Drive<R: Row> {
         ..
     } = &db.movie;
     let Cast { person, .. } = &db.cast;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name, ..
     } = &db.person;
     db.movie
-        .with(company.and(keyword.select(keyword_text).eq("character-name-in-title")))
+        .with(company.and(keyword.eq("character-name-in-title")))
         .select(cast.select(person).select(person_name).rx(re))
 }
 
@@ -3159,9 +2500,6 @@ fn q17e(db: &'static Job) -> impl Drive<R: Row> {
     } = &db.movie;
     let Cast { person, .. } = &db.cast;
     let Company { country, .. } = &db.company;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name, ..
     } = &db.person;
@@ -3170,7 +2508,7 @@ fn q17e(db: &'static Job) -> impl Drive<R: Row> {
             company
                 .select(country)
                 .eq("[us]")
-                .and(keyword.select(keyword_text).eq("character-name-in-title")),
+                .and(keyword.eq("character-name-in-title")),
         )
         .select(cast.select(person).select(person_name))
 }
@@ -3182,12 +2520,7 @@ fn ib_18a(db: &'static Job) -> impl Query<R = &'static str, D = Id<Movie>> + Dri
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    info.with(info_ty.select(infotype_text).eq("budget"))
-        .select(info_info)
+    info.with(info_ty.eq("budget")).select(info_info)
 }
 
 fn q18a(db: &'static Job) -> impl Drive<R: Row> {
@@ -3204,10 +2537,6 @@ fn q18a(db: &'static Job) -> impl Drive<R: Row> {
         ty: data_ty,
         ..
     } = &db.data;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     let Person {
         name: person_name,
         gender,
@@ -3225,10 +2554,7 @@ fn q18a(db: &'static Job) -> impl Drive<R: Row> {
         )
         .select(
             ib_18a(db)
-                .and(
-                    data.with(data_ty.select(infotype_text).eq("votes"))
-                        .select(data_text),
-                )
+                .and(data.with(data_ty.eq("votes")).select(data_text))
                 .and(title),
         )
 }
@@ -3242,12 +2568,7 @@ fn gf_18b(db: &'static Job) -> impl Query<D = Id<Info>> + Probe {
         note: info_note,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     info_ty
-        .select(infotype_text)
         .eq("genres")
         .and(info_info.is_in(["Horror", "Thriller"]))
         .minus(info_note)
@@ -3275,10 +2596,6 @@ fn q18b(db: &'static Job) -> impl Drive<R: Row> {
     let Info {
         info: info_info, ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     let Person { gender, .. } = &db.person;
     db.movie
         .with(
@@ -3297,13 +2614,8 @@ fn q18b(db: &'static Job) -> impl Drive<R: Row> {
             info.with(gf_18b(db))
                 .select(info_info)
                 .and(
-                    data.with(
-                        data_ty
-                            .select(infotype_text)
-                            .eq("rating")
-                            .and(data_text.gt("8.0")),
-                    )
-                    .select(data_text),
+                    data.with(data_ty.eq("rating").and(data_text.gt("8.0")))
+                        .select(data_text),
                 )
                 .and(title),
         )
@@ -3315,14 +2627,7 @@ fn gf_18c(db: &'static Job) -> impl Query<D = Id<Info>> + Probe {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    info_ty
-        .select(infotype_text)
-        .eq("genres")
-        .and(info_info.is_in(genre6()))
+    info_ty.eq("genres").and(info_info.is_in(genre6()))
 }
 
 fn q18c(db: &'static Job) -> impl Drive<R: Row> {
@@ -3346,10 +2651,6 @@ fn q18c(db: &'static Job) -> impl Drive<R: Row> {
     let Info {
         info: info_info, ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     let Person { gender, .. } = &db.person;
     db.movie
         .with(
@@ -3364,10 +2665,7 @@ fn q18c(db: &'static Job) -> impl Drive<R: Row> {
         .select(
             info.with(gf_18c(db))
                 .select(info_info)
-                .and(
-                    data.with(data_ty.select(infotype_text).eq("votes"))
-                        .select(data_text),
-                )
+                .and(data.with(data_ty.eq("votes")).select(data_text))
                 .and(title),
         )
 }
@@ -3376,19 +2674,12 @@ fn q18c(db: &'static Job) -> impl Drive<R: Row> {
 
 fn k_23ab(db: &'static Job) -> impl Query<R = &'static str, D = Id<Movie>> + Drive + Probe {
     let Movie { kind, .. } = &db.movie;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
-    kind.select(kind_text).eq("movie")
+    kind.eq("movie")
 }
 
 fn k_23c(db: &'static Job) -> impl Query<R = &'static str, D = Id<Movie>> + Drive + Probe {
     let Movie { kind, .. } = &db.movie;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
-    kind.select(kind_text)
-        .is_in(["movie", "tv movie", "video movie", "video game"])
+    kind.is_in(["movie", "tv movie", "video movie", "video game"])
 }
 
 // Conjunct trees (∧ = Prod) — consumed via `member` only, so the value
@@ -3399,14 +2690,7 @@ fn gf_25ab(db: &'static Job) -> impl Query<D = Id<Info>> + Probe {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    info_ty
-        .select(infotype_text)
-        .eq("genres")
-        .and(info_info.eq("Horror"))
+    info_ty.eq("genres").and(info_info.eq("Horror"))
 }
 
 fn gf_25c(db: &'static Job) -> impl Query<D = Id<Info>> + Probe {
@@ -3415,14 +2699,7 @@ fn gf_25c(db: &'static Job) -> impl Query<D = Id<Info>> + Probe {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    info_ty
-        .select(infotype_text)
-        .eq("genres")
-        .and(info_info.is_in(genre6()))
+    info_ty.eq("genres").and(info_info.is_in(genre6()))
 }
 
 fn q19a(db: &'static Job) -> impl Drive<R: Row> {
@@ -3451,20 +2728,12 @@ fn q19a(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     let Person {
         name: person_name,
         gender,
         alias,
         ..
     } = &db.person;
-    let RoleType {
-        text: roletype_text,
-        ..
-    } = &db.role_type;
     db.movie
         .with(
             company
@@ -3476,7 +2745,6 @@ fn q19a(db: &'static Job) -> impl Drive<R: Row> {
                 .and(
                     info.select(
                         info_ty
-                            .select(infotype_text)
                             .eq("release dates")
                             .and(info_info.rx(r"^Japan:.*200|^USA:.*200")),
                     ),
@@ -3488,7 +2756,7 @@ fn q19a(db: &'static Job) -> impl Drive<R: Row> {
             cast.with(
                 cast_note
                     .is_in(voice4())
-                    .and(role.select(roletype_text).eq("actress"))
+                    .and(role.eq("actress"))
                     .and(character)
                     .and(person.with(gender.eq("f").and(person_name.rx(r"Ang")).and(alias))),
             )
@@ -3524,20 +2792,12 @@ fn q19b(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     let Person {
         name: person_name,
         gender,
         alias,
         ..
     } = &db.person;
-    let RoleType {
-        text: roletype_text,
-        ..
-    } = &db.role_type;
     db.movie
         .with(
             company
@@ -3550,7 +2810,6 @@ fn q19b(db: &'static Job) -> impl Drive<R: Row> {
                 .and(
                     info.select(
                         info_ty
-                            .select(infotype_text)
                             .eq("release dates")
                             .and(info_info.rx(r"^Japan:.*2007|^USA:.*2008")),
                     ),
@@ -3563,7 +2822,7 @@ fn q19b(db: &'static Job) -> impl Drive<R: Row> {
             cast.with(
                 cast_note
                     .eq("(voice)")
-                    .and(role.select(roletype_text).eq("actress"))
+                    .and(role.eq("actress"))
                     .and(character)
                     .and(person.with(gender.eq("f").and(person_name.rx(r"Angel")).and(alias))),
             )
@@ -3595,20 +2854,12 @@ fn q19c(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     let Person {
         name: person_name,
         gender,
         alias,
         ..
     } = &db.person;
-    let RoleType {
-        text: roletype_text,
-        ..
-    } = &db.role_type;
     db.movie
         .with(
             company
@@ -3617,7 +2868,6 @@ fn q19c(db: &'static Job) -> impl Drive<R: Row> {
                 .and(
                     info.select(
                         info_ty
-                            .select(infotype_text)
                             .eq("release dates")
                             .and(info_info.rx(r"^Japan:.*200|^USA:.*200")),
                     ),
@@ -3628,7 +2878,7 @@ fn q19c(db: &'static Job) -> impl Drive<R: Row> {
             cast.with(
                 cast_note
                     .is_in(voice4())
-                    .and(role.select(roletype_text).eq("actress"))
+                    .and(role.eq("actress"))
                     .and(character)
                     .and(person.with(gender.eq("f").and(person_name.rx(r"An")).and(alias))),
             )
@@ -3656,37 +2906,25 @@ fn q19d(db: &'static Job) -> impl Drive<R: Row> {
     } = &db.cast;
     let Company { country, .. } = &db.company;
     let Info { ty: info_ty, .. } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     let Person {
         name: person_name,
         gender,
         alias,
         ..
     } = &db.person;
-    let RoleType {
-        text: roletype_text,
-        ..
-    } = &db.role_type;
     db.movie
         .with(
             company
                 .select(country)
                 .eq("[us]")
-                .and(
-                    info.select(info_ty)
-                        .select(infotype_text)
-                        .eq("release dates"),
-                )
+                .and(info.select(info_ty).eq("release dates"))
                 .and(production_year.gt(2000)),
         )
         .select(
             cast.with(
                 cast_note
                     .is_in(voice4())
-                    .and(role.select(roletype_text).eq("actress"))
+                    .and(role.eq("actress"))
                     .and(character)
                     .and(person.with(gender.eq("f").and(alias))),
             )
@@ -3707,44 +2945,17 @@ fn q20a(db: &'static Job) -> impl Drive<R: Row> {
         ..
     } = &db.movie;
     let Cast { character, .. } = &db.cast;
-    let Character {
-        text: character_text,
-        ..
-    } = &db.character;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let CompleteCast {
         status, subject, ..
     } = &db.complete_cast;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     db.movie
         .with(
             complete_cast
-                .select(
-                    subject
-                        .select(compcasttype_text)
-                        .eq("cast")
-                        .and(status.select(compcasttype_text).rx(r"complete")),
-                )
-                .and(keyword.select(keyword_text).is_in(kw8()))
-                .and(kind.select(kind_text).eq("movie"))
+                .select(subject.eq("cast").and(status.rx(r"complete")))
+                .and(keyword.is_in(kw8()))
+                .and(kind.eq("movie"))
                 .and(production_year.gt(1950))
-                .and(
-                    cast.select(
-                        character.select(
-                            character_text
-                                .nrx(r"Sherlock")
-                                .and(character_text.rx(r"Tony.*Stark|Iron.*Man")),
-                        ),
-                    ),
-                ),
+                .and(cast.select(character.nrx(r"Sherlock").rx(r"Tony.*Stark|Iron.*Man"))),
         )
         .select(title)
 }
@@ -3762,46 +2973,24 @@ fn q20b(db: &'static Job) -> impl Drive<R: Row> {
     let Cast {
         person, character, ..
     } = &db.cast;
-    let Character {
-        text: character_text,
-        ..
-    } = &db.character;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let CompleteCast {
         status, subject, ..
     } = &db.complete_cast;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     let Person {
         name: person_name, ..
     } = &db.person;
     db.movie
         .with(
             complete_cast
-                .select(
-                    subject
-                        .select(compcasttype_text)
-                        .eq("cast")
-                        .and(status.select(compcasttype_text).rx(r"complete")),
-                )
-                .and(keyword.select(keyword_text).is_in(kw8()))
-                .and(kind.select(kind_text).eq("movie"))
+                .select(subject.eq("cast").and(status.rx(r"complete")))
+                .and(keyword.is_in(kw8()))
+                .and(kind.eq("movie"))
                 .and(production_year.gt(2000))
                 .and(
                     cast.select(
                         character
-                            .select(
-                                character_text
-                                    .nrx(r"Sherlock")
-                                    .and(character_text.rx(r"Tony.*Stark|Iron.*Man")),
-                            )
+                            .nrx(r"Sherlock")
+                            .rx(r"Tony.*Stark|Iron.*Man")
                             .and(person.select(person_name).rx(r"Downey.*Robert")),
                     ),
                 ),
@@ -3822,41 +3011,22 @@ fn q20c(db: &'static Job) -> impl Drive<R: Row> {
     let Cast {
         person, character, ..
     } = &db.cast;
-    let Character {
-        text: character_text,
-        ..
-    } = &db.character;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let CompleteCast {
         status, subject, ..
     } = &db.complete_cast;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     let Person {
         name: person_name, ..
     } = &db.person;
     db.movie
         .with(
             complete_cast
-                .select(
-                    subject
-                        .select(compcasttype_text)
-                        .eq("cast")
-                        .and(status.select(compcasttype_text).rx(r"complete")),
-                )
-                .and(keyword.select(keyword_text).is_in(kw10()))
-                .and(kind.select(kind_text).eq("movie"))
+                .select(subject.eq("cast").and(status.rx(r"complete")))
+                .and(keyword.is_in(kw10()))
+                .and(kind.eq("movie"))
                 .and(production_year.gt(2000)),
         )
         .select(
-            cast.with(character.select(character_text).rx(r"[Mm]an"))
+            cast.with(character.rx(r"[Mm]an"))
                 .select(person)
                 .select(person_name)
                 .and(title),
@@ -3892,12 +3062,9 @@ fn q21(db: &'static Job, countries: Vec<&'static str>, ylo: i64, yhi: i64) -> im
     let Info {
         info: info_info, ..
     } = &db.info;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     db.movie
         .with(
-            link.and(keyword.select(keyword_text).eq("sequel"))
+            link.and(keyword.eq("sequel"))
                 .and(production_year.between(ylo, yhi))
                 .and(info.select(info_info).is_in(countries))
                 .and(follow_link(db)),
@@ -3930,10 +3097,6 @@ fn q23a(db: &'static Job) -> impl Drive<R: Row> {
         complete_cast,
         ..
     } = &db.movie;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let Company { country, .. } = &db.company;
     let CompleteCast { status, .. } = &db.complete_cast;
     let Info {
@@ -3942,21 +3105,15 @@ fn q23a(db: &'static Job) -> impl Drive<R: Row> {
         note: info_note,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     db.movie
         .with(
             complete_cast
                 .select(status)
-                .select(compcasttype_text)
                 .eq("complete+verified")
                 .and(company.select(country).eq("[us]"))
                 .and(
                     info.select(
                         info_ty
-                            .select(infotype_text)
                             .eq("release dates")
                             .and(info_note.rx(r"internet"))
                             .and(info_info.rx(r"^USA:.* 199|^USA:.* 200")),
@@ -3979,10 +3136,6 @@ fn q23b(db: &'static Job) -> impl Drive<R: Row> {
         complete_cast,
         ..
     } = &db.movie;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let Company { country, .. } = &db.company;
     let CompleteCast { status, .. } = &db.complete_cast;
     let Info {
@@ -3991,35 +3144,22 @@ fn q23b(db: &'static Job) -> impl Drive<R: Row> {
         note: info_note,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     db.movie
         .with(
             complete_cast
                 .select(status)
-                .select(compcasttype_text)
                 .eq("complete+verified")
                 .and(company.select(country).eq("[us]"))
                 .and(
                     info.select(
                         info_ty
-                            .select(infotype_text)
                             .eq("release dates")
                             .and(info_note.rx(r"internet"))
                             .and(info_info.rx(r"^USA:.* 200")),
                     ),
                 )
                 .and(k_23ab(db))
-                .and(
-                    keyword
-                        .select(keyword_text)
-                        .is_in(["nerd", "loner", "alienation", "dignity"]),
-                )
+                .and(keyword.is_in(["nerd", "loner", "alienation", "dignity"]))
                 .and(production_year.gt(2000)),
         )
         .select(k_23ab(db).and(title))
@@ -4035,10 +3175,6 @@ fn q23c(db: &'static Job) -> impl Drive<R: Row> {
         complete_cast,
         ..
     } = &db.movie;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let Company { country, .. } = &db.company;
     let CompleteCast { status, .. } = &db.complete_cast;
     let Info {
@@ -4047,21 +3183,15 @@ fn q23c(db: &'static Job) -> impl Drive<R: Row> {
         note: info_note,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     db.movie
         .with(
             complete_cast
                 .select(status)
-                .select(compcasttype_text)
                 .eq("complete+verified")
                 .and(company.select(country).eq("[us]"))
                 .and(
                     info.select(
                         info_ty
-                            .select(infotype_text)
                             .eq("release dates")
                             .and(info_note.rx(r"internet"))
                             .and(info_info.rx(r"^USA:.* 199|^USA:.* 200")),
@@ -4091,33 +3221,18 @@ fn q24a(db: &'static Job) -> impl Drive<R: Row> {
         character,
         ..
     } = &db.cast;
-    let Character {
-        text: character_text,
-        ..
-    } = &db.character;
     let Company { country, .. } = &db.company;
     let Info {
         info: info_info,
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name,
         gender,
         alias,
         ..
     } = &db.person;
-    let RoleType {
-        text: roletype_text,
-        ..
-    } = &db.role_type;
     db.movie
         .with(
             company
@@ -4126,30 +3241,21 @@ fn q24a(db: &'static Job) -> impl Drive<R: Row> {
                 .and(
                     info.select(
                         info_ty
-                            .select(infotype_text)
                             .eq("release dates")
                             .and(info_info.rx(r"^Japan:.*201|^USA:.*201")),
                     ),
                 )
-                .and(keyword.select(keyword_text).is_in([
-                    "hero",
-                    "martial-arts",
-                    "hand-to-hand-combat",
-                ]))
+                .and(keyword.is_in(["hero", "martial-arts", "hand-to-hand-combat"]))
                 .and(production_year.gt(2010)),
         )
         .select(
             cast.with(
                 cast_note
                     .is_in(voice4())
-                    .and(role.select(roletype_text).eq("actress"))
+                    .and(role.eq("actress"))
                     .and(person.with(gender.eq("f").and(person_name.rx(r"An")).and(alias))),
             )
-            .select(
-                character
-                    .select(character_text)
-                    .and(person.select(person_name)),
-            )
+            .select(character.and(person.select(person_name)))
             .and(title),
         )
 }
@@ -4171,10 +3277,6 @@ fn q24b(db: &'static Job) -> impl Drive<R: Row> {
         character,
         ..
     } = &db.cast;
-    let Character {
-        text: character_text,
-        ..
-    } = &db.character;
     let Company {
         name: company_name,
         country,
@@ -4185,23 +3287,12 @@ fn q24b(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name,
         gender,
         alias,
         ..
     } = &db.person;
-    let RoleType {
-        text: roletype_text,
-        ..
-    } = &db.role_type;
     db.movie
         .with(
             company
@@ -4213,12 +3304,11 @@ fn q24b(db: &'static Job) -> impl Drive<R: Row> {
                 .and(
                     info.select(
                         info_ty
-                            .select(infotype_text)
                             .eq("release dates")
                             .and(info_info.rx(r"^Japan:.*201|^USA:.*201")),
                     ),
                 )
-                .and(keyword.select(keyword_text).is_in([
+                .and(keyword.is_in([
                     "hero",
                     "martial-arts",
                     "hand-to-hand-combat",
@@ -4231,14 +3321,10 @@ fn q24b(db: &'static Job) -> impl Drive<R: Row> {
             cast.with(
                 cast_note
                     .is_in(voice4())
-                    .and(role.select(roletype_text).eq("actress"))
+                    .and(role.eq("actress"))
                     .and(person.with(gender.eq("f").and(person_name.rx(r"An")).and(alias))),
             )
-            .select(
-                character
-                    .select(character_text)
-                    .and(person.select(person_name)),
-            )
+            .select(character.and(person.select(person_name)))
             .and(title),
         )
 }
@@ -4265,36 +3351,23 @@ fn q25a(db: &'static Job) -> impl Drive<R: Row> {
     let Info {
         info: info_info, ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name,
         gender,
         ..
     } = &db.person;
     db.movie
-        .with(
-            info.with(gf_25ab(db))
-                .and(keyword.select(keyword_text).is_in([
-                    "murder",
-                    "blood",
-                    "gore",
-                    "death",
-                    "female-nudity",
-                ])),
-        )
+        .with(info.with(gf_25ab(db)).and(keyword.is_in([
+            "murder",
+            "blood",
+            "gore",
+            "death",
+            "female-nudity",
+        ])))
         .select(
             info.with(gf_25ab(db))
                 .select(info_info)
-                .and(
-                    data.with(data_ty.select(infotype_text).eq("votes"))
-                        .select(data_text),
-                )
+                .and(data.with(data_ty.eq("votes")).select(data_text))
                 .and(title)
                 .and(
                     cast.with(cast_note.is_in(writer5()).and(person.with(gender.eq("m"))))
@@ -4327,13 +3400,6 @@ fn q25b(db: &'static Job) -> impl Drive<R: Row> {
     let Info {
         info: info_info, ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name,
         gender,
@@ -4342,23 +3408,14 @@ fn q25b(db: &'static Job) -> impl Drive<R: Row> {
     db.movie
         .with(
             info.with(gf_25ab(db))
-                .and(keyword.select(keyword_text).is_in([
-                    "murder",
-                    "blood",
-                    "gore",
-                    "death",
-                    "female-nudity",
-                ]))
+                .and(keyword.is_in(["murder", "blood", "gore", "death", "female-nudity"]))
                 .and(production_year.gt(2010))
                 .and(title.rx(r"^Vampire")),
         )
         .select(
             info.with(gf_25ab(db))
                 .select(info_info)
-                .and(
-                    data.with(data_ty.select(infotype_text).eq("votes"))
-                        .select(data_text),
-                )
+                .and(data.with(data_ty.eq("votes")).select(data_text))
                 .and(title)
                 .and(
                     cast.with(cast_note.is_in(writer5()).and(person.with(gender.eq("m"))))
@@ -4390,30 +3447,17 @@ fn q25c(db: &'static Job) -> impl Drive<R: Row> {
     let Info {
         info: info_info, ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name,
         gender,
         ..
     } = &db.person;
     db.movie
-        .with(
-            info.with(gf_25c(db))
-                .and(keyword.select(keyword_text).is_in(kw7())),
-        )
+        .with(info.with(gf_25c(db)).and(keyword.is_in(kw7())))
         .select(
             info.with(gf_25c(db))
                 .select(info_info)
-                .and(
-                    data.with(data_ty.select(infotype_text).eq("votes"))
-                        .select(data_text),
-                )
+                .and(data.with(data_ty.eq("votes")).select(data_text))
                 .and(title)
                 .and(
                     cast.with(cast_note.is_in(writer5()).and(person.with(gender.eq("m"))))
@@ -4437,14 +3481,6 @@ fn q26a(db: &'static Job) -> impl Drive<R: Row> {
     let Cast {
         person, character, ..
     } = &db.cast;
-    let Character {
-        text: character_text,
-        ..
-    } = &db.character;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let CompleteCast {
         status, subject, ..
     } = &db.complete_cast;
@@ -4453,47 +3489,23 @@ fn q26a(db: &'static Job) -> impl Drive<R: Row> {
         ty: data_ty,
         ..
     } = &db.data;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     let Person {
         name: person_name, ..
     } = &db.person;
     db.movie
         .with(
             complete_cast
-                .select(
-                    subject
-                        .select(compcasttype_text)
-                        .eq("cast")
-                        .and(status.select(compcasttype_text).rx(r"complete")),
-                )
-                .and(keyword.select(keyword_text).is_in(kw10()))
-                .and(kind.select(kind_text).eq("movie"))
+                .select(subject.eq("cast").and(status.rx(r"complete")))
+                .and(keyword.is_in(kw10()))
+                .and(kind.eq("movie"))
                 .and(production_year.gt(2000)),
         )
         .select(
-            cast.with(character.select(character_text).rx(r"[Mm]an"))
-                .select(
-                    character
-                        .select(character_text)
-                        .and(person.select(person_name)),
-                )
+            cast.with(character.rx(r"[Mm]an"))
+                .select(character.and(person.select(person_name)))
                 .and(
-                    data.with(
-                        data_ty
-                            .select(infotype_text)
-                            .eq("rating")
-                            .and(data_text.gt("7.0")),
-                    )
-                    .select(data_text),
+                    data.with(data_ty.eq("rating").and(data_text.gt("7.0")))
+                        .select(data_text),
                 )
                 .and(title),
         )
@@ -4511,14 +3523,6 @@ fn q26b(db: &'static Job) -> impl Drive<R: Row> {
         ..
     } = &db.movie;
     let Cast { character, .. } = &db.cast;
-    let Character {
-        text: character_text,
-        ..
-    } = &db.character;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let CompleteCast {
         status, subject, ..
     } = &db.complete_cast;
@@ -4527,46 +3531,20 @@ fn q26b(db: &'static Job) -> impl Drive<R: Row> {
         ty: data_ty,
         ..
     } = &db.data;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     db.movie
         .with(
             complete_cast
-                .select(
-                    subject
-                        .select(compcasttype_text)
-                        .eq("cast")
-                        .and(status.select(compcasttype_text).rx(r"complete")),
-                )
-                .and(keyword.select(keyword_text).is_in([
-                    "superhero",
-                    "marvel-comics",
-                    "based-on-comic",
-                    "fight",
-                ]))
-                .and(kind.select(kind_text).eq("movie"))
+                .select(subject.eq("cast").and(status.rx(r"complete")))
+                .and(keyword.is_in(["superhero", "marvel-comics", "based-on-comic", "fight"]))
+                .and(kind.eq("movie"))
                 .and(production_year.gt(2005)),
         )
         .select(
-            cast.with(character.select(character_text).rx(r"[Mm]an"))
+            cast.with(character.rx(r"[Mm]an"))
                 .select(character)
-                .select(character_text)
                 .and(
-                    data.with(
-                        data_ty
-                            .select(infotype_text)
-                            .eq("rating")
-                            .and(data_text.gt("8.0")),
-                    )
-                    .select(data_text),
+                    data.with(data_ty.eq("rating").and(data_text.gt("8.0")))
+                        .select(data_text),
                 )
                 .and(title),
         )
@@ -4584,14 +3562,6 @@ fn q26c(db: &'static Job) -> impl Drive<R: Row> {
         ..
     } = &db.movie;
     let Cast { character, .. } = &db.cast;
-    let Character {
-        text: character_text,
-        ..
-    } = &db.character;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let CompleteCast {
         status, subject, ..
     } = &db.complete_cast;
@@ -4600,36 +3570,18 @@ fn q26c(db: &'static Job) -> impl Drive<R: Row> {
         ty: data_ty,
         ..
     } = &db.data;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
-    let rd = data
-        .with(data_ty.select(infotype_text).eq("rating"))
-        .select(data_text);
+    let rd = data.with(data_ty.eq("rating")).select(data_text);
     db.movie
         .with(
             complete_cast
-                .select(
-                    subject
-                        .select(compcasttype_text)
-                        .eq("cast")
-                        .and(status.select(compcasttype_text).rx(r"complete")),
-                )
-                .and(keyword.select(keyword_text).is_in(kw10()))
-                .and(kind.select(kind_text).eq("movie"))
+                .select(subject.eq("cast").and(status.rx(r"complete")))
+                .and(keyword.is_in(kw10()))
+                .and(kind.eq("movie"))
                 .and(production_year.gt(2000)),
         )
         .select(
-            cast.with(character.select(character_text).rx(r"[Mm]an"))
+            cast.with(character.rx(r"[Mm]an"))
                 .select(character)
-                .select(character_text)
                 .and(rd)
                 .and(title),
         )
@@ -4659,16 +3611,7 @@ fn dt_28ac(db: &'static Job) -> impl Query<R = Id<Data>, D = Id<Movie>> + Drive 
         ty: data_ty,
         ..
     } = &db.data;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    data.with(
-        data_ty
-            .select(infotype_text)
-            .eq("rating")
-            .and(data_text.lt("8.5")),
-    )
+    data.with(data_ty.eq("rating").and(data_text.lt("8.5")))
 }
 
 fn dt_28b(db: &'static Job) -> impl Query<R = Id<Data>, D = Id<Movie>> + Drive + Probe {
@@ -4678,16 +3621,7 @@ fn dt_28b(db: &'static Job) -> impl Query<R = Id<Data>, D = Id<Movie>> + Drive +
         ty: data_ty,
         ..
     } = &db.data;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    data.with(
-        data_ty
-            .select(infotype_text)
-            .eq("rating")
-            .and(data_text.gt("6.5")),
-    )
+    data.with(data_ty.eq("rating").and(data_text.gt("6.5")))
 }
 
 // Conjunct trees (∧ = Prod) — consumed via `member` only, so the value
@@ -4698,12 +3632,7 @@ fn gf_horror(db: &'static Job) -> impl Query<D = Id<Info>> + Probe {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
     info_ty
-        .select(infotype_text)
         .eq("genres")
         .and(info_info.is_in(["Horror", "Thriller"]))
 }
@@ -4714,14 +3643,7 @@ fn gf_genre6(db: &'static Job) -> impl Query<D = Id<Info>> + Probe {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    info_ty
-        .select(infotype_text)
-        .eq("genres")
-        .and(info_info.is_in(genre6()))
+    info_ty.eq("genres").and(info_info.is_in(genre6()))
 }
 
 fn qlink_33a(db: &'static Job) -> impl Query<R = Id<MovieLink>, D = Id<Movie>> + Drive + Probe {
@@ -4738,36 +3660,17 @@ fn qlink_33a(db: &'static Job) -> impl Query<R = Id<MovieLink>, D = Id<Movie>> +
         ty: data_ty,
         ..
     } = &db.data;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
-    let LinkType {
-        text: linktype_text,
-        ..
-    } = &db.link_type;
     let MovieLink {
         target,
         ty: movielink_ty,
         ..
     } = &db.movie_link;
     link.with(
-        movielink_ty.select(linktype_text).is_in(link3()).and(
+        movielink_ty.is_in(link3()).and(
             target.with(
-                kind.select(kind_text)
-                    .eq("tv series")
+                kind.eq("tv series")
                     .and(company)
-                    .and(
-                        data.with(
-                            data_ty
-                                .select(infotype_text)
-                                .eq("rating")
-                                .and(data_text.lt("3.0")),
-                        ),
-                    )
+                    .and(data.with(data_ty.eq("rating").and(data_text.lt("3.0"))))
                     .and(production_year.ge(2005))
                     .and(production_year.le(2008)),
             ),
@@ -4789,36 +3692,17 @@ fn qlink_33b(db: &'static Job) -> impl Query<R = Id<MovieLink>, D = Id<Movie>> +
         ty: data_ty,
         ..
     } = &db.data;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
-    let LinkType {
-        text: linktype_text,
-        ..
-    } = &db.link_type;
     let MovieLink {
         target,
         ty: movielink_ty,
         ..
     } = &db.movie_link;
     link.with(
-        movielink_ty.select(linktype_text).rx(r"follow").and(
+        movielink_ty.rx(r"follow").and(
             target.with(
-                kind.select(kind_text)
-                    .eq("tv series")
+                kind.eq("tv series")
                     .and(company)
-                    .and(
-                        data.with(
-                            data_ty
-                                .select(infotype_text)
-                                .eq("rating")
-                                .and(data_text.lt("3.0")),
-                        ),
-                    )
+                    .and(data.with(data_ty.eq("rating").and(data_text.lt("3.0"))))
                     .and(production_year.eq(2007)),
             ),
         ),
@@ -4839,36 +3723,17 @@ fn qlink_33c(db: &'static Job) -> impl Query<R = Id<MovieLink>, D = Id<Movie>> +
         ty: data_ty,
         ..
     } = &db.data;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
-    let LinkType {
-        text: linktype_text,
-        ..
-    } = &db.link_type;
     let MovieLink {
         target,
         ty: movielink_ty,
         ..
     } = &db.movie_link;
     link.with(
-        movielink_ty.select(linktype_text).is_in(link3()).and(
+        movielink_ty.is_in(link3()).and(
             target.with(
-                kind.select(kind_text)
-                    .is_in(["tv series", "episode"])
+                kind.is_in(["tv series", "episode"])
                     .and(company)
-                    .and(
-                        data.with(
-                            data_ty
-                                .select(infotype_text)
-                                .eq("rating")
-                                .and(data_text.lt("3.5")),
-                        ),
-                    )
+                    .and(data.with(data_ty.eq("rating").and(data_text.lt("3.5"))))
                     .and(production_year.ge(2000))
                     .and(production_year.le(2010)),
             ),
@@ -4886,10 +3751,6 @@ fn q27a(db: &'static Job) -> impl Drive<R: Row> {
         link,
         ..
     } = &db.movie;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let Company {
         name: company_name, ..
     } = &db.company;
@@ -4899,21 +3760,14 @@ fn q27a(db: &'static Job) -> impl Drive<R: Row> {
     let Info {
         info: info_info, ..
     } = &db.info;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     db.movie
         .with(
-            link.and(keyword.select(keyword_text).eq("sequel"))
+            link.and(keyword.eq("sequel"))
                 .and(production_year.between(1950, 2000))
                 .and(info.select(info_info.is_in(["Sweden", "Germany", "Swedish", "German"])))
                 .and(
-                    complete_cast.select(
-                        subject
-                            .select(compcasttype_text)
-                            .is_in(["cast", "crew"])
-                            .and(status.select(compcasttype_text).eq("complete")),
-                    ),
+                    complete_cast
+                        .select(subject.is_in(["cast", "crew"]).and(status.eq("complete"))),
                 )
                 .and(follow_link(db)),
         )
@@ -4935,10 +3789,6 @@ fn q27b(db: &'static Job) -> impl Drive<R: Row> {
         link,
         ..
     } = &db.movie;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let Company {
         name: company_name, ..
     } = &db.company;
@@ -4948,21 +3798,14 @@ fn q27b(db: &'static Job) -> impl Drive<R: Row> {
     let Info {
         info: info_info, ..
     } = &db.info;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     db.movie
         .with(
-            link.and(keyword.select(keyword_text).eq("sequel"))
+            link.and(keyword.eq("sequel"))
                 .and(production_year.eq(1998))
                 .and(info.select(info_info.is_in(["Sweden", "Germany", "Swedish", "German"])))
                 .and(
-                    complete_cast.select(
-                        subject
-                            .select(compcasttype_text)
-                            .is_in(["cast", "crew"])
-                            .and(status.select(compcasttype_text).eq("complete")),
-                    ),
+                    complete_cast
+                        .select(subject.is_in(["cast", "crew"]).and(status.eq("complete"))),
                 )
                 .and(follow_link(db)),
         )
@@ -4984,10 +3827,6 @@ fn q27c(db: &'static Job) -> impl Drive<R: Row> {
         link,
         ..
     } = &db.movie;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let Company {
         name: company_name, ..
     } = &db.company;
@@ -4997,22 +3836,12 @@ fn q27c(db: &'static Job) -> impl Drive<R: Row> {
     let Info {
         info: info_info, ..
     } = &db.info;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     db.movie
         .with(
-            link.and(keyword.select(keyword_text).eq("sequel"))
+            link.and(keyword.eq("sequel"))
                 .and(production_year.between(1950, 2010))
                 .and(info.select(info_info.is_in(nordic9())))
-                .and(
-                    complete_cast.select(
-                        subject
-                            .select(compcasttype_text)
-                            .eq("cast")
-                            .and(status.select(compcasttype_text).rx(r"^complete")),
-                    ),
-                )
+                .and(complete_cast.select(subject.eq("cast").and(status.rx(r"^complete"))))
                 .and(follow_link(db)),
         )
         .select(
@@ -5033,10 +3862,6 @@ fn q28a(db: &'static Job) -> impl Drive<R: Row> {
         complete_cast,
         ..
     } = &db.movie;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let Company {
         name: company_name, ..
     } = &db.company;
@@ -5051,37 +3876,15 @@ fn q28a(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     db.movie
         .with(
             complete_cast
-                .select(
-                    subject
-                        .select(compcasttype_text)
-                        .eq("crew")
-                        .and(status.select(compcasttype_text).ne("complete+verified")),
-                )
+                .select(subject.eq("crew").and(status.ne("complete+verified")))
                 .and(co_28(db))
-                .and(
-                    info.select(
-                        info_ty
-                            .select(infotype_text)
-                            .eq("countries")
-                            .and(info_info.is_in(nordic10())),
-                    ),
-                )
+                .and(info.select(info_ty.eq("countries").and(info_info.is_in(nordic10()))))
                 .and(dt_28ac(db))
-                .and(keyword.select(keyword_text).is_in(murder4()))
-                .and(kind.select(kind_text).is_in(["movie", "episode"]))
+                .and(keyword.is_in(murder4()))
+                .and(kind.is_in(["movie", "episode"]))
                 .and(production_year.gt(2000)),
         )
         .select(
@@ -5102,10 +3905,6 @@ fn q28b(db: &'static Job) -> impl Drive<R: Row> {
         complete_cast,
         ..
     } = &db.movie;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let Company {
         name: company_name, ..
     } = &db.company;
@@ -5120,37 +3919,21 @@ fn q28b(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     db.movie
         .with(
             complete_cast
-                .select(
-                    subject
-                        .select(compcasttype_text)
-                        .eq("crew")
-                        .and(status.select(compcasttype_text).ne("complete+verified")),
-                )
+                .select(subject.eq("crew").and(status.ne("complete+verified")))
                 .and(co_28(db))
                 .and(
                     info.select(
                         info_ty
-                            .select(infotype_text)
                             .eq("countries")
                             .and(info_info.is_in(["Sweden", "Germany", "Swedish", "German"])),
                     ),
                 )
                 .and(dt_28b(db))
-                .and(keyword.select(keyword_text).is_in(murder4()))
-                .and(kind.select(kind_text).is_in(["movie", "episode"]))
+                .and(keyword.is_in(murder4()))
+                .and(kind.is_in(["movie", "episode"]))
                 .and(production_year.gt(2005)),
         )
         .select(
@@ -5171,10 +3954,6 @@ fn q28c(db: &'static Job) -> impl Drive<R: Row> {
         complete_cast,
         ..
     } = &db.movie;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let Company {
         name: company_name, ..
     } = &db.company;
@@ -5189,37 +3968,15 @@ fn q28c(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     db.movie
         .with(
             complete_cast
-                .select(
-                    subject
-                        .select(compcasttype_text)
-                        .eq("cast")
-                        .and(status.select(compcasttype_text).eq("complete")),
-                )
+                .select(subject.eq("cast").and(status.eq("complete")))
                 .and(co_28(db))
-                .and(
-                    info.select(
-                        info_ty
-                            .select(infotype_text)
-                            .eq("countries")
-                            .and(info_info.is_in(nordic10())),
-                    ),
-                )
+                .and(info.select(info_ty.eq("countries").and(info_info.is_in(nordic10()))))
                 .and(dt_28ac(db))
-                .and(keyword.select(keyword_text).is_in(murder4()))
-                .and(kind.select(kind_text).is_in(["movie", "episode"]))
+                .and(keyword.is_in(murder4()))
+                .and(kind.is_in(["movie", "episode"]))
                 .and(production_year.gt(2005)),
         )
         .select(
@@ -5248,14 +4005,6 @@ fn q29a(db: &'static Job) -> impl Drive<R: Row> {
         character,
         ..
     } = &db.cast;
-    let Character {
-        text: character_text,
-        ..
-    } = &db.character;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let Company { country, .. } = &db.company;
     let CompleteCast {
         status, subject, ..
@@ -5265,13 +4014,6 @@ fn q29a(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name,
         gender,
@@ -5282,29 +4024,19 @@ fn q29a(db: &'static Job) -> impl Drive<R: Row> {
     let PersonInfo {
         ty: personinfo_ty, ..
     } = &db.person_info;
-    let RoleType {
-        text: roletype_text,
-        ..
-    } = &db.role_type;
     db.movie
         .with(
             complete_cast
-                .select(
-                    subject
-                        .select(compcasttype_text)
-                        .eq("cast")
-                        .and(status.select(compcasttype_text).eq("complete+verified")),
-                )
+                .select(subject.eq("cast").and(status.eq("complete+verified")))
                 .and(company.select(country).eq("[us]"))
                 .and(
                     info.select(
                         info_ty
-                            .select(infotype_text)
                             .eq("release dates")
                             .and(info_info.rx(r"^Japan:.*200|^USA:.*200")),
                     ),
                 )
-                .and(keyword.select(keyword_text).eq("computer-animation"))
+                .and(keyword.eq("computer-animation"))
                 .and(title.eq("Shrek 2"))
                 .and(production_year.ge(2000))
                 .and(production_year.le(2010)),
@@ -5313,23 +4045,19 @@ fn q29a(db: &'static Job) -> impl Drive<R: Row> {
             cast.with(
                 cast_note
                     .is_in(voice3())
-                    .and(role.select(roletype_text).eq("actress"))
-                    .and(character.select(character_text).eq("Queen"))
+                    .and(role.eq("actress"))
+                    .and(character.eq("Queen"))
                     .and(
                         person.with(
                             gender
                                 .eq("f")
                                 .and(person_name.rx(r"An"))
                                 .and(alias)
-                                .and(bio.select(personinfo_ty.select(infotype_text).eq("trivia"))),
+                                .and(bio.select(personinfo_ty.eq("trivia"))),
                         ),
                     ),
             )
-            .select(
-                character
-                    .select(character_text)
-                    .and(person.select(person_name)),
-            )
+            .select(character.and(person.select(person_name)))
             .and(title),
         )
 }
@@ -5352,14 +4080,6 @@ fn q29b(db: &'static Job) -> impl Drive<R: Row> {
         character,
         ..
     } = &db.cast;
-    let Character {
-        text: character_text,
-        ..
-    } = &db.character;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let Company { country, .. } = &db.company;
     let CompleteCast {
         status, subject, ..
@@ -5369,13 +4089,6 @@ fn q29b(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name,
         gender,
@@ -5386,29 +4099,13 @@ fn q29b(db: &'static Job) -> impl Drive<R: Row> {
     let PersonInfo {
         ty: personinfo_ty, ..
     } = &db.person_info;
-    let RoleType {
-        text: roletype_text,
-        ..
-    } = &db.role_type;
     db.movie
         .with(
             complete_cast
-                .select(
-                    subject
-                        .select(compcasttype_text)
-                        .eq("cast")
-                        .and(status.select(compcasttype_text).eq("complete+verified")),
-                )
+                .select(subject.eq("cast").and(status.eq("complete+verified")))
                 .and(company.select(country).eq("[us]"))
-                .and(
-                    info.select(
-                        info_ty
-                            .select(infotype_text)
-                            .eq("release dates")
-                            .and(info_info.rx(r"^USA:.*200")),
-                    ),
-                )
-                .and(keyword.select(keyword_text).eq("computer-animation"))
+                .and(info.select(info_ty.eq("release dates").and(info_info.rx(r"^USA:.*200"))))
+                .and(keyword.eq("computer-animation"))
                 .and(title.eq("Shrek 2"))
                 .and(production_year.ge(2000))
                 .and(production_year.le(2005)),
@@ -5417,23 +4114,19 @@ fn q29b(db: &'static Job) -> impl Drive<R: Row> {
             cast.with(
                 cast_note
                     .is_in(voice3())
-                    .and(role.select(roletype_text).eq("actress"))
-                    .and(character.select(character_text).eq("Queen"))
+                    .and(role.eq("actress"))
+                    .and(character.eq("Queen"))
                     .and(
                         person.with(
                             gender
                                 .eq("f")
                                 .and(person_name.rx(r"An"))
                                 .and(alias)
-                                .and(bio.select(personinfo_ty.select(infotype_text).eq("height"))),
+                                .and(bio.select(personinfo_ty.eq("height"))),
                         ),
                     ),
             )
-            .select(
-                character
-                    .select(character_text)
-                    .and(person.select(person_name)),
-            )
+            .select(character.and(person.select(person_name)))
             .and(title),
         )
 }
@@ -5456,14 +4149,6 @@ fn q29c(db: &'static Job) -> impl Drive<R: Row> {
         character,
         ..
     } = &db.cast;
-    let Character {
-        text: character_text,
-        ..
-    } = &db.character;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let Company { country, .. } = &db.company;
     let CompleteCast {
         status, subject, ..
@@ -5473,13 +4158,6 @@ fn q29c(db: &'static Job) -> impl Drive<R: Row> {
         ty: info_ty,
         ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name,
         gender,
@@ -5490,52 +4168,35 @@ fn q29c(db: &'static Job) -> impl Drive<R: Row> {
     let PersonInfo {
         ty: personinfo_ty, ..
     } = &db.person_info;
-    let RoleType {
-        text: roletype_text,
-        ..
-    } = &db.role_type;
     db.movie
         .with(
             complete_cast
-                .select(
-                    subject
-                        .select(compcasttype_text)
-                        .eq("cast")
-                        .and(status.select(compcasttype_text).eq("complete+verified")),
-                )
+                .select(subject.eq("cast").and(status.eq("complete+verified")))
                 .and(company.select(country).eq("[us]"))
                 .and(
                     info.select(
                         info_ty
-                            .select(infotype_text)
                             .eq("release dates")
                             .and(info_info.rx(r"^Japan:.*200|^USA:.*200")),
                     ),
                 )
-                .and(keyword.select(keyword_text).eq("computer-animation"))
+                .and(keyword.eq("computer-animation"))
                 .and(production_year.ge(2000))
                 .and(production_year.le(2010)),
         )
         .select(
             cast.with(
-                cast_note
-                    .is_in(voice4())
-                    .and(role.select(roletype_text).eq("actress"))
-                    .and(
-                        person.with(
-                            gender
-                                .eq("f")
-                                .and(person_name.rx(r"An"))
-                                .and(alias)
-                                .and(bio.select(personinfo_ty.select(infotype_text).eq("trivia"))),
-                        ),
+                cast_note.is_in(voice4()).and(role.eq("actress")).and(
+                    person.with(
+                        gender
+                            .eq("f")
+                            .and(person_name.rx(r"An"))
+                            .and(alias)
+                            .and(bio.select(personinfo_ty.eq("trivia"))),
                     ),
+                ),
             )
-            .select(
-                character
-                    .select(character_text)
-                    .and(person.select(person_name)),
-            )
+            .select(character.and(person.select(person_name)))
             .and(title),
         )
 }
@@ -5556,10 +4217,6 @@ fn q30a(db: &'static Job) -> impl Drive<R: Row> {
         note: cast_note,
         ..
     } = &db.cast;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let CompleteCast {
         status, subject, ..
     } = &db.complete_cast;
@@ -5571,13 +4228,6 @@ fn q30a(db: &'static Job) -> impl Drive<R: Row> {
     let Info {
         info: info_info, ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name,
         gender,
@@ -5588,21 +4238,17 @@ fn q30a(db: &'static Job) -> impl Drive<R: Row> {
             complete_cast
                 .select(
                     subject
-                        .select(compcasttype_text)
                         .is_in(["cast", "crew"])
-                        .and(status.select(compcasttype_text).eq("complete+verified")),
+                        .and(status.eq("complete+verified")),
                 )
                 .and(info.with(gf_horror(db)))
-                .and(keyword.select(keyword_text).is_in(kw7()))
+                .and(keyword.is_in(kw7()))
                 .and(production_year.gt(2000)),
         )
         .select(
             info.with(gf_horror(db))
                 .select(info_info)
-                .and(
-                    data.with(data_ty.select(infotype_text).eq("votes"))
-                        .select(data_text),
-                )
+                .and(data.with(data_ty.eq("votes")).select(data_text))
                 .and(title)
                 .and(
                     cast.with(cast_note.is_in(writer5()).and(person.with(gender.eq("m"))))
@@ -5628,10 +4274,6 @@ fn q30b(db: &'static Job) -> impl Drive<R: Row> {
         note: cast_note,
         ..
     } = &db.cast;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let CompleteCast {
         status, subject, ..
     } = &db.complete_cast;
@@ -5643,13 +4285,6 @@ fn q30b(db: &'static Job) -> impl Drive<R: Row> {
     let Info {
         info: info_info, ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name,
         gender,
@@ -5660,22 +4295,18 @@ fn q30b(db: &'static Job) -> impl Drive<R: Row> {
             complete_cast
                 .select(
                     subject
-                        .select(compcasttype_text)
                         .is_in(["cast", "crew"])
-                        .and(status.select(compcasttype_text).eq("complete+verified")),
+                        .and(status.eq("complete+verified")),
                 )
                 .and(info.with(gf_horror(db)))
-                .and(keyword.select(keyword_text).is_in(kw7()))
+                .and(keyword.is_in(kw7()))
                 .and(production_year.gt(2000))
                 .and(title.rx(r"Freddy|Jason|^Saw")),
         )
         .select(
             info.with(gf_horror(db))
                 .select(info_info)
-                .and(
-                    data.with(data_ty.select(infotype_text).eq("votes"))
-                        .select(data_text),
-                )
+                .and(data.with(data_ty.eq("votes")).select(data_text))
                 .and(title)
                 .and(
                     cast.with(cast_note.is_in(writer5()).and(person.with(gender.eq("m"))))
@@ -5700,10 +4331,6 @@ fn q30c(db: &'static Job) -> impl Drive<R: Row> {
         note: cast_note,
         ..
     } = &db.cast;
-    let CompCastType {
-        text: compcasttype_text,
-        ..
-    } = &db.comp_cast_type;
     let CompleteCast {
         status, subject, ..
     } = &db.complete_cast;
@@ -5715,13 +4342,6 @@ fn q30c(db: &'static Job) -> impl Drive<R: Row> {
     let Info {
         info: info_info, ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name,
         gender,
@@ -5730,22 +4350,14 @@ fn q30c(db: &'static Job) -> impl Drive<R: Row> {
     db.movie
         .with(
             complete_cast
-                .select(
-                    subject
-                        .select(compcasttype_text)
-                        .eq("cast")
-                        .and(status.select(compcasttype_text).eq("complete+verified")),
-                )
+                .select(subject.eq("cast").and(status.eq("complete+verified")))
                 .and(info.with(gf_genre6(db)))
-                .and(keyword.select(keyword_text).is_in(kw7())),
+                .and(keyword.is_in(kw7())),
         )
         .select(
             info.with(gf_genre6(db))
                 .select(info_info)
-                .and(
-                    data.with(data_ty.select(infotype_text).eq("votes"))
-                        .select(data_text),
-                )
+                .and(data.with(data_ty.eq("votes")).select(data_text))
                 .and(title)
                 .and(
                     cast.with(cast_note.is_in(writer5()).and(person.with(gender.eq("m"))))
@@ -5781,13 +4393,6 @@ fn q31a(db: &'static Job) -> impl Drive<R: Row> {
     let Info {
         info: info_info, ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name,
         gender,
@@ -5799,15 +4404,12 @@ fn q31a(db: &'static Job) -> impl Drive<R: Row> {
                 .select(company_name)
                 .rx(r"^Lionsgate")
                 .and(info.with(gf_horror(db)))
-                .and(keyword.select(keyword_text).is_in(kw7())),
+                .and(keyword.is_in(kw7())),
         )
         .select(
             info.with(gf_horror(db))
                 .select(info_info)
-                .and(
-                    data.with(data_ty.select(infotype_text).eq("votes"))
-                        .select(data_text),
-                )
+                .and(data.with(data_ty.eq("votes")).select(data_text))
                 .and(title)
                 .and(
                     cast.with(cast_note.is_in(writer5()).and(person.with(gender.eq("m"))))
@@ -5846,13 +4448,6 @@ fn q31b(db: &'static Job) -> impl Drive<R: Row> {
     let Info {
         info: info_info, ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name,
         gender,
@@ -5867,17 +4462,14 @@ fn q31b(db: &'static Job) -> impl Drive<R: Row> {
                         .and(company_note.rx(r"\(Blu-ray\)")),
                 )
                 .and(info.with(gf_horror(db)))
-                .and(keyword.select(keyword_text).is_in(kw7()))
+                .and(keyword.is_in(kw7()))
                 .and(production_year.gt(2000))
                 .and(title.rx(r"Freddy|Jason|^Saw")),
         )
         .select(
             info.with(gf_horror(db))
                 .select(info_info)
-                .and(
-                    data.with(data_ty.select(infotype_text).eq("votes"))
-                        .select(data_text),
-                )
+                .and(data.with(data_ty.eq("votes")).select(data_text))
                 .and(title)
                 .and(
                     cast.with(cast_note.is_in(writer5()).and(person.with(gender.eq("m"))))
@@ -5913,13 +4505,6 @@ fn q31c(db: &'static Job) -> impl Drive<R: Row> {
     let Info {
         info: info_info, ..
     } = &db.info;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name, ..
     } = &db.person;
@@ -5929,15 +4514,12 @@ fn q31c(db: &'static Job) -> impl Drive<R: Row> {
                 .select(company_name)
                 .rx(r"^Lionsgate")
                 .and(info.with(gf_genre6(db)))
-                .and(keyword.select(keyword_text).is_in(kw7())),
+                .and(keyword.is_in(kw7())),
         )
         .select(
             info.with(gf_genre6(db))
                 .select(info_info)
-                .and(
-                    data.with(data_ty.select(infotype_text).eq("votes"))
-                        .select(data_text),
-                )
+                .and(data.with(data_ty.eq("votes")).select(data_text))
                 .and(title)
                 .and(
                     cast.with(cast_note.is_in(writer5()))
@@ -5955,26 +4537,16 @@ fn q32(db: &'static Job, kw: &'static str) -> impl Drive<R: Row> {
         link,
         ..
     } = &db.movie;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
-    let LinkType {
-        text: linktype_text,
-        ..
-    } = &db.link_type;
     let MovieLink {
         target,
         ty: movielink_ty,
         ..
     } = &db.movie_link;
-    db.movie
-        .with(link.and(keyword.select(keyword_text).eq(kw)))
-        .select(
-            link.select(movielink_ty)
-                .select(linktype_text)
-                .and(title)
-                .and(link.select(target).select(title)),
-        )
+    db.movie.with(link.and(keyword.eq(kw))).select(
+        link.select(movielink_ty)
+            .and(title)
+            .and(link.select(target).select(title)),
+    )
 }
 
 fn q32a(db: &'static Job) -> impl Drive<R: Row> {
@@ -6002,18 +4574,10 @@ fn q33a(db: &'static Job) -> impl Drive<R: Row> {
         ty: data_ty,
         ..
     } = &db.data;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     let MovieLink { target, .. } = &db.movie_link;
     db.movie
         .with(
-            kind.select(kind_text)
-                .eq("tv series")
+            kind.eq("tv series")
                 .and(company.select(country).eq("[us]"))
                 .and(qlink_33a(db)),
         )
@@ -6027,19 +4591,11 @@ fn q33a(db: &'static Job) -> impl Drive<R: Row> {
                         .select(company)
                         .select(company_name),
                 )
-                .and(
-                    data.with(data_ty.select(infotype_text).eq("rating"))
-                        .select(data_text),
-                )
+                .and(data.with(data_ty.eq("rating")).select(data_text))
                 .and(
                     qlink_33a(db).select(target).select(
-                        data.with(
-                            data_ty
-                                .select(infotype_text)
-                                .eq("rating")
-                                .and(data_text.lt("3.0")),
-                        )
-                        .select(data_text),
+                        data.with(data_ty.eq("rating").and(data_text.lt("3.0")))
+                            .select(data_text),
                     ),
                 )
                 .and(title)
@@ -6065,18 +4621,10 @@ fn q33b(db: &'static Job) -> impl Drive<R: Row> {
         ty: data_ty,
         ..
     } = &db.data;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     let MovieLink { target, .. } = &db.movie_link;
     db.movie
         .with(
-            kind.select(kind_text)
-                .eq("tv series")
+            kind.eq("tv series")
                 .and(company.select(country).eq("[nl]"))
                 .and(qlink_33b(db)),
         )
@@ -6090,19 +4638,11 @@ fn q33b(db: &'static Job) -> impl Drive<R: Row> {
                         .select(company)
                         .select(company_name),
                 )
-                .and(
-                    data.with(data_ty.select(infotype_text).eq("rating"))
-                        .select(data_text),
-                )
+                .and(data.with(data_ty.eq("rating")).select(data_text))
                 .and(
                     qlink_33b(db).select(target).select(
-                        data.with(
-                            data_ty
-                                .select(infotype_text)
-                                .eq("rating")
-                                .and(data_text.lt("3.0")),
-                        )
-                        .select(data_text),
+                        data.with(data_ty.eq("rating").and(data_text.lt("3.0")))
+                            .select(data_text),
                     ),
                 )
                 .and(title)
@@ -6128,18 +4668,10 @@ fn q33c(db: &'static Job) -> impl Drive<R: Row> {
         ty: data_ty,
         ..
     } = &db.data;
-    let InfoType {
-        text: infotype_text,
-        ..
-    } = &db.info_type;
-    let Kind {
-        text: kind_text, ..
-    } = &db.kind;
     let MovieLink { target, .. } = &db.movie_link;
     db.movie
         .with(
-            kind.select(kind_text)
-                .is_in(["tv series", "episode"])
+            kind.is_in(["tv series", "episode"])
                 .and(company.select(country).ne("[us]"))
                 .and(qlink_33c(db)),
         )
@@ -6153,19 +4685,11 @@ fn q33c(db: &'static Job) -> impl Drive<R: Row> {
                         .select(company)
                         .select(company_name),
                 )
-                .and(
-                    data.with(data_ty.select(infotype_text).eq("rating"))
-                        .select(data_text),
-                )
+                .and(data.with(data_ty.eq("rating")).select(data_text))
                 .and(
                     qlink_33c(db).select(target).select(
-                        data.with(
-                            data_ty
-                                .select(infotype_text)
-                                .eq("rating")
-                                .and(data_text.lt("3.5")),
-                        )
-                        .select(data_text),
+                        data.with(data_ty.eq("rating").and(data_text.lt("3.5")))
+                            .select(data_text),
                     ),
                 )
                 .and(title)
@@ -6187,9 +4711,9 @@ fn q33c(db: &'static Job) -> impl Drive<R: Row> {
 //            the same Compose — no keyset projection), and also how you
 //            navigate: `cast.select(person).select(person_name)` walks
 //            Movie → Cast → Person → name, one column per hop
-//   .select(keyword_text)  the ID→value hop that `Value` used to elide
-//            behind `keyword.eq(..)`; with no global store to read the
-//            value column from, it is written out
+//            Lookup tables are not hops: `kind`, `keyword`, `role`, `ty`
+//            are dictionary-encoded string columns (`Dict`/`DictSet`),
+//            so `kind.eq("movie")` compares the string directly
 //   .and(b)    product (×)
 //   .and     ∧ — alias for the product; conjunct trees are consumed via
 //            the flat short-circuit `member` (restriction = `.with`)
@@ -6206,13 +4730,10 @@ pub fn q6a_methods(db: &'static Job) -> impl Drive<R: Row> {
         ..
     } = &db.movie;
     let Cast { person, .. } = &db.cast;
-    let Keyword {
-        text: keyword_text, ..
-    } = &db.keyword;
     let Person {
         name: person_name, ..
     } = &db.person;
-    let kw_marvel = || keyword.select(keyword_text).eq("marvel-cinematic-universe");
+    let kw_marvel = || keyword.eq("marvel-cinematic-universe");
     let q = db
         .movie
         .with(production_year.gt(2010).and(kw_marvel()))

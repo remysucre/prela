@@ -137,7 +137,7 @@ member-check `p`, probe `b` — the post-unification spelling of Julia's
 | `r ← s` (l-compose) | `set.group_by(r).select(s)`               | drive-only `GroupBy`, SEMANTICS GENERALIZED vs Julia: the Rust receiver is a ROW-VALUED set (entity table / restriction of one — in general the pk map Key → row), and `set.group_by(r)` denotes `r.inv().with(set.inv())` — drive the set, probe the key `r` per row, emit (key-value, row). Column values are navigated AFTER grouping, so Julia's column-receiver `r ← s` becomes `set.group_by(r).select(s)` (identical over the full table; Julia's form relied on the entity table being the identity, i.e. pk id = row number) |
 | `q ▷ (op, init)`    | `q.fold(init, op)`                        | per-key foldl into an eager cache |
 | `q ▷ f` (callable)  | `q.buf_fold(f)`                           | `BufFold` — per-key whole-multiset reduce: buffer each group, cache `f(group)`. For reducers that don't fit foldl's `(S, R) → S` shape; `▷ (vs -> length(unique(vs)))` ⇒ `.count_distinct()`, the `length ∘ unique` instance |
-| `a == v`            | `a.eq(v)`                                 | on an entity-valued col, auto-elides to its primary scalar field |
+| `a == v`            | `a.eq(v)`                                 | compares the query's range; lookup-table columns are `Dict`-typed and already string-valued |
 | `a != v`            | `a.ne(v)`                                 |  |
 | `>, <, >=, <=`      | `.gt`, `.lt`, `.ge`, `.le`                | Works on i64 and &str (lex) |
 | `a in (v1, …)`      | `a.is_in([v1, …])`                        | any `IntoIterator` — arrays, slices, the named set fns in `super::sets` |
@@ -215,29 +215,28 @@ A field is spelled two ways, by position in the chain:
 `name_pcode_cf` (Person); `country` (Company); `target` (MovieLink);
 `status`, `subject` (CompleteCast).
 
-**Entity-qualified roots** (names that collide across entities): the
-lookup-table labels are uniformly `text` (`Keyword::text`,
-`Kind::text`, `RoleType::text`, `Character::text`,
-`CompanyType::text`, `InfoType::text`, `Data::text`,
-`AkaName::text`, `AkaTitle::text`, `LinkType::text`,
-`CompCastType::text`); plus `Person::name` / `Company::name`,
-`Cast::note` / `Company::note` / `Info::note` / `PersonInfo::note`,
-`Company::ty` / `Info::ty` / `Data::ty` / `PersonInfo::ty` /
-`MovieLink::ty`, and `Info::info` / `PersonInfo::info`.
+**Entity-qualified roots** (names that collide across entities):
+`Person::name` / `Company::name`, `Cast::note` / `Company::note` /
+`Info::note` / `PersonInfo::note`, `Company::ty` / `Info::ty` /
+`Data::ty` / `PersonInfo::ty` / `MovieLink::ty`, `Data::text`, and
+`Info::info` / `PersonInfo::info`.
 
 (Former names: `type_` is now `ty` everywhere — no raw-keyword underscore,
 and field names ARE the cache filenames (`Info_ty.bin`). `Person.info` →
-`bio`, `Person.aka` → `alias`; each lookup table's label column →
-`text`.)
+`bio`, `Person.aka` → `alias`.)
 
-## Primary-field elision — comparisons auto-navigate to the primary
+## Lookup tables are string columns — no elision needed
 
-Julia writes `keyword == "x"` and means "the keyword id, resolved to its
-label, equals x". Rust elides identically: a comparison on an entity-valued
-query auto-navigates to that entity's PRIMARY (first-declared) scalar field
-before comparing. So `keyword.eq("x")` ≡ `keyword.text().eq("x")` — the
-`.text()` is implied. Driven by the `Field`/`Primary` traits in engine.rs;
-the elision is by-construction transparent (same plan as the explicit nav).
+Julia's schema keeps SQL's lookup tables (`kind_type`, `role_type`,
+`info_type`, `keyword`, `char_name`, …) as entities and writes
+`keyword == "x"` for "the keyword id, resolved to its label, equals x".
+Rust has no such entities: each lookup table carried one string and was only
+ever read through the column that referenced it, so that column owns the
+strings. `kind: Dict<Movie>` is the relation movie → kind-string
+(dictionary-encoded: `Movie_kind` codes + `Kind_text` strings, the same two
+cache files), `keyword: DictSet<Movie>` is movie → keyword-strings, and a
+comparison is just a comparison on a string-valued query. Nothing is
+elided and nothing is global.
 
 | Julia                                | Rust                       |
 |--------------------------------------|----------------------------|
@@ -250,16 +249,16 @@ the elision is by-construction transparent (same plan as the explicit nav).
 | `CompleteCast.status == "x"`         | `status.eq("x")`           |
 
 Applies to every comparator (`eq/ne/gt/lt/ge/le/in_v/is_in/rx/nrx/during/
-between`). Two caveats:
+between`). Two notes:
 
-- **Only the PRIMARY field elides.** A non-primary scalar still needs the
-  explicit hop: `Company.country` is `company.country()` (country is not
-  Company's first field), and any navigation used as OUTPUT keeps its nav
-  method (`cast.person().name()`).
-- **Entities without a scalar primary don't elide** (their first field is an
-  entity ref: Cast, MovieLink, CompleteCast, PartSupp, Order, Lineitem) — so
-  `.eq` on their ids won't compile. Compare ids with the non-eliding escape
-  hatch `.filt`, e.g. `Order::customer.filt(|c| c != Dense::NONE)`.
+- **Real entities still need the hop.** `Person`, `Company` and `Movie`
+  have several attributes and are read directly as well as through FKs, so
+  `cast.person` stays id-valued and the query names the attribute:
+  `person.select(person_name).eq("x")`.
+- **Regex over a dictionary column** has a fast path: `keyword.rx_dict(re)`
+  runs the regex once over the string table into a bitset over codes and
+  tests each movie-keyword pair by bit lookup, where `keyword.rx(re)` runs
+  it once per pair.
 
 ## Multi-hop traversal
 

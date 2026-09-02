@@ -94,7 +94,6 @@ fn run_suite<D>(
 fn run_job() {
     let t = std::time::Instant::now();
     let db: &'static job_schema::Job = Box::leak(Box::new(job_schema::load(&cache_dir())));
-    job_schema::register_values(db);
     eprintln!(
         "load: {:.2}s  (movie n={}, person n={})",
         t.elapsed().as_secs_f32(),
@@ -126,7 +125,6 @@ fn run_tpch() {
     // the columns hold `&'static` references (which is what the engine's
     // `Compose`/`Filter` types expect). The cache mmap is leaked anyway.
     let db: &'static tpch_schema::Tpch = Box::leak(Box::new(tpch_schema::load(&cache_dir())));
-    tpch_schema::register_values(db);
     eprintln!(
         "load: {:.2}s  (li n={}, ord n={}, ps n={})",
         t.elapsed().as_secs_f32(),

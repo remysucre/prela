@@ -1,7 +1,6 @@
-use crate::engine::{Id, IntoQuery, SparseUniverse, Universe, Value};
+use crate::engine::{Id, IntoQuery, SparseUniverse, Universe};
 use crate::loader::{Col, Loader, Str, sparse_key};
 use std::path::Path;
-use std::sync::OnceLock;
 
 // =====================================================================
 // Entities
@@ -114,37 +113,6 @@ pub struct Lineitem {
     pub shipinstruct: Col<Lineitem, Str>,
     pub shipmode: Col<Lineitem, Str>,
     pub comment: Col<Lineitem, Str>,
-}
-
-macro_rules! value {
-    ($Db:ty; $($E:ident, $STATIC:ident, $dbfield:ident . $field:ident, $Scalar:ty);* $(;)?) => {
-        $(
-            static $STATIC: OnceLock<&'static Col<$E, $Scalar>> = OnceLock::new();
-            impl Value for $E {
-                type Scalar = $Scalar;
-                type Col = Col<$E, $Scalar>;
-                #[inline]
-                fn value() -> &'static Self::Col {
-                    $STATIC.get().expect("value column read before load()")
-                }
-            }
-        )*
-
-        pub fn register_values(db: &'static $Db) {
-            $(
-                let _ = $STATIC.set(&db.$dbfield.$field);
-            )*
-        }
-    };
-}
-
-value! {
-    Tpch;
-    Region, REGION_VALUE, region.name, Str;
-    Nation, NATION_VALUE, nation.name, Str;
-    Supplier, SUPPLIER_VALUE, supplier.name, Str;
-    Customer, CUSTOMER_VALUE, customer.name, Str;
-    Part, PART_VALUE, part.name, Str;
 }
 
 // =====================================================================
