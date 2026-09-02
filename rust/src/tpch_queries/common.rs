@@ -1,6 +1,6 @@
-// Baseline TPC-H implementations — direct algebraic ports of
-// the historic julia-engine tpch_queries_*.jl — plus the oracles and the registry machinery
-// shared by all variants.
+// Baseline TPC-H implementations — direct algebraic renderings of the
+// TPC-H queries — plus the oracles and the registry machinery shared by
+// all variants.
 //
 // Each query opens by destructuring the entities it touches out of the
 // database (`let Lineitem { shipdate, discount, .. } = &db.lineitem;`).
@@ -9,12 +9,9 @@
 // that collide across entities are renamed at the pattern, which is where
 // the ambiguity actually is.
 //
-// Two spellings changed with the schema macro. Navigation is `.select(col)`
-// rather than a generated method (`order.date()` → `l_order.select(o_date)`),
-// and comparing a foreign key against a label is written out rather than
-// elided through `Value` (`Nation::region.eq("ASIA")` →
-// `n_region.select(r_name).eq("ASIA")`) — there is no global for a
-// no-argument `value()` to read.
+// Navigation is `.select(col)` (`l_order.select(o_date)`), and comparing a
+// foreign key against a label is written out in full
+// (`n_region.select(r_name).eq("ASIA")`).
 //
 // Short oracle strings are inlined as consts; long ones live in the repo at
 // ../oracles/tpch/Q*.txt and are loaded once by `oracle()`.
@@ -58,7 +55,7 @@ pub fn oracle(name: &'static str) -> &'static str {
                 .unwrap_or_else(|e| panic!("read oracle {path}: {e}"));
             m.insert(n, &*s.leak());
         }
-        // Q9 cent-drift: the algebraic version's sum order matches Julia
+        // Q9 cent-drift: the algebraic version's sum order differs from DuckDB's
         // (drifts on both EGYPT 1996 and MOROCCO 1997). Patch both rows.
         let fixed = m["Q9"]
             .replace("EGYPT|1996|47745727.55", "EGYPT|1996|47745727.54")

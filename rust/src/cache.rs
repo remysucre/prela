@@ -79,8 +79,8 @@ fn cast_slice<T>(bytes: &'static [u8], off: usize, len: usize) -> &'static [T] {
 // ===== dense columns (one value per 0-based id) ==========================
 // The `_in` readers are dir-parameterized and generic over the key domain
 // `D: Dense` (and, for FK columns, the value entity tag `T`) — the typed
-// `Loader` instantiates them with `D = Id<E>`; the legacy wrappers
-// below pin `D = usize` and the default `../cache` dir.
+// `Loader` instantiates them with `D = Id<E>`; the wrappers below pin
+// `D = usize` and the default `../cache` dir.
 
 /// Dense i64 column (scalars; dates are pre-parsed yyyymmdd).
 pub fn load_i64_in<D: Dense>(dir: &Path, name: &str) -> VecRel<i64, D> {

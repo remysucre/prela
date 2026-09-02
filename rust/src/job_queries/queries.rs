@@ -1,7 +1,5 @@
-// All 113 JOB queries — one entry per Julia _q(name, oracle) block —
-// plus the method-chain demo. Merged from the former per-template chunk
-// files (t1..t6, demo_methods) into one module; the section comments below
-// mark which slice of queries.jl each block came from.
+// All 113 JOB queries, plus the method-chain demo. The section comments
+// below mark which templates each block covers.
 //
 // Each query takes the loaded database and opens by destructuring the
 // entities it touches (`let Movie { title, keyword, .. } = &db.movie;`).
@@ -18,7 +16,7 @@ use crate::job_queries::sets::{
 use crate::job_schema::*;
 
 pub const ENTRIES: &[super::Entry] = &[
-    // --- t1.rs ---
+    // --- templates 1-5, 11-15, 22 ---
     ("2a", "'Doc'", |db| min_row(q2a(db))),
     ("2d", "& Teller", |db| min_row(q2d(db))),
     ("3b", "300: Rise of an Empire", |db| min_row(q3b(db))),
@@ -80,7 +78,7 @@ pub const ENTRIES: &[super::Entry] = &[
     ("14c", "1.0 || $lowdown", |db| min_row(q14c(db))),
     ("22b", "(empty)", |db| min_row(q22b(db))),
     ("22c", "(empty)", |db| min_row(q22c(db))),
-    // --- t2.rs ---
+    // --- 22d, 5b, 5c, 15a-d, 11c-d, 13d, 6a-f ---
     ("22d", "(#1.1) || 2.0 || 13 Productions", |db| {
         min_row(q22d(db))
     }),
@@ -143,7 +141,7 @@ pub const ENTRIES: &[super::Entry] = &[
         "based-on-comic || & Teller 2 || \"Steff\", Stefanie Oxmann Mcgaha",
         |db| min_row(q6f(db)),
     ),
-    // --- t3.rs ---
+    // --- 7a-c, 8a-d, 9a-d, 10a-c ---
     ("7a", "Antonioni, Michelangelo || Dressed to Kill", |db| {
         min_row(q7a(db))
     }),
@@ -194,7 +192,7 @@ pub const ENTRIES: &[super::Entry] = &[
     ("10c", "Himself || Evil Eyes: Behind the Scenes", |db| {
         min_row(q10c(db))
     }),
-    // --- t4.rs ---
+    // --- templates 16-18 ---
     (
         "16a",
         "Adams, Stan || Carol Burnett vs. Anthony Perkins",
@@ -220,7 +218,7 @@ pub const ENTRIES: &[super::Entry] = &[
     }),
     ("18b", "Horror || 8.1 || Agorable", |db| min_row(q18b(db))),
     ("18c", "Action || 10 || #PostModem", |db| min_row(q18c(db))),
-    // --- t5.rs ---
+    // --- 19a-26c ---
     ("19a", "Angeline, Moriah || Blue Harvest", |db| {
         min_row(q19a(db))
     }),
@@ -290,7 +288,7 @@ pub const ENTRIES: &[super::Entry] = &[
     ("26c", "'Agua' Man || 1.9 || 12 Rounds", |db| {
         min_row(q26c(db))
     }),
-    // --- t6.rs ---
+    // --- 27a-33c ---
     (
         "27a",
         "Det Danske Filminstitut || followed by || Spår i mörker",
@@ -371,7 +369,7 @@ pub const ENTRIES: &[super::Entry] = &[
         "2BE || 495 Productions || 1.3 || 1.0 || A Double Shot at Love || A Double Shot at Love",
         |db| min_row(q33c(db)),
     ),
-    // --- demo_methods.rs ---
+    // --- method-chain demo ---
     (
         "6a/method",
         "marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert",
@@ -379,7 +377,7 @@ pub const ENTRIES: &[super::Entry] = &[
     ),
 ];
 
-// ===== // queries: queries.jl lines 107..413 (templates 1-5, 11-15, 22 — movie-only) (t1.rs) =====
+// ===== queries: templates 1-5, 11-15, 22 — movie-only =====
 
 // q2a–q2d differ only in the company country code.
 fn q2(db: &'static Job, cc: &'static str) -> impl Drive<R: Row> {
@@ -1313,7 +1311,7 @@ fn q22c(db: &'static Job) -> impl Drive<R: Row> {
         )
 }
 
-// ===== // queries: queries.jl lines ~381-588 (22d, 5b, 5c, 15a-d, 11c-d, 13d, 6a-f) (t2.rs) =====
+// ===== queries: 22d, 5b, 5c, 15a-d, 11c-d, 13d, 6a-f =====
 
 fn q22d(db: &'static Job) -> impl Drive<R: Row> {
     let Movie {
@@ -1786,7 +1784,7 @@ fn q6f(db: &'static Job) -> impl Drive<R: Row> {
         .select(kw().and(title).and(cast_name))
 }
 
-// ===== // queries: 7a-c, 8a-d, 9a-d, 10a-c (queries.jl lines 591-753) (t3.rs) =====
+// ===== queries: 7a-c, 8a-d, 9a-d, 10a-c =====
 
 fn q7a(db: &'static Job) -> impl Drive<R: Row> {
     let Movie {
@@ -2361,7 +2359,7 @@ fn q10c(db: &'static Job) -> impl Drive<R: Row> {
         )
 }
 
-// ===== // queries: queries.jl lines 757-856 (templates 16-18) (t4.rs) =====
+// ===== queries: templates 16-18 =====
 
 // q16a/q16d differ only in the episode_nr lower bound.
 fn q16ad(db: &'static Job, lo: i64) -> impl Drive<R: Row> {
@@ -2670,7 +2668,7 @@ fn q18c(db: &'static Job) -> impl Drive<R: Row> {
         )
 }
 
-// ===== // queries: 19a-26c (queries.jl lines 859-1111) (t5.rs) =====
+// ===== queries: 19a-26c =====
 
 fn k_23ab(db: &'static Job) -> impl Query<R = &'static str, D = Id<Movie>> + Drive + Probe {
     let Movie { kind, .. } = &db.movie;
@@ -3587,7 +3585,7 @@ fn q26c(db: &'static Job) -> impl Drive<R: Row> {
         )
 }
 
-// ===== // queries: 27a–33c (queries.jl lines 1114–1394) (t6.rs) =====
+// ===== queries: 27a–33c =====
 
 fn co_28(db: &'static Job) -> impl Query<R = Id<Company>, D = Id<Movie>> + Drive + Probe {
     let Movie { company, .. } = &db.movie;
@@ -4697,8 +4695,8 @@ fn q33c(db: &'static Job) -> impl Drive<R: Row> {
         )
 }
 
-// ===== // Reference example of the method-chain form. Kept as a registered query so
-// `cargo asm` always has a known symbol to inspect. (demo_methods.rs) =====
+// ===== Reference example of the method-chain form. Kept as a registered
+// query so `cargo asm` always has a known symbol to inspect. =====
 
 // q6a — movie : (year > 2010) ∧ (keyword == "marvel-...")
 //             → (keyword == "marvel-...") × title
@@ -4719,7 +4717,7 @@ fn q33c(db: &'static Job) -> impl Drive<R: Row> {
 //            the flat short-circuit `member` (restriction = `.with`)
 //   .or      ∨ — probe-only membership union (drive with `.union`)
 //   .minus   value-bearing difference (key-based member test)
-//   .with    restriction (Julia `:`) — keep rows whose value is a member
+//   .with    restriction — keep rows whose value is a member
 //   .eq / .ne / .gt / .lt / .ge / .le / .is_in / .rx / .nrx  predicates
 pub fn q6a_methods(db: &'static Job) -> impl Drive<R: Row> {
     let Movie {

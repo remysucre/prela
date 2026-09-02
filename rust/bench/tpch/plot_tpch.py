@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # TPC-H SF=1 single-threaded — scatter overlay of "idiomatic" and
 # "optimized" Rust prela vs DuckDB-ST. Idiomatic is the honest baseline
-# (no per-query rewriting; just the algebra ports); optimized hand-encodes
+# (no per-query rewriting; just the plain algebra); optimized hand-encodes
 # the plans a stats-driven optimizer would pick. Diagonal y=x marks parity.
 #
 # Reads warm run-2 timings from data/{idiomatic,optimized}.txt

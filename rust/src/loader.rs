@@ -28,8 +28,6 @@
 // against (src/bin/regen.rs), and it cannot drift from the schema, because
 // it is produced by the schema's own loading code rather than declared
 // alongside it.
-//
-// This replaces the `MANIFEST` const that `schema!` used to generate.
 
 use crate::cache;
 use crate::engine::{Bitset, Dense, DictMultiRel, DictRel, Id, MultiRel, SparseUniverse, Universe, VecRel};
@@ -262,10 +260,10 @@ pub fn sparse_key<T: Dense, E: 'static>(fk: &VecRel<T, Id<E>>) -> SparseKey<E> {
 // Tests — a toy struct schema over a synthetic cache.
 // =====================================================================
 //
-// These replace the two `schema!` tests that went away with the macro
-// (loading every field-type arm, navigating across entities, and the
-// manifest matching the declaration exactly). The schema below is written
-// the way a real one is: `#[derive(IntoQuery)]` structs and one `build`.
+// They cover loading every field-type arm, navigating across entities, and
+// the manifest matching the declaration exactly. The schema below is
+// written the way a real one is: `#[derive(IntoQuery)]` structs and one
+// `build`.
 
 #[cfg(test)]
 mod tests {
@@ -339,7 +337,7 @@ mod tests {
         l.manifest()
     }
 
-    // ----- synthetic cache files (same writers the schema! tests used) ---
+    // ----- synthetic cache files ---------------------------------------
 
     fn write_col(dir: &PathBuf, name: &str, head: [u8; HEADER_LEN], payload: &[u8]) {
         let mut f = File::create(dir.join(format!("{name}.bin"))).unwrap();
@@ -496,7 +494,7 @@ mod tests {
     }
 
     /// A column read at the wrong declared type fails loudly, naming the
-    /// file — the check that used to live in the macro's `@load` arms.
+    /// file.
     #[test]
     #[should_panic(expected = "cache/loader mismatch")]
     fn wrong_declared_type_fails_loudly() {

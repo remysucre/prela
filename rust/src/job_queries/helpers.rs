@@ -1,8 +1,7 @@
 // Terminal continuation: drive a query, fold the lexicographic minimum of
 // each output column independently, and render `a || b || …` (or "(empty)"
 // when no row survived) — the JOB benchmark's MIN(...) projection.
-// Plus the typed shared sub-queries (Julia `let` bindings used by several
-// queries).
+// Plus the typed shared sub-queries used by several queries.
 
 use crate::engine::*;
 use crate::job_schema::*;
@@ -49,7 +48,7 @@ pub fn min_row<Q: Drive>(q: Q) -> String where Q::R: Row {
     }
 }
 
-// ===== shared sub-queries (Julia `let` bindings used by several queries) =
+// ===== shared sub-queries (used by several queries) =====================
 
 // ===== keyword patterns, resolved to ids once ===========================
 /// Companies named *Film*/*Warner*, non-Polish production companies without
@@ -63,10 +62,9 @@ pub fn film_or_warner_co(db: &'static Job) -> impl Query<R = Id<Company>, D = Id
 }
 
 /// The link-type label ("followed by", …) of each movie's "follow"-typed
-/// links — the `lk` binding of queries 21a-c and 27a-c. String-valued like
-/// Julia's `link → (MovieLink.type ~ r"follow")`, which composes through to
-/// the link type's label; here that hop is the explicit
-/// ``, so output products use the result directly.
+/// links — the `lk` binding of queries 21a-c and 27a-c. String-valued: the
+/// hop to the link type's label is explicit here, so output products use
+/// the result directly.
 pub fn follow_link(db: &'static Job) -> impl Query<D = Id<Movie>, R = &'static str> + Drive + Probe {
     let Movie { link, .. } = &db.movie;
     let MovieLink { ty: movielink_ty, .. } = &db.movie_link;

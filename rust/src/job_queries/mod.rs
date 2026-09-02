@@ -1,5 +1,4 @@
-// All 113 JOB queries — one entry per Julia _q(name, oracle) block —
-// plus the method-chain demo. See queries.rs.
+// All 113 JOB queries, plus the method-chain demo. See queries.rs.
 //
 // Each query takes the loaded database and opens by destructuring the
 // entities it touches (`let Movie { title, keyword, .. } = &db.movie;`).

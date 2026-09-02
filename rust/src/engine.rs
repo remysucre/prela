@@ -1229,8 +1229,7 @@ impl<D: Copy + Eq + Hash, S: Copy> Fold<D, S> {
         Fold { cache: m }
     }
 
-    /// Whole-multiset reduce (Julia's BufFold — julia-engine plan.jl
-    /// `build_buffold`): buffer every group into an `SVec`, then compute
+    /// Whole-multiset reduce: buffer every group into an `SVec`, then compute
     /// each cache entry as `f(vs)` over the whole group. For reducers that
     /// don't fit foldl's `(S, R) -> S` shape — count-distinct, median, … —
     /// where `build` is the per-key foldl.
@@ -1625,7 +1624,7 @@ pub trait QueryExt: IntoQuery + Sized {
         Filter { a: self.iq(), p: f }
     }
 
-    /// Half-open range `[lo, hi)` — Julia `during(lo, hi)`.
+    /// Half-open range `[lo, hi)`.
     #[inline(always)]
     fn during(self, lo: ROf<Self>, hi: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1637,7 +1636,7 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    /// Closed range `[lo, hi]` — Julia `lo..hi`.
+    /// Closed range `[lo, hi]`.
     #[inline(always)]
     fn between(self, lo: ROf<Self>, hi: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1881,7 +1880,7 @@ mod tests {
         let c = cast();
         let u3 = Universe::new(3);
         // films-with-cast as an identity relation: restrict the universe by
-        // membership in cast (Julia's `a : b`, the Restrict node).
+        // membership in cast (the Restrict node).
         let people = u3.with(&c);
         assert_eq!(drive_all(&people), vec![(0, 0), (2, 2)]);
         assert!(people.member(0) && !people.member(1));
@@ -2000,8 +1999,7 @@ mod tests {
         // typed fixture columns: movie → kind id, kind → name
         let mk: VecRel<Id<K>, Id<M>> = VecRel::new(vec![Id::new(1), Id::new(0), Id::new(1)]);
         let kname: VecRel<&'static str, Id<K>> = VecRel::new(vec!["alpha", "beta"]);
-        // compose through the typed bridge (Id<K> = Id<K>) — the shape the
-        // schema!-generated nav methods build (`q.kname()` ≡ `q.select(kname)`)
+        // compose through the typed bridge (Id<K> = Id<K>)
         let mut got = Vec::new();
         (&mk).select(&kname).drive(|m, n| got.push((m.0, n)));
         assert_eq!(got, vec![(0, "beta"), (1, "alpha"), (2, "beta")]);
@@ -2028,8 +2026,8 @@ mod tests {
     fn collect_set_restrict_and_map() {
         let f = films();
         let u = Universe::new(31);
-        // Julia's `⩘`: the universe 0..31 restricted by films' collected
-        // value-set {10, 20, 30}
+        // the universe 0..31 restricted by films' collected value-set
+        // {10, 20, 30}
         let w = u.with((&f).collect::<MatSet<_>>());
         assert_eq!(drive_all(&w), vec![(10, 10), (20, 20), (30, 30)]);
         assert!(w.member(10) && !w.member(11));
