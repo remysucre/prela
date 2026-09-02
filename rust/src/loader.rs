@@ -47,11 +47,38 @@ pub type Str = &'static str;
 pub type Col<E, T> = VecRel<T, Id<E>>;
 /// A set-valued (CSR) column of entity `E`.
 pub type Set<E, T> = MultiRel<T, Id<E>>;
-/// A dictionary-encoded string column of entity `E`: what SQL normalises
-/// into a lookup table (`kind_type`) is here just a `Str`-valued column.
-pub type Dict<E> = DictRel<Id<E>>;
-/// A set-valued dictionary-encoded string column of entity `E`.
-pub type DictSet<E> = DictMultiRel<Id<E>>;
+/// A dictionary-encoded column of entity `E`: what SQL normalises into a
+/// lookup table (`kind_type`) is here just a `T`-valued column, stored as
+/// codes plus a table. Strings are the common case, so `T` defaults to it.
+pub type Dict<E, T = Str> = DictRel<T, Id<E>>;
+/// A set-valued dictionary-encoded column of entity `E`.
+pub type DictSet<E, T = Str> = DictMultiRel<T, Id<E>>;
+
+/// A dense payload type the cache can hold, with its physical kind and
+/// reader. This is what lets `l.dict(..)` pick the table reader from the
+/// declared field type.
+pub trait Scalar: Copy + 'static {
+    const KIND: u32;
+    fn load<D: Dense>(dir: &Path, name: &str) -> VecRel<Self, D>;
+}
+impl Scalar for Str {
+    const KIND: u32 = KIND_DENSE_STR;
+    fn load<D: Dense>(dir: &Path, name: &str) -> VecRel<Self, D> {
+        cache::load_strs_in(dir, name)
+    }
+}
+impl Scalar for i64 {
+    const KIND: u32 = KIND_DENSE_I64;
+    fn load<D: Dense>(dir: &Path, name: &str) -> VecRel<Self, D> {
+        cache::load_i64_in(dir, name)
+    }
+}
+impl Scalar for f64 {
+    const KIND: u32 = KIND_DENSE_F64;
+    fn load<D: Dense>(dir: &Path, name: &str) -> VecRel<Self, D> {
+        cache::load_f64_in(dir, name)
+    }
+}
 
 /// Reads columns and remembers which ones it read.
 ///
@@ -148,31 +175,32 @@ impl<'a> Loader<'a> {
         }
     }
 
-    // ===== dictionary-encoded string columns ============================
+    // ===== dictionary-encoded columns ===================================
 
-    /// One string per id: `codes` is a dense word column of codes into the
-    /// string table `strs` (`l.dict("Movie_kind", "Kind_text")`).
-    pub fn dict<E: 'static>(&mut self, codes: &str, strs: &str) -> Dict<E> {
+    /// One entry per id: `codes` is a dense word column of codes into
+    /// `table` (`l.dict("Movie_kind", "Kind_text")`). The table's payload
+    /// type comes from the declared field type.
+    pub fn dict<E: 'static, T: Scalar>(&mut self, codes: &str, table: &str) -> Dict<E, T> {
         let c = match self.note(codes, KIND_DENSE_I64) {
             Some(dir) => cache::load_words_in(dir, codes),
             None => VecRel::new(Vec::new()),
         };
-        DictRel::new(c, self.dict_strs(strs))
+        DictRel::new(c, self.table(table))
     }
 
-    /// Zero or more strings per id: `codes` is a CSR word column.
-    pub fn multi_dict<E: 'static>(&mut self, codes: &str, strs: &str) -> DictSet<E> {
+    /// Zero or more entries per id: `codes` is a CSR word column.
+    pub fn multi_dict<E: 'static, T: Scalar>(&mut self, codes: &str, table: &str) -> DictSet<E, T> {
         let c = match self.note(codes, KIND_CSR_WORDS) {
             Some(dir) => cache::load_multi_words_in(dir, codes),
             None => empty_csr(),
         };
-        DictMultiRel::new(c, self.dict_strs(strs))
+        DictMultiRel::new(c, self.table(table))
     }
 
-    /// The string table of a dictionary column, keyed by code.
-    fn dict_strs(&mut self, name: &str) -> VecRel<Str, usize> {
-        match self.note(name, KIND_DENSE_STR) {
-            Some(dir) => cache::load_strs_in(dir, name),
+    /// The table of a dictionary column, keyed by code.
+    fn table<T: Scalar>(&mut self, name: &str) -> VecRel<T, usize> {
+        match self.note(name, T::KIND) {
+            Some(dir) => T::load(dir, name),
             None => VecRel::new(Vec::new()),
         }
     }

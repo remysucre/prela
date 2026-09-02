@@ -343,139 +343,165 @@ impl<R: Copy, D: Dense> Probe for MultiRel<R, D> {
     }
 }
 
-// ===== DictRel / DictMultiRel — dictionary-encoded string columns ========
+// ===== DictRel / DictMultiRel — dictionary-encoded columns ================
 //
-// A string column stored as `codes` (one per id, or CSR) plus `strs` (one
-// per code). Logically it is the relation id → Str: probing an id looks up
-// its code's string, and predicates apply to the string, so a schema writes
+// A column stored as `codes` (one per id, or CSR) plus a `table` (one value
+// per code). Logically it is the relation id → R: probing an id looks up
+// its code's entry, and predicates apply to the entry, so a schema writes
 // `kind: Dict<Movie>` and a query writes `kind.eq("movie")`. Physically it
 // is the SQL lookup table (`kind_type`) folded into the column that
 // referenced it — the cache files are unchanged (`Movie_kind` codes,
-// `Kind_text` strings), only the schema stops treating `Kind` as an entity.
+// `Kind_text` entries), only the schema stops treating `Kind` as an entity.
 //
-// Codes are `usize`, so a code that is a hole (`NO_ID`) fails the `strs`
-// bounds check and the id probes to nothing, exactly like an FK hole.
+// `R` is any `Copy` payload; strings are the common case (`Dict<E>` defaults
+// to `Str`) and get the regex convenience below. Codes are `usize`, so a
+// code that is a hole (`NO_ID`) fails the `table` bounds check and the id
+// probes to nothing, exactly like an FK hole.
 //
-// The dictionary stays reachable for the one optimisation that needs it:
-// `rx_dict` runs a regex once over `strs` into a bitset over codes and
-// then tests each pair by bit lookup, instead of once per pair.
+// The table stays reachable for the one optimisation that needs it:
+// `dict_filter` evaluates a predicate once per table entry into a bitset
+// over codes and then tests each pair by bit lookup, instead of once per
+// pair.
 
-pub struct DictRel<D: Dense> {
+pub struct DictRel<R: Copy, D: Dense> {
     pub codes: VecRel<usize, D>,
-    pub strs: VecRel<&'static str, usize>,
+    pub table: VecRel<R, usize>,
 }
 
-impl<D: Dense> DictRel<D> {
-    pub fn new(codes: VecRel<usize, D>, strs: VecRel<&'static str, usize>) -> Self {
-        DictRel { codes, strs }
+/// `dict_filter`'s plan: the codes restricted by a bitset, then the table.
+pub type DictFiltered<'a, C, R> = Compose<Restrict<&'a C, Bitset<usize>>, &'a VecRel<R, usize>>;
+
+impl<R: Copy, D: Dense> DictRel<R, D> {
+    pub fn new(codes: VecRel<usize, D>, table: VecRel<R, usize>) -> Self {
+        DictRel { codes, table }
     }
     /// Size of the domain: one slot per entity id.
     pub fn n_dom(&self) -> usize {
         self.codes.n_dom()
     }
-    /// The ids whose string matches `re`, with the string as value. One
-    /// regex pass over the dictionary, then a bit test per id.
-    pub fn rx_dict(&self, re: &str) -> Compose<Restrict<&VecRel<usize, D>, Bitset<usize>>, &VecRel<&'static str, usize>> {
-        (&self.codes).with(dict_mask(&self.strs, re)).select(&self.strs)
+    /// The ids whose entry satisfies `p`, with the entry as value. `p` runs
+    /// once per table entry, then each id costs a bit test.
+    pub fn dict_filter<P: Fn(R) -> bool>(&self, p: P) -> DictFiltered<'_, VecRel<usize, D>, R> {
+        (&self.codes).with(dict_mask(&self.table, p)).select(&self.table)
+    }
+}
+impl<D: Dense> DictRel<&'static str, D> {
+    /// `dict_filter` by regex.
+    pub fn rx_dict(&self, re: &str) -> DictFiltered<'_, VecRel<usize, D>, &'static str> {
+        let re = Regex::new(re).unwrap();
+        self.dict_filter(move |s| re.is_match(s))
     }
 }
 
-impl<D: Dense> Query for DictRel<D> {
+impl<R: Copy, D: Dense> Query for DictRel<R, D> {
     type D = D;
-    type R = &'static str;
+    type R = R;
 }
-impl<D: Dense> Drive for DictRel<D> {
+impl<R: Copy, D: Dense> Drive for DictRel<R, D> {
     #[inline(always)]
-    fn drive<K: FnMut(D, &'static str)>(&self, mut k: K) {
+    fn drive<K: FnMut(D, R)>(&self, mut k: K) {
         for (i, &c) in self.codes.v.iter().enumerate() {
-            if let Some(&s) = self.strs.v.get(c) {
-                k(D::from_idx(i), s);
+            if let Some(&r) = self.table.v.get(c) {
+                k(D::from_idx(i), r);
             }
         }
     }
 }
-impl<D: Dense> Member for DictRel<D> {
+impl<R: Copy, D: Dense> Member for DictRel<R, D> {
     #[inline(always)]
     fn member(&self, x: D) -> bool {
-        self.codes.v.get(x.idx()).is_some_and(|&c| c < self.strs.v.len())
+        self.codes.v.get(x.idx()).is_some_and(|&c| c < self.table.v.len())
     }
 }
-impl<D: Dense> Probe for DictRel<D> {
+impl<R: Copy, D: Dense> Probe for DictRel<R, D> {
     #[inline(always)]
-    fn probe<K: FnMut(&'static str)>(&self, x: D, mut k: K) {
+    fn probe<K: FnMut(R)>(&self, x: D, mut k: K) {
         if let Some(&c) = self.codes.v.get(x.idx()) {
-            if let Some(&s) = self.strs.v.get(c) {
-                k(s);
+            if let Some(&r) = self.table.v.get(c) {
+                k(r);
             }
         }
     }
     #[inline(always)]
-    fn probe_any<K: FnMut(&'static str) -> bool>(&self, x: D, mut k: K) -> bool {
+    fn probe_any<K: FnMut(R) -> bool>(&self, x: D, mut k: K) -> bool {
         match self.codes.v.get(x.idx()) {
-            Some(&c) => self.strs.v.get(c).is_some_and(|&s| k(s)),
+            Some(&c) => self.table.v.get(c).is_some_and(|&r| k(r)),
             None => false,
         }
     }
 }
 
-pub struct DictMultiRel<D: Dense> {
+pub struct DictMultiRel<R: Copy + 'static, D: Dense> {
     pub codes: MultiRel<usize, D>,
-    pub strs: VecRel<&'static str, usize>,
+    pub table: VecRel<R, usize>,
 }
 
-impl<D: Dense> DictMultiRel<D> {
-    pub fn new(codes: MultiRel<usize, D>, strs: VecRel<&'static str, usize>) -> Self {
-        DictMultiRel { codes, strs }
+impl<R: Copy + 'static, D: Dense> DictMultiRel<R, D> {
+    pub fn new(codes: MultiRel<usize, D>, table: VecRel<R, usize>) -> Self {
+        DictMultiRel { codes, table }
     }
     /// Size of the domain: one row (possibly empty) per entity id.
     pub fn n_dom(&self) -> usize {
         self.codes.n_dom()
     }
-    /// The (id, string) pairs whose string matches `re`. One regex pass
-    /// over the dictionary, then a bit test per pair — the difference
+    /// The (id, entry) pairs whose entry satisfies `p`. `p` runs once per
+    /// table entry, then each pair costs a bit test — the difference
     /// between ~0.1 ms and a regex call per movie-keyword pair.
-    pub fn rx_dict(&self, re: &str) -> Compose<Restrict<&MultiRel<usize, D>, Bitset<usize>>, &VecRel<&'static str, usize>> {
-        (&self.codes).with(dict_mask(&self.strs, re)).select(&self.strs)
+    pub fn dict_filter<P: Fn(R) -> bool>(&self, p: P) -> DictFiltered<'_, MultiRel<usize, D>, R> {
+        (&self.codes).with(dict_mask(&self.table, p)).select(&self.table)
+    }
+}
+impl<D: Dense> DictMultiRel<&'static str, D> {
+    /// `dict_filter` by regex.
+    pub fn rx_dict(&self, re: &str) -> DictFiltered<'_, MultiRel<usize, D>, &'static str> {
+        let re = Regex::new(re).unwrap();
+        self.dict_filter(move |s| re.is_match(s))
     }
 }
 
-/// Bitset over the codes of `strs` whose string matches `re`.
-fn dict_mask(strs: &VecRel<&'static str, usize>, re: &str) -> Bitset<usize> {
-    Bitset::over(Universe::<usize>::new(strs.n_dom()), strs.rx(re).inv())
+/// Bitset over the codes of `table` whose entry satisfies `p`.
+fn dict_mask<R: Copy, P: Fn(R) -> bool>(table: &VecRel<R, usize>, p: P) -> Bitset<usize> {
+    let mut b = Bitset::empty(Universe::<usize>::new(table.n_dom()));
+    for (c, &r) in table.v.iter().enumerate() {
+        if p(r) {
+            b.set(c);
+        }
+    }
+    b
 }
 
-impl<D: Dense> Query for DictMultiRel<D> {
+impl<R: Copy + 'static, D: Dense> Query for DictMultiRel<R, D> {
     type D = D;
-    type R = &'static str;
+    type R = R;
 }
-impl<D: Dense> Drive for DictMultiRel<D> {
+impl<R: Copy + 'static, D: Dense> Drive for DictMultiRel<R, D> {
     #[inline(always)]
-    fn drive<K: FnMut(D, &'static str)>(&self, mut k: K) {
+    fn drive<K: FnMut(D, R)>(&self, mut k: K) {
         self.codes.drive(|d, c| {
-            if let Some(&s) = self.strs.v.get(c) {
-                k(d, s);
+            if let Some(&r) = self.table.v.get(c) {
+                k(d, r);
             }
         });
     }
 }
-impl<D: Dense> Member for DictMultiRel<D> {
+impl<R: Copy + 'static, D: Dense> Member for DictMultiRel<R, D> {
     #[inline(always)]
     fn member(&self, x: D) -> bool {
-        self.codes.probe_any(x, |c| c < self.strs.v.len())
+        self.codes.probe_any(x, |c| c < self.table.v.len())
     }
 }
-impl<D: Dense> Probe for DictMultiRel<D> {
+impl<R: Copy + 'static, D: Dense> Probe for DictMultiRel<R, D> {
     #[inline(always)]
-    fn probe<K: FnMut(&'static str)>(&self, x: D, mut k: K) {
+    fn probe<K: FnMut(R)>(&self, x: D, mut k: K) {
         self.codes.probe(x, |c| {
-            if let Some(&s) = self.strs.v.get(c) {
-                k(s);
+            if let Some(&r) = self.table.v.get(c) {
+                k(r);
             }
         });
     }
     #[inline(always)]
-    fn probe_any<K: FnMut(&'static str) -> bool>(&self, x: D, mut k: K) -> bool {
-        self.codes.probe_any(x, |c| self.strs.v.get(c).is_some_and(|&s| k(s)))
+    fn probe_any<K: FnMut(R) -> bool>(&self, x: D, mut k: K) -> bool {
+        self.codes.probe_any(x, |c| self.table.v.get(c).is_some_and(|&r| k(r)))
     }
 }
 
