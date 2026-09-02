@@ -2,28 +2,6 @@ use crate::engine::{Id, IntoQuery};
 use crate::loader::{Col, Dict, DictSet, Key, Loader, Set, Str};
 use std::path::Path;
 
-// =====================================================================
-// Entities
-// =====================================================================
-//
-// An entity struct reads like a SQL table: `id` is the primary key — the
-// identity column over the entity's ids, its id space sized at load — and
-// every other field is a column keyed by those ids, with `Self` naming the
-// entity. `#[derive(IntoQuery)]` implements `IntoQuery for &Self` by
-// returning the `#[primary_key]` field, and `QueryExt` is
-// blanket-implemented over `IntoQuery`, so an entity drives directly:
-// `db.movie.select(..)` resolves by autoref on `&Movie`. Reach for
-// `db.movie.id` itself when you want the `Universe`, e.g. for its `.n`.
-//
-// JOB's lookup tables — kind_type, role_type, char_name, keyword,
-// company_type, info_type, aka_name, aka_title, link_type, comp_cast_type —
-// are not entities here. Each carried one string and was only ever read
-// through the column that referenced it, so that column owns the strings:
-// `kind: Dict<Movie, Str>` is the relation movie → kind-string, and a query
-// writes `kind.eq("movie")` rather than hopping through `kind_type`. The
-// cache files are the same two per column (codes + strings); only the
-// schema stops pretending the string table is a thing of its own.
-
 #[derive(IntoQuery)]
 pub struct Movie {
     #[primary_key]
@@ -116,10 +94,6 @@ pub struct CompleteCast {
     pub subject: Dict<Self, Str>,
 }
 
-// =====================================================================
-// The database
-// =====================================================================
-
 pub struct Job {
     pub movie: Movie,
     pub cast: Cast,
@@ -131,10 +105,6 @@ pub struct Job {
     pub movie_link: MovieLink,
     pub complete_cast: CompleteCast,
 }
-
-// =====================================================================
-// Loading
-// =====================================================================
 
 fn build(l: &mut Loader) -> Job {
     Job {
@@ -215,8 +185,6 @@ pub fn manifest() -> Vec<(String, u32)> {
     let _ = build(&mut l);
     l.manifest()
 }
-
-// ===== tests — typed loading agrees with the untyped loaders =============
 
 #[cfg(test)]
 mod tests {
