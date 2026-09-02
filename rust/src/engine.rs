@@ -348,13 +348,13 @@ impl<R: Copy, D: Dense> Probe for MultiRel<R, D> {
 // A column stored as `codes` (one per id, or CSR) plus a `table` (one value
 // per code). Logically it is the relation id → R: probing an id looks up
 // its code's entry, and predicates apply to the entry, so a schema writes
-// `kind: Dict<Movie>` and a query writes `kind.eq("movie")`. Physically it
+// `kind: Dict<Movie, Str>` and a query writes `kind.eq("movie")`. Physically it
 // is the SQL lookup table (`kind_type`) folded into the column that
 // referenced it — the cache files are unchanged (`Movie_kind` codes,
 // `Kind_text` entries), only the schema stops treating `Kind` as an entity.
 //
-// `R` is any `Copy` payload; strings are the common case (`Dict<E>` defaults
-// to `Str`) and get the regex convenience below. Codes are `usize`, so a
+// `R` is any `Copy` payload; strings are the common case and get the regex
+// convenience below. Codes are `usize`, so a
 // code that is a hole (`NO_ID`) fails the `table` bounds check and the id
 // probes to nothing, exactly like an FK hole.
 //

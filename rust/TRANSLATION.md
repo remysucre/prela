@@ -232,9 +232,9 @@ Julia's schema keeps SQL's lookup tables (`kind_type`, `role_type`,
 `keyword == "x"` for "the keyword id, resolved to its label, equals x".
 Rust has no such entities: each lookup table carried one string and was only
 ever read through the column that referenced it, so that column owns the
-strings. `kind: Dict<Movie>` is the relation movie → kind-string
+strings. `kind: Dict<Movie, Str>` is the relation movie → kind-string
 (dictionary-encoded: `Movie_kind` codes + `Kind_text` strings, the same two
-cache files), `keyword: DictSet<Movie>` is movie → keyword-strings, and a
+cache files), `keyword: DictSet<Movie, Str>` is movie → keyword-strings, and a
 comparison is just a comparison on a string-valued query. Nothing is
 elided and nothing is global.
 

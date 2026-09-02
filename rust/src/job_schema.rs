@@ -18,7 +18,7 @@ use std::path::Path;
 // company_type, info_type, aka_name, aka_title, link_type, comp_cast_type —
 // are not entities here. Each carried one string and was only ever read
 // through the column that referenced it, so that column owns the strings:
-// `kind: Dict<Movie>` is the relation movie → kind-string, and a query
+// `kind: Dict<Movie, Str>` is the relation movie → kind-string, and a query
 // writes `kind.eq("movie")` rather than hopping through `kind_type`. The
 // cache files are the same two per column (codes + strings); only the
 // schema stops pretending the string table is a thing of its own.
@@ -27,10 +27,10 @@ use std::path::Path;
 pub struct Movie {
     pub key: Universe<Id<Movie>>,
     pub title: Col<Movie, Str>,
-    pub kind: Dict<Movie>,
+    pub kind: Dict<Movie, Str>,
     pub production_year: Set<Movie, i64>,
     pub episode_nr: Set<Movie, i64>,
-    pub keyword: DictSet<Movie>,
+    pub keyword: DictSet<Movie, Str>,
     pub company: Set<Movie, Id<Company>>,
     pub cast: Set<Movie, Id<Cast>>,
     pub info: Set<Movie, Id<Info>>,
@@ -38,16 +38,16 @@ pub struct Movie {
     pub complete_cast: Set<Movie, Id<CompleteCast>>,
     pub link: Set<Movie, Id<MovieLink>>,
     pub linked_by: Set<Movie, Id<MovieLink>>,
-    pub aka: DictSet<Movie>,
+    pub aka: DictSet<Movie, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct Cast {
     pub key: Universe<Id<Cast>>,
     pub person: Col<Cast, Id<Person>>,
-    pub role: Dict<Cast>,
+    pub role: Dict<Cast, Str>,
     pub note: Set<Cast, Str>,
-    pub character: DictSet<Cast>,
+    pub character: DictSet<Cast, Str>,
 }
 
 #[derive(IntoQuery)]
@@ -55,7 +55,7 @@ pub struct Person {
     pub key: Universe<Id<Person>>,
     pub name: Col<Person, Str>,
     pub gender: Set<Person, Str>,
-    pub alias: DictSet<Person>,
+    pub alias: DictSet<Person, Str>,
     pub bio: Set<Person, Id<PersonInfo>>,
     pub name_pcode_cf: Set<Person, Str>,
 }
@@ -66,14 +66,14 @@ pub struct Company {
     pub name: Col<Company, Str>,
     pub country: Set<Company, Str>,
     pub note: Set<Company, Str>,
-    pub ty: Dict<Company>,
+    pub ty: Dict<Company, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct Info {
     pub key: Universe<Id<Info>>,
     pub info: Col<Info, Str>,
-    pub ty: Dict<Info>,
+    pub ty: Dict<Info, Str>,
     pub note: Set<Info, Str>,
 }
 
@@ -81,14 +81,14 @@ pub struct Info {
 pub struct Data {
     pub key: Universe<Id<Data>>,
     pub text: Col<Data, Str>,
-    pub ty: Dict<Data>,
+    pub ty: Dict<Data, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct PersonInfo {
     pub key: Universe<Id<PersonInfo>>,
     pub info: Col<PersonInfo, Str>,
-    pub ty: Dict<PersonInfo>,
+    pub ty: Dict<PersonInfo, Str>,
     pub note: Set<PersonInfo, Str>,
 }
 
@@ -96,14 +96,14 @@ pub struct PersonInfo {
 pub struct MovieLink {
     pub key: Universe<Id<MovieLink>>,
     pub target: Col<MovieLink, Id<Movie>>,
-    pub ty: Dict<MovieLink>,
+    pub ty: Dict<MovieLink, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct CompleteCast {
     pub key: Universe<Id<CompleteCast>>,
-    pub status: Dict<CompleteCast>,
-    pub subject: Dict<CompleteCast>,
+    pub status: Dict<CompleteCast, Str>,
+    pub subject: Dict<CompleteCast, Str>,
 }
 
 // =====================================================================

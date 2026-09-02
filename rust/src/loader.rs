@@ -49,10 +49,10 @@ pub type Col<E, T> = VecRel<T, Id<E>>;
 pub type Set<E, T> = MultiRel<T, Id<E>>;
 /// A dictionary-encoded column of entity `E`: what SQL normalises into a
 /// lookup table (`kind_type`) is here just a `T`-valued column, stored as
-/// codes plus a table. Strings are the common case, so `T` defaults to it.
-pub type Dict<E, T = Str> = DictRel<T, Id<E>>;
+/// codes plus a table.
+pub type Dict<E, T> = DictRel<T, Id<E>>;
 /// A set-valued dictionary-encoded column of entity `E`.
-pub type DictSet<E, T = Str> = DictMultiRel<T, Id<E>>;
+pub type DictSet<E, T> = DictMultiRel<T, Id<E>>;
 
 /// A dense payload type the cache can hold, with its physical kind and
 /// reader. This is what lets `l.dict(..)` pick the table reader from the
