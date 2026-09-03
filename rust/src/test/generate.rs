@@ -23,6 +23,11 @@ const TEXT_ALPHABET: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXY
 /// value, but it no longer dominates ordinary generated fixtures.
 const NONEMPTY_TEXT_PROBABILITY: f64 = 0.9;
 
+/// Probability that an ordinary nullable cell is absent. The deliberately
+/// high rate makes NULL-sensitive predicates and joins common rather than
+/// occasional in differential fixtures.
+const NULL_PROBABILITY: f64 = 0.5;
+
 /// One scalar value in the engine-independent logical database.
 ///
 /// `Null` is a logical absence, not a physical sentinel such as `0` or `""`.
@@ -197,9 +202,9 @@ fn draw_cell(
 ) -> Cell {
     use hegel::generators as gs;
 
-    // Nullable columns independently have a 10% chance of absence, in
+    // Nullable columns independently have a 50% chance of absence, in
     // addition to the one mandatory target chosen by `generator`.
-    if nullable && tc.draw(gs::weighted_booleans(0.1)) {
+    if nullable && tc.draw(gs::weighted_booleans(NULL_PROBABILITY)) {
         return Cell::Null;
     }
     match schema.domain(column) {

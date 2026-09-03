@@ -1,14 +1,10 @@
 //! End-to-end Join Order Benchmark differential execution.
 
 use super::run_sql;
-use crate::engine::{Dense, DictMultiRel, DictRel, Drive, Id, MultiRel, QueryExt, Universe, VecRel};
-use crate::job_schema::{
-    self, Cast, Company, CompleteCast, Data, Info, Job, Movie, MovieLink, Person, PersonInfo,
-};
-use crate::loader::Loader;
-use crate::test::generate::Database;
+use crate::job_schema::Job;
+use crate::job_shred::JobShredder;
+use crate::test::generate::{Cell, Database, Row};
 use crate::test::queries::job::{Query, schema};
-use crate::test::relations::Relations;
 use crate::test::result::ResultSet;
 use crate::test::sql::to_sql;
 use std::path::PathBuf;
@@ -96,237 +92,204 @@ fn compare_with_job(
 /// Query logic stays in `job_queries::queries`; this is only the shared data
 /// boundary between the canonical SQL tables and that representation.
 fn adapt_job(database: &Database) -> Result<&'static Job, String> {
-    let db = Relations::new(database);
-    let movie_count = db.table::<Movie>("Title")?.n;
-    let person_count = db.table::<Person>("Name")?.n;
-    let company_count = db.table::<Company>("MovieCompanies")?.n;
-    let cast_count = db.table::<Cast>("CastInfo")?.n;
-    let info_count = db.table::<Info>("MovieInfo")?.n;
-    let data_count = db.table::<Data>("MovieInfoIdx")?.n;
-    let person_info_count = db.table::<PersonInfo>("PersonInfo")?.n;
-    let movie_link_count = db.table::<MovieLink>("MovieLink")?.n;
-    let complete_cast_count = db.table::<CompleteCast>("CompleteCast")?.n;
-
-    let movie_keyword_movie =
-        db.foreign::<schema::MovieKeyword, Movie>("MovieKeyword", "movie_id")?;
-    let movie_keyword_keyword =
-        db.foreign::<schema::MovieKeyword, schema::Keyword>("MovieKeyword", "keyword_id")?;
-    let company_movie = db.foreign::<Company, Movie>("MovieCompanies", "movie_id")?;
-    let company_name =
-        db.foreign::<Company, schema::CompanyName>("MovieCompanies", "company_id")?;
-    let cast_movie = db.foreign::<Cast, Movie>("CastInfo", "movie_id")?;
-    let info_movie = db.foreign::<Info, Movie>("MovieInfo", "movie_id")?;
-    let data_movie = db.foreign::<Data, Movie>("MovieInfoIdx", "movie_id")?;
-    let complete_cast_movie = db.foreign::<CompleteCast, Movie>("CompleteCast", "movie_id")?;
-    let movie_link_movie = db.foreign::<MovieLink, Movie>("MovieLink", "movie_id")?;
-    let movie_link_target = db.foreign::<MovieLink, Movie>("MovieLink", "linked_movie_id")?;
-    let aka_title_movie = db.foreign::<schema::AkaTitle, Movie>("AkaTitle", "movie_id")?;
-    let aka_name_person = db.foreign::<schema::AkaName, Person>("AkaName", "person_id")?;
-    let person_info_person = db.foreign::<PersonInfo, Person>("PersonInfo", "person_id")?;
-
-    let mut job = job_schema::build(&mut Loader::probing());
-    job.movie.id = Universe::new(movie_count);
-    job.cast.id = Universe::new(cast_count);
-    job.person.id = Universe::new(person_count);
-    job.company.id = Universe::new(company_count);
-    job.info.id = Universe::new(info_count);
-    job.data.id = Universe::new(data_count);
-    job.person_info.id = Universe::new(person_info_count);
-    job.movie_link.id = Universe::new(movie_link_count);
-    job.complete_cast.id = Universe::new(complete_cast_count);
-    job.movie.title = db
-        .static_text::<Movie>("Title", "title")?
-        .into_dense("Title.title")?;
-    job.movie.kind = dict_dense(
-        db.foreign::<Movie, schema::KindType>("Title", "kind_id")?
-            .into_dense("Title.kind_id")?,
-        db.static_text::<schema::KindType>("KindType", "kind")?
-            .into_dense("KindType.kind")?,
-    );
-    job.movie.production_year = db
-        .integer::<Movie>("Title", "production_year")?
-        .into_multi();
-    job.movie.episode_nr = db.integer::<Movie>("Title", "episode_nr")?.into_multi();
-    job.movie.keyword = dict_multi(
-        movie_count,
-        (&movie_keyword_movie).inv().select(&movie_keyword_keyword),
-        db.static_text::<schema::Keyword>("Keyword", "keyword")?
-            .into_dense("Keyword.keyword")?,
-    );
-    job.movie.company = materialize_multi(movie_count, (&company_movie).inv());
-    job.movie.cast = materialize_multi(movie_count, (&cast_movie).inv());
-    job.movie.info = materialize_multi(movie_count, (&info_movie).inv());
-    job.movie.data = materialize_multi(movie_count, (&data_movie).inv());
-    job.movie.complete_cast = materialize_multi(movie_count, (&complete_cast_movie).inv());
-    job.movie.link = materialize_multi(movie_count, (&movie_link_movie).inv());
-    job.movie.linked_by = materialize_multi(movie_count, (&movie_link_target).inv());
-    job.movie.aka = dict_multi(
-        movie_count,
-        (&aka_title_movie).inv(),
-        db.static_text::<schema::AkaTitle>("AkaTitle", "title")?
-            .into_dense("AkaTitle.title")?,
-    );
-    job.company.name = materialize_dense(
-        company_count,
-        (&company_name).select(&db.static_text::<schema::CompanyName>("CompanyName", "name")?),
-        "MovieCompanies.company_id -> CompanyName.name",
-    )?;
-    job.company.country = materialize_multi(
-        company_count,
-        (&company_name)
-            .select(&db.static_text::<schema::CompanyName>("CompanyName", "country_code")?),
-    );
-    job.company.note = db
-        .static_text::<Company>("MovieCompanies", "note")?
-        .into_multi();
-    job.company.ty = dict_dense(
-        db.foreign::<Company, schema::CompanyType>("MovieCompanies", "company_type_id")?
-            .into_dense("MovieCompanies.company_type_id")?,
-        db.static_text::<schema::CompanyType>("CompanyType", "kind")?
-            .into_dense("CompanyType.kind")?,
-    );
-    job.cast.person = db
-        .foreign::<Cast, Person>("CastInfo", "person_id")?
-        .into_dense("CastInfo.person_id")?;
-    job.cast.role = dict_dense(
-        db.foreign::<Cast, schema::RoleType>("CastInfo", "role_id")?
-            .into_dense("CastInfo.role_id")?,
-        db.static_text::<schema::RoleType>("RoleType", "role")?
-            .into_dense("RoleType.role")?,
-    );
-    job.cast.note = db.static_text::<Cast>("CastInfo", "note")?.into_multi();
-    job.cast.character = dict_multi(
-        cast_count,
-        db.foreign::<Cast, schema::CharName>("CastInfo", "person_role_id")?,
-        db.static_text::<schema::CharName>("CharName", "name")?
-            .into_dense("CharName.name")?,
-    );
-    job.person.name = db
-        .static_text::<Person>("Name", "name")?
-        .into_dense("Name.name")?;
-    job.person.gender = db.static_text::<Person>("Name", "gender")?.into_multi();
-    job.person.alias = dict_multi(
-        person_count,
-        (&aka_name_person).inv(),
-        db.static_text::<schema::AkaName>("AkaName", "name")?
-            .into_dense("AkaName.name")?,
-    );
-    job.person.bio = materialize_multi(person_count, (&person_info_person).inv());
-    job.person.name_pcode_cf = db
-        .static_text::<Person>("Name", "name_pcode_cf")?
-        .into_multi();
-    job.info.info = db
-        .static_text::<Info>("MovieInfo", "info")?
-        .into_dense("MovieInfo.info")?;
-    job.info.ty = dict_dense(
-        db.foreign::<Info, schema::InfoType>("MovieInfo", "info_type_id")?
-            .into_dense("MovieInfo.info_type_id")?,
-        db.static_text::<schema::InfoType>("InfoType", "info")?
-            .into_dense("InfoType.info")?,
-    );
-    job.info.note = db.static_text::<Info>("MovieInfo", "note")?.into_multi();
-    job.data.text = db
-        .static_text::<Data>("MovieInfoIdx", "info")?
-        .into_dense("MovieInfoIdx.info")?;
-    job.data.ty = dict_dense(
-        db.foreign::<Data, schema::InfoType>("MovieInfoIdx", "info_type_id")?
-            .into_dense("MovieInfoIdx.info_type_id")?,
-        db.static_text::<schema::InfoType>("InfoType", "info")?
-            .into_dense("InfoType.info")?,
-    );
-    job.person_info.info = db
-        .static_text::<PersonInfo>("PersonInfo", "info")?
-        .into_dense("PersonInfo.info")?;
-    job.person_info.ty = dict_dense(
-        db.foreign::<PersonInfo, schema::InfoType>("PersonInfo", "info_type_id")?
-            .into_dense("PersonInfo.info_type_id")?,
-        db.static_text::<schema::InfoType>("InfoType", "info")?
-            .into_dense("InfoType.info")?,
-    );
-    job.person_info.note = db
-        .static_text::<PersonInfo>("PersonInfo", "note")?
-        .into_multi();
-    job.movie_link.target = movie_link_target.into_dense("MovieLink.linked_movie_id")?;
-    job.movie_link.ty = dict_dense(
-        db.foreign::<MovieLink, schema::LinkType>("MovieLink", "link_type_id")?
-            .into_dense("MovieLink.link_type_id")?,
-        db.static_text::<schema::LinkType>("LinkType", "link")?
-            .into_dense("LinkType.link")?,
-    );
-    job.complete_cast.status = dict_dense(
-        db.foreign::<CompleteCast, schema::CompCastType>("CompleteCast", "status_id")?
-            .into_dense("CompleteCast.status_id")?,
-        db.static_text::<schema::CompCastType>("CompCastType", "kind")?
-            .into_dense("CompCastType.kind")?,
-    );
-    job.complete_cast.subject = dict_dense(
-        db.foreign::<CompleteCast, schema::CompCastType>("CompleteCast", "subject_id")?
-            .into_dense("CompleteCast.subject_id")?,
-        db.static_text::<schema::CompCastType>("CompCastType", "kind")?
-            .into_dense("CompCastType.kind")?,
-    );
-
-    Ok(Box::leak(Box::new(job)))
+    Ok(Box::leak(Box::new(shred_job(database)?.into_job())))
 }
 
-fn dict_dense<E: 'static, T: 'static>(
-    codes: VecRel<Id<T>, Id<E>>,
-    table: VecRel<&'static str, Id<T>>,
-) -> DictRel<&'static str, Id<E>> {
-    DictRel::new(
-        VecRel::new(codes.v.into_iter().map(Dense::idx).collect()),
-        VecRel::new(table.v),
-    )
-}
+fn shred_job(database: &Database) -> Result<JobShredder, String> {
+    let mut shred = JobShredder::default();
 
-fn dict_multi<E: 'static, T: 'static, Q>(
-    n: usize,
-    codes: Q,
-    table: VecRel<&'static str, Id<T>>,
-) -> DictMultiRel<&'static str, Id<E>>
-where
-    Q: Drive<D = Id<E>, R = Id<T>>,
-{
-    DictMultiRel::new(
-        materialize_multi(n, codes.map(Dense::idx)),
-        VecRel::new(table.v),
-    )
-}
-
-fn materialize_dense<Q>(n: usize, query: Q, name: &str) -> Result<VecRel<Q::R, Q::D>, String>
-where
-    Q: Drive,
-    Q::D: Dense,
-    Q::R: Copy + 'static,
-{
-    let mut values = vec![None; n];
-    let mut duplicate = None;
-    query.drive(|key, value| {
-        let index = key.idx();
-        if values[index].replace(value).is_some() {
-            duplicate = Some(index);
-        }
-    });
-    if let Some(index) = duplicate {
-        return Err(format!("{name} has multiple values for row {index}"));
+    for row in rows(database, "CompCastType")? {
+        shred.comp_cast_type(
+            integer(row, "CompCastType", "__id")?,
+            text(row, "CompCastType", "kind")?,
+        );
     }
-    let values = values
-        .into_iter()
-        .enumerate()
-        .map(|(index, value)| value.ok_or_else(|| format!("{name} is missing row {index}")))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(VecRel::new(values))
+    for row in rows(database, "CompanyName")? {
+        shred.company_name(
+            integer(row, "CompanyName", "__id")?,
+            text(row, "CompanyName", "name")?,
+            text(row, "CompanyName", "country_code")?,
+        );
+    }
+    for row in rows(database, "CompanyType")? {
+        shred.company_type(
+            integer(row, "CompanyType", "__id")?,
+            text(row, "CompanyType", "kind")?,
+        );
+    }
+    for row in rows(database, "InfoType")? {
+        shred.info_type(
+            integer(row, "InfoType", "__id")?,
+            text(row, "InfoType", "info")?,
+        );
+    }
+    for row in rows(database, "Keyword")? {
+        shred.keyword(
+            integer(row, "Keyword", "__id")?,
+            text(row, "Keyword", "keyword")?,
+        );
+    }
+    for row in rows(database, "KindType")? {
+        shred.kind_type(
+            integer(row, "KindType", "__id")?,
+            text(row, "KindType", "kind")?,
+        );
+    }
+    for row in rows(database, "LinkType")? {
+        shred.link_type(
+            integer(row, "LinkType", "__id")?,
+            text(row, "LinkType", "link")?,
+        );
+    }
+    for row in rows(database, "Name")? {
+        shred.name(
+            integer(row, "Name", "__id")?,
+            text(row, "Name", "name")?,
+            text(row, "Name", "gender")?,
+            text(row, "Name", "name_pcode_cf")?,
+        );
+    }
+    for row in rows(database, "RoleType")? {
+        shred.role_type(
+            integer(row, "RoleType", "__id")?,
+            text(row, "RoleType", "role")?,
+        );
+    }
+    for row in rows(database, "CharName")? {
+        shred.char_name(
+            integer(row, "CharName", "__id")?,
+            text(row, "CharName", "name")?,
+        );
+    }
+    for row in rows(database, "Title")? {
+        shred.title(
+            integer(row, "Title", "__id")?,
+            text(row, "Title", "title")?,
+            integer(row, "Title", "kind_id")?,
+            integer(row, "Title", "production_year")?,
+            integer(row, "Title", "episode_nr")?,
+        );
+    }
+    for row in rows(database, "AkaName")? {
+        shred.aka_name(
+            integer(row, "AkaName", "__id")?,
+            integer(row, "AkaName", "person_id")?,
+            text(row, "AkaName", "name")?,
+        );
+    }
+    for row in rows(database, "AkaTitle")? {
+        shred.aka_title(
+            integer(row, "AkaTitle", "__id")?,
+            integer(row, "AkaTitle", "movie_id")?,
+            text(row, "AkaTitle", "title")?,
+        );
+    }
+    for row in rows(database, "CastInfo")? {
+        shred.cast_info(
+            integer(row, "CastInfo", "__id")?,
+            integer(row, "CastInfo", "person_id")?,
+            integer(row, "CastInfo", "movie_id")?,
+            integer(row, "CastInfo", "person_role_id")?,
+            text(row, "CastInfo", "note")?,
+            integer(row, "CastInfo", "role_id")?,
+        );
+    }
+    for row in rows(database, "CompleteCast")? {
+        shred.complete_cast(
+            integer(row, "CompleteCast", "__id")?,
+            integer(row, "CompleteCast", "movie_id")?,
+            integer(row, "CompleteCast", "subject_id")?,
+            integer(row, "CompleteCast", "status_id")?,
+        );
+    }
+    for row in rows(database, "MovieCompanies")? {
+        shred.movie_company(
+            integer(row, "MovieCompanies", "__id")?,
+            integer(row, "MovieCompanies", "movie_id")?,
+            integer(row, "MovieCompanies", "company_id")?,
+            integer(row, "MovieCompanies", "company_type_id")?,
+            text(row, "MovieCompanies", "note")?,
+        );
+    }
+    for row in rows(database, "MovieInfo")? {
+        shred.movie_info(
+            integer(row, "MovieInfo", "__id")?,
+            integer(row, "MovieInfo", "movie_id")?,
+            integer(row, "MovieInfo", "info_type_id")?,
+            text(row, "MovieInfo", "info")?,
+            text(row, "MovieInfo", "note")?,
+        );
+    }
+    for row in rows(database, "MovieInfoIdx")? {
+        shred.movie_info_idx(
+            integer(row, "MovieInfoIdx", "__id")?,
+            integer(row, "MovieInfoIdx", "movie_id")?,
+            integer(row, "MovieInfoIdx", "info_type_id")?,
+            text(row, "MovieInfoIdx", "info")?,
+        );
+    }
+    for row in rows(database, "MovieKeyword")? {
+        shred.movie_keyword(
+            integer(row, "MovieKeyword", "movie_id")?,
+            integer(row, "MovieKeyword", "keyword_id")?,
+        );
+    }
+    for row in rows(database, "MovieLink")? {
+        shred.movie_link(
+            integer(row, "MovieLink", "__id")?,
+            integer(row, "MovieLink", "movie_id")?,
+            integer(row, "MovieLink", "linked_movie_id")?,
+            integer(row, "MovieLink", "link_type_id")?,
+        );
+    }
+    for row in rows(database, "PersonInfo")? {
+        shred.person_info(
+            integer(row, "PersonInfo", "__id")?,
+            integer(row, "PersonInfo", "person_id")?,
+            integer(row, "PersonInfo", "info_type_id")?,
+            text(row, "PersonInfo", "info")?,
+            text(row, "PersonInfo", "note")?,
+        );
+    }
+
+    Ok(shred)
 }
 
-fn materialize_multi<Q>(n: usize, query: Q) -> MultiRel<Q::R, Q::D>
-where
-    Q: Drive,
-    Q::D: Dense,
-    Q::R: Copy + 'static,
-{
-    let mut pairs = Vec::new();
-    query.drive(|key, value| pairs.push((key.idx(), value)));
-    MultiRel::from_pairs(n, pairs)
+fn rows<'a>(database: &'a Database, entity: &str) -> Result<&'a [Row], String> {
+    database
+        .tables
+        .iter()
+        .find(|table| table.entity == entity)
+        .map(|table| table.rows.as_slice())
+        .ok_or_else(|| format!("generated database has no {entity} table"))
+}
+
+fn integer(row: &Row, entity: &'static str, field: &'static str) -> Result<Option<i64>, String> {
+    match row
+        .cells
+        .get(&crate::test::schema::ColumnId::new(entity, field))
+    {
+        Some(Cell::Null) => Ok(None),
+        Some(Cell::I64(value)) => Ok(Some(*value)),
+        Some(other) => Err(format!("{entity}.{field} expected integer, got {other:?}")),
+        None => Err(format!("generated row has no {entity}.{field}")),
+    }
+}
+
+fn text<'a>(
+    row: &'a Row,
+    entity: &'static str,
+    field: &'static str,
+) -> Result<Option<&'a str>, String> {
+    match row
+        .cells
+        .get(&crate::test::schema::ColumnId::new(entity, field))
+    {
+        Some(Cell::Null) => Ok(None),
+        Some(Cell::Text(value)) => Ok(Some(value)),
+        Some(other) => Err(format!("{entity}.{field} expected text, got {other:?}")),
+        None => Err(format!("generated row has no {entity}.{field}")),
+    }
 }
 
 fn validate_result_width(
@@ -676,25 +639,40 @@ mod tests {
         }
     }
 
+    #[test]
+    fn shared_shredder_cache_matches_in_memory_relations() {
+        let database = fixture();
+        let in_memory = adapt_job(&database).unwrap();
+        let cache_dir = std::env::temp_dir().join(format!(
+            "prela_job_shred_roundtrip_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        let written = shred_job(&database).unwrap().write_cache(&cache_dir);
+        assert_eq!(written.len(), crate::job_schema::manifest().len());
+        let from_cache = Box::leak(Box::new(crate::job_schema::load(&cache_dir)));
+
+        for query in queries::all() {
+            assert_eq!(
+                crate::job_queries::differential(query.name, in_memory).unwrap(),
+                crate::job_queries::differential(query.name, from_cache).unwrap(),
+                "JOB Q{} differs between in-memory and cache shredding",
+                query.name,
+            );
+        }
+
+        std::fs::remove_dir_all(cache_dir).unwrap();
+    }
+
     #[hegel::test(
         test_cases = 100,
         suppress_health_check = [HealthCheck::TooSlow]
     )]
     fn job_queries_match_generated_nullable_fixtures(tc: TestCase) {
-        let database = tc.draw(generator(&schema::SCHEMA));
-        let job = adapt_job(&database).unwrap();
-        for query in queries::all() {
-            let comparison = compare_with_job(&database, query, job).unwrap();
-            assert!(comparison.equivalent(), "{}", comparison.failure(&database));
-        }
-    }
-
-    #[hegel::test(
-        test_cases = 10_000,
-        suppress_health_check = [HealthCheck::TooSlow]
-    )]
-    #[ignore = "run explicitly to search the JOB query suite for counterexamples"]
-    fn differential_job_suite(tc: TestCase) {
         let database = tc.draw(generator(&schema::SCHEMA));
         let job = adapt_job(&database).unwrap();
         for query in queries::all() {

@@ -14,10 +14,12 @@
 extern crate self as prela;
 
 pub mod cache;
+pub mod cache_writer;
 pub mod engine;
 pub mod format;
 pub mod job_queries;
 pub mod job_schema;
+pub mod job_shred;
 pub mod loader;
 #[cfg(all(test, feature = "test"))]
 pub(crate) mod test;

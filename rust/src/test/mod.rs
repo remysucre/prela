@@ -29,9 +29,6 @@
 pub mod generate;
 /// Benchmark SQL and generated mismatch artifacts.
 pub mod queries;
-/// Converts generated database rows into Prela's typed relations, treating
-/// `NULL` as a missing fact.
-pub mod relations;
 /// Typed query results and explicit row-order equality policies.
 pub mod result;
 /// Extensible constraints and the inline rule-syntax translator.

@@ -106,7 +106,55 @@ pub struct Job {
     pub complete_cast: CompleteCast,
 }
 
-pub(crate) fn build(l: &mut Loader) -> Job {
+/// The relation operations needed to assemble the physical JOB schema.
+/// Disk caches and generated in-memory columns implement the same source, so
+/// this `build` function remains the only definition of the `Job` layout.
+pub(crate) trait JobSource {
+    fn key<E: 'static>(&self, name: &str) -> Key<E>;
+    fn strs<E: 'static>(&mut self, name: &str) -> Col<E, Str>;
+    fn ids<T: 'static, E: 'static>(&mut self, name: &str) -> Col<E, Id<T>>;
+    fn dict<E: 'static>(&mut self, codes: &str, table: &str) -> Dict<E, Str>;
+    fn multi_dict<E: 'static>(&mut self, codes: &str, table: &str) -> DictSet<E, Str>;
+    fn multi_ids<T: 'static, E: 'static>(&mut self, name: &str) -> Set<E, Id<T>>;
+    fn multi_i64<E: 'static>(&mut self, name: &str) -> Set<E, i64>;
+    fn multi_strs<E: 'static>(&mut self, name: &str) -> Set<E, Str>;
+}
+
+impl JobSource for Loader<'_> {
+    fn key<E: 'static>(&self, name: &str) -> Key<E> {
+        Loader::key(self, name)
+    }
+
+    fn strs<E: 'static>(&mut self, name: &str) -> Col<E, Str> {
+        Loader::strs(self, name)
+    }
+
+    fn ids<T: 'static, E: 'static>(&mut self, name: &str) -> Col<E, Id<T>> {
+        Loader::ids(self, name)
+    }
+
+    fn dict<E: 'static>(&mut self, codes: &str, table: &str) -> Dict<E, Str> {
+        Loader::dict(self, codes, table)
+    }
+
+    fn multi_dict<E: 'static>(&mut self, codes: &str, table: &str) -> DictSet<E, Str> {
+        Loader::multi_dict(self, codes, table)
+    }
+
+    fn multi_ids<T: 'static, E: 'static>(&mut self, name: &str) -> Set<E, Id<T>> {
+        Loader::multi_ids(self, name)
+    }
+
+    fn multi_i64<E: 'static>(&mut self, name: &str) -> Set<E, i64> {
+        Loader::multi_i64(self, name)
+    }
+
+    fn multi_strs<E: 'static>(&mut self, name: &str) -> Set<E, Str> {
+        Loader::multi_strs(self, name)
+    }
+}
+
+pub(crate) fn build<S: JobSource>(l: &mut S) -> Job {
     Job {
         movie: Movie {
             id: l.key("Movie_title"),

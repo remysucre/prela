@@ -2,7 +2,8 @@
 
 The JOB differential suite generates small nullable IMDb databases, runs all
 113 queries through both DuckDB and Prela, and compares their normalized
-results. Run the commands below from the repository root.
+results. Its Prela side uses the same `job_shred` transformation as production
+`regen job`. Run the commands below from the repository root.
 
 The regular smoke run checks 100 generated databases:
 
@@ -24,11 +25,10 @@ HEGEL_TEST_CASES=1000 cargo test --release --manifest-path rust/Cargo.toml --fea
 One case runs all 113 query pairs. Large limits can therefore take hours in a
 debug build; use `--release` for hundreds or thousands of cases.
 
-The dedicated deep run is ignored by default and uses 10,000 cases unless
-`HEGEL_TEST_CASES` overrides it:
+Use the same test for a deep run by raising `HEGEL_TEST_CASES`:
 
 ```sh
-HEGEL_TEST_CASES=10000 cargo test --release --manifest-path rust/Cargo.toml --features test differential_job_suite -- --ignored --nocapture
+HEGEL_TEST_CASES=10000 cargo test --release --manifest-path rust/Cargo.toml --features test job_queries_match_generated_nullable_fixtures -- --nocapture
 ```
 
 Cargo's test harness does not impose a wall-clock timeout. On Linux, wrap the
@@ -36,10 +36,10 @@ command with `timeout`; on macOS, use GNU coreutils' `gtimeout` if installed:
 
 ```sh
 # Linux: stop after 10 minutes
-timeout 10m env HEGEL_TEST_CASES=10000 cargo test --release --manifest-path rust/Cargo.toml --features test differential_job_suite -- --ignored --nocapture
+timeout 10m env HEGEL_TEST_CASES=10000 cargo test --release --manifest-path rust/Cargo.toml --features test job_queries_match_generated_nullable_fixtures -- --nocapture
 
 # macOS: stop after 10 minutes
-gtimeout 10m env HEGEL_TEST_CASES=10000 cargo test --release --manifest-path rust/Cargo.toml --features test differential_job_suite -- --ignored --nocapture
+gtimeout 10m env HEGEL_TEST_CASES=10000 cargo test --release --manifest-path rust/Cargo.toml --features test job_queries_match_generated_nullable_fixtures -- --nocapture
 ```
 
 When a comparison fails, the test output identifies the query and writes a
