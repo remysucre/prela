@@ -16,3 +16,6 @@ pub type Entry = crate::Entry<crate::job_schema::Job>;
 pub fn all_queries() -> Vec<Entry> {
     queries::ENTRIES.to_vec()
 }
+
+#[cfg(all(test, feature = "test"))]
+pub(crate) use queries::differential;

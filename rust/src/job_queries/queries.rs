@@ -10,6 +10,8 @@
 
 use crate::engine::*;
 use crate::job_queries::helpers::{Row, film_or_warner_co, follow_link, min_row};
+#[cfg(all(test, feature = "test"))]
+use crate::job_queries::helpers::min_result;
 use crate::job_queries::sets::{
     genre6, kw7, kw8, kw10, link3, murder4, nordic8, nordic9, nordic10, voice3, voice4, writer5,
 };
@@ -113,32 +115,32 @@ pub const ENTRIES: &[super::Entry] = &[
     }),
     (
         "6a",
-        "marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert",
+        "marvel-cinematic-universe || Downey Jr., Robert || Iron Man 3",
         |db| min_row(q6a(db)),
     ),
     (
         "6b",
-        "based-on-comic || The Avengers 2 || Downey Jr., Robert",
+        "based-on-comic || Downey Jr., Robert || The Avengers 2",
         |db| min_row(q6b(db)),
     ),
     (
         "6c",
-        "marvel-cinematic-universe || The Avengers 2 || Downey Jr., Robert",
+        "marvel-cinematic-universe || Downey Jr., Robert || The Avengers 2",
         |db| min_row(q6c(db)),
     ),
     (
         "6d",
-        "based-on-comic || 2008 MTV Movie Awards || Downey Jr., Robert",
+        "based-on-comic || Downey Jr., Robert || 2008 MTV Movie Awards",
         |db| min_row(q6d(db)),
     ),
     (
         "6e",
-        "marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert",
+        "marvel-cinematic-universe || Downey Jr., Robert || Iron Man 3",
         |db| min_row(q6e(db)),
     ),
     (
         "6f",
-        "based-on-comic || & Teller 2 || \"Steff\", Stefanie Oxmann Mcgaha",
+        "based-on-comic || \"Steff\", Stefanie Oxmann Mcgaha || & Teller 2",
         |db| min_row(q6f(db)),
     ),
     // --- 7a-c, 8a-d, 9a-d, 10a-c ---
@@ -372,10 +374,135 @@ pub const ENTRIES: &[super::Entry] = &[
     // --- method-chain demo ---
     (
         "6a/method",
-        "marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert",
+        "marvel-cinematic-universe || Downey Jr., Robert || Iron Man 3",
         |db| min_row(q6a_methods(db)),
     ),
 ];
+
+#[cfg(all(test, feature = "test"))]
+pub(crate) fn differential(
+    name: &str,
+    db: &'static Job,
+) -> Result<crate::test::result::ResultSet, String> {
+    let result = match name {
+        "1a" => min_result(q1a(db), 3),
+        "1b" => min_result(q1b(db), 3),
+        "1c" => min_result(q1c(db), 3),
+        "1d" => min_result(q1d(db), 3),
+        "2a" => min_result(q2a(db), 1),
+        "2b" => min_result(q2b(db), 1),
+        "2c" => min_result(q2c(db), 1),
+        "2d" => min_result(q2d(db), 1),
+        "3a" => min_result(q3a(db), 1),
+        "3b" => min_result(q3b(db), 1),
+        "3c" => min_result(q3c(db), 1),
+        "4a" => min_result(q4a(db), 2),
+        "4b" => min_result(q4b(db), 2),
+        "4c" => min_result(q4c(db), 2),
+        "5a" => min_result(q5a(db), 1),
+        "5b" => min_result(q5b(db), 1),
+        "5c" => min_result(q5c(db), 1),
+        "6a" => min_result(q6a(db), 3),
+        "6b" => min_result(q6b(db), 3),
+        "6c" => min_result(q6c(db), 3),
+        "6d" => min_result(q6d(db), 3),
+        "6e" => min_result(q6e(db), 3),
+        "6f" => min_result(q6f(db), 3),
+        "7a" => min_result(q7a(db), 2),
+        "7b" => min_result(q7b(db), 2),
+        "7c" => min_result(q7c(db), 2),
+        "8a" => min_result(q8a(db), 2),
+        "8b" => min_result(q8b(db), 2),
+        "8c" => min_result(q8c(db), 2),
+        "8d" => min_result(q8d(db), 2),
+        "9a" => min_result(q9a(db), 3),
+        "9b" => min_result(q9b(db), 4),
+        "9c" => min_result(q9c(db), 4),
+        "9d" => min_result(q9d(db), 4),
+        "10a" => min_result(q10a(db), 2),
+        "10b" => min_result(q10b(db), 2),
+        "10c" => min_result(q10c(db), 2),
+        "11a" => min_result(q11a(db), 3),
+        "11b" => min_result(q11b(db), 3),
+        "11c" => min_result(q11c(db), 3),
+        "11d" => min_result(q11d(db), 3),
+        "12a" => min_result(q12a(db), 3),
+        "12b" => min_result(q12b(db), 2),
+        "12c" => min_result(q12c(db), 3),
+        "13a" => min_result(q13a(db), 3),
+        "13b" => min_result(q13b(db), 3),
+        "13c" => min_result(q13c(db), 3),
+        "13d" => min_result(q13d(db), 3),
+        "14a" => min_result(q14a(db), 2),
+        "14b" => min_result(q14b(db), 2),
+        "14c" => min_result(q14c(db), 2),
+        "15a" => min_result(q15a(db), 2),
+        "15b" => min_result(q15b(db), 2),
+        "15c" => min_result(q15c(db), 2),
+        "15d" => min_result(q15d(db), 2),
+        "16a" => min_result(q16a(db), 2),
+        "16b" => min_result(q16b(db), 2),
+        "16c" => min_result(q16c(db), 2),
+        "16d" => min_result(q16d(db), 2),
+        // The SQL projects the same MIN(name) twice under distinct aliases.
+        "17a" => min_result(q17a(db).map(|name| (name, name)), 2),
+        "17b" => min_result(q17b(db).map(|name| (name, name)), 2),
+        "17c" => min_result(q17c(db).map(|name| (name, name)), 2),
+        "17d" => min_result(q17d(db), 1),
+        "17e" => min_result(q17e(db), 1),
+        "17f" => min_result(q17f(db), 1),
+        "18a" => min_result(q18a(db), 3),
+        "18b" => min_result(q18b(db), 3),
+        "18c" => min_result(q18c(db), 3),
+        "19a" => min_result(q19a(db), 2),
+        "19b" => min_result(q19b(db), 2),
+        "19c" => min_result(q19c(db), 2),
+        "19d" => min_result(q19d(db), 2),
+        "20a" => min_result(q20a(db), 1),
+        "20b" => min_result(q20b(db), 1),
+        "20c" => min_result(q20c(db), 2),
+        "21a" => min_result(q21a(db), 3),
+        "21b" => min_result(q21b(db), 3),
+        "21c" => min_result(q21c(db), 3),
+        "22a" => min_result(q22a(db), 3),
+        "22b" => min_result(q22b(db), 3),
+        "22c" => min_result(q22c(db), 3),
+        "22d" => min_result(q22d(db), 3),
+        "23a" => min_result(q23a(db), 2),
+        "23b" => min_result(q23b(db), 2),
+        "23c" => min_result(q23c(db), 2),
+        "24a" => min_result(q24a(db), 3),
+        "24b" => min_result(q24b(db), 3),
+        "25a" => min_result(q25a(db), 4),
+        "25b" => min_result(q25b(db), 4),
+        "25c" => min_result(q25c(db), 4),
+        "26a" => min_result(q26a(db), 4),
+        "26b" => min_result(q26b(db), 3),
+        "26c" => min_result(q26c(db), 3),
+        "27a" => min_result(q27a(db), 3),
+        "27b" => min_result(q27b(db), 3),
+        "27c" => min_result(q27c(db), 3),
+        "28a" => min_result(q28a(db), 3),
+        "28b" => min_result(q28b(db), 3),
+        "28c" => min_result(q28c(db), 3),
+        "29a" => min_result(q29a(db), 3),
+        "29b" => min_result(q29b(db), 3),
+        "29c" => min_result(q29c(db), 3),
+        "30a" => min_result(q30a(db), 4),
+        "30b" => min_result(q30b(db), 4),
+        "30c" => min_result(q30c(db), 4),
+        "31a" => min_result(q31a(db), 4),
+        "31b" => min_result(q31b(db), 4),
+        "31c" => min_result(q31c(db), 4),
+        "32a" => min_result(q32a(db), 3),
+        "32b" => min_result(q32b(db), 3),
+        "33a" => min_result(q33a(db), 6),
+        "33b" => min_result(q33b(db), 6),
+        "33c" => min_result(q33c(db), 6),
+        _ => return Err(format!("unknown JOB query {name}")),
+    };
+    Ok(result)
+}
 
 // ===== queries: templates 1-5, 11-15, 22 — movie-only =====
 
@@ -1724,7 +1851,7 @@ fn q6_marvel(db: &'static Job, year: i64) -> impl Drive<R: Row> {
         .rx(r"Downey.*Robert");
     db.movie
         .with(production_year.gt(year).and(kw()))
-        .select(kw().and(title).and(downey))
+        .select(kw().and(downey).and(title))
 }
 
 fn q6_comic(db: &'static Job, year: i64) -> impl Drive<R: Row> {
@@ -1746,7 +1873,7 @@ fn q6_comic(db: &'static Job, year: i64) -> impl Drive<R: Row> {
         .rx(r"Downey.*Robert");
     db.movie
         .with(production_year.gt(year).and(kw()))
-        .select(kw().and(title).and(downey))
+        .select(kw().and(downey).and(title))
 }
 
 fn q6a(db: &'static Job) -> impl Drive<R: Row> {
@@ -1781,7 +1908,7 @@ fn q6f(db: &'static Job) -> impl Drive<R: Row> {
     let cast_name = cast.select(person).select(person_name);
     db.movie
         .with(production_year.gt(2000).and(kw()))
-        .select(kw().and(title).and(cast_name))
+        .select(kw().and(cast_name).and(title))
 }
 
 // ===== queries: 7a-c, 8a-d, 9a-d, 10a-c =====

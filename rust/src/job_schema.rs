@@ -106,7 +106,7 @@ pub struct Job {
     pub complete_cast: CompleteCast,
 }
 
-fn build(l: &mut Loader) -> Job {
+pub(crate) fn build(l: &mut Loader) -> Job {
     Job {
         movie: Movie {
             id: l.key("Movie_title"),

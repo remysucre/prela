@@ -12,16 +12,27 @@ pub trait Row: Copy {
     fn col_min(self, other: Self) -> Self;
     /// Append each column, formatted, to `cols`.
     fn push_cols(self, cols: &mut Vec<String>);
+    /// Append each column without losing its scalar type.
+    #[cfg(all(test, feature = "test"))]
+    fn push_result_cells(self, cells: &mut Vec<crate::test::result::ResultCell>);
 }
 
 impl Row for &'static str {
     fn col_min(self, other: Self) -> Self { if self <= other { self } else { other } }
     fn push_cols(self, cols: &mut Vec<String>) { cols.push(self.to_string()); }
+    #[cfg(all(test, feature = "test"))]
+    fn push_result_cells(self, cells: &mut Vec<crate::test::result::ResultCell>) {
+        cells.push(crate::test::result::ResultCell::Text(self.to_owned()));
+    }
 }
 
 impl Row for i64 {
     fn col_min(self, other: Self) -> Self { self.min(other) }
     fn push_cols(self, cols: &mut Vec<String>) { cols.push(self.to_string()); }
+    #[cfg(all(test, feature = "test"))]
+    fn push_result_cells(self, cells: &mut Vec<crate::test::result::ResultCell>) {
+        cells.push(crate::test::result::ResultCell::Integer(i128::from(self)));
+    }
 }
 
 impl<A: Row, B: Row> Row for (A, B) {
@@ -31,6 +42,11 @@ impl<A: Row, B: Row> Row for (A, B) {
     fn push_cols(self, cols: &mut Vec<String>) {
         self.0.push_cols(cols);
         self.1.push_cols(cols);
+    }
+    #[cfg(all(test, feature = "test"))]
+    fn push_result_cells(self, cells: &mut Vec<crate::test::result::ResultCell>) {
+        self.0.push_result_cells(cells);
+        self.1.push_result_cells(cells);
     }
 }
 
@@ -46,6 +62,32 @@ pub fn min_row<Q: Drive>(q: Q) -> String where Q::R: Row {
             cols.join(" || ")
         }
     }
+}
+
+#[cfg(all(test, feature = "test"))]
+pub fn min_result<Q: Drive>(q: Q, width: usize) -> crate::test::result::ResultSet
+where
+    Q::R: Row,
+{
+    use crate::test::result::{ResultCell, ResultSet};
+
+    let mut minimum: Option<Q::R> = None;
+    q.drive(|_, value| {
+        minimum = Some(match minimum {
+            Some(old) => old.col_min(value),
+            None => value,
+        })
+    });
+    let row = match minimum {
+        None => vec![ResultCell::Null; width],
+        Some(row) => {
+            let mut values = Vec::with_capacity(width);
+            row.push_result_cells(&mut values);
+            assert_eq!(values.len(), width);
+            values
+        }
+    };
+    ResultSet::from_rows([row])
 }
 
 // ===== shared sub-queries (used by several queries) =====================

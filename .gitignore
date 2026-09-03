@@ -7,14 +7,25 @@ data/
 
 # Rust build artifacts
 rust/target/
+rust/.hegel/
+rust/src/test/queries/job/*/mismatch.sql
 schema_experiments/target/
 schema_sandbox/target/
+
+# Local Haskell tooling and build artifacts
+/cabal.project
+/hie.yaml
+/dist-newstyle/
 
 # Zig build artifacts
 zig/zig-out/
 zig/.zig-cache/
 
+# Local Lean experiment and build artifacts
+/lean/
+
 # Editor / LyX backups
+/.vscode/
 *~
 *.swp
 .DS_Store
@@ -24,3 +35,10 @@ notes/
 sandbox/
 .claude/worktrees
 rust/bench/__pycache__
+\#prela.lyx#/
+haskell/dist-newstyle/
+
+# Local editor and generated build output
+.vscode/
+dist-newstyle/
+lean/.lake/

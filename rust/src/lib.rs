@@ -7,6 +7,8 @@
 //     cache from parquet and verifies its outputs against those schemas'
 //     `manifest()` lists.
 
+#![recursion_limit = "256"]
+
 // `#[derive(IntoQuery)]` (macros/) expands to `::prela::engine::..` paths so it works
 // from any crate; this alias makes them resolve inside prela itself too.
 extern crate self as prela;
@@ -17,6 +19,8 @@ pub mod format;
 pub mod job_queries;
 pub mod job_schema;
 pub mod loader;
+#[cfg(all(test, feature = "test"))]
+pub(crate) mod test;
 pub mod tpch_queries;
 pub mod tpch_schema;
 
