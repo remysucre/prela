@@ -8,11 +8,11 @@ use crate::job_schema::*;
 
 /// One typed scalar returned by the feature-gated query-result hook.
 #[cfg(feature = "test")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Result {
     Null,
     Integer(i64),
-    Text(&'static str),
+    Text(String),
 }
 
 /// An output-row shape: scalar columns and nested `Prod` tuples thereof.
@@ -35,7 +35,7 @@ impl Row for &'static str {
     fn push_cols(self, cols: &mut Vec<String>) { cols.push(self.to_string()); }
     #[cfg(feature = "test")]
     fn push_result_cells(self, cells: &mut Vec<Result>) {
-        cells.push(Result::Text(self));
+        cells.push(Result::Text(self.to_owned()));
     }
 }
 

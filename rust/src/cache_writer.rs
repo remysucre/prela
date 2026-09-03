@@ -5,6 +5,7 @@
 //! the on-disk encoding therefore have one implementation.
 
 use crate::format::{HEADER_LEN, KIND_CSR_STR, KIND_CSR_WORDS, KIND_DENSE_STR, align8, header};
+#[cfg(feature = "test")]
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -241,57 +242,82 @@ impl CacheColumn {
         }
     }
 
+    #[cfg(feature = "test")]
     fn into_memory(self) -> MemoryColumn {
         match self {
             Self::DenseWords { values, .. } => MemoryColumn::DenseWords(values),
             Self::DenseStrings { offsets, bytes } => {
-                MemoryColumn::DenseStrings(strings(offsets, bytes))
+                let (bytes, values) = strings(offsets, bytes);
+                MemoryColumn::DenseStrings { bytes, values }
             }
             Self::CsrWords { offsets, values } => MemoryColumn::CsrWords {
-                offsets: Box::leak(offsets.into_boxed_slice()),
-                values: Box::leak(values.into_boxed_slice()),
+                offsets: offsets.into_boxed_slice(),
+                values: values.into_boxed_slice(),
             },
             Self::CsrStrings {
                 row_offsets,
                 string_offsets,
                 bytes,
-            } => MemoryColumn::CsrStrings {
-                offsets: Box::leak(row_offsets.into_boxed_slice()),
-                values: Box::leak(strings(string_offsets, bytes).into_boxed_slice()),
-            },
+            } => {
+                let (bytes, values) = strings(string_offsets, bytes);
+                MemoryColumn::CsrStrings {
+                    offsets: row_offsets.into_boxed_slice(),
+                    bytes,
+                    values,
+                }
+            }
         }
     }
 }
 
-fn strings(offsets: Vec<u32>, bytes: Vec<u8>) -> Vec<&'static str> {
-    let bytes = Box::leak(bytes.into_boxed_slice());
-    offsets
+#[cfg(feature = "test")]
+fn strings(offsets: Vec<u32>, bytes: Vec<u8>) -> (Box<[u8]>, Box<[&'static str]>) {
+    let bytes = bytes.into_boxed_slice();
+    let values = offsets
         .windows(2)
         .map(|window| {
-            let value = &bytes[window[0] as usize..window[1] as usize];
+            // The boxed bytes have a stable address and are retained in the
+            // same `MemoryColumn` as these views. `OwnedJob` ensures the Job
+            // using them is dropped before the column storage.
+            let value = unsafe {
+                std::slice::from_raw_parts(
+                    bytes.as_ptr().add(window[0] as usize),
+                    (window[1] - window[0]) as usize,
+                )
+            };
             unsafe { std::str::from_utf8_unchecked(value) }
         })
-        .collect()
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+    (bytes, values)
 }
 
-pub enum MemoryColumn {
+#[cfg(feature = "test")]
+pub(crate) enum MemoryColumn {
     DenseWords(Vec<u64>),
-    DenseStrings(Vec<&'static str>),
+    DenseStrings {
+        #[allow(dead_code)]
+        bytes: Box<[u8]>,
+        values: Box<[&'static str]>,
+    },
     CsrWords {
-        offsets: &'static [u32],
-        values: &'static [u64],
+        offsets: Box<[u32]>,
+        values: Box<[u64]>,
     },
     CsrStrings {
-        offsets: &'static [u32],
-        values: &'static [&'static str],
+        offsets: Box<[u32]>,
+        #[allow(dead_code)]
+        bytes: Box<[u8]>,
+        values: Box<[&'static str]>,
     },
 }
 
+#[cfg(feature = "test")]
 impl MemoryColumn {
     pub fn n_dom(&self) -> usize {
         match self {
             Self::DenseWords(values) => values.len(),
-            Self::DenseStrings(values) => values.len(),
+            Self::DenseStrings { values, .. } => values.len(),
             Self::CsrWords { offsets, .. } | Self::CsrStrings { offsets, .. } => offsets.len() - 1,
         }
     }
@@ -321,7 +347,8 @@ impl CacheColumns {
         written
     }
 
-    pub fn into_memory(self) -> BTreeMap<String, MemoryColumn> {
+    #[cfg(feature = "test")]
+    pub(crate) fn into_memory(self) -> BTreeMap<String, MemoryColumn> {
         self.columns
             .into_iter()
             .map(|(name, column)| (name, column.into_memory()))

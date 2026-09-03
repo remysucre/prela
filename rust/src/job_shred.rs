@@ -4,12 +4,21 @@
 //! same row methods below. A missing (`None`) value emits no pair, which is the
 //! single definition of how SQL `NULL` is represented by the JOB relations.
 
-use crate::cache_writer::{CacheColumn, CacheColumns, MemoryColumn, StringColumn, WordColumn};
+use crate::cache_writer::{CacheColumn, StringColumn, WordColumn};
+#[cfg(feature = "test")]
+use crate::cache_writer::{CacheColumns, MemoryColumn};
+#[cfg(feature = "test")]
 use crate::engine::{DictMultiRel, DictRel, Id, MultiRel, Universe, VecRel};
 use crate::format::{KIND_DENSE_I64, NO_ID_WORD};
+#[cfg(feature = "test")]
 use crate::job_schema::{Job, JobSource};
+#[cfg(feature = "test")]
 use crate::loader::{Col, Dict, DictSet, Key, Set, Str};
-use std::collections::{BTreeMap, HashMap};
+#[cfg(feature = "test")]
+use std::any::Any;
+#[cfg(feature = "test")]
+use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::path::Path;
 
 fn internal(id: i64) -> usize {
@@ -359,10 +368,17 @@ impl JobShredder {
         }
     }
 
-    /// Materialize the shredded pairs directly as the production JOB schema.
-    pub fn into_job(self) -> Job {
+    /// Materialize the shredded pairs directly as an owned production JOB
+    /// schema. The wrapper retains the backing storage borrowed by its CSR
+    /// relations and string values.
+    #[cfg(feature = "test")]
+    pub fn into_job(self) -> OwnedJob {
         let mut source = MemoryJobSource::new(self.into_columns());
-        crate::job_schema::build(&mut source)
+        let job = crate::job_schema::build(&mut source);
+        OwnedJob {
+            job,
+            _source: source,
+        }
     }
 
     /// Write the same shredded pairs in the production cache format.
@@ -378,6 +394,7 @@ impl JobShredder {
 
     /// Finalize every logical pair stream once. Both the in-memory source and
     /// the cache writer consume this exact named physical-column collection.
+    #[cfg(feature = "test")]
     fn into_columns(self) -> CacheColumns {
         let mut columns = CacheColumns::default();
         self.emit_columns(|name, column| columns.push(name, column));
@@ -602,14 +619,40 @@ struct Sizes {
     comp_cast_type: usize,
 }
 
-struct MemoryJobSource {
-    columns: BTreeMap<String, MemoryColumn>,
+/// An in-memory JOB and all allocations referenced by its relations.
+///
+/// Field order matters: Rust drops fields in declaration order, so `job` is
+/// gone before `_source` releases the buffers to which it contains views.
+#[cfg(feature = "test")]
+pub struct OwnedJob {
+    job: Job,
+    _source: MemoryJobSource,
 }
 
+#[cfg(feature = "test")]
+impl OwnedJob {
+    /// Run a differential query without exposing the schema's internally
+    /// lifetime-extended string views.
+    pub fn differential(
+        &self,
+        name: &str,
+    ) -> Result<Vec<crate::job_queries::helpers::Result>, String> {
+        crate::job_queries::differential(name, &self.job)
+    }
+}
+
+#[cfg(feature = "test")]
+struct MemoryJobSource {
+    columns: BTreeMap<String, MemoryColumn>,
+    derived: Vec<Box<dyn Any>>,
+}
+
+#[cfg(feature = "test")]
 impl MemoryJobSource {
     fn new(columns: CacheColumns) -> Self {
         Self {
             columns: columns.into_memory(),
+            derived: Vec::new(),
         }
     }
 
@@ -628,26 +671,48 @@ impl MemoryJobSource {
 
     fn dense_strings(&self, name: &str) -> &[&'static str] {
         match self.column(name) {
-            MemoryColumn::DenseStrings(values) => values,
+            MemoryColumn::DenseStrings { values, .. } => values,
             _ => panic!("{name} is not a dense string column"),
         }
     }
 
     fn multi_words(&self, name: &str) -> (&'static [u32], &'static [u64]) {
         match self.column(name) {
-            MemoryColumn::CsrWords { offsets, values } => (offsets, values),
+            MemoryColumn::CsrWords { offsets, values } => unsafe {
+                (extend_slice(offsets), extend_slice(values))
+            },
             _ => panic!("{name} is not a CSR word column"),
         }
     }
 
     fn multi_strings(&self, name: &str) -> (&'static [u32], &'static [&'static str]) {
         match self.column(name) {
-            MemoryColumn::CsrStrings { offsets, values } => (offsets, values),
+            MemoryColumn::CsrStrings {
+                offsets, values, ..
+            } => unsafe { (extend_slice(offsets), extend_slice(values)) },
             _ => panic!("{name} is not a CSR string column"),
         }
     }
+
+    fn keep<T: 'static>(&mut self, values: Vec<T>) -> &'static [T] {
+        let values = values.into_boxed_slice();
+        // SAFETY: `derived` retains this box until its enclosing `OwnedJob`
+        // has dropped the schema that contains the returned view.
+        let slice = unsafe { std::slice::from_raw_parts(values.as_ptr(), values.len()) };
+        self.derived.push(Box::new(values));
+        slice
+    }
 }
 
+/// Extend a view into storage owned by `MemoryJobSource`. These references are
+/// used only inside the associated `OwnedJob`, whose field order guarantees
+/// that the relations are destroyed before their storage.
+#[cfg(feature = "test")]
+unsafe fn extend_slice<T>(slice: &[T]) -> &'static [T] {
+    unsafe { std::slice::from_raw_parts(slice.as_ptr(), slice.len()) }
+}
+
+#[cfg(feature = "test")]
 impl JobSource for MemoryJobSource {
     fn key<E: 'static>(&self, name: &str) -> Key<E> {
         Universe::new(self.column(name).n_dom())
@@ -684,8 +749,9 @@ impl JobSource for MemoryJobSource {
             .iter()
             .map(|&value| value as usize)
             .collect::<Vec<_>>();
+        let values = self.keep(values);
         DictMultiRel::new(
-            MultiRel::from_csr(offsets, Box::leak(values.into_boxed_slice())),
+            MultiRel::from_csr(offsets, values),
             VecRel::new(self.dense_strings(table).to_vec()),
         )
     }
@@ -696,13 +762,15 @@ impl JobSource for MemoryJobSource {
             .iter()
             .map(|&value| Id::new(value as usize))
             .collect::<Vec<_>>();
-        MultiRel::from_csr(offsets, Box::leak(values.into_boxed_slice()))
+        let values = self.keep(values);
+        MultiRel::from_csr(offsets, values)
     }
 
     fn multi_i64<E: 'static>(&mut self, name: &str) -> Set<E, i64> {
         let (offsets, values) = self.multi_words(name);
         let values = values.iter().map(|&value| value as i64).collect::<Vec<_>>();
-        MultiRel::from_csr(offsets, Box::leak(values.into_boxed_slice()))
+        let values = self.keep(values);
+        MultiRel::from_csr(offsets, values)
     }
 
     fn multi_strs<E: 'static>(&mut self, name: &str) -> Set<E, Str> {

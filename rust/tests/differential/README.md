@@ -1,12 +1,20 @@
-# Differential tests
+# PBT for Prela
 
-The JOB differential suite generates small nullable IMDb databases, runs all
-113 queries through both DuckDB and Prela, and compares their normalized
-results.
+This is the differential testing harness for Prela. It's probably buggy, for which I apologize in advance.
+It generates small databases using [Hegel](https://hegel.dev), a new PBT tool
+written in Rust. These databases are *schema-directed*, meaning that their structure is dictated by the shape of an
+existing schema, in this case the JOB schema. It's also possible to add some additional refinement (e.g., specify 
+that a `String` should be between 1 and 7 characters).
+
+Provided this information, Hegel generates a database in a generic representation. This representation is then
+converted to both SQL and Prela-style databases. Each of the 113 job queries run against each generated database
+in both SQL and Prela; any mismatch is logged to the relevant query subdirectory of the form `tests/differential/queries/job/q*/mismatch.sql`, with Hegel automatically shrinking the error-producing example.
+
+You can run it like this:
 
 ```sh
 cargo test --manifest-path rust/Cargo.toml --features test --test differential \
-  job_queries_match_generated_nullable_fixtures -- --nocapture
+  prela_matches_duckdb_on_generated_job_databases -- --nocapture
 ```
 
 Run it from the repository root. One case runs all 113 query pairs; the default
@@ -25,34 +33,12 @@ yourself with `timeout` (GNU coreutils' `gtimeout` on macOS):
 timeout 10m env HEGEL_TEST_CASES=10000 cargo test --release ...
 ```
 
-Each case leaks the `&'static` Prela database it shreds — the engine requires
-that lifetime — so memory grows linearly in the case count. It is a few KB per
-case, which is why a 10,000-case run is fine and an unbounded one is not.
+Each case owns the Prela database it shreds and drops it after all 113 queries
+finish. The query registry still uses `&'static` internally, but the
+differential entry point scopes that lifetime extension to synchronous query
+evaluation and copies result strings before returning. Memory therefore stays
+bounded by the active case rather than growing with the case count.
 
-When a comparison fails, the test output identifies the query and writes a
-reproduction to that query's
-`tests/differential/queries/job/q*/mismatch.sql` file.
+### What now?
 
-## What the suite does and does not cover
-
-It covers query semantics and the `job_shred` transformation, which is the same
-code `regen job` uses in production.
-
-It does not cover the mapping *into* that shredder. Each caller writes its own:
-`runner/job.rs` maps from the generated `Database`, and `bin/regen.rs` maps from
-parquet column indices. Only the first is exercised here, so a wrong column
-index on the regeneration side is invisible to all 113 queries at any case
-count.
-
-## Generated database examples
-
-`generated-databases.sql` contains 100 deterministic examples from the same
-generator. Each numbered block holds a full JOB schema and its rows, wrapped in
-a transaction that rolls back so the whole file can be executed in DuckDB.
-Remove a block's `ROLLBACK` to keep that example loaded for interactive
-queries. Regenerate from the repository root with:
-
-```sh
-cargo test --manifest-path rust/Cargo.toml --features test --test differential \
-  write_generated_job_databases -- --ignored --nocapture
-```
+The JOB database does not reliably produce errors, so either Prela is perfect or it's not exhaustive enough. We should look at other (nullable) benchmarks, implement their schemas, and do the same thing we do here. We should also make the generation "smarter," although there's really no upper limit on how far we can go with this, and at some point it kind of turns into a paper in and of itself. The obvious thing to do is to make the databases both schema *and* query-directed---injecting `NULLs` specifically in columns that a given query touches, generating data that satisfies a particular predicate, etc.

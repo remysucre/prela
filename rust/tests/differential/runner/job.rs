@@ -5,8 +5,7 @@ use crate::generate::{Cell, Database, Row, RowId};
 use crate::queries::job::{Query, schema};
 use crate::result::{ResultCell, ResultSet};
 use crate::sql::to_sql;
-use prela::job_schema::Job;
-use prela::job_shred::JobShredder;
+use prela::job_shred::{JobShredder, OwnedJob};
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
@@ -59,13 +58,13 @@ impl Comparison {
 
 pub fn compare(database: &Database, query: Query) -> Result<Comparison, String> {
     let job = adapt_job(database)?;
-    compare_with_job(database, query, job)
+    compare_with_job(database, query, &job)
 }
 
 fn compare_with_job(
     database: &Database,
     query: Query,
-    job: &'static Job,
+    job: &OwnedJob,
 ) -> Result<Comparison, String> {
     let (columns, sql) = run_sql(
         &schema::SCHEMA,
@@ -88,15 +87,16 @@ fn compare_with_job(
     Ok(comparison)
 }
 
-fn run_prela(name: &str, job: &'static Job) -> Result<ResultSet, String> {
+fn run_prela(name: &str, job: &OwnedJob) -> Result<ResultSet, String> {
     use prela::job_queries::helpers::Result as QueryResult;
 
-    let row = prela::job_queries::differential(name, job)?
+    let row = job
+        .differential(name)?
         .into_iter()
         .map(|cell| match cell {
             QueryResult::Null => ResultCell::Null,
             QueryResult::Integer(value) => ResultCell::Integer(i128::from(value)),
-            QueryResult::Text(value) => ResultCell::Text(value.to_owned()),
+            QueryResult::Text(value) => ResultCell::Text(value),
         });
     Ok(ResultSet::from_rows([row.collect()]))
 }
@@ -104,8 +104,8 @@ fn run_prela(name: &str, job: &'static Job) -> Result<ResultSet, String> {
 /// Shred one normalized SQL fixture into the production JOB representation.
 /// Query logic stays in `job_queries::queries`; this is only the shared data
 /// boundary between the canonical SQL tables and that representation.
-fn adapt_job(database: &Database) -> Result<&'static Job, String> {
-    Ok(Box::leak(Box::new(shred_job(database)?.into_job())))
+fn adapt_job(database: &Database) -> Result<OwnedJob, String> {
+    Ok(shred_job(database)?.into_job())
 }
 
 fn shred_job(database: &Database) -> Result<JobShredder, String> {
@@ -686,12 +686,12 @@ mod tests {
 
         let written = shred_job(&database).unwrap().write_cache(&cache_dir);
         assert_eq!(written.len(), prela::job_schema::manifest().len());
-        let from_cache = Box::leak(Box::new(prela::job_schema::load(&cache_dir)));
+        let from_cache = prela::job_schema::load(&cache_dir);
 
         for &query in queries::all() {
             assert_eq!(
-                prela::job_queries::differential(query.name, in_memory).unwrap(),
-                prela::job_queries::differential(query.name, from_cache).unwrap(),
+                in_memory.differential(query.name).unwrap(),
+                prela::job_queries::differential(query.name, &from_cache).unwrap(),
                 "JOB Q{} differs between in-memory and cache shredding",
                 query.name,
             );
@@ -704,11 +704,11 @@ mod tests {
         test_cases = 100,
         suppress_health_check = [HealthCheck::TooSlow]
     )]
-    fn job_queries_match_generated_nullable_fixtures(tc: TestCase) {
+    fn prela_matches_duckdb_on_generated_job_databases(tc: TestCase) {
         let database = tc.draw(generator(&schema::SCHEMA));
         let job = adapt_job(&database).unwrap();
         for &query in queries::all() {
-            let comparison = compare_with_job(&database, query, job).unwrap();
+            let comparison = compare_with_job(&database, query, &job).unwrap();
             assert!(comparison.equivalent(), "{}", comparison.failure(&database));
         }
     }
