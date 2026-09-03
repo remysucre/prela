@@ -17,27 +17,21 @@ cargo test --manifest-path rust/Cargo.toml --features test --test differential \
   prela_matches_duckdb_on_generated_job_databases -- --nocapture
 ```
 
-Run it from the repository root. One case runs all 113 query pairs; the default
-is 100 cases. `HEGEL_TEST_CASES=<n>` changes that, and anything past a few
-hundred wants `--release` — a debug build takes hours:
+It should be run from the repository root. One case runs all 113 query pairs; the default
+is 100 cases. You can change this using `HEGEL_TEST_CASES=<n>`, and anything past a few
+hundred warrants `--release`, as the process can become time-consuming:
 
 ```sh
-HEGEL_TEST_CASES=10 cargo test ...                        # quick check
-HEGEL_TEST_CASES=10000 cargo test --release ...           # deep run
+HEGEL_TEST_CASES=10 cargo test ...                       
+HEGEL_TEST_CASES=10000 cargo test --release ...          
 ```
 
-Cargo's test harness imposes no wall-clock timeout, so bound a deep run
-yourself with `timeout` (GNU coreutils' `gtimeout` on macOS):
+Cargo's test harness imposes no wall-clock timeout, so to bound the
+time the run takes you can do this:
 
 ```sh
 timeout 10m env HEGEL_TEST_CASES=10000 cargo test --release ...
 ```
-
-Each case owns the Prela database it shreds and drops it after all 113 queries
-finish. The query registry still uses `&'static` internally, but the
-differential entry point scopes that lifetime extension to synchronous query
-evaluation and copies result strings before returning. Memory therefore stays
-bounded by the active case rather than growing with the case count.
 
 ### What now?
 
