@@ -21,8 +21,6 @@ pub mod job_queries;
 pub mod job_schema;
 pub mod job_shred;
 pub mod loader;
-#[cfg(all(test, feature = "test"))]
-pub(crate) mod test;
 pub mod tpch_queries;
 pub mod tpch_schema;
 

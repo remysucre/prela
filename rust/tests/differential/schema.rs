@@ -5,9 +5,9 @@
 //! without permitting those rules to redefine schema structure.
 //!
 //! The small structural `entities!` helper materializes Rust table/column
-//! metadata from ordinary field declarations. Physical SQL names live in the
-//! benchmark's separate adapter registry, and extra value behavior crosses the
-//! value-only `constraints!` boundary.
+//! metadata from ordinary field declarations. A benchmark's [`TableMeta`] list
+//! supplies SQL table and id-column names, and extra value behavior crosses
+//! the value-only `constraints!` boundary.
 
 use super::rules::{CellCtx, Domain, ValueRule};
 use std::collections::BTreeSet;
@@ -17,8 +17,9 @@ pub const ID_FIELD: &str = "__id";
 
 /// Stable logical identity of one schema column.
 ///
-/// These are Rust/logical names (`Lineitem.shipdate`), not physical SQL names
-/// (`l_shipdate`). Database adapters own that translation.
+/// The `entity` is the Rust type name and differs from the SQL table name; the
+/// `field` is used verbatim as the SQL column name. Only table names and the
+/// implicit id column are renamed, by [`TableMeta`].
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ColumnId {
     pub entity: &'static str,
@@ -116,22 +117,6 @@ pub struct Schema {
 }
 
 impl Schema {
-    /// Const constructor used by the macro's generated `SCHEMA` static.
-    pub const fn new(
-        tables: &'static [&'static str],
-        columns: &'static [ColumnMeta],
-        rules: &'static [&'static dyn ValueRule],
-    ) -> Self {
-        Self {
-            tables,
-            columns,
-            sql: &[],
-            rules,
-            required: &[],
-            primary_keys: &[],
-        }
-    }
-
     /// Construct a canonical benchmark schema. Value-generation constraints
     /// deliberately live elsewhere and can be applied with [`Schema::overlay`].
     pub const fn canonical(
@@ -172,7 +157,43 @@ impl Schema {
             .map(|key| key.columns)
     }
 
-    /// Iterate canonical foreign keys, expanding typed single-column ids.
+    /// Primary key made from ordinary SQL-visible fields rather than `__id`.
+    pub(crate) fn explicit_key(&self, entity: &str) -> Option<&'static [ColumnId]> {
+        self.primary_key(entity)
+            .filter(|columns| !columns.iter().any(|column| column.field == ID_FIELD))
+    }
+
+    /// Integer component used to make an explicit generated key unique.
+    pub(crate) fn unique_integer_key(&self, entity: &str) -> Option<ColumnId> {
+        self.explicit_key(entity)?.iter().copied().find(|column| {
+            matches!(
+                self.column(*column)
+                    .expect("primary key column exists")
+                    .kind,
+                ScalarKind::I64
+            )
+        })
+    }
+
+    /// Single SQL key column referenced by a typed `Id<Entity>` field.
+    /// Legacy schemas without declared key metadata may still expose a mapped
+    /// identity column.
+    pub(crate) fn reference_key(&self, entity: &str) -> Option<ColumnId> {
+        match self.primary_key(entity) {
+            Some(key) if key.len() == 1 => Some(key[0]),
+            Some(_) => None,
+            None => {
+                let id = ColumnId::new(
+                    self.tables.iter().copied().find(|table| *table == entity)?,
+                    ID_FIELD,
+                );
+                self.sql_column(id).is_some().then_some(id)
+            }
+        }
+    }
+
+    /// Count the typed-id columns, each of which is one single-column
+    /// foreign key.
     pub fn foreign_key_count(&self) -> usize {
         self.columns
             .iter()
@@ -195,7 +216,8 @@ impl Schema {
             .map(|table| table.sql)
     }
 
-    /// Return the declared SQL name for a logical column.
+    /// Return the SQL name for a logical column: [`TableMeta::id`] for the
+    /// synthetic [`ID_FIELD`], and the logical field name itself otherwise.
     pub fn sql_column(&self, id: ColumnId) -> Option<&'static str> {
         if id.field == ID_FIELD {
             return self
@@ -229,7 +251,6 @@ impl Schema {
 
     /// Whether a column participates in a declared key and therefore must not
     /// be selected as the generator's forced NULL target.
-    ///
     pub fn is_structural(&self, column: ColumnId) -> bool {
         if column.field == ID_FIELD && self.sql_column(column).is_some() {
             return true;
@@ -244,16 +265,24 @@ impl Schema {
         false
     }
 
-    /// Whether an entity declares a key made from ordinary fields.
+    /// Logical columns of one entity in the stable order used both to build
+    /// generated rows and to render `CREATE TABLE`/`INSERT` tuples.
     ///
-    /// Entities without such a declaration use their implicit Prela `Id<E>` as
-    /// the logical `__id` column.  This lets adapters discover key shape from
-    /// schema structure instead of maintaining a database-specific table list.
-    pub(crate) fn has_key(&self, entity: &'static str) -> bool {
-        if let Some(columns) = self.primary_key(entity) {
-            return !columns.iter().any(|column| column.field == ID_FIELD);
+    /// A SQL-visible identity column comes first. Row identity itself lives on
+    /// [`Row`](crate::generate::Row), so entities without such a column do not
+    /// need to invent one merely for the Prela adapter.
+    pub(crate) fn entity_columns(&self, entity: &'static str) -> Vec<ColumnId> {
+        let mut columns = Vec::new();
+        if self.sql_column(ColumnId::new(entity, ID_FIELD)).is_some() {
+            columns.push(ColumnId::new(entity, ID_FIELD));
         }
-        false
+        columns.extend(
+            self.columns
+                .iter()
+                .filter(|column| column.entity == entity)
+                .map(|column| ColumnId::new(column.entity, column.field)),
+        );
+        columns
     }
 
     /// Validate schema shape and every rule before random generation starts.
@@ -263,8 +292,9 @@ impl Schema {
         if tables.len() != self.tables.len() {
             return Err("schema contains duplicate table names".to_owned());
         }
-        // Macro-generated schemas satisfy this by construction, but `Schema::new`
-        // is public so hand-written/custom schemas receive the same protection.
+        // Macro-generated schemas satisfy this by construction, but
+        // `Schema::canonical` is public so hand-written schemas receive the
+        // same protection.
         let mut column_ids = BTreeSet::new();
         for column in self.columns {
             if !tables.contains(column.entity) {
@@ -302,10 +332,26 @@ impl Schema {
                         column.entity, column.field
                     ));
                 }
-                if self.has_key(parent) {
+                if let Some(key) = self.primary_key(parent)
+                    && key.len() != 1
+                {
                     return Err(format!(
-                        "column {}.{} references {parent}'s implicit id, but {parent} has an explicit key",
-                        column.entity, column.field
+                        "column {}.{} is one scalar but {parent} has a {}-column primary key",
+                        column.entity,
+                        column.field,
+                        key.len(),
+                    ));
+                }
+                if let Some(target) = self.reference_key(parent)
+                    && target.field != ID_FIELD
+                    && !matches!(
+                        self.require_column(target)?.kind,
+                        ScalarKind::I64 | ScalarKind::ForeignKey(_)
+                    )
+                {
+                    return Err(format!(
+                        "column {}.{} cannot reference non-integer key {}.{}",
+                        column.entity, column.field, target.entity, target.field,
                     ));
                 }
             }
@@ -416,12 +462,12 @@ impl Schema {
 
 /// Materialize ordinary Rust entity declarations as logical metadata.
 ///
-/// Physical table and surrogate-key names deliberately cannot be expressed
-/// here. A benchmark provides those in its canonical SQL adapter registry.
+/// SQL table and surrogate-key names deliberately cannot be expressed here. A
+/// benchmark provides those in its own [`TableMeta`] list.
 macro_rules! entities {
     (@entities [$($tables:expr,)*] [$($columns:expr,)*]) => {
         pub static TABLES: &[&str] = &[$($tables,)*];
-        pub static COLUMNS: &[$crate::test::schema::ColumnMeta] = &[$($columns,)*];
+        pub static COLUMNS: &[$crate::schema::ColumnMeta] = &[$($columns,)*];
     };
 
     (@entities
@@ -429,7 +475,7 @@ macro_rules! entities {
       pub struct $Ent:ident { $($fields:tt)* } $($rest:tt)*) => {
         #[allow(dead_code)]
         pub struct $Ent { $($fields)* }
-        $crate::test::schema::entities!(@fields
+        $crate::schema::entities!(@fields
             [$($tables,)* stringify!($Ent),]
             [$($columns,)*]
             $Ent { $($fields)* } $($rest)*);
@@ -438,7 +484,7 @@ macro_rules! entities {
     (@fields
       [$($tables:expr,)*] [$($columns:expr,)*]
       $Ent:ident { } $($rest:tt)*) => {
-        $crate::test::schema::entities!(@entities
+        $crate::schema::entities!(@entities
             [$($tables,)*] [$($columns,)*] $($rest)*);
     };
 
@@ -447,11 +493,11 @@ macro_rules! entities {
       $Ent:ident {
           pub $field:ident: Col<$Owner:ident, Str>, $($fields:tt)*
       } $($rest:tt)*) => {
-        $crate::test::schema::entities!(@fields
+        $crate::schema::entities!(@fields
             [$($tables,)*]
-            [$($columns,)* $crate::test::schema::ColumnMeta::new(
+            [$($columns,)* $crate::schema::ColumnMeta::new(
                 stringify!($Ent), stringify!($field),
-                $crate::test::schema::ScalarKind::Str),]
+                $crate::schema::ScalarKind::Str),]
             $Ent { $($fields)* } $($rest)*);
     };
 
@@ -460,11 +506,11 @@ macro_rules! entities {
       $Ent:ident {
           pub $field:ident: Col<$Owner:ident, i64>, $($fields:tt)*
       } $($rest:tt)*) => {
-        $crate::test::schema::entities!(@fields
+        $crate::schema::entities!(@fields
             [$($tables,)*]
-            [$($columns,)* $crate::test::schema::ColumnMeta::new(
+            [$($columns,)* $crate::schema::ColumnMeta::new(
                 stringify!($Ent), stringify!($field),
-                $crate::test::schema::ScalarKind::I64),]
+                $crate::schema::ScalarKind::I64),]
             $Ent { $($fields)* } $($rest)*);
     };
 
@@ -473,16 +519,16 @@ macro_rules! entities {
       $Ent:ident {
           pub $field:ident: Col<$Owner:ident, Id<$Target:ident>>, $($fields:tt)*
       } $($rest:tt)*) => {
-        $crate::test::schema::entities!(@fields
+        $crate::schema::entities!(@fields
             [$($tables,)*]
-            [$($columns,)* $crate::test::schema::ColumnMeta::new(
+            [$($columns,)* $crate::schema::ColumnMeta::new(
                 stringify!($Ent), stringify!($field),
-                $crate::test::schema::ScalarKind::ForeignKey(stringify!($Target))),]
+                $crate::schema::ScalarKind::ForeignKey(stringify!($Target))),]
             $Ent { $($fields)* } $($rest)*);
     };
 
     ($($body:tt)*) => {
-        $crate::test::schema::entities!(@entities [] [] $($body)*);
+        $crate::schema::entities!(@entities [] [] $($body)*);
     };
 }
 
@@ -497,24 +543,24 @@ pub(crate) use entities;
 /// impossible to spell in this DSL.
 macro_rules! value_rule {
     ($Ent:ident.$field:ident : i64 => range($min:expr, $max:expr)) => {
-        &$crate::test::rules::I64 {
-            column: $crate::test::schema::ColumnId::new(stringify!($Ent), stringify!($field)),
+        &$crate::rules::I64 {
+            column: $crate::schema::ColumnId::new(stringify!($Ent), stringify!($field)),
             min: $min,
             max: $max,
-        } as &dyn $crate::test::rules::ValueRule
+        } as &dyn $crate::rules::ValueRule
     };
     ($Ent:ident.$field:ident : str => length($min:expr, $max:expr)) => {
-        &$crate::test::rules::Length {
-            column: $crate::test::schema::ColumnId::new(stringify!($Ent), stringify!($field)),
+        &$crate::rules::Length {
+            column: $crate::schema::ColumnId::new(stringify!($Ent), stringify!($field)),
             min: $min,
             max: $max,
-        } as &dyn $crate::test::rules::ValueRule
+        } as &dyn $crate::rules::ValueRule
     };
     ($Ent:ident.$field:ident : str => values([$($value:expr),+ $(,)?])) => {
-        &$crate::test::rules::Values {
-            column: $crate::test::schema::ColumnId::new(stringify!($Ent), stringify!($field)),
+        &$crate::rules::Values {
+            column: $crate::schema::ColumnId::new(stringify!($Ent), stringify!($field)),
             values: &[$($value),+],
-        } as &dyn $crate::test::rules::ValueRule
+        } as &dyn $crate::rules::ValueRule
     };
 }
 
@@ -523,22 +569,22 @@ macro_rules! constraints {
         pub static $name:ident for $base:expr;
         $($body:tt)*
     ) => {
-        $crate::test::schema::constraints!(@collect $name, ($base), [] $($body)*);
+        $crate::schema::constraints!(@collect $name, ($base), [] $($body)*);
     };
 
     (@collect $name:ident, ($base:expr), [$($rules:expr,)*]) => {
-        pub static RULES: &[&dyn $crate::test::rules::ValueRule] = &[
+        pub static RULES: &[&dyn $crate::rules::ValueRule] = &[
             $($rules,)*
         ];
-        pub static $name: $crate::test::schema::Schema =
-            $crate::test::schema::Schema::overlay(&($base), RULES);
+        pub static $name: $crate::schema::Schema =
+            $crate::schema::Schema::overlay(&($base), RULES);
     };
 
     (@collect $name:ident, ($base:expr), [$($rules:expr,)*]
         $Ent:ident.$field:ident : $kind:tt => $rule:ident($($args:tt)*); $($rest:tt)*) => {
-        $crate::test::schema::constraints!(@collect $name, ($base), [
+        $crate::schema::constraints!(@collect $name, ($base), [
             $($rules,)*
-            $crate::test::schema::value_rule!(
+            $crate::schema::value_rule!(
                 $Ent.$field: $kind => $rule($($args)*)
             ),
         ] $($rest)*);
@@ -546,16 +592,16 @@ macro_rules! constraints {
 
     (@collect $name:ident, ($base:expr), [$($rules:expr,)*]
         $Ent:ident.$left:ident <= $right:ident; $($rest:tt)*) => {
-        $crate::test::schema::constraints!(@collect $name, ($base), [
+        $crate::schema::constraints!(@collect $name, ($base), [
             $($rules,)*
-            &$crate::test::rules::Order {
-                left: $crate::test::schema::ColumnId::new(
+            &$crate::rules::Order {
+                left: $crate::schema::ColumnId::new(
                     stringify!($Ent), stringify!($left)
                 ),
-                right: $crate::test::schema::ColumnId::new(
+                right: $crate::schema::ColumnId::new(
                     stringify!($Ent), stringify!($right)
                 ),
-            } as &dyn $crate::test::rules::ValueRule,
+            } as &dyn $crate::rules::ValueRule,
         ] $($rest)*);
     };
 }
@@ -566,7 +612,7 @@ pub(crate) use value_rule;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::rules::{I64, ValueRule};
+    use crate::rules::{I64, ValueRule};
 
     /// Example of extending the rule system without modifying its built-ins.
     #[derive(Debug)]
@@ -583,11 +629,11 @@ mod tests {
     // The typed overlay accepts an ordinary user-defined value refinement.
     mod fixture {
         use super::FortyTwo;
-        use crate::test::rules::ValueRule;
-        use crate::test::schema::{ColumnId, ColumnMeta, ScalarKind, Schema};
+        use crate::rules::ValueRule;
+        use crate::schema::{ColumnId, ColumnMeta, ScalarKind, Schema};
 
         static COLUMNS: &[ColumnMeta] = &[ColumnMeta::new("Thing", "answer", ScalarKind::I64)];
-        static BASE: Schema = Schema::new(&["Thing"], COLUMNS, &[]);
+        static BASE: Schema = Schema::canonical(&["Thing"], COLUMNS, &[], &[], &[]);
         static ANSWER: FortyTwo = FortyTwo(ColumnId::new("Thing", "answer"));
         static RULES: &[&dyn ValueRule] = &[&ANSWER];
         pub static SCHEMA: Schema = Schema::overlay(&BASE, RULES);
@@ -602,12 +648,13 @@ mod tests {
             max: 1,
         };
         static RULES: &[&dyn ValueRule] = &[&RANGE];
-        let schema = Schema::new(&["Thing"], &[], RULES);
+        static BASE: Schema = Schema::canonical(&["Thing"], &[], &[], &[], &[]);
+        let schema = Schema::overlay(&BASE, RULES);
         assert!(schema.validate().is_err());
     }
 
     #[test]
-    fn rejects_foreign_keys_without_an_implicit_parent_id() {
+    fn accepts_foreign_keys_to_a_single_explicit_parent_key() {
         static COLUMNS: &[ColumnMeta] = &[
             ColumnMeta::new("Parent", "key", ScalarKind::I64),
             ColumnMeta::new("Child", "parent", ScalarKind::ForeignKey("Parent")),
@@ -615,9 +662,31 @@ mod tests {
         static KEYS: &[PrimaryKey] =
             &[PrimaryKey::new("Parent", &[ColumnId::new("Parent", "key")])];
         let schema = Schema::canonical(&["Parent", "Child"], COLUMNS, &[], &[], KEYS);
+        schema.validate().unwrap();
+        assert_eq!(
+            schema.reference_key("Parent"),
+            Some(ColumnId::new("Parent", "key")),
+        );
+    }
+
+    #[test]
+    fn rejects_scalar_foreign_keys_to_composite_parent_keys() {
+        static COLUMNS: &[ColumnMeta] = &[
+            ColumnMeta::new("Parent", "left", ScalarKind::I64),
+            ColumnMeta::new("Parent", "right", ScalarKind::I64),
+            ColumnMeta::new("Child", "parent", ScalarKind::ForeignKey("Parent")),
+        ];
+        static KEYS: &[PrimaryKey] = &[PrimaryKey::new(
+            "Parent",
+            &[
+                ColumnId::new("Parent", "left"),
+                ColumnId::new("Parent", "right"),
+            ],
+        )];
+        let schema = Schema::canonical(&["Parent", "Child"], COLUMNS, &[], &[], KEYS);
         assert_eq!(
             schema.validate().unwrap_err(),
-            "column Child.parent references Parent's implicit id, but Parent has an explicit key"
+            "column Child.parent is one scalar but Parent has a 2-column primary key",
         );
     }
 

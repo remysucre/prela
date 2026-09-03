@@ -1,12 +1,12 @@
 //! End-to-end Join Order Benchmark differential execution.
 
 use super::run_sql;
-use crate::job_schema::Job;
-use crate::job_shred::JobShredder;
-use crate::test::generate::{Cell, Database, Row};
-use crate::test::queries::job::{Query, schema};
-use crate::test::result::ResultSet;
-use crate::test::sql::to_sql;
+use crate::generate::{Cell, Database, Row, RowId};
+use crate::queries::job::{Query, schema};
+use crate::result::{ResultCell, ResultSet};
+use crate::sql::to_sql;
+use prela::job_schema::Job;
+use prela::job_shred::JobShredder;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
@@ -74,7 +74,7 @@ fn compare_with_job(
         query.sql,
         query.order,
     )?;
-    let prela = crate::job_queries::differential(query.name, job)?;
+    let prela = run_prela(query.name, job)?;
     validate_result_width(query, &columns, &prela)?;
     let comparison = Comparison {
         query,
@@ -86,6 +86,19 @@ fn compare_with_job(
         comparison.write_mismatch(database)?;
     }
     Ok(comparison)
+}
+
+fn run_prela(name: &str, job: &'static Job) -> Result<ResultSet, String> {
+    use prela::job_queries::helpers::Result as QueryResult;
+
+    let row = prela::job_queries::differential(name, job)?
+        .into_iter()
+        .map(|cell| match cell {
+            QueryResult::Null => ResultCell::Null,
+            QueryResult::Integer(value) => ResultCell::Integer(i128::from(value)),
+            QueryResult::Text(value) => ResultCell::Text(value.to_owned()),
+        });
+    Ok(ResultSet::from_rows([row.collect()]))
 }
 
 /// Shred one normalized SQL fixture into the production JOB representation.
@@ -265,12 +278,17 @@ fn rows<'a>(database: &'a Database, entity: &str) -> Result<&'a [Row], String> {
 }
 
 fn integer(row: &Row, entity: &'static str, field: &'static str) -> Result<Option<i64>, String> {
-    match row
-        .cells
-        .get(&crate::test::schema::ColumnId::new(entity, field))
-    {
+    if field == crate::schema::ID_FIELD {
+        return Ok(Some(
+            i64::try_from(row.id.index).expect("tiny row identity fits i64") + 1,
+        ));
+    }
+    match row.cells.get(&crate::schema::ColumnId::new(entity, field)) {
         Some(Cell::Null) => Ok(None),
         Some(Cell::I64(value)) => Ok(Some(*value)),
+        Some(Cell::Reference(target)) => Ok(Some(
+            i64::try_from(target.index).expect("tiny row identity fits i64") + 1,
+        )),
         Some(other) => Err(format!("{entity}.{field} expected integer, got {other:?}")),
         None => Err(format!("generated row has no {entity}.{field}")),
     }
@@ -281,10 +299,7 @@ fn text<'a>(
     entity: &'static str,
     field: &'static str,
 ) -> Result<Option<&'a str>, String> {
-    match row
-        .cells
-        .get(&crate::test::schema::ColumnId::new(entity, field))
-    {
+    match row.cells.get(&crate::schema::ColumnId::new(entity, field)) {
         Some(Cell::Null) => Ok(None),
         Some(Cell::Text(value)) => Ok(Some(value)),
         Some(other) => Err(format!("{entity}.{field} expected text, got {other:?}")),
@@ -324,10 +339,10 @@ fn sql_comment(output: &ResultSet) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::generate::{Cell, Row, Table, generator};
-    use crate::test::queries::job as queries;
-    use crate::test::result::ResultCell;
-    use crate::test::schema::{ColumnId, ID_FIELD};
+    use crate::generate::{Cell, Row, Table, generator};
+    use crate::queries::job as queries;
+    use crate::result::ResultCell;
+    use crate::schema::ColumnId;
     use hegel::{HealthCheck, TestCase};
     use std::collections::BTreeMap;
     use std::fs::File;
@@ -346,7 +361,7 @@ mod tests {
         id: i64,
         values: impl IntoIterator<Item = (&'static str, Cell)>,
     ) -> Row {
-        let mut cells = BTreeMap::from([(ColumnId::new(entity, ID_FIELD), Cell::I64(id))]);
+        let mut cells = BTreeMap::new();
         cells.extend(
             schema::SCHEMA
                 .columns
@@ -354,12 +369,29 @@ mod tests {
                 .filter(|column| column.entity == entity)
                 .map(|column| (ColumnId::new(entity, column.field), Cell::Null)),
         );
-        cells.extend(
-            values
-                .into_iter()
-                .map(|(field, value)| (ColumnId::new(entity, field), value)),
-        );
-        Row { cells }
+        cells.extend(values.into_iter().map(|(field, value)| {
+            let column = ColumnId::new(entity, field);
+            let value = match (
+                schema::SCHEMA.column(column).map(|column| column.kind),
+                value,
+            ) {
+                (Some(crate::schema::ScalarKind::ForeignKey(parent)), Cell::I64(id)) => {
+                    Cell::Reference(RowId {
+                        entity: parent,
+                        index: usize::try_from(id - 1).expect("fixture ids are positive"),
+                    })
+                }
+                (_, value) => value,
+            };
+            (column, value)
+        }));
+        Row {
+            id: RowId {
+                entity,
+                index: usize::try_from(id - 1).expect("fixture ids are positive"),
+            },
+            cells,
+        }
     }
 
     fn text(value: &str) -> Cell {
@@ -653,13 +685,13 @@ mod tests {
         ));
 
         let written = shred_job(&database).unwrap().write_cache(&cache_dir);
-        assert_eq!(written.len(), crate::job_schema::manifest().len());
-        let from_cache = Box::leak(Box::new(crate::job_schema::load(&cache_dir)));
+        assert_eq!(written.len(), prela::job_schema::manifest().len());
+        let from_cache = Box::leak(Box::new(prela::job_schema::load(&cache_dir)));
 
-        for query in queries::all() {
+        for &query in queries::all() {
             assert_eq!(
-                crate::job_queries::differential(query.name, in_memory).unwrap(),
-                crate::job_queries::differential(query.name, from_cache).unwrap(),
+                prela::job_queries::differential(query.name, in_memory).unwrap(),
+                prela::job_queries::differential(query.name, from_cache).unwrap(),
                 "JOB Q{} differs between in-memory and cache shredding",
                 query.name,
             );
@@ -675,7 +707,7 @@ mod tests {
     fn job_queries_match_generated_nullable_fixtures(tc: TestCase) {
         let database = tc.draw(generator(&schema::SCHEMA));
         let job = adapt_job(&database).unwrap();
-        for query in queries::all() {
+        for &query in queries::all() {
             let comparison = compare_with_job(&database, query, job).unwrap();
             assert!(comparison.equivalent(), "{}", comparison.failure(&database));
         }
@@ -692,7 +724,7 @@ mod tests {
         let database = tc.draw(generator(&schema::SCHEMA));
         let output = EXAMPLE_FILE.get_or_init(|| {
             let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("src/test/generated-databases.sql");
+                .join("tests/differential/generated-databases.sql");
             let mut file = File::create(path).expect("create generated database examples");
             writeln!(
                 file,

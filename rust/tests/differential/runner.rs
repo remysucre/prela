@@ -8,6 +8,7 @@ use duckdb::Connection;
 use duckdb::types::ValueRef;
 
 /// End-to-end Join Order Benchmark execution.
+#[path = "runner/job.rs"]
 pub mod job;
 
 /// Execute one SQL query against a generated fixture.

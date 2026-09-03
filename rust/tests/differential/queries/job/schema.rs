@@ -1,8 +1,8 @@
 //! Canonical normalized IMDB schema used only by JOB differential tests.
 
-use crate::engine::Id;
-use crate::loader::{Col, Str};
-use crate::test::schema::{ColumnId, PrimaryKey, Schema, TableMeta, constraints, entities};
+use crate::schema::{ColumnId, PrimaryKey, Schema, TableMeta, constraints, entities};
+use prela::engine::Id;
+use prela::loader::{Col, Str};
 
 entities! {
     pub struct CompCastType {
@@ -307,8 +307,8 @@ mod tests {
 
     #[hegel::test(test_cases = 5)]
     fn generated_job_fixture_contains_null_and_loads(tc: hegel::TestCase) {
-        use crate::test::generate::{Cell, generator};
-        use crate::test::sql::to_sql;
+        use crate::generate::{Cell, generator};
+        use crate::sql::to_sql;
 
         let database = tc.draw(generator(&SCHEMA));
         assert!(database.tables.iter().any(|table| {

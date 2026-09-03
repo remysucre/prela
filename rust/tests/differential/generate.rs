@@ -2,7 +2,7 @@
 //!
 //! This module knows nothing about benchmark names, SQL syntax, or Prela's physical
 //! relation types.  Its inputs are a logical
-//! [`Schema`](crate::test::schema::Schema). Its output is a neutral
+//! [`Schema`](crate::schema::Schema). Its output is a neutral
 //! [`Database`] which an adapter can later encode for either engine.
 //!
 //! Generation is deliberately small (one to three rows per table).  Small
@@ -10,7 +10,7 @@
 //! easier for a person to understand when SQL and Prela disagree.
 
 use super::rules::{Domain, RowBounds, RowCtx};
-use super::schema::{ColumnId, ID_FIELD, Schema};
+use super::schema::{ColumnId, ID_FIELD, ScalarKind, Schema};
 use std::collections::BTreeMap;
 
 /// Characters used for unconstrained text.  Besides ordinary alphanumerics it
@@ -37,10 +37,23 @@ const NULL_PROBABILITY: f64 = 0.5;
 pub enum Cell {
     /// No value is present for this row and column.
     Null,
-    /// An integer value, also used for entity/foreign-key ids.
+    /// An ordinary integer value.
     I64(i64),
     /// Ordinary text.  The empty string is a real value, distinct from `Null`.
     Text(String),
+    /// A typed reference to another generated row.
+    Reference(RowId),
+}
+
+/// Stable identity of a row inside one generated database.
+///
+/// Adapters decide how this identity is represented physically. Prela uses the
+/// row index as an `Id<E>`; SQL replaces it with the referenced row's declared
+/// primary-key value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RowId {
+    pub entity: &'static str,
+    pub index: usize,
 }
 
 /// A logical row keyed by stable `(entity, field)` identifiers.
@@ -49,7 +62,10 @@ pub enum Cell {
 /// and rules from silently disagreeing about column order.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
-    /// Every declared column, plus the synthetic `__id`, for this row.
+    /// Adapter-independent identity of this row within its table.
+    pub id: RowId,
+    /// Every ordinary declared column. The synthetic `__id` is derived from
+    /// `id` by adapters and is never stored as a scalar cell.
     pub cells: BTreeMap<ColumnId, Cell>,
 }
 
@@ -66,7 +82,7 @@ pub struct Table {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Database {
     /// Tables appear in schema order.  Reference targets must precede sources,
-    /// allowing source rows to copy already-generated target keys.
+    /// so every generated row reference names an existing parent table.
     pub tables: Vec<Table>,
 }
 
@@ -91,8 +107,8 @@ pub fn generator(schema: &'static Schema) -> impl hegel::Generator<Database> + S
     // generator rather than once per generated test case.
     schema.validate().expect("invalid generation schema");
 
-    // Primary-key columns cannot be NULL.  The synthetic entity id is also
-    // structural even though it is not included in the annotation rules.
+    // Primary-key columns cannot be NULL. Row identity is stored separately,
+    // so it is not part of this ordinary-column list.
     let nullable_columns: Vec<_> = schema
         .columns
         .iter()
@@ -109,23 +125,28 @@ pub fn generator(schema: &'static Schema) -> impl hegel::Generator<Database> + S
             Some(tc.draw(gs::sampled_from(nullable_columns.clone())))
         };
 
-        // Start with tiny independent sizes for every table.
+        // Start with tiny independent sizes for every table, then cap tables
+        // whose explicit key has a smaller finite unique-value space.
         let mut row_counts = BTreeMap::new();
         for &entity in schema.tables {
             let row_count = tc.draw(gs::integers::<usize>().min_value(1).max_value(3));
             row_counts.insert(entity, row_count);
+        }
+        for &entity in schema.tables {
+            let capacity = explicit_key_capacity(schema, entity, &row_counts);
+            row_counts.insert(entity, row_counts[entity].min(capacity));
         }
         // Tables are generated in declaration order.  This makes an earlier
         // referenced table available when a later source copies its key.
         let mut tables: Vec<Table> = Vec::with_capacity(schema.tables.len());
         for &entity in schema.tables {
             let row_count = row_counts[entity];
-            let columns = entity_columns(schema, entity);
+            let columns = schema.entity_columns(entity);
             let mut rows = Vec::with_capacity(row_count);
             for row_index in 0..row_count {
                 let mut cells = BTreeMap::new();
 
-                for &column in &columns {
+                for &column in columns.iter().filter(|column| column.field != ID_FIELD) {
                     // Row annotations are interpreted generically. For an
                     // ordering rule, the value already in `cells` becomes a
                     // dynamic bound on this draw; no benchmark field names occur in
@@ -138,11 +159,24 @@ pub fn generator(schema: &'static Schema) -> impl hegel::Generator<Database> + S
                         ctx.finish()
                     };
                     // Precedence is significant:
-                    // 1. ids are always present;
-                    // 2. the mandatory NULL target wins for its first row;
-                    // 3. ordinary fields are randomly drawn from their domain.
-                    let cell = if column.field == ID_FIELD {
-                        Cell::I64(row_index as i64 + 1)
+                    // 1. explicit key discriminators are unique;
+                    // 2. all-reference composite keys enumerate unique tuples;
+                    // 3. the mandatory NULL target wins for ordinary fields;
+                    // 4. remaining fields are drawn from their domain.
+                    let cell = if schema.unique_integer_key(entity) == Some(column) {
+                        unique_integer_key_cell(schema, column, row_index)
+                    } else if let Some(index) =
+                        key_reference_index(schema, entity, column, row_index, &row_counts)
+                    {
+                        let ScalarKind::ForeignKey(parent) =
+                            schema.column(column).expect("known key column").kind
+                        else {
+                            unreachable!()
+                        };
+                        Cell::Reference(RowId {
+                            entity: parent,
+                            index,
+                        })
                     } else if row_index == 0 && target == Some(column) {
                         Cell::Null
                     } else {
@@ -163,28 +197,18 @@ pub fn generator(schema: &'static Schema) -> impl hegel::Generator<Database> + S
                     );
                     cells.insert(column, cell);
                 }
-                rows.push(Row { cells });
+                rows.push(Row {
+                    id: RowId {
+                        entity,
+                        index: row_index,
+                    },
+                    cells,
+                });
             }
             tables.push(Table { entity, rows });
         }
         Database { tables }
     })
-}
-
-/// Return the stable column order used when constructing every row.
-///
-/// The synthetic entity id comes first, followed by declared fields in schema
-/// order.  SQL rendering reuses this order for `CREATE TABLE` and `INSERT`.
-fn entity_columns(schema: &Schema, entity: &'static str) -> Vec<ColumnId> {
-    let mut columns = vec![ColumnId::new(entity, ID_FIELD)];
-    columns.extend(
-        schema
-            .columns
-            .iter()
-            .filter(|column| column.entity == entity)
-            .map(|column| ColumnId::new(column.entity, column.field)),
-    );
-    columns
 }
 
 /// Draw one optional or present scalar from the column's rule-derived domain.
@@ -260,13 +284,89 @@ fn draw_cell(
             Cell::I64(tc.draw(gs::integers::<i64>().min_value(min).max_value(max)))
         }
         Domain::Reference { entity } => {
-            // Logical ids are one-based so SQL fixture keys remain positive.
-            // Prela adapters convert them to zero-based Ids.
             let parent_rows = row_counts.get(entity).copied().unwrap_or(0);
-            let upper = i64::try_from(parent_rows.max(1)).expect("tiny table size fits in i64");
-            Cell::I64(tc.draw(gs::integers::<i64>().min_value(1).max_value(upper)))
+            let upper = parent_rows
+                .checked_sub(1)
+                .expect("referenced table has a row");
+            Cell::Reference(RowId {
+                entity,
+                index: tc.draw(gs::integers::<usize>().min_value(0).max_value(upper)),
+            })
         }
     }
+}
+
+/// Maximum number of rows whose declared explicit key can make unique.
+fn explicit_key_capacity(
+    schema: &Schema,
+    entity: &'static str,
+    row_counts: &BTreeMap<&'static str, usize>,
+) -> usize {
+    let Some(key) = schema.explicit_key(entity) else {
+        return usize::MAX;
+    };
+    if let Some(column) = schema.unique_integer_key(entity) {
+        let Domain::I64 { min, max } = schema.domain(column) else {
+            unreachable!()
+        };
+        return usize::try_from(i128::from(max) - i128::from(min) + 1).unwrap_or(usize::MAX);
+    }
+    key.iter()
+        .map(
+            |column| match schema.column(*column).expect("validated key column").kind {
+                ScalarKind::ForeignKey(parent) => row_counts[parent],
+                _ => unreachable!("validated explicit key has a uniqueness strategy"),
+            },
+        )
+        .product()
+}
+
+/// Give one integer component a deterministic distinct value in every row.
+fn unique_integer_key_cell(schema: &Schema, column: ColumnId, row_index: usize) -> Cell {
+    let Domain::I64 { min, .. } = schema.domain(column) else {
+        unreachable!()
+    };
+    let offset = i64::try_from(row_index).expect("tiny row index fits i64");
+    Cell::I64(
+        min.checked_add(offset)
+            .expect("validated key capacity fits i64"),
+    )
+}
+
+/// Enumerate the Cartesian product for an all-reference composite key.
+fn key_reference_index(
+    schema: &Schema,
+    entity: &'static str,
+    column: ColumnId,
+    row_index: usize,
+    row_counts: &BTreeMap<&'static str, usize>,
+) -> Option<usize> {
+    let key = schema.explicit_key(entity)?;
+    if schema.unique_integer_key(entity).is_some()
+        || !key.iter().all(|column| {
+            matches!(
+                schema.column(*column).expect("validated key column").kind,
+                ScalarKind::ForeignKey(_)
+            )
+        })
+    {
+        return None;
+    }
+    let position = key.iter().position(|candidate| *candidate == column)?;
+    let stride = key[..position]
+        .iter()
+        .map(
+            |column| match schema.column(*column).expect("validated key column").kind {
+                ScalarKind::ForeignKey(parent) => row_counts[parent],
+                _ => unreachable!(),
+            },
+        )
+        .product::<usize>();
+    let ScalarKind::ForeignKey(parent) = schema.column(column).expect("validated key column").kind
+    else {
+        unreachable!()
+    };
+    Some((row_index / stride) % row_counts[parent])
 }
 
 #[cfg(test)]
@@ -277,14 +377,14 @@ mod tests {
     // A deliberately small schema proves the generator is generic and that
     // foreign-key domains are inferred from `Col<Child, Id<Parent>>` metadata.
     mod fixture {
-        use crate::test::schema::{ColumnMeta, ScalarKind, Schema, constraints};
+        use crate::schema::{ColumnMeta, ScalarKind, Schema, constraints};
 
         static COLUMNS: &[ColumnMeta] = &[
             ColumnMeta::new("Parent", "name", ScalarKind::Str),
             ColumnMeta::new("Child", "parent", ScalarKind::ForeignKey("Parent")),
             ColumnMeta::new("Child", "count", ScalarKind::I64),
         ];
-        static BASE: Schema = Schema::new(&["Parent", "Child"], COLUMNS, &[]);
+        static BASE: Schema = Schema::canonical(&["Parent", "Child"], COLUMNS, &[], &[], &[]);
 
         constraints! {
             pub static SCHEMA for BASE;
@@ -296,13 +396,13 @@ mod tests {
     // A second small schema proves that row annotations—not
     // field names in the generator—create dependent Hegel draws.
     mod ordered_fixture {
-        use crate::test::schema::{ColumnMeta, ScalarKind, Schema, constraints};
+        use crate::schema::{ColumnMeta, ScalarKind, Schema, constraints};
 
         static COLUMNS: &[ColumnMeta] = &[
             ColumnMeta::new("Interval", "lower", ScalarKind::I64),
             ColumnMeta::new("Interval", "upper", ScalarKind::I64),
         ];
-        static BASE: Schema = Schema::new(&["Interval"], COLUMNS, &[]);
+        static BASE: Schema = Schema::canonical(&["Interval"], COLUMNS, &[], &[], &[]);
 
         constraints! {
             pub static SCHEMA for BASE;
@@ -310,6 +410,42 @@ mod tests {
             Interval.upper: i64 => range(-100, 100);
             Interval.lower <= upper;
         }
+    }
+
+    mod explicit_key_fixture {
+        use crate::schema::{ColumnId, ColumnMeta, PrimaryKey, ScalarKind, Schema, constraints};
+
+        static COLUMNS: &[ColumnMeta] = &[
+            ColumnMeta::new("Parent", "key", ScalarKind::I64),
+            ColumnMeta::new("Child", "parent", ScalarKind::ForeignKey("Parent")),
+        ];
+        static REQUIRED: &[ColumnId] = &[ColumnId::new("Child", "parent")];
+        static KEYS: &[PrimaryKey] =
+            &[PrimaryKey::new("Parent", &[ColumnId::new("Parent", "key")])];
+        static BASE: Schema = Schema::canonical(&["Parent", "Child"], COLUMNS, &[], REQUIRED, KEYS);
+
+        constraints! {
+            pub static SCHEMA for BASE;
+            Parent.key: i64 => range(40, 42);
+        }
+    }
+
+    mod reference_key_fixture {
+        use crate::schema::{ColumnId, ColumnMeta, PrimaryKey, ScalarKind, Schema};
+
+        static COLUMNS: &[ColumnMeta] = &[
+            ColumnMeta::new("Link", "left", ScalarKind::ForeignKey("Left")),
+            ColumnMeta::new("Link", "right", ScalarKind::ForeignKey("Right")),
+        ];
+        static KEYS: &[PrimaryKey] = &[PrimaryKey::new(
+            "Link",
+            &[
+                ColumnId::new("Link", "left"),
+                ColumnId::new("Link", "right"),
+            ],
+        )];
+        pub static SCHEMA: Schema =
+            Schema::canonical(&["Left", "Right", "Link"], COLUMNS, &[], &[], KEYS);
     }
 
     /// Generated scalar columns exercise NULL while present foreign keys remain
@@ -341,11 +477,68 @@ mod tests {
                 .rows
                 .iter()
                 .all(|row| match row.cells[&parent_column] {
-                    Cell::I64(parent) => (1..=parents.rows.len() as i64).contains(&parent),
+                    Cell::Reference(parent) => {
+                        parent.entity == "Parent" && parent.index < parents.rows.len()
+                    }
                     Cell::Null => true,
                     _ => false,
                 })
         );
+    }
+
+    #[hegel::test(test_cases = 25)]
+    fn explicit_keys_are_unique_and_references_name_rows(tc: TestCase) {
+        let database = tc.draw(generator(&explicit_key_fixture::SCHEMA));
+        let parents = database
+            .tables
+            .iter()
+            .find(|table| table.entity == "Parent")
+            .unwrap();
+        let children = database
+            .tables
+            .iter()
+            .find(|table| table.entity == "Child")
+            .unwrap();
+        let key = ColumnId::new("Parent", "key");
+        let values = parents
+            .rows
+            .iter()
+            .map(|row| match row.cells[&key] {
+                Cell::I64(value) => value,
+                ref other => panic!("integer key generated {other:?}"),
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+
+        assert_eq!(values.len(), parents.rows.len());
+        assert!(children.rows.iter().all(|row| {
+            matches!(
+                row.cells[&ColumnId::new("Child", "parent")],
+                Cell::Reference(RowId { entity: "Parent", index })
+                    if index < parents.rows.len()
+            )
+        }));
+    }
+
+    #[hegel::test(test_cases = 25)]
+    fn all_reference_composite_keys_are_unique(tc: TestCase) {
+        let database = tc.draw(generator(&reference_key_fixture::SCHEMA));
+        let links = database
+            .tables
+            .iter()
+            .find(|table| table.entity == "Link")
+            .unwrap();
+        let left = ColumnId::new("Link", "left");
+        let right = ColumnId::new("Link", "right");
+        let keys = links
+            .rows
+            .iter()
+            .map(|row| match (&row.cells[&left], &row.cells[&right]) {
+                (Cell::Reference(left), Cell::Reference(right)) => (left.index, right.index),
+                other => panic!("reference key generated {other:?}"),
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+
+        assert_eq!(keys.len(), links.rows.len());
     }
 
     /// The annotation turns the first Hegel result into the second draw's

@@ -9,499 +9,161 @@
 // `const` array of fn pointers.
 
 use crate::engine::*;
-use crate::job_queries::helpers::{Row, film_or_warner_co, follow_link, min_row};
-#[cfg(all(test, feature = "test"))]
+#[cfg(feature = "test")]
 use crate::job_queries::helpers::min_result;
+use crate::job_queries::helpers::{Row, film_or_warner_co, follow_link, min_row};
 use crate::job_queries::sets::{
     genre6, kw7, kw8, kw10, link3, murder4, nordic8, nordic9, nordic10, voice3, voice4, writer5,
 };
 use crate::job_schema::*;
 
-pub const ENTRIES: &[super::Entry] = &[
-    // --- templates 1-5, 11-15, 22 ---
-    ("2a", "'Doc'", |db| min_row(q2a(db))),
-    ("2d", "& Teller", |db| min_row(q2d(db))),
-    ("3b", "300: Rise of an Empire", |db| min_row(q3b(db))),
-    ("4a", "5.1 || & Teller 2", |db| min_row(q4a(db))),
-    ("13a", "Afghanistan:24 June 2012 || 1.0 || &Me", |db| {
-        min_row(q13a(db))
-    }),
-    (
-        "11a",
-        "Churchill Films || followed by || Batman Beyond",
-        |db| min_row(q11a(db)),
-    ),
-    ("22a", "(empty)", |db| min_row(q22a(db))),
-    (
-        "1a",
-        "(A Warner Bros.-First National Picture) (presents) || A Clockwork Orange || 1934",
-        |db| min_row(q1a(db)),
-    ),
-    ("5a", "(empty)", |db| min_row(q5a(db))),
-    ("12a", "10th Grade Reunion Films || 8.1 || 3:20", |db| {
-        min_row(q12a(db))
-    }),
-    ("14a", "1.0 || $lowdown", |db| min_row(q14a(db))),
-    (
-        "1b",
-        "(Set Decoration Rentals) (uncredited) || Disaster Movie || 2008",
-        |db| min_row(q1b(db)),
-    ),
-    ("2b", "'Doc'", |db| min_row(q2b(db))),
-    ("2c", "(empty)", |db| min_row(q2c(db))),
-    ("3a", "2 Days in New York", |db| min_row(q3a(db))),
-    ("3c", "& Teller 2", |db| min_row(q3c(db))),
-    ("4b", "9.1 || Batman: Arkham City", |db| min_row(q4b(db))),
-    (
-        "11b",
-        "Filmlance International AB || follows || The Money Man",
-        |db| min_row(q11b(db)),
-    ),
-    ("13b", "501audio || 1.8 || 5 Time Champion", |db| {
-        min_row(q13b(db))
-    }),
-    ("1c", "(co-production) || Intouchables || 2011", |db| {
-        min_row(q1c(db))
-    }),
-    (
-        "1d",
-        "(Set Decoration Rentals) (uncredited) || Disaster Movie || 2004",
-        |db| min_row(q1d(db)),
-    ),
-    ("4c", "2.1 || & Teller 2", |db| min_row(q4c(db))),
-    ("12b", "$10,000 || Birdemic: Shock and Terror", |db| {
-        min_row(q12b(db))
-    }),
-    ("12c", "\"Oh That Gus!\" || 7.1 || $1.11", |db| {
-        min_row(q12c(db))
-    }),
-    ("13c", "DL Sites || 1.8 || Champion", |db| min_row(q13c(db))),
-    ("14b", "6.4 || Of Dolls and Murder", |db| min_row(q14b(db))),
-    ("14c", "1.0 || $lowdown", |db| min_row(q14c(db))),
-    ("22b", "(empty)", |db| min_row(q22b(db))),
-    ("22c", "(empty)", |db| min_row(q22c(db))),
-    // --- 22d, 5b, 5c, 15a-d, 11c-d, 13d, 6a-f ---
-    ("22d", "(#1.1) || 2.0 || 13 Productions", |db| {
-        min_row(q22d(db))
-    }),
-    ("5b", "(empty)", |db| min_row(q5b(db))),
-    ("5c", "11,830,420", |db| min_row(q5c(db))),
-    (
-        "15a",
-        "USA:1 June 2007 || Battlestar Galactica: The Resistance",
-        |db| min_row(q15a(db)),
-    ),
-    ("15b", "USA:27 April 2007 || RoboCop vs Terminator", |db| {
-        min_row(q15b(db))
-    }),
-    ("15c", "USA:1 April 2003 || 24: Day Six - Debrief", |db| {
-        min_row(q15c(db))
-    }),
-    ("15d", "(Not So) Instant Photo || 06/05", |db| {
-        min_row(q15d(db))
-    }),
-    (
-        "11c",
-        "20th Century Fox Home Entertainment || (1997-2002) (worldwide) (all media) || 24",
-        |db| min_row(q11c(db)),
-    ),
-    (
-        "11d",
-        "13th Street || (1954) (UK) (TV) || ...denn sie wissen nicht, was sie tun",
-        |db| min_row(q11d(db)),
-    ),
-    ("13d", "\"O\" Films || 1.0 || #54 Meets #47", |db| {
-        min_row(q13d(db))
-    }),
-    (
-        "6a",
-        "marvel-cinematic-universe || Downey Jr., Robert || Iron Man 3",
-        |db| min_row(q6a(db)),
-    ),
-    (
-        "6b",
-        "based-on-comic || Downey Jr., Robert || The Avengers 2",
-        |db| min_row(q6b(db)),
-    ),
-    (
-        "6c",
-        "marvel-cinematic-universe || Downey Jr., Robert || The Avengers 2",
-        |db| min_row(q6c(db)),
-    ),
-    (
-        "6d",
-        "based-on-comic || Downey Jr., Robert || 2008 MTV Movie Awards",
-        |db| min_row(q6d(db)),
-    ),
-    (
-        "6e",
-        "marvel-cinematic-universe || Downey Jr., Robert || Iron Man 3",
-        |db| min_row(q6e(db)),
-    ),
-    (
-        "6f",
-        "based-on-comic || \"Steff\", Stefanie Oxmann Mcgaha || & Teller 2",
-        |db| min_row(q6f(db)),
-    ),
-    // --- 7a-c, 8a-d, 9a-d, 10a-c ---
-    ("7a", "Antonioni, Michelangelo || Dressed to Kill", |db| {
-        min_row(q7a(db))
-    }),
-    ("7b", "De Palma, Brian || Dressed to Kill", |db| {
-        min_row(q7b(db))
-    }),
-    (
-        "7c",
-        "50 Cent || \"Boo\" Arnold was born Earl Arnold in Hattiesburg, Mississippi in 1966. His father gave him the nickname 'Boo' early in life and it stuck through grade school, high school, and college. He is still known as \"Boo\" to family and friends.  Raised in central Texas, Arnold played baseball at Texas Tech University where he graduated with a BA in Advertising and Marketing. While at Texas Tech he was also a member of the Texas Epsilon chapter of Phi Delta Theta fraternity. After college he worked with Young Life, an outreach to high school students, in San Antonio, Texas.  While with Young Life Arnold began taking extension courses through Fuller Theological Seminary and ultimately went full-time to Gordon-Conwell Theological Seminary in Boston, Massachusetts. At Gordon-Conwell he completed a Master's Degree in Divinity studying Theology, Philosophy, Church History, Biblical Languages (Hebrew & Greek), and Exegetical Methods. Following seminary he was involved with reconciliation efforts in the former Yugoslavia shortly after the war ended there in1995.  Arnold started acting in his early thirties in Texas. After an encouraging visit to Los Angeles where he spent time with childhood friend George Eads (of CSI Las Vegas) he decided to move to Los Angeles in 2001 to pursue acting full-time. While in Los Angeles he has studied acting with Judith Weston at Judith Weston Studio for Actors and Directors.  Arnold's acting career has been one of steady development, booking co-star and guest-star roles in nighttime television. He guest-starred opposite of Jane Seymour on the night time television drama Justice. He played the lead, Michael Hollister, in the film The Seer, written and directed by Patrick Masset (Friday Night Lights).  He was nominated Best Actor in the168 Film Festival for the role of Phil Stevens in the short-film Useless. In Useless he played a US Marshal who must choose between mercy and justice as he confronts the man who murdered his father. Arnold's performance in Useless confirmed his ability to carry lead roles, and he continues to work toward solidifying himself as a male lead in film and television.  Arnold married fellow Texan Stacy Rudd of San Antonio in 2003 and they are now raising their three children in the Los Angeles area.",
-        |db| min_row(q7c(db)),
-    ),
-    ("8a", "Chambers, Linda || .hack//Quantum", |db| {
-        min_row(q8a(db))
-    }),
-    (
-        "8b",
-        "Chambers, Linda || Dragon Ball Z: Shin Budokai",
-        |db| min_row(q8b(db)),
-    ),
-    ("8c", "\"A.J.\" || #1 Cheerleader Camp", |db| {
-        min_row(q8c(db))
-    }),
-    (
-        "8d",
-        "\"Jenny from the Block\" || #1 Cheerleader Camp",
-        |db| min_row(q8d(db)),
-    ),
-    ("9a", "AJ || Airport Announcer || Blue Harvest", |db| {
-        min_row(q9a(db))
-    }),
-    (
-        "9b",
-        "AJ || Airport Announcer || Bassett, Angela || Blue Harvest",
-        |db| min_row(q9b(db)),
-    ),
-    (
-        "9c",
-        "'Annette' || 2nd Balladeer || Alborg, Ana Esther || (1975-01-20)",
-        |db| min_row(q9c(db)),
-    ),
-    (
-        "9d",
-        "!!!, Toy || Aaron, Caroline || \"Cockamamie's\" Salesgirl || $15,000.00 Error",
-        |db| min_row(q9d(db)),
-    ),
-    ("10a", "Actor || 12 Rounds", |db| min_row(q10a(db))),
-    ("10b", "(empty)", |db| min_row(q10b(db))),
-    ("10c", "Himself || Evil Eyes: Behind the Scenes", |db| {
-        min_row(q10c(db))
-    }),
-    // --- templates 16-18 ---
-    (
-        "16a",
-        "Adams, Stan || Carol Burnett vs. Anthony Perkins",
-        |db| min_row(q16a(db)),
-    ),
-    ("16b", "!!!, Toy || & Teller", |db| min_row(q16b(db))),
-    ("16c", "\"Brooklyn\" Tony Danza || (#1.5)", |db| {
-        min_row(q16c(db))
-    }),
-    ("16d", "\"Brooklyn\" Tony Danza || (#1.5)", |db| {
-        min_row(q16d(db))
-    }),
-    ("17a", "B, Khaz", |db| min_row(q17a(db))),
-    ("17b", "Z'Dar, Robert", |db| min_row(q17b(db))),
-    ("17c", "X'Volaitis, John", |db| min_row(q17c(db))),
-    ("17d", "Abrahamsson, Bertil", |db| min_row(q17d(db))),
-    ("17e", "$hort, Too", |db| min_row(q17e(db))),
-    ("17f", "'El Galgo PornoStar', Blanquito", |db| {
-        min_row(q17f(db))
-    }),
-    ("18a", "$1,000 || 10 || 40 Days and 40 Nights", |db| {
-        min_row(q18a(db))
-    }),
-    ("18b", "Horror || 8.1 || Agorable", |db| min_row(q18b(db))),
-    ("18c", "Action || 10 || #PostModem", |db| min_row(q18c(db))),
-    // --- 19a-26c ---
-    ("19a", "Angeline, Moriah || Blue Harvest", |db| {
-        min_row(q19a(db))
-    }),
-    ("19b", "Jolie, Angelina || Kung Fu Panda", |db| {
-        min_row(q19b(db))
-    }),
-    (
-        "19c",
-        "Alborg, Ana Esther || .hack//Akusei heni vol. 2",
-        |db| min_row(q19c(db)),
-    ),
-    ("19d", "Aaron, Caroline || $9.99", |db| min_row(q19d(db))),
-    ("20a", "Disaster Movie", |db| min_row(q20a(db))),
-    ("20b", "Iron Man", |db| min_row(q20b(db))),
-    ("20c", "Abell, Alistair || ...And Then I...", |db| {
-        min_row(q20c(db))
-    }),
-    (
-        "21a",
-        "Det Danske Filminstitut || followed by || Der Serienkiller - Klinge des Todes",
-        |db| min_row(q21a(db)),
-    ),
-    (
-        "21b",
-        "Filmlance International AB || followed by || Hämndens pris",
-        |db| min_row(q21b(db)),
-    ),
-    (
-        "21c",
-        "Churchill Films || followed by || Batman Beyond",
-        |db| min_row(q21c(db)),
-    ),
-    ("23a", "movie || The Analysts", |db| min_row(q23a(db))),
-    ("23b", "movie || The Big Mope", |db| min_row(q23b(db))),
-    ("23c", "movie || Dirt Merchant", |db| min_row(q23c(db))),
-    (
-        "24a",
-        "Additional Voices || Baker, Andrea || Baiohazâdo 6",
-        |db| min_row(q24a(db)),
-    ),
-    (
-        "24b",
-        "Tigress || Jolie, Angelina || Kung Fu Panda 2",
-        |db| min_row(q24b(db)),
-    ),
-    (
-        "25a",
-        "Horror || 10 || -- And Now the Screaming Starts! || Abdallah, Damon",
-        |db| min_row(q25a(db)),
-    ),
-    (
-        "25b",
-        "Horror || 138 || Vampire Boys || Campbell, Jeremiah",
-        |db| min_row(q25b(db)),
-    ),
-    ("25c", "Action || 10 || $ || Aakeson, Kim Fupz", |db| {
-        min_row(q25c(db))
-    }),
-    (
-        "26a",
-        "'Agua' Man || Acereda, Hermie || 7.1 || 3:10 to Yuma",
-        |db| min_row(q26a(db)),
-    ),
-    ("26b", "Bank Manager || 8.2 || Inception", |db| {
-        min_row(q26b(db))
-    }),
-    ("26c", "'Agua' Man || 1.9 || 12 Rounds", |db| {
-        min_row(q26c(db))
-    }),
-    // --- 27a-33c ---
-    (
-        "27a",
-        "Det Danske Filminstitut || followed by || Spår i mörker",
-        |db| min_row(q27a(db)),
-    ),
-    (
-        "27b",
-        "Filmlance International AB || followed by || Vita nätter",
-        |db| min_row(q27b(db)),
-    ),
-    (
-        "27c",
-        "Det Danske Filminstitut || followed by || Spår i mörker",
-        |db| min_row(q27c(db)),
-    ),
-    ("28a", "01 Distribuzione || 2.9 || (#1.1)", |db| {
-        min_row(q28a(db))
-    }),
-    ("28b", "20th Century Fox || 6.6 || (#1.1)", |db| {
-        min_row(q28b(db))
-    }),
-    ("28c", "01 Distribuzione || 1.9 || (#1.1)", |db| {
-        min_row(q28c(db))
-    }),
-    ("29a", "Queen || Andrews, Julie || Shrek 2", |db| {
-        min_row(q29a(db))
-    }),
-    ("29b", "Queen || Andrews, Julie || Shrek 2", |db| {
-        min_row(q29b(db))
-    }),
-    ("29c", "Lola || Andrews, Julie || Hoodwinked!", |db| {
-        min_row(q29c(db))
-    }),
-    (
-        "30a",
-        "Horror || 100356 || 16 Blocks || Abrams, J.J.",
-        |db| min_row(q30a(db)),
-    ),
-    (
-        "30b",
-        "Horror || 194782 || Freddy vs. Jason || Shannon, Damian",
-        |db| min_row(q30b(db)),
-    ),
-    ("30c", "Action || 100356 || $ || Abernathy, Lewis", |db| {
-        min_row(q30c(db))
-    }),
-    (
-        "31a",
-        "Horror || 1040 || 2001 Maniacs || Agnew, Jim",
-        |db| min_row(q31a(db)),
-    ),
-    (
-        "31b",
-        "Horror || 129755 || Saw || Bousman, Darren Lynn",
-        |db| min_row(q31b(db)),
-    ),
-    ("31c", "Action || 1008 || 11:14 || Abraham, Brad", |db| {
-        min_row(q31c(db))
-    }),
-    ("32a", "(empty)", |db| min_row(q32a(db))),
-    (
-        "32b",
-        "alternate language version of || 12 oz. Mouse || 'Angel': Season 2 Overview",
-        |db| min_row(q32b(db)),
-    ),
-    (
-        "33a",
-        "495 Productions || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila",
-        |db| min_row(q33a(db)),
-    ),
-    (
-        "33b",
-        "MTV Netherlands || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila",
-        |db| min_row(q33b(db)),
-    ),
-    (
-        "33c",
-        "2BE || 495 Productions || 1.3 || 1.0 || A Double Shot at Love || A Double Shot at Love",
-        |db| min_row(q33c(db)),
-    ),
-    // --- method-chain demo ---
-    (
-        "6a/method",
-        "marvel-cinematic-universe || Downey Jr., Robert || Iron Man 3",
-        |db| min_row(q6a_methods(db)),
-    ),
-];
+macro_rules! job_queries {
+    ($($name:literal => $query:ident $(.$adapt:ident($($arg:tt)*))*, $oracle:literal;)*) => {
+        /// Every query, paired with the output the full IMDb dataset produces.
+        pub const ENTRIES: &[super::Entry] = &[
+            $(($name, $oracle, |db| min_row($query(db))),)*
+        ];
 
-#[cfg(all(test, feature = "test"))]
-pub(crate) fn differential(
-    name: &str,
-    db: &'static Job,
-) -> Result<crate::test::result::ResultSet, String> {
-    let result = match name {
-        "1a" => min_result(q1a(db), 3),
-        "1b" => min_result(q1b(db), 3),
-        "1c" => min_result(q1c(db), 3),
-        "1d" => min_result(q1d(db), 3),
-        "2a" => min_result(q2a(db), 1),
-        "2b" => min_result(q2b(db), 1),
-        "2c" => min_result(q2c(db), 1),
-        "2d" => min_result(q2d(db), 1),
-        "3a" => min_result(q3a(db), 1),
-        "3b" => min_result(q3b(db), 1),
-        "3c" => min_result(q3c(db), 1),
-        "4a" => min_result(q4a(db), 2),
-        "4b" => min_result(q4b(db), 2),
-        "4c" => min_result(q4c(db), 2),
-        "5a" => min_result(q5a(db), 1),
-        "5b" => min_result(q5b(db), 1),
-        "5c" => min_result(q5c(db), 1),
-        "6a" => min_result(q6a(db), 3),
-        "6b" => min_result(q6b(db), 3),
-        "6c" => min_result(q6c(db), 3),
-        "6d" => min_result(q6d(db), 3),
-        "6e" => min_result(q6e(db), 3),
-        "6f" => min_result(q6f(db), 3),
-        "7a" => min_result(q7a(db), 2),
-        "7b" => min_result(q7b(db), 2),
-        "7c" => min_result(q7c(db), 2),
-        "8a" => min_result(q8a(db), 2),
-        "8b" => min_result(q8b(db), 2),
-        "8c" => min_result(q8c(db), 2),
-        "8d" => min_result(q8d(db), 2),
-        "9a" => min_result(q9a(db), 3),
-        "9b" => min_result(q9b(db), 4),
-        "9c" => min_result(q9c(db), 4),
-        "9d" => min_result(q9d(db), 4),
-        "10a" => min_result(q10a(db), 2),
-        "10b" => min_result(q10b(db), 2),
-        "10c" => min_result(q10c(db), 2),
-        "11a" => min_result(q11a(db), 3),
-        "11b" => min_result(q11b(db), 3),
-        "11c" => min_result(q11c(db), 3),
-        "11d" => min_result(q11d(db), 3),
-        "12a" => min_result(q12a(db), 3),
-        "12b" => min_result(q12b(db), 2),
-        "12c" => min_result(q12c(db), 3),
-        "13a" => min_result(q13a(db), 3),
-        "13b" => min_result(q13b(db), 3),
-        "13c" => min_result(q13c(db), 3),
-        "13d" => min_result(q13d(db), 3),
-        "14a" => min_result(q14a(db), 2),
-        "14b" => min_result(q14b(db), 2),
-        "14c" => min_result(q14c(db), 2),
-        "15a" => min_result(q15a(db), 2),
-        "15b" => min_result(q15b(db), 2),
-        "15c" => min_result(q15c(db), 2),
-        "15d" => min_result(q15d(db), 2),
-        "16a" => min_result(q16a(db), 2),
-        "16b" => min_result(q16b(db), 2),
-        "16c" => min_result(q16c(db), 2),
-        "16d" => min_result(q16d(db), 2),
-        // The SQL projects the same MIN(name) twice under distinct aliases.
-        "17a" => min_result(q17a(db).map(|name| (name, name)), 2),
-        "17b" => min_result(q17b(db).map(|name| (name, name)), 2),
-        "17c" => min_result(q17c(db).map(|name| (name, name)), 2),
-        "17d" => min_result(q17d(db), 1),
-        "17e" => min_result(q17e(db), 1),
-        "17f" => min_result(q17f(db), 1),
-        "18a" => min_result(q18a(db), 3),
-        "18b" => min_result(q18b(db), 3),
-        "18c" => min_result(q18c(db), 3),
-        "19a" => min_result(q19a(db), 2),
-        "19b" => min_result(q19b(db), 2),
-        "19c" => min_result(q19c(db), 2),
-        "19d" => min_result(q19d(db), 2),
-        "20a" => min_result(q20a(db), 1),
-        "20b" => min_result(q20b(db), 1),
-        "20c" => min_result(q20c(db), 2),
-        "21a" => min_result(q21a(db), 3),
-        "21b" => min_result(q21b(db), 3),
-        "21c" => min_result(q21c(db), 3),
-        "22a" => min_result(q22a(db), 3),
-        "22b" => min_result(q22b(db), 3),
-        "22c" => min_result(q22c(db), 3),
-        "22d" => min_result(q22d(db), 3),
-        "23a" => min_result(q23a(db), 2),
-        "23b" => min_result(q23b(db), 2),
-        "23c" => min_result(q23c(db), 2),
-        "24a" => min_result(q24a(db), 3),
-        "24b" => min_result(q24b(db), 3),
-        "25a" => min_result(q25a(db), 4),
-        "25b" => min_result(q25b(db), 4),
-        "25c" => min_result(q25c(db), 4),
-        "26a" => min_result(q26a(db), 4),
-        "26b" => min_result(q26b(db), 3),
-        "26c" => min_result(q26c(db), 3),
-        "27a" => min_result(q27a(db), 3),
-        "27b" => min_result(q27b(db), 3),
-        "27c" => min_result(q27c(db), 3),
-        "28a" => min_result(q28a(db), 3),
-        "28b" => min_result(q28b(db), 3),
-        "28c" => min_result(q28c(db), 3),
-        "29a" => min_result(q29a(db), 3),
-        "29b" => min_result(q29b(db), 3),
-        "29c" => min_result(q29c(db), 3),
-        "30a" => min_result(q30a(db), 4),
-        "30b" => min_result(q30b(db), 4),
-        "30c" => min_result(q30c(db), 4),
-        "31a" => min_result(q31a(db), 4),
-        "31b" => min_result(q31b(db), 4),
-        "31c" => min_result(q31c(db), 4),
-        "32a" => min_result(q32a(db), 3),
-        "32b" => min_result(q32b(db), 3),
-        "33a" => min_result(q33a(db), 6),
-        "33b" => min_result(q33b(db), 6),
-        "33c" => min_result(q33c(db), 6),
-        _ => return Err(format!("unknown JOB query {name}")),
+        /// The same queries as typed cells, for comparison against DuckDB.
+        #[cfg(feature = "test")]
+        pub fn differential(
+            name: &str,
+            db: &'static Job,
+        ) -> Result<Vec<crate::job_queries::helpers::Result>, String> {
+            match name {
+                $($name => Ok(min_result($query(db) $(.$adapt($($arg)*))*)),)*
+                _ => Err(format!("unknown JOB query {name}")),
+            }
+        }
     };
-    Ok(result)
+}
+
+// Each line names a query once: its JOB name, the function implementing it,
+// and the oracle string the full IMDb dataset produces. A trailing method
+// chain adapts the plan for the differential comparison only, where the JOB
+// SQL projects a column that the benchmark reports once (queries 17a-c).
+job_queries! {
+    // --- templates 1-5, 11-15, 22 ---
+    "2a" => q2a, "'Doc'";
+    "2d" => q2d, "& Teller";
+    "3b" => q3b, "300: Rise of an Empire";
+    "4a" => q4a, "5.1 || & Teller 2";
+    "13a" => q13a, "Afghanistan:24 June 2012 || 1.0 || &Me";
+    "11a" => q11a, "Churchill Films || followed by || Batman Beyond";
+    "22a" => q22a, "(empty)";
+    "1a" => q1a, "(A Warner Bros.-First National Picture) (presents) || A Clockwork Orange || 1934";
+    "5a" => q5a, "(empty)";
+    "12a" => q12a, "10th Grade Reunion Films || 8.1 || 3:20";
+    "14a" => q14a, "1.0 || $lowdown";
+    "1b" => q1b, "(Set Decoration Rentals) (uncredited) || Disaster Movie || 2008";
+    "2b" => q2b, "'Doc'";
+    "2c" => q2c, "(empty)";
+    "3a" => q3a, "2 Days in New York";
+    "3c" => q3c, "& Teller 2";
+    "4b" => q4b, "9.1 || Batman: Arkham City";
+    "11b" => q11b, "Filmlance International AB || follows || The Money Man";
+    "13b" => q13b, "501audio || 1.8 || 5 Time Champion";
+    "1c" => q1c, "(co-production) || Intouchables || 2011";
+    "1d" => q1d, "(Set Decoration Rentals) (uncredited) || Disaster Movie || 2004";
+    "4c" => q4c, "2.1 || & Teller 2";
+    "12b" => q12b, "$10,000 || Birdemic: Shock and Terror";
+    "12c" => q12c, "\"Oh That Gus!\" || 7.1 || $1.11";
+    "13c" => q13c, "DL Sites || 1.8 || Champion";
+    "14b" => q14b, "6.4 || Of Dolls and Murder";
+    "14c" => q14c, "1.0 || $lowdown";
+    "22b" => q22b, "(empty)";
+    "22c" => q22c, "(empty)";
+    // --- 22d, 5b, 5c, 15a-d, 11c-d, 13d, 6a-f ---
+    "22d" => q22d, "(#1.1) || 2.0 || 13 Productions";
+    "5b" => q5b, "(empty)";
+    "5c" => q5c, "11,830,420";
+    "15a" => q15a, "USA:1 June 2007 || Battlestar Galactica: The Resistance";
+    "15b" => q15b, "USA:27 April 2007 || RoboCop vs Terminator";
+    "15c" => q15c, "USA:1 April 2003 || 24: Day Six - Debrief";
+    "15d" => q15d, "(Not So) Instant Photo || 06/05";
+    "11c" => q11c, "20th Century Fox Home Entertainment || (1997-2002) (worldwide) (all media) || 24";
+    "11d" => q11d, "13th Street || (1954) (UK) (TV) || ...denn sie wissen nicht, was sie tun";
+    "13d" => q13d, "\"O\" Films || 1.0 || #54 Meets #47";
+    "6a" => q6a, "marvel-cinematic-universe || Downey Jr., Robert || Iron Man 3";
+    "6b" => q6b, "based-on-comic || Downey Jr., Robert || The Avengers 2";
+    "6c" => q6c, "marvel-cinematic-universe || Downey Jr., Robert || The Avengers 2";
+    "6d" => q6d, "based-on-comic || Downey Jr., Robert || 2008 MTV Movie Awards";
+    "6e" => q6e, "marvel-cinematic-universe || Downey Jr., Robert || Iron Man 3";
+    "6f" => q6f, "based-on-comic || \"Steff\", Stefanie Oxmann Mcgaha || & Teller 2";
+    // --- 7a-c, 8a-d, 9a-d, 10a-c ---
+    "7a" => q7a, "Antonioni, Michelangelo || Dressed to Kill";
+    "7b" => q7b, "De Palma, Brian || Dressed to Kill";
+    "7c" => q7c, "50 Cent || \"Boo\" Arnold was born Earl Arnold in Hattiesburg, Mississippi in 1966. His father gave him the nickname 'Boo' early in life and it stuck through grade school, high school, and college. He is still known as \"Boo\" to family and friends.  Raised in central Texas, Arnold played baseball at Texas Tech University where he graduated with a BA in Advertising and Marketing. While at Texas Tech he was also a member of the Texas Epsilon chapter of Phi Delta Theta fraternity. After college he worked with Young Life, an outreach to high school students, in San Antonio, Texas.  While with Young Life Arnold began taking extension courses through Fuller Theological Seminary and ultimately went full-time to Gordon-Conwell Theological Seminary in Boston, Massachusetts. At Gordon-Conwell he completed a Master's Degree in Divinity studying Theology, Philosophy, Church History, Biblical Languages (Hebrew & Greek), and Exegetical Methods. Following seminary he was involved with reconciliation efforts in the former Yugoslavia shortly after the war ended there in1995.  Arnold started acting in his early thirties in Texas. After an encouraging visit to Los Angeles where he spent time with childhood friend George Eads (of CSI Las Vegas) he decided to move to Los Angeles in 2001 to pursue acting full-time. While in Los Angeles he has studied acting with Judith Weston at Judith Weston Studio for Actors and Directors.  Arnold's acting career has been one of steady development, booking co-star and guest-star roles in nighttime television. He guest-starred opposite of Jane Seymour on the night time television drama Justice. He played the lead, Michael Hollister, in the film The Seer, written and directed by Patrick Masset (Friday Night Lights).  He was nominated Best Actor in the168 Film Festival for the role of Phil Stevens in the short-film Useless. In Useless he played a US Marshal who must choose between mercy and justice as he confronts the man who murdered his father. Arnold's performance in Useless confirmed his ability to carry lead roles, and he continues to work toward solidifying himself as a male lead in film and television.  Arnold married fellow Texan Stacy Rudd of San Antonio in 2003 and they are now raising their three children in the Los Angeles area.";
+    "8a" => q8a, "Chambers, Linda || .hack//Quantum";
+    "8b" => q8b, "Chambers, Linda || Dragon Ball Z: Shin Budokai";
+    "8c" => q8c, "\"A.J.\" || #1 Cheerleader Camp";
+    "8d" => q8d, "\"Jenny from the Block\" || #1 Cheerleader Camp";
+    "9a" => q9a, "AJ || Airport Announcer || Blue Harvest";
+    "9b" => q9b, "AJ || Airport Announcer || Bassett, Angela || Blue Harvest";
+    "9c" => q9c, "'Annette' || 2nd Balladeer || Alborg, Ana Esther || (1975-01-20)";
+    "9d" => q9d, "!!!, Toy || Aaron, Caroline || \"Cockamamie's\" Salesgirl || $15,000.00 Error";
+    "10a" => q10a, "Actor || 12 Rounds";
+    "10b" => q10b, "(empty)";
+    "10c" => q10c, "Himself || Evil Eyes: Behind the Scenes";
+    // --- templates 16-18 ---
+    "16a" => q16a, "Adams, Stan || Carol Burnett vs. Anthony Perkins";
+    "16b" => q16b, "!!!, Toy || & Teller";
+    "16c" => q16c, "\"Brooklyn\" Tony Danza || (#1.5)";
+    "16d" => q16d, "\"Brooklyn\" Tony Danza || (#1.5)";
+    "17a" => q17a.map(|name| (name, name)), "B, Khaz";
+    "17b" => q17b.map(|name| (name, name)), "Z'Dar, Robert";
+    "17c" => q17c.map(|name| (name, name)), "X'Volaitis, John";
+    "17d" => q17d, "Abrahamsson, Bertil";
+    "17e" => q17e, "$hort, Too";
+    "17f" => q17f, "'El Galgo PornoStar', Blanquito";
+    "18a" => q18a, "$1,000 || 10 || 40 Days and 40 Nights";
+    "18b" => q18b, "Horror || 8.1 || Agorable";
+    "18c" => q18c, "Action || 10 || #PostModem";
+    // --- 19a-26c ---
+    "19a" => q19a, "Angeline, Moriah || Blue Harvest";
+    "19b" => q19b, "Jolie, Angelina || Kung Fu Panda";
+    "19c" => q19c, "Alborg, Ana Esther || .hack//Akusei heni vol. 2";
+    "19d" => q19d, "Aaron, Caroline || $9.99";
+    "20a" => q20a, "Disaster Movie";
+    "20b" => q20b, "Iron Man";
+    "20c" => q20c, "Abell, Alistair || ...And Then I...";
+    "21a" => q21a, "Det Danske Filminstitut || followed by || Der Serienkiller - Klinge des Todes";
+    "21b" => q21b, "Filmlance International AB || followed by || Hämndens pris";
+    "21c" => q21c, "Churchill Films || followed by || Batman Beyond";
+    "23a" => q23a, "movie || The Analysts";
+    "23b" => q23b, "movie || The Big Mope";
+    "23c" => q23c, "movie || Dirt Merchant";
+    "24a" => q24a, "Additional Voices || Baker, Andrea || Baiohazâdo 6";
+    "24b" => q24b, "Tigress || Jolie, Angelina || Kung Fu Panda 2";
+    "25a" => q25a, "Horror || 10 || -- And Now the Screaming Starts! || Abdallah, Damon";
+    "25b" => q25b, "Horror || 138 || Vampire Boys || Campbell, Jeremiah";
+    "25c" => q25c, "Action || 10 || $ || Aakeson, Kim Fupz";
+    "26a" => q26a, "'Agua' Man || Acereda, Hermie || 7.1 || 3:10 to Yuma";
+    "26b" => q26b, "Bank Manager || 8.2 || Inception";
+    "26c" => q26c, "'Agua' Man || 1.9 || 12 Rounds";
+    // --- 27a-33c ---
+    "27a" => q27a, "Det Danske Filminstitut || followed by || Spår i mörker";
+    "27b" => q27b, "Filmlance International AB || followed by || Vita nätter";
+    "27c" => q27c, "Det Danske Filminstitut || followed by || Spår i mörker";
+    "28a" => q28a, "01 Distribuzione || 2.9 || (#1.1)";
+    "28b" => q28b, "20th Century Fox || 6.6 || (#1.1)";
+    "28c" => q28c, "01 Distribuzione || 1.9 || (#1.1)";
+    "29a" => q29a, "Queen || Andrews, Julie || Shrek 2";
+    "29b" => q29b, "Queen || Andrews, Julie || Shrek 2";
+    "29c" => q29c, "Lola || Andrews, Julie || Hoodwinked!";
+    "30a" => q30a, "Horror || 100356 || 16 Blocks || Abrams, J.J.";
+    "30b" => q30b, "Horror || 194782 || Freddy vs. Jason || Shannon, Damian";
+    "30c" => q30c, "Action || 100356 || $ || Abernathy, Lewis";
+    "31a" => q31a, "Horror || 1040 || 2001 Maniacs || Agnew, Jim";
+    "31b" => q31b, "Horror || 129755 || Saw || Bousman, Darren Lynn";
+    "31c" => q31c, "Action || 1008 || 11:14 || Abraham, Brad";
+    "32a" => q32a, "(empty)";
+    "32b" => q32b, "alternate language version of || 12 oz. Mouse || 'Angel': Season 2 Overview";
+    "33a" => q33a, "495 Productions || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila";
+    "33b" => q33b, "MTV Netherlands || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila";
+    "33c" => q33c, "2BE || 495 Productions || 1.3 || 1.0 || A Double Shot at Love || A Double Shot at Love";
+    // --- method-chain demo ---
+    "6a/method" => q6a_methods, "marvel-cinematic-universe || Downey Jr., Robert || Iron Man 3";
 }
 
 // ===== queries: templates 1-5, 11-15, 22 — movie-only =====

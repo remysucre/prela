@@ -6,36 +6,51 @@
 use crate::engine::*;
 use crate::job_schema::*;
 
+/// One typed scalar returned by the feature-gated query-result hook.
+#[cfg(feature = "test")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Result {
+    Null,
+    Integer(i64),
+    Text(&'static str),
+}
+
 /// An output-row shape: scalar columns and nested `Prod` tuples thereof.
 pub trait Row: Copy {
+    /// Number of scalar columns, so an empty result can be padded to the
+    /// right arity without the caller restating it.
+    const WIDTH: usize;
     /// Column-wise minimum of two rows.
     fn col_min(self, other: Self) -> Self;
     /// Append each column, formatted, to `cols`.
     fn push_cols(self, cols: &mut Vec<String>);
     /// Append each column without losing its scalar type.
-    #[cfg(all(test, feature = "test"))]
-    fn push_result_cells(self, cells: &mut Vec<crate::test::result::ResultCell>);
+    #[cfg(feature = "test")]
+    fn push_result_cells(self, cells: &mut Vec<Result>);
 }
 
 impl Row for &'static str {
+    const WIDTH: usize = 1;
     fn col_min(self, other: Self) -> Self { if self <= other { self } else { other } }
     fn push_cols(self, cols: &mut Vec<String>) { cols.push(self.to_string()); }
-    #[cfg(all(test, feature = "test"))]
-    fn push_result_cells(self, cells: &mut Vec<crate::test::result::ResultCell>) {
-        cells.push(crate::test::result::ResultCell::Text(self.to_owned()));
+    #[cfg(feature = "test")]
+    fn push_result_cells(self, cells: &mut Vec<Result>) {
+        cells.push(Result::Text(self));
     }
 }
 
 impl Row for i64 {
+    const WIDTH: usize = 1;
     fn col_min(self, other: Self) -> Self { self.min(other) }
     fn push_cols(self, cols: &mut Vec<String>) { cols.push(self.to_string()); }
-    #[cfg(all(test, feature = "test"))]
-    fn push_result_cells(self, cells: &mut Vec<crate::test::result::ResultCell>) {
-        cells.push(crate::test::result::ResultCell::Integer(i128::from(self)));
+    #[cfg(feature = "test")]
+    fn push_result_cells(self, cells: &mut Vec<Result>) {
+        cells.push(Result::Integer(self));
     }
 }
 
 impl<A: Row, B: Row> Row for (A, B) {
+    const WIDTH: usize = A::WIDTH + B::WIDTH;
     fn col_min(self, other: Self) -> Self {
         (self.0.col_min(other.0), self.1.col_min(other.1))
     }
@@ -43,8 +58,8 @@ impl<A: Row, B: Row> Row for (A, B) {
         self.0.push_cols(cols);
         self.1.push_cols(cols);
     }
-    #[cfg(all(test, feature = "test"))]
-    fn push_result_cells(self, cells: &mut Vec<crate::test::result::ResultCell>) {
+    #[cfg(feature = "test")]
+    fn push_result_cells(self, cells: &mut Vec<Result>) {
         self.0.push_result_cells(cells);
         self.1.push_result_cells(cells);
     }
@@ -64,13 +79,13 @@ pub fn min_row<Q: Drive>(q: Q) -> String where Q::R: Row {
     }
 }
 
-#[cfg(all(test, feature = "test"))]
-pub fn min_result<Q: Drive>(q: Q, width: usize) -> crate::test::result::ResultSet
+/// Drive `q` and accumulate per-column minima as typed cells, padding an
+/// empty result to [`Row::WIDTH`] nulls the way SQL's `MIN` over no rows does.
+#[cfg(feature = "test")]
+pub fn min_result<Q: Drive>(q: Q) -> Vec<Result>
 where
     Q::R: Row,
 {
-    use crate::test::result::{ResultCell, ResultSet};
-
     let mut minimum: Option<Q::R> = None;
     q.drive(|_, value| {
         minimum = Some(match minimum {
@@ -78,16 +93,15 @@ where
             None => value,
         })
     });
-    let row = match minimum {
-        None => vec![ResultCell::Null; width],
+    match minimum {
+        None => vec![Result::Null; Q::R::WIDTH],
         Some(row) => {
-            let mut values = Vec::with_capacity(width);
+            let mut values = Vec::with_capacity(Q::R::WIDTH);
             row.push_result_cells(&mut values);
-            assert_eq!(values.len(), width);
+            debug_assert_eq!(values.len(), Q::R::WIDTH);
             values
         }
-    };
-    ResultSet::from_rows([row])
+    }
 }
 
 // ===== shared sub-queries (used by several queries) =====================

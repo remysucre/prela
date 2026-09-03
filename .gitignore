@@ -8,7 +8,7 @@ data/
 # Rust build artifacts
 rust/target/
 rust/.hegel/
-rust/src/test/queries/job/*/mismatch.sql
+rust/tests/differential/queries/job/*/mismatch.sql
 schema_experiments/target/
 schema_sandbox/target/
 

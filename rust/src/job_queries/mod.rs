@@ -17,5 +17,5 @@ pub fn all_queries() -> Vec<Entry> {
     queries::ENTRIES.to_vec()
 }
 
-#[cfg(all(test, feature = "test"))]
-pub(crate) use queries::differential;
+#[cfg(feature = "test")]
+pub use queries::differential;
