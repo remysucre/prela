@@ -1,4 +1,4 @@
-use prela::{Entry, job_queries, job_schema, tpch_queries, tpch_schema};
+use prela::{job_queries, job_schema, tpch_queries, tpch_schema};
 
 /// Cache directory the suites mmap from — `../cache` by default, overridable
 /// with `PRELA_CACHE` (e.g. to point at a different scale factor's cache).
@@ -21,11 +21,11 @@ fn main() {
 /// Two timed rounds over a query suite: run every query, diff against its
 /// oracle, report ok-counts. Per-query reporting is suite-specific.
 ///
-/// `db` is `&'static` because the runners are fn pointers in `const`
-/// tables — see `Entry`.
-fn run_suite<D>(
+/// `db` is `&'static` because the runners hand out plans built from it —
+/// see `Entry`. `F` is a fn pointer for TPC-H and a boxed closure for JOB.
+fn run_suite<D, F: Fn(&'static D) -> String>(
     db: &'static D,
-    qs: &[Entry<D>],
+    qs: &[(&'static str, &'static str, F)],
     on_pass: impl Fn(usize, &str, f64, &str),
     on_diff: impl Fn(&str, f64, &str, &str),
 ) {
@@ -101,7 +101,7 @@ fn run_job() {
         db.person.id.n
     );
 
-    let qs = job_queries::all_queries();
+    let qs = job_queries::all_queries(db);
     eprintln!("{} queries registered", qs.len());
 
     run_suite(
@@ -121,7 +121,7 @@ fn run_job() {
 
 fn run_tpch() {
     let t = std::time::Instant::now();
-    // Leaked, once: `Entry`'s runners are fn pointers, and plans built from
+    // Leaked, once: `Entry`'s runners take a `&'static` database, and plans built from
     // the columns hold `&'static` references (which is what the engine's
     // `Compose`/`Filter` types expect). The cache mmap is leaked anyway.
     let db: &'static tpch_schema::Tpch = Box::leak(Box::new(tpch_schema::load(&cache_dir())));

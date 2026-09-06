@@ -23,6 +23,7 @@ pub mod tpch_schema;
 /// A registered query: (name, expected output, runner).
 ///
 /// Runners take the loaded database, which `main` leaks to `&'static` so
-/// that plans built from it carry no lifetime and the `ENTRIES` tables can
-/// stay `const` arrays of fn pointers.
+/// that plans built from it carry no lifetime and the TPC-H tables can stay
+/// `const` arrays of fn pointers. JOB's entries are the same tuple with a
+/// boxed closure over the once-destructured columns (`job_queries::Entry`).
 pub type Entry<D> = (&'static str, &'static str, fn(&'static D) -> String);

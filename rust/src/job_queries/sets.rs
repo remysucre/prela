@@ -18,3 +18,5 @@ pub fn nordic9()  -> Vec<&'static str> { vec!["Sweden","Norway","Germany","Denma
 pub fn nordic10() -> Vec<&'static str> { vec!["Sweden","Norway","Germany","Denmark","Swedish","Danish","Norwegian","German","USA","American"] }
 
 pub fn link3() -> Vec<&'static str> { vec!["sequel","follows","followed by"] }
+
+pub fn horror2() -> Vec<&'static str> { vec!["Horror","Thriller"] }
