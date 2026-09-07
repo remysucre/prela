@@ -27,6 +27,11 @@ pub trait Member: Query {
 pub trait Probe: Member {
     fn probe<K: FnMut(Self::R)>(&self, x: Self::D, k: K);
     fn probe_any<K: FnMut(Self::R) -> bool>(&self, x: Self::D, k: K) -> bool;
+    fn get(&self, x: Self::D) -> Option<Self::R> {
+        let mut res = None;
+        self.probe(x, |y| res = Some(y));
+        res
+    }
 }
 
 pub trait IntoQuery {
@@ -192,8 +197,6 @@ impl<E: 'static> Dense for Id<E> {
         Id::new(i)
     }
 }
-
-
 
 pub struct VecRel<R: Copy, D: Dense = usize> {
     pub v: Vec<R>,
@@ -382,7 +385,9 @@ impl<R: Copy, D: Dense> DictRel<R, D> {
     /// The ids whose entry satisfies `p`, with the entry as value. `p` runs
     /// once per table entry, then each id costs a bit test.
     pub fn dict_filter<P: Fn(R) -> bool>(&self, p: P) -> DictFiltered<'_, VecRel<usize, D>, R> {
-        (&self.codes).with(dict_mask(&self.table, p)).select(&self.table)
+        (&self.codes)
+            .with(dict_mask(&self.table, p))
+            .select(&self.table)
     }
 }
 impl<D: Dense> DictRel<&'static str, D> {
@@ -410,7 +415,10 @@ impl<R: Copy, D: Dense> Drive for DictRel<R, D> {
 impl<R: Copy, D: Dense> Member for DictRel<R, D> {
     #[inline(always)]
     fn member(&self, x: D) -> bool {
-        self.codes.v.get(x.idx()).is_some_and(|&c| c < self.table.v.len())
+        self.codes
+            .v
+            .get(x.idx())
+            .is_some_and(|&c| c < self.table.v.len())
     }
 }
 impl<R: Copy, D: Dense> Probe for DictRel<R, D> {
@@ -448,7 +456,9 @@ impl<R: Copy + 'static, D: Dense> DictMultiRel<R, D> {
     /// table entry, then each pair costs a bit test — the difference
     /// between ~0.1 ms and a regex call per movie-keyword pair.
     pub fn dict_filter<P: Fn(R) -> bool>(&self, p: P) -> DictFiltered<'_, MultiRel<usize, D>, R> {
-        (&self.codes).with(dict_mask(&self.table, p)).select(&self.table)
+        (&self.codes)
+            .with(dict_mask(&self.table, p))
+            .select(&self.table)
     }
 }
 impl<D: Dense> DictMultiRel<&'static str, D> {
@@ -501,7 +511,8 @@ impl<R: Copy + 'static, D: Dense> Probe for DictMultiRel<R, D> {
     }
     #[inline(always)]
     fn probe_any<K: FnMut(R) -> bool>(&self, x: D, mut k: K) -> bool {
-        self.codes.probe_any(x, |c| self.table.v.get(c).is_some_and(|&r| k(r)))
+        self.codes
+            .probe_any(x, |c| self.table.v.get(c).is_some_and(|&r| k(r)))
     }
 }
 
@@ -1230,7 +1241,8 @@ impl<D: Copy + Eq + Hash, S: Copy> Fold<D, S> {
         Fold { cache: m }
     }
 
-    /// Whole-multiset reduce: buffer every group into an `SVec`, then compute
+    /// Whole-multiset reduce (Julia's BufFold — julia-engine plan.jl
+    /// `build_buffold`): buffer every group into an `SVec`, then compute
     /// each cache entry as `f(vs)` over the whole group. For reducers that
     /// don't fit foldl's `(S, R) -> S` shape — count-distinct, median, … —
     /// where `build` is the per-key foldl.
@@ -1496,9 +1508,6 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    // Predicate filters over the query's range. A dictionary-encoded string
-    // column (`DictRel`) already has range `Str`, so `kind.eq("movie")`
-    // needs no hop to a lookup table.
     #[inline(always)]
     fn eq(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1509,6 +1518,7 @@ pub trait QueryExt: IntoQuery + Sized {
             p: move |x| x == v,
         }
     }
+
     #[inline(always)]
     fn ne(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1519,6 +1529,7 @@ pub trait QueryExt: IntoQuery + Sized {
             p: move |x| x != v,
         }
     }
+
     #[inline(always)]
     fn gt(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1529,6 +1540,7 @@ pub trait QueryExt: IntoQuery + Sized {
             p: move |x| x > v,
         }
     }
+
     #[inline(always)]
     fn lt(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1539,6 +1551,7 @@ pub trait QueryExt: IntoQuery + Sized {
             p: move |x| x < v,
         }
     }
+
     #[inline(always)]
     fn ge(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1549,6 +1562,7 @@ pub trait QueryExt: IntoQuery + Sized {
             p: move |x| x >= v,
         }
     }
+
     #[inline(always)]
     fn le(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1559,6 +1573,7 @@ pub trait QueryExt: IntoQuery + Sized {
             p: move |x| x <= v,
         }
     }
+
     #[inline(always)]
     fn in_v(self, vs: Vec<ROf<Self>>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1569,6 +1584,7 @@ pub trait QueryExt: IntoQuery + Sized {
             p: move |x| vs.iter().any(|&v| v == x),
         }
     }
+
     /// `in_v` over any `IntoIterator`
     #[inline(always)]
     fn is_in<I: IntoIterator<Item = ROf<Self>>>(
@@ -1625,7 +1641,7 @@ pub trait QueryExt: IntoQuery + Sized {
         Filter { a: self.iq(), p: f }
     }
 
-    /// Half-open range `[lo, hi)`.
+    /// Half-open range `[lo, hi)` — Julia `during(lo, hi)`.
     #[inline(always)]
     fn during(self, lo: ROf<Self>, hi: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1637,7 +1653,7 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    /// Closed range `[lo, hi]`.
+    /// Closed range `[lo, hi]` — Julia `lo..hi`.
     #[inline(always)]
     fn between(self, lo: ROf<Self>, hi: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1881,7 +1897,7 @@ mod tests {
         let c = cast();
         let u3 = Universe::new(3);
         // films-with-cast as an identity relation: restrict the universe by
-        // membership in cast (the Restrict node).
+        // membership in cast (Julia's `a : b`, the Restrict node).
         let people = u3.with(&c);
         assert_eq!(drive_all(&people), vec![(0, 0), (2, 2)]);
         assert!(people.member(0) && !people.member(1));
@@ -2000,7 +2016,8 @@ mod tests {
         // typed fixture columns: movie → kind id, kind → name
         let mk: VecRel<Id<K>, Id<M>> = VecRel::new(vec![Id::new(1), Id::new(0), Id::new(1)]);
         let kname: VecRel<&'static str, Id<K>> = VecRel::new(vec!["alpha", "beta"]);
-        // compose through the typed bridge (Id<K> = Id<K>)
+        // compose through the typed bridge (Id<K> = Id<K>) — the shape the
+        // schema!-generated nav methods build (`q.kname()` ≡ `q.select(kname)`)
         let mut got = Vec::new();
         (&mk).select(&kname).drive(|m, n| got.push((m.0, n)));
         assert_eq!(got, vec![(0, "beta"), (1, "alpha"), (2, "beta")]);
@@ -2027,8 +2044,8 @@ mod tests {
     fn collect_set_restrict_and_map() {
         let f = films();
         let u = Universe::new(31);
-        // the universe 0..31 restricted by films' collected value-set
-        // {10, 20, 30}
+        // Julia's `⩘`: the universe 0..31 restricted by films' collected
+        // value-set {10, 20, 30}
         let w = u.with((&f).collect::<MatSet<_>>());
         assert_eq!(drive_all(&w), vec![(10, 10), (20, 20), (30, 30)]);
         assert!(w.member(10) && !w.member(11));
