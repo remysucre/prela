@@ -216,6 +216,37 @@ impl<R: Copy, D: Dense> VecRel<R, D> {
     }
 }
 
+impl<R: Copy, D: Dense> Query for VecRel<R, D> {
+    type D = D;
+    type R = R;
+}
+impl<R: Copy, D: Dense> Drive for VecRel<R, D> {
+    #[inline(always)]
+    fn drive<K: FnMut(D, R)>(&self, mut k: K) {
+        for (i, &r) in self.v.iter().enumerate() {
+            k(D::from_idx(i), r);
+        }
+    }
+}
+impl<R: Copy, D: Dense> Member for VecRel<R, D> {
+    #[inline(always)]
+    fn member(&self, x: D) -> bool {
+        x.idx() < self.v.len()
+    }
+}
+impl<R: Copy, D: Dense> Probe for VecRel<R, D> {
+    #[inline(always)]
+    fn probe<K: FnMut(R)>(&self, x: D, mut k: K) {
+        if let Some(&r) = self.v.get(x.idx()) {
+            k(r);
+        }
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut(R) -> bool>(&self, x: D, mut k: K) -> bool {
+        self.v.get(x.idx()).is_some_and(|&r| k(r))
+    }
+}
+
 pub struct MultiRel<R: Copy + 'static, D: Dense = usize> {
     pub _d: PhantomData<D>,
     pub offsets: &'static [u32],
@@ -279,37 +310,6 @@ impl<R: Copy + 'static, D: Dense> MultiRel<R, D> {
         } else {
             &[]
         }
-    }
-}
-
-impl<R: Copy, D: Dense> Query for VecRel<R, D> {
-    type D = D;
-    type R = R;
-}
-impl<R: Copy, D: Dense> Drive for VecRel<R, D> {
-    #[inline(always)]
-    fn drive<K: FnMut(D, R)>(&self, mut k: K) {
-        for (i, &r) in self.v.iter().enumerate() {
-            k(D::from_idx(i), r);
-        }
-    }
-}
-impl<R: Copy, D: Dense> Member for VecRel<R, D> {
-    #[inline(always)]
-    fn member(&self, x: D) -> bool {
-        x.idx() < self.v.len()
-    }
-}
-impl<R: Copy, D: Dense> Probe for VecRel<R, D> {
-    #[inline(always)]
-    fn probe<K: FnMut(R)>(&self, x: D, mut k: K) {
-        if let Some(&r) = self.v.get(x.idx()) {
-            k(r);
-        }
-    }
-    #[inline(always)]
-    fn probe_any<K: FnMut(R) -> bool>(&self, x: D, mut k: K) -> bool {
-        self.v.get(x.idx()).is_some_and(|&r| k(r))
     }
 }
 
