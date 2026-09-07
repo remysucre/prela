@@ -9,7 +9,7 @@
 // carry no lifetime.
 
 use crate::engine::*;
-use crate::job_queries::helpers::{Row, film_or_warner_co, follow_link, min_row};
+use crate::job_queries::helpers::{Row, min_row};
 use crate::job_queries::Entry;
 use crate::job_queries::sets::{
     genre6, horror2, kw7, kw8, kw10, link3, murder4, nordic8, nordic9, nordic10, voice3, voice4, writer5,
@@ -42,31 +42,28 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
     };
 
     let q1b = move || {
-        db.movie.with(data.select(data_ty).eq("bottom 10 rank")
-                      .and(production_year.between(2005, 2010)))
+        db.movie.with(data.select(data_ty).eq("bottom 10 rank"))
                 .select(company.with(company_ty.eq("production companies"))
                                .select(company_note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)"))
                         .and(title)
-                        .and(production_year))
+                        .and(production_year.between(2005, 2010)))
     };
 
     let q1c = move || {
-        db.movie.with(data.select(data_ty).eq("top 250 rank")
-                      .and(production_year.gt(2010)))
+        db.movie.with(data.select(data_ty).eq("top 250 rank"))
                 .select(company.with(company_ty.eq("production companies"))
                                .select(company_note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)")
                                                    .rx(r"\(co-production\)"))
                         .and(title)
-                        .and(production_year))
+                        .and(production_year.gt(2010)))
     };
 
     let q1d = move || {
-        db.movie.with(data.select(data_ty).eq("bottom 10 rank")
-                      .and(production_year.gt(2000)))
+        db.movie.with(data.select(data_ty).eq("bottom 10 rank"))
                 .select(company.with(company_ty.eq("production companies"))
                                .select(company_note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)"))
                         .and(title)
-                        .and(production_year))
+                        .and(production_year.gt(2000)))
     };
 
     let q2a = move || {
@@ -161,58 +158,45 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
     };
 
     let q6a = move || {
-        let kw = || keyword.eq("marvel-cinematic-universe");
-        db.movie.with(production_year.gt(2010)
-                      .and(kw()))
-                .select(kw()
+        db.movie.with(production_year.gt(2010))
+                .select(keyword.eq("marvel-cinematic-universe")
                         .and(title)
                         .and(cast.select(person).select(person_name).rx(r"Downey.*Robert")))
     };
 
     let q6b = move || {
-        let kw = || keyword.is_in(kw8());
-        db.movie.with(production_year.gt(2014)
-                      .and(kw()))
-                .select(kw()
+        db.movie.with(production_year.gt(2014))
+                .select(keyword.is_in(kw8())
                         .and(title)
                         .and(cast.select(person).select(person_name).rx(r"Downey.*Robert")))
     };
 
     let q6c = move || {
-        let kw = || keyword.eq("marvel-cinematic-universe");
-        db.movie.with(production_year.gt(2014)
-                      .and(kw()))
-                .select(kw()
+        db.movie.with(production_year.gt(2014))
+                .select(keyword.eq("marvel-cinematic-universe")
                         .and(title)
                         .and(cast.select(person).select(person_name).rx(r"Downey.*Robert")))
     };
 
     let q6d = move || {
-        let kw = || keyword.is_in(kw8());
-        db.movie.with(production_year.gt(2000)
-                      .and(kw()))
-                .select(kw()
+        db.movie.with(production_year.gt(2000))
+                .select(keyword.is_in(kw8())
                         .and(title)
                         .and(cast.select(person).select(person_name).rx(r"Downey.*Robert")))
     };
 
     let q6e = move || {
-        let kw = || keyword.eq("marvel-cinematic-universe");
-        db.movie.with(production_year.gt(2000)
-                      .and(kw()))
-                .select(kw()
+        db.movie.with(production_year.gt(2000))
+                .select(keyword.eq("marvel-cinematic-universe")
                         .and(title)
                         .and(cast.select(person).select(person_name).rx(r"Downey.*Robert")))
     };
 
     let q6f = move || {
-        let kw = || keyword.is_in(kw8());
-        let cast_name = cast.select(person).select(person_name);
-        db.movie.with(production_year.gt(2000)
-                      .and(kw()))
-                .select(kw()
+        db.movie.with(production_year.gt(2000))
+                .select(keyword.is_in(kw8())
                         .and(title)
-                        .and(cast_name))
+                        .and(cast.select(person).select(person_name)))
     };
 
     let q7a = move || {
@@ -220,10 +204,8 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
                       .and(linked_by.select(link_ty).eq("features")))
                 .select(cast.select(person.with(alias.rx(r"a")
                                                 .and(name_pcode_cf.between("A", "F"))
-                                                // m ∨ (f ∧ person_name~^B), spelled {m,f} ∖ (f ∖ ^B):
-                                                // ∨ is member-only and can't sit inside a probed ∧-tree.
-                                                .and(gender.is_in(["m", "f"])
-                                                           .minus(gender.eq("f").minus(person_name.rx(r"^B"))))
+                                                .and(gender.eq("m")
+                                                     .or(gender.eq("f").and(person_name.rx(r"^B"))))
                                                 .and(bio.with(personinfo_ty.eq("mini biography")
                                                               .and(personinfo_note.eq("Volker Boehm")))))
                                           .select(person_name))
@@ -243,41 +225,35 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
     };
 
     let q7c = move || {
-        // Conjunct tree (∧ = Prod) — consumed via `member` only.
-        let bio_filter = || personinfo_ty.eq("mini biography").and(personinfo_note);
         db.movie.with(production_year.between(1980, 2010)
                       .and(linked_by.select(link_ty).is_in(["references", "referenced in", "features", "featured in"])))
                 .select(cast.select(person.with(alias.rx(r"a|^A")
                                                 .and(name_pcode_cf.between("A", "F"))
-                                                // m ∨ (f ∧ name~^A), spelled {m,f} ∖ (f ∖ ^A):
-                                                // ∨ is member-only and can't sit inside a probed ∧-tree.
-                                                .and(gender.is_in(["m", "f"])
-                                                           .minus(gender.eq("f").minus(person_name.rx(r"^A"))))
-                                                .and(bio.with(bio_filter())))
+                                                .and(gender.eq("m")
+                                                     .or(gender.eq("f").and(person_name.rx(r"^A")))))
                                           .select(person_name
-                                                  .and(bio.with(bio_filter()).select(personinfo_info)))))
+                                                  .and(bio.with(personinfo_ty.eq("mini biography")
+                                                                .and(personinfo_note))
+                                                          .select(personinfo_info)))))
     };
 
     let q8a = move || {
         db.movie.with(company.with(country.eq("[jp]")
                                    .and(company_note.rx(r"\(Japan\)").nrx(r"\(USA\)"))))
                 .select(cast.with(cast_note.eq("(voice: English version)")
-                                  .and(role.eq("actress"))
-                                  .and(person.with(person_name.rx(r"Yo").nrx(r"Yu"))))
-                            .select(person).select(alias)
+                                  .and(role.eq("actress")))
+                            .select(person.with(person_name.rx(r"Yo").nrx(r"Yu"))).select(alias)
                         .and(title))
     };
 
     let q8b = move || {
         db.movie.with(company.with(country.eq("[jp]")
                                    .and(company_note.rx(r"\(Japan\)").nrx(r"\(USA\)").rx(r"\(2006\)|\(2007\)")))
-                      .and(production_year.between(2006, 2007))
-                      .and(title.rx(r"^One Piece|^Dragon Ball Z")))
+                      .and(production_year.between(2006, 2007)))
                 .select(cast.with(cast_note.eq("(voice: English version)")
-                                  .and(role.eq("actress"))
-                                  .and(person.with(person_name.rx(r"Yo").nrx(r"Yu"))))
-                            .select(person).select(alias)
-                        .and(title))
+                                  .and(role.eq("actress")))
+                            .select(person.with(person_name.rx(r"Yo").nrx(r"Yu"))).select(alias)
+                        .and(title.rx(r"^One Piece|^Dragon Ball Z")))
     };
 
     let q8c = move || {
@@ -297,9 +273,9 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
                                    .and(company_note.rx(r"\(USA\)|\(worldwide\)")))
                       .and(production_year.between(2005, 2015)))
                 .select(cast.with(cast_note.is_in(voice4())
-                                  .and(role.eq("actress"))
-                                  .and(person.with(gender.eq("f").and(person_name.rx(r"Ang")))))
-                            .select(person.select(alias).and(character))
+                                  .and(role.eq("actress")))
+                            .select(person.with(gender.eq("f").and(person_name.rx(r"Ang"))).select(alias)
+                                    .and(character))
                         .and(title))
     };
 
@@ -308,32 +284,26 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
                                    .and(company_note.rx(r"\(200.*\)").rx(r"\(USA\)|\(worldwide\)")))
                       .and(production_year.between(2007, 2010)))
                 .select(cast.with(cast_note.eq("(voice)")
-                                  .and(role.eq("actress"))
-                                  .and(person.with(gender.eq("f").and(person_name.rx(r"Angel")))))
-                            .select(person.select(alias)
-                                    .and(character)
-                                    .and(person.select(person_name)))
+                                  .and(role.eq("actress")))
+                            .select(person.with(gender.eq("f")).select(alias.and(person_name.rx(r"Angel")))
+                                    .and(character))
                         .and(title))
     };
 
     let q9c = move || {
         db.movie.with(company.select(country).eq("[us]"))
                 .select(cast.with(cast_note.is_in(voice4())
-                                  .and(role.eq("actress"))
-                                  .and(person.with(gender.eq("f").and(person_name.rx(r"An")))))
-                            .select(person.select(alias)
-                                    .and(character)
-                                    .and(person.select(person_name)))
+                                  .and(role.eq("actress")))
+                            .select(person.with(gender.eq("f")).select(alias.and(person_name.rx(r"An")))
+                                    .and(character))
                         .and(title))
     };
 
     let q9d = move || {
         db.movie.with(company.select(country).eq("[us]"))
                 .select(cast.with(cast_note.is_in(voice4())
-                                  .and(role.eq("actress"))
-                                  .and(person.with(gender.eq("f"))))
-                            .select(person.select(alias)
-                                    .and(person.select(person_name))
+                                  .and(role.eq("actress")))
+                            .select(person.with(gender.eq("f")).select(alias.and(person_name))
                                     .and(character))
                         .and(title))
     };
@@ -364,7 +334,7 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
     };
 
     let q11a = move || {
-        db.movie.with(keyword.eq("sequel")
+        db.movie.with(link.and(keyword.eq("sequel"))
                       .and(production_year.between(1950, 2000)))
                 .select(company.with(country.ne("[pl]")
                                      .and(company_name.rx(r"Film|Warner"))
@@ -376,37 +346,32 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
     };
 
     let q11b = move || {
-        db.movie.with(keyword.eq("sequel")
-                      .and(production_year.eq(1998))
-                      .and(title.rx(r"Money")))
+        db.movie.with(link.and(keyword.eq("sequel"))
+                      .and(production_year.eq(1998)))
                 .select(company.with(country.ne("[pl]")
                                      .and(company_name.rx(r"Film|Warner"))
                                      .and(company_ty.eq("production companies"))
                                      .minus(company_note))
                                .select(company_name)
                         .and(link.select(link_ty).rx(r"follows"))
-                        .and(title))
+                        .and(title.rx(r"Money")))
     };
 
     let q11c = move || {
-        db.movie.with(keyword.is_in(["sequel", "revenge", "based-on-novel"])
-                      .and(production_year.gt(1950))
-                      .and(link))
+        db.movie.with(link.and(keyword.is_in(["sequel", "revenge", "based-on-novel"]))
+                      .and(production_year.gt(1950)))
                 .select(company.with(country.ne("[pl]")
                                      .and(company_name.rx(r"^20th Century Fox|^Twentieth Century Fox"))
-                                     .and(company_ty.ne("production companies"))
-                                     .and(company_note))
+                                     .and(company_ty.ne("production companies")))
                                .select(company_name.and(company_note))
                         .and(title))
     };
 
     let q11d = move || {
-        db.movie.with(keyword.is_in(["sequel", "revenge", "based-on-novel"])
-                      .and(production_year.gt(1950))
-                      .and(link))
+        db.movie.with(link.and(keyword.is_in(["sequel", "revenge", "based-on-novel"]))
+                      .and(production_year.gt(1950)))
                 .select(company.with(country.ne("[pl]")
-                                     .and(company_ty.ne("production companies"))
-                                     .and(company_note))
+                                     .and(company_ty.ne("production companies")))
                                .select(company_name.and(company_note))
                         .and(title))
     };
@@ -426,10 +391,9 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
         db.movie.with(company.with(country.eq("[us]")
                                    .and(company_ty.is_in(["production companies", "distributors"])))
                       .and(data.select(data_ty).eq("bottom 10 rank"))
-                      .and(production_year.gt(2000))
-                      .and(title.rx(r"^Birdemic|Movie")))
+                      .and(production_year.gt(2000)))
                 .select(info.with(info_ty.eq("budget")).select(info_info)
-                        .and(title))
+                        .and(title.rx(r"^Birdemic|Movie")))
     };
 
     let q12c = move || {
@@ -454,24 +418,22 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
 
     let q13b = move || {
         db.movie.with(kind.eq("movie")
-                      .and(info.select(info_ty).eq("release dates"))
-                      .and(title.ne("").rx(r"Champion|Loser")))
-                .select(company.with(country.eq("[us]")
-                                     .and(company_ty.eq("production companies")))
-                               .select(company_name)
-                        .and(data.with(data_ty.eq("rating")).select(data_text))
-                        .and(title))
+                      .and(info.select(info_ty).eq("release dates")))
+                .select(title.ne("").rx(r"Champion|Loser")
+                        .and(company.with(country.eq("[us]")
+                                          .and(company_ty.eq("production companies")))
+                                    .select(company_name))
+                        .and(data.with(data_ty.eq("rating")).select(data_text)))
     };
 
     let q13c = move || {
         db.movie.with(kind.eq("movie")
-                      .and(info.select(info_ty).eq("release dates"))
-                      .and(title.ne("").rx(r"^Champion|^Loser")))
-                .select(company.with(country.eq("[us]")
-                                     .and(company_ty.eq("production companies")))
-                               .select(company_name)
-                        .and(data.with(data_ty.eq("rating")).select(data_text))
-                        .and(title))
+                      .and(info.select(info_ty).eq("release dates")))
+                .select(title.ne("").rx(r"^Champion|^Loser")
+                        .and(company.with(country.eq("[us]")
+                                          .and(company_ty.eq("production companies")))
+                                    .select(company_name))
+                        .and(data.with(data_ty.eq("rating")).select(data_text)))
     };
 
     let q13d = move || {
@@ -501,10 +463,9 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
                       .and(info.with(info_ty.eq("countries")
                                      .and(info_info.is_in(["Sweden", "Norway", "Germany", "Denmark", "Swedish",
                                                            "Denish", "Norwegian", "German", "USA", "American"]))))
-                      .and(production_year.gt(2010))
-                      .and(title.rx(r"murder|Murder|Mord")))
+                      .and(production_year.gt(2010)))
                 .select(data.with(data_ty.eq("rating")).select(data_text.gt("6.0"))
-                        .and(title))
+                        .and(title.rx(r"murder|Murder|Mord")))
     };
 
     let q14c = move || {
@@ -628,6 +589,9 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
     };
 
     let q18a = move || {
+        // `budget` leads the with although the select repeats it: the test is
+        // cheap and cuts the drive to movies with a budget before the cast
+        // walk and its name regex.
         let budget = || info.with(info_ty.eq("budget")).select(info_info);
         db.movie.with(budget()
                       .and(cast.with(cast_note.is_in(["(producer)", "(executive producer)"])
@@ -638,7 +602,8 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
     };
 
     let q18b = move || {
-        // Conjunct/diff tree (∧ = Prod, - = Diff) — consumed via `member` only.
+        // The genre test leads the with although the select repeats it: it is
+        // cheap and cuts the drive before the cast walk.
         let gf = || info_ty.eq("genres").and(info_info.is_in(horror2())).minus(info_note);
         db.movie.with(info.with(gf())
                       .and(production_year.between(2008, 2014))
@@ -650,6 +615,8 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
     };
 
     let q18c = move || {
+        // The genre test leads the with although the select repeats it: it is
+        // cheap and cuts the drive before the cast walk.
         let gf = || info_ty.eq("genres").and(info_info.is_in(genre6()));
         db.movie.with(info.with(gf())
                       .and(cast.with(cast_note.is_in(writer5())
@@ -667,11 +634,8 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
                       .and(production_year.between(2005, 2009)))
                 .select(cast.with(cast_note.is_in(voice4())
                                   .and(role.eq("actress"))
-                                  .and(character)
-                                  .and(person.with(gender.eq("f")
-                                                   .and(person_name.rx(r"Ang"))
-                                                   .and(alias))))
-                            .select(person).select(person_name)
+                                  .and(character))
+                            .select(person.with(gender.eq("f").and(alias)).select(person_name.rx(r"Ang")))
                         .and(title))
     };
 
@@ -680,16 +644,12 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
                                    .and(company_note.rx(r"\(200.*\)").rx(r"\(USA\)|\(worldwide\)")))
                       .and(info.with(info_ty.eq("release dates")
                                      .and(info_info.rx(r"^Japan:.*2007|^USA:.*2008"))))
-                      .and(production_year.between(2007, 2008))
-                      .and(title.rx(r"Kung.*Fu.*Panda")))
+                      .and(production_year.between(2007, 2008)))
                 .select(cast.with(cast_note.eq("(voice)")
                                   .and(role.eq("actress"))
-                                  .and(character)
-                                  .and(person.with(gender.eq("f")
-                                                   .and(person_name.rx(r"Angel"))
-                                                   .and(alias))))
-                            .select(person).select(person_name)
-                        .and(title))
+                                  .and(character))
+                            .select(person.with(gender.eq("f").and(alias)).select(person_name.rx(r"Angel")))
+                        .and(title.rx(r"Kung.*Fu.*Panda")))
     };
 
     let q19c = move || {
@@ -699,11 +659,8 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
                       .and(production_year.gt(2000)))
                 .select(cast.with(cast_note.is_in(voice4())
                                   .and(role.eq("actress"))
-                                  .and(character)
-                                  .and(person.with(gender.eq("f")
-                                                   .and(person_name.rx(r"An"))
-                                                   .and(alias))))
-                            .select(person).select(person_name)
+                                  .and(character))
+                            .select(person.with(gender.eq("f").and(alias)).select(person_name.rx(r"An")))
                         .and(title))
     };
 
@@ -713,9 +670,8 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
                       .and(production_year.gt(2000)))
                 .select(cast.with(cast_note.is_in(voice4())
                                   .and(role.eq("actress"))
-                                  .and(character)
-                                  .and(person.with(gender.eq("f").and(alias))))
-                            .select(person).select(person_name)
+                                  .and(character))
+                            .select(person.with(gender.eq("f").and(alias)).select(person_name))
                         .and(title))
     };
 
@@ -747,45 +703,51 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
                         .and(title))
     };
 
-    // `co` appears ONLY in the select, like q11a's: the select is a join, so a
-    // movie with no Film/Warner company simply probes to no row — repeating it as
-    // a `with` conjunct filters nothing extra and costs a company walk plus the
-    // `Film|Warner` regex on all 2.5M movies. What is left in `with` is ordered
-    // cheapest-and-most-selective first: the keyword test alone cuts the drive to
-    // a few thousand movies, so the year, country and link tests run on almost
-    // nothing.
-    //
-    // Bare `link` leads: only 6.4k of the 2.5M movies have one, against ~10k for
-    // the keyword, and its test is a CSR-emptiness check rather than a walk of
-    // the movie's keyword ids. `lk` in the select makes it redundant, so it costs
-    // nothing but the ordering.
+    // The company and link-type tests live only in the select: it is a join,
+    // so a movie without a Film/Warner company or a "follow" link simply
+    // probes to no row, and repeating either test in the `with` would only
+    // add work. The `with` is ordered cheapest-and-most-selective first, and
+    // bare `link` leads although the select's link test makes it redundant:
+    // only 6.4k of the 2.5M movies have a link, and the test is a
+    // CSR-emptiness check rather than a walk of the movie's keyword ids.
+    // Leading with the keyword test instead is 8x slower, and leading with
+    // the `follow` regex over the links is 20% slower (q21a–c, q27a–c).
     let q21a = move || {
         db.movie.with(link.and(keyword.eq("sequel"))
                       .and(production_year.between(1950, 2000))
-                      .and(info.select(info_info).is_in(nordic8()))
-                      .and(follow_link(db)))
-                .select(film_or_warner_co(db).select(company_name)
-                        .and(follow_link(db))
+                      .and(info.select(info_info).is_in(nordic8())))
+                .select(company.with(country.ne("[pl]")
+                                     .and(company_name.rx(r"Film|Warner"))
+                                     .and(company_ty.eq("production companies"))
+                                     .minus(company_note))
+                               .select(company_name)
+                        .and(link.select(link_ty).rx(r"follow"))
                         .and(title))
     };
 
     let q21b = move || {
         db.movie.with(link.and(keyword.eq("sequel"))
                       .and(production_year.between(2000, 2010))
-                      .and(info.select(info_info).is_in(["Germany", "German"]))
-                      .and(follow_link(db)))
-                .select(film_or_warner_co(db).select(company_name)
-                        .and(follow_link(db))
+                      .and(info.select(info_info).is_in(["Germany", "German"])))
+                .select(company.with(country.ne("[pl]")
+                                     .and(company_name.rx(r"Film|Warner"))
+                                     .and(company_ty.eq("production companies"))
+                                     .minus(company_note))
+                               .select(company_name)
+                        .and(link.select(link_ty).rx(r"follow"))
                         .and(title))
     };
 
     let q21c = move || {
         db.movie.with(link.and(keyword.eq("sequel"))
                       .and(production_year.between(1950, 2010))
-                      .and(info.select(info_info).is_in(nordic9()))
-                      .and(follow_link(db)))
-                .select(film_or_warner_co(db).select(company_name)
-                        .and(follow_link(db))
+                      .and(info.select(info_info).is_in(nordic9())))
+                .select(company.with(country.ne("[pl]")
+                                     .and(company_name.rx(r"Film|Warner"))
+                                     .and(company_ty.eq("production companies"))
+                                     .minus(company_note))
+                               .select(company_name)
+                        .and(link.select(link_ty).rx(r"follow"))
                         .and(title))
     };
 
@@ -844,42 +806,36 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
     };
 
     let q23a = move || {
-        let k = || kind.eq("movie");
         db.movie.with(complete_cast.select(status).eq("complete+verified")
                       .and(company.select(country).eq("[us]"))
                       .and(info.with(info_ty.eq("release dates")
                                      .and(info_note.rx(r"internet"))
                                      .and(info_info.rx(r"^USA:.* 199|^USA:.* 200"))))
-                      .and(k())
                       .and(keyword)
                       .and(production_year.gt(2000)))
-                .select(k().and(title))
+                .select(kind.eq("movie").and(title))
     };
 
     let q23b = move || {
-        let k = || kind.eq("movie");
         db.movie.with(complete_cast.select(status).eq("complete+verified")
                       .and(company.select(country).eq("[us]"))
                       .and(info.with(info_ty.eq("release dates")
                                      .and(info_note.rx(r"internet"))
                                      .and(info_info.rx(r"^USA:.* 200"))))
-                      .and(k())
                       .and(keyword.is_in(["nerd", "loner", "alienation", "dignity"]))
                       .and(production_year.gt(2000)))
-                .select(k().and(title))
+                .select(kind.eq("movie").and(title))
     };
 
     let q23c = move || {
-        let k = || kind.is_in(["movie", "tv movie", "video movie", "video game"]);
         db.movie.with(complete_cast.select(status).eq("complete+verified")
                       .and(company.select(country).eq("[us]"))
                       .and(info.with(info_ty.eq("release dates")
                                      .and(info_note.rx(r"internet"))
                                      .and(info_info.rx(r"^USA:.* 199|^USA:.* 200"))))
-                      .and(k())
                       .and(keyword)
                       .and(production_year.gt(1990)))
-                .select(k().and(title))
+                .select(kind.is_in(["movie", "tv movie", "video movie", "video game"]).and(title))
     };
 
     let q24a = move || {
@@ -889,11 +845,9 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
                       .and(keyword.is_in(["hero", "martial-arts", "hand-to-hand-combat"]))
                       .and(production_year.gt(2010)))
                 .select(cast.with(cast_note.is_in(voice4())
-                                  .and(role.eq("actress"))
-                                  .and(person.with(gender.eq("f")
-                                                   .and(person_name.rx(r"An"))
-                                                   .and(alias))))
-                            .select(character.and(person.select(person_name)))
+                                  .and(role.eq("actress")))
+                            .select(character
+                                    .and(person.with(gender.eq("f").and(alias)).select(person_name.rx(r"An"))))
                         .and(title))
     };
 
@@ -903,53 +857,40 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
                       .and(info.with(info_ty.eq("release dates")
                                      .and(info_info.rx(r"^Japan:.*201|^USA:.*201"))))
                       .and(keyword.is_in(["hero", "martial-arts", "hand-to-hand-combat", "computer-animated-movie"]))
-                      .and(production_year.gt(2010))
-                      .and(title.rx(r"^Kung Fu Panda")))
+                      .and(production_year.gt(2010)))
                 .select(cast.with(cast_note.is_in(voice4())
-                                  .and(role.eq("actress"))
-                                  .and(person.with(gender.eq("f")
-                                                   .and(person_name.rx(r"An"))
-                                                   .and(alias))))
-                            .select(character.and(person.select(person_name)))
-                        .and(title))
+                                  .and(role.eq("actress")))
+                            .select(character
+                                    .and(person.with(gender.eq("f").and(alias)).select(person_name.rx(r"An"))))
+                        .and(title.rx(r"^Kung Fu Panda")))
     };
 
     let q25a = move || {
-        let gf = || info_ty.eq("genres").and(info_info.eq("Horror"));
-        db.movie.with(info.with(gf())
-                      .and(keyword.is_in(["murder", "blood", "gore", "death", "female-nudity"])))
-                .select(info.with(gf()).select(info_info)
+        db.movie.with(keyword.is_in(["murder", "blood", "gore", "death", "female-nudity"]))
+                .select(info.with(info_ty.eq("genres").and(info_info.eq("Horror"))).select(info_info)
                         .and(data.with(data_ty.eq("votes")).select(data_text))
                         .and(title)
-                        .and(cast.with(cast_note.is_in(writer5())
-                                       .and(person.with(gender.eq("m"))))
-                                 .select(person).select(person_name)))
+                        .and(cast.with(cast_note.is_in(writer5()))
+                                 .select(person.with(gender.eq("m"))).select(person_name)))
     };
 
     let q25b = move || {
-        let gf = || info_ty.eq("genres").and(info_info.eq("Horror"));
-        db.movie.with(info.with(gf())
-                      .and(keyword.is_in(["murder", "blood", "gore", "death", "female-nudity"]))
-                      .and(production_year.gt(2010))
-                      .and(title.rx(r"^Vampire")))
-                .select(info.with(gf()).select(info_info)
+        db.movie.with(keyword.is_in(["murder", "blood", "gore", "death", "female-nudity"])
+                      .and(production_year.gt(2010)))
+                .select(info.with(info_ty.eq("genres").and(info_info.eq("Horror"))).select(info_info)
                         .and(data.with(data_ty.eq("votes")).select(data_text))
-                        .and(title)
-                        .and(cast.with(cast_note.is_in(writer5())
-                                       .and(person.with(gender.eq("m"))))
-                                 .select(person).select(person_name)))
+                        .and(title.rx(r"^Vampire"))
+                        .and(cast.with(cast_note.is_in(writer5()))
+                                 .select(person.with(gender.eq("m"))).select(person_name)))
     };
 
     let q25c = move || {
-        let gf = || info_ty.eq("genres").and(info_info.is_in(genre6()));
-        db.movie.with(info.with(gf())
-                      .and(keyword.is_in(kw7())))
-                .select(info.with(gf()).select(info_info)
+        db.movie.with(keyword.is_in(kw7()))
+                .select(info.with(info_ty.eq("genres").and(info_info.is_in(genre6()))).select(info_info)
                         .and(data.with(data_ty.eq("votes")).select(data_text))
                         .and(title)
-                        .and(cast.with(cast_note.is_in(writer5())
-                                       .and(person.with(gender.eq("m"))))
-                                 .select(person).select(person_name)))
+                        .and(cast.with(cast_note.is_in(writer5()))
+                                 .select(person.with(gender.eq("m"))).select(person_name)))
     };
 
     let q26a = move || {
@@ -957,7 +898,7 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
                       .and(keyword.is_in(kw10()))
                       .and(kind.eq("movie"))
                       .and(production_year.gt(2000)))
-                .select(cast.with(character.rx(r"[Mm]an")).select(character.and(person.select(person_name)))
+                .select(cast.select(character.rx(r"[Mm]an").and(person.select(person_name)))
                         .and(data.with(data_ty.eq("rating")).select(data_text.gt("7.0")))
                         .and(title))
     };
@@ -967,19 +908,18 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
                       .and(keyword.is_in(["superhero", "marvel-comics", "based-on-comic", "fight"]))
                       .and(kind.eq("movie"))
                       .and(production_year.gt(2005)))
-                .select(cast.with(character.rx(r"[Mm]an")).select(character)
+                .select(cast.select(character.rx(r"[Mm]an"))
                         .and(data.with(data_ty.eq("rating")).select(data_text.gt("8.0")))
                         .and(title))
     };
 
     let q26c = move || {
-        let rd = data.with(data_ty.eq("rating")).select(data_text);
         db.movie.with(complete_cast.with(subject.eq("cast").and(status.rx(r"complete")))
                       .and(keyword.is_in(kw10()))
                       .and(kind.eq("movie"))
                       .and(production_year.gt(2000)))
-                .select(cast.with(character.rx(r"[Mm]an")).select(character)
-                        .and(rd)
+                .select(cast.select(character.rx(r"[Mm]an"))
+                        .and(data.with(data_ty.eq("rating")).select(data_text))
                         .and(title))
     };
 
@@ -987,10 +927,13 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
         db.movie.with(link.and(keyword.eq("sequel"))
                       .and(production_year.between(1950, 2000))
                       .and(info.select(info_info).is_in(["Sweden", "Germany", "Swedish", "German"]))
-                      .and(complete_cast.with(subject.is_in(["cast", "crew"]).and(status.eq("complete"))))
-                      .and(follow_link(db)))
-                .select(film_or_warner_co(db).select(company_name)
-                        .and(follow_link(db))
+                      .and(complete_cast.with(subject.is_in(["cast", "crew"]).and(status.eq("complete")))))
+                .select(company.with(country.ne("[pl]")
+                                     .and(company_name.rx(r"Film|Warner"))
+                                     .and(company_ty.eq("production companies"))
+                                     .minus(company_note))
+                               .select(company_name)
+                        .and(link.select(link_ty).rx(r"follow"))
                         .and(title))
     };
 
@@ -998,10 +941,13 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
         db.movie.with(link.and(keyword.eq("sequel"))
                       .and(production_year.eq(1998))
                       .and(info.select(info_info).is_in(["Sweden", "Germany", "Swedish", "German"]))
-                      .and(complete_cast.with(subject.is_in(["cast", "crew"]).and(status.eq("complete"))))
-                      .and(follow_link(db)))
-                .select(film_or_warner_co(db).select(company_name)
-                        .and(follow_link(db))
+                      .and(complete_cast.with(subject.is_in(["cast", "crew"]).and(status.eq("complete")))))
+                .select(company.with(country.ne("[pl]")
+                                     .and(company_name.rx(r"Film|Warner"))
+                                     .and(company_ty.eq("production companies"))
+                                     .minus(company_note))
+                               .select(company_name)
+                        .and(link.select(link_ty).rx(r"follow"))
                         .and(title))
     };
 
@@ -1009,55 +955,52 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
         db.movie.with(link.and(keyword.eq("sequel"))
                       .and(production_year.between(1950, 2010))
                       .and(info.select(info_info).is_in(nordic9()))
-                      .and(complete_cast.with(subject.eq("cast").and(status.rx(r"^complete"))))
-                      .and(follow_link(db)))
-                .select(film_or_warner_co(db).select(company_name)
-                        .and(follow_link(db))
+                      .and(complete_cast.with(subject.eq("cast").and(status.rx(r"^complete")))))
+                .select(company.with(country.ne("[pl]")
+                                     .and(company_name.rx(r"Film|Warner"))
+                                     .and(company_ty.eq("production companies"))
+                                     .minus(company_note))
+                               .select(company_name)
+                        .and(link.select(link_ty).rx(r"follow"))
                         .and(title))
     };
 
     let q28a = move || {
-        let co = || company.with(country.ne("[us]").and(company_note.nrx(r"\(USA\)").rx(r"\(200.*\)")));
-        let dt = || data.with(data_ty.eq("rating").and(data_text.lt("8.5")));
         db.movie.with(complete_cast.with(subject.eq("crew").and(status.ne("complete+verified")))
-                      .and(co())
                       .and(info.with(info_ty.eq("countries").and(info_info.is_in(nordic10()))))
-                      .and(dt())
                       .and(keyword.is_in(murder4()))
                       .and(kind.is_in(["movie", "episode"]))
                       .and(production_year.gt(2000)))
-                .select(co().select(company_name)
-                        .and(dt().select(data_text))
+                .select(company.with(country.ne("[us]")
+                                     .and(company_note.nrx(r"\(USA\)").rx(r"\(200.*\)")))
+                               .select(company_name)
+                        .and(data.with(data_ty.eq("rating")).select(data_text.lt("8.5")))
                         .and(title))
     };
 
     let q28b = move || {
-        let co = || company.with(country.ne("[us]").and(company_note.nrx(r"\(USA\)").rx(r"\(200.*\)")));
-        let dt = || data.with(data_ty.eq("rating").and(data_text.gt("6.5")));
         db.movie.with(complete_cast.with(subject.eq("crew").and(status.ne("complete+verified")))
-                      .and(co())
                       .and(info.with(info_ty.eq("countries").and(info_info.is_in(["Sweden", "Germany", "Swedish", "German"]))))
-                      .and(dt())
                       .and(keyword.is_in(murder4()))
                       .and(kind.is_in(["movie", "episode"]))
                       .and(production_year.gt(2005)))
-                .select(co().select(company_name)
-                        .and(dt().select(data_text))
+                .select(company.with(country.ne("[us]")
+                                     .and(company_note.nrx(r"\(USA\)").rx(r"\(200.*\)")))
+                               .select(company_name)
+                        .and(data.with(data_ty.eq("rating")).select(data_text.gt("6.5")))
                         .and(title))
     };
 
     let q28c = move || {
-        let co = || company.with(country.ne("[us]").and(company_note.nrx(r"\(USA\)").rx(r"\(200.*\)")));
-        let dt = || data.with(data_ty.eq("rating").and(data_text.lt("8.5")));
         db.movie.with(complete_cast.with(subject.eq("cast").and(status.eq("complete")))
-                      .and(co())
                       .and(info.with(info_ty.eq("countries").and(info_info.is_in(nordic10()))))
-                      .and(dt())
                       .and(keyword.is_in(murder4()))
                       .and(kind.is_in(["movie", "episode"]))
                       .and(production_year.gt(2005)))
-                .select(co().select(company_name)
-                        .and(dt().select(data_text))
+                .select(company.with(country.ne("[us]")
+                                     .and(company_note.nrx(r"\(USA\)").rx(r"\(200.*\)")))
+                               .select(company_name)
+                        .and(data.with(data_ty.eq("rating")).select(data_text.lt("8.5")))
                         .and(title))
     };
 
@@ -1067,17 +1010,15 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
                       .and(info.with(info_ty.eq("release dates")
                                      .and(info_info.rx(r"^Japan:.*200|^USA:.*200"))))
                       .and(keyword.eq("computer-animation"))
-                      .and(title.eq("Shrek 2"))
                       .and(production_year.between(2000, 2010)))
                 .select(cast.with(cast_note.is_in(voice3())
-                                  .and(role.eq("actress"))
-                                  .and(character.eq("Queen"))
-                                  .and(person.with(gender.eq("f")
-                                                   .and(person_name.rx(r"An"))
-                                                   .and(alias)
-                                                   .and(bio.select(personinfo_ty).eq("trivia")))))
-                            .select(character.and(person.select(person_name)))
-                        .and(title))
+                                  .and(role.eq("actress")))
+                            .select(character.eq("Queen")
+                                    .and(person.with(gender.eq("f")
+                                                     .and(alias)
+                                                     .and(bio.select(personinfo_ty).eq("trivia")))
+                                               .select(person_name.rx(r"An"))))
+                        .and(title.eq("Shrek 2")))
     };
 
     let q29b = move || {
@@ -1086,17 +1027,15 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
                       .and(info.with(info_ty.eq("release dates")
                                      .and(info_info.rx(r"^USA:.*200"))))
                       .and(keyword.eq("computer-animation"))
-                      .and(title.eq("Shrek 2"))
                       .and(production_year.between(2000, 2005)))
                 .select(cast.with(cast_note.is_in(voice3())
-                                  .and(role.eq("actress"))
-                                  .and(character.eq("Queen"))
-                                  .and(person.with(gender.eq("f")
-                                                   .and(person_name.rx(r"An"))
-                                                   .and(alias)
-                                                   .and(bio.select(personinfo_ty).eq("height")))))
-                            .select(character.and(person.select(person_name)))
-                        .and(title))
+                                  .and(role.eq("actress")))
+                            .select(character.eq("Queen")
+                                    .and(person.with(gender.eq("f")
+                                                     .and(alias)
+                                                     .and(bio.select(personinfo_ty).eq("height")))
+                                               .select(person_name.rx(r"An"))))
+                        .and(title.eq("Shrek 2")))
     };
 
     let q29c = move || {
@@ -1107,163 +1046,133 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
                       .and(keyword.eq("computer-animation"))
                       .and(production_year.between(2000, 2010)))
                 .select(cast.with(cast_note.is_in(voice4())
-                                  .and(role.eq("actress"))
-                                  .and(person.with(gender.eq("f")
-                                                   .and(person_name.rx(r"An"))
-                                                   .and(alias)
-                                                   .and(bio.select(personinfo_ty).eq("trivia")))))
-                            .select(character.and(person.select(person_name)))
+                                  .and(role.eq("actress")))
+                            .select(character
+                                    .and(person.with(gender.eq("f")
+                                                     .and(alias)
+                                                     .and(bio.select(personinfo_ty).eq("trivia")))
+                                               .select(person_name.rx(r"An"))))
                         .and(title))
     };
 
     let q30a = move || {
-        let gf = || info_ty.eq("genres").and(info_info.is_in(horror2()));
         db.movie.with(complete_cast.with(subject.is_in(["cast", "crew"]).and(status.eq("complete+verified")))
-                      .and(info.with(gf()))
                       .and(keyword.is_in(kw7()))
                       .and(production_year.gt(2000)))
-                .select(info.with(gf()).select(info_info)
+                .select(info.with(info_ty.eq("genres").and(info_info.is_in(horror2()))).select(info_info)
                         .and(data.with(data_ty.eq("votes")).select(data_text))
                         .and(title)
-                        .and(cast.with(cast_note.is_in(writer5())
-                                       .and(person.with(gender.eq("m"))))
-                                 .select(person).select(person_name)))
+                        .and(cast.with(cast_note.is_in(writer5()))
+                                 .select(person.with(gender.eq("m"))).select(person_name)))
     };
 
     let q30b = move || {
-        let gf = || info_ty.eq("genres").and(info_info.is_in(horror2()));
         db.movie.with(complete_cast.with(subject.is_in(["cast", "crew"]).and(status.eq("complete+verified")))
-                      .and(info.with(gf()))
                       .and(keyword.is_in(kw7()))
-                      .and(production_year.gt(2000))
-                      .and(title.rx(r"Freddy|Jason|^Saw")))
-                .select(info.with(gf()).select(info_info)
+                      .and(production_year.gt(2000)))
+                .select(info.with(info_ty.eq("genres").and(info_info.is_in(horror2()))).select(info_info)
                         .and(data.with(data_ty.eq("votes")).select(data_text))
-                        .and(title)
-                        .and(cast.with(cast_note.is_in(writer5())
-                                       .and(person.with(gender.eq("m"))))
-                                 .select(person).select(person_name)))
+                        .and(title.rx(r"Freddy|Jason|^Saw"))
+                        .and(cast.with(cast_note.is_in(writer5()))
+                                 .select(person.with(gender.eq("m"))).select(person_name)))
     };
 
     let q30c = move || {
-        let gf = || info_ty.eq("genres").and(info_info.is_in(genre6()));
         db.movie.with(complete_cast.with(subject.eq("cast").and(status.eq("complete+verified")))
-                      .and(info.with(gf()))
                       .and(keyword.is_in(kw7())))
-                .select(info.with(gf()).select(info_info)
+                .select(info.with(info_ty.eq("genres").and(info_info.is_in(genre6()))).select(info_info)
                         .and(data.with(data_ty.eq("votes")).select(data_text))
                         .and(title)
-                        .and(cast.with(cast_note.is_in(writer5())
-                                       .and(person.with(gender.eq("m"))))
-                                 .select(person).select(person_name)))
+                        .and(cast.with(cast_note.is_in(writer5()))
+                                 .select(person.with(gender.eq("m"))).select(person_name)))
     };
 
     let q31a = move || {
-        let gf = || info_ty.eq("genres").and(info_info.is_in(horror2()));
         db.movie.with(company.select(company_name).rx(r"^Lionsgate")
-                      .and(info.with(gf()))
                       .and(keyword.is_in(kw7())))
-                .select(info.with(gf()).select(info_info)
+                .select(info.with(info_ty.eq("genres").and(info_info.is_in(horror2()))).select(info_info)
                         .and(data.with(data_ty.eq("votes")).select(data_text))
                         .and(title)
-                        .and(cast.with(cast_note.is_in(writer5())
-                                       .and(person.with(gender.eq("m"))))
-                                 .select(person).select(person_name)))
+                        .and(cast.with(cast_note.is_in(writer5()))
+                                 .select(person.with(gender.eq("m"))).select(person_name)))
     };
 
     let q31b = move || {
-        let gf = || info_ty.eq("genres").and(info_info.is_in(horror2()));
         db.movie.with(company.with(company_name.rx(r"^Lionsgate")
                                    .and(company_note.rx(r"\(Blu-ray\)")))
-                      .and(info.with(gf()))
                       .and(keyword.is_in(kw7()))
-                      .and(production_year.gt(2000))
-                      .and(title.rx(r"Freddy|Jason|^Saw")))
-                .select(info.with(gf()).select(info_info)
+                      .and(production_year.gt(2000)))
+                .select(info.with(info_ty.eq("genres").and(info_info.is_in(horror2()))).select(info_info)
                         .and(data.with(data_ty.eq("votes")).select(data_text))
-                        .and(title)
-                        .and(cast.with(cast_note.is_in(writer5())
-                                       .and(person.with(gender.eq("m"))))
-                                 .select(person).select(person_name)))
+                        .and(title.rx(r"Freddy|Jason|^Saw"))
+                        .and(cast.with(cast_note.is_in(writer5()))
+                                 .select(person.with(gender.eq("m"))).select(person_name)))
     };
 
     let q31c = move || {
-        let gf = || info_ty.eq("genres").and(info_info.is_in(genre6()));
         db.movie.with(company.select(company_name).rx(r"^Lionsgate")
-                      .and(info.with(gf()))
                       .and(keyword.is_in(kw7())))
-                .select(info.with(gf()).select(info_info)
+                .select(info.with(info_ty.eq("genres").and(info_info.is_in(genre6()))).select(info_info)
                         .and(data.with(data_ty.eq("votes")).select(data_text))
                         .and(title)
                         .and(cast.with(cast_note.is_in(writer5())).select(person).select(person_name)))
     };
 
     let q32a = move || {
+        // Bare `link` leads the with although the select repeats it: only 6.4k
+        // movies have one, and the test is a CSR-emptiness check, so it cuts
+        // the drive before the keyword walk.
         db.movie.with(link.and(keyword.eq("10,000-mile-club")))
-                .select(link.select(link_ty)
-                        .and(title)
-                        .and(link.select(target).select(title)))
+                .select(link.select(link_ty.and(target.select(title)))
+                        .and(title))
     };
 
     let q32b = move || {
+        // Bare `link` leads the with although the select repeats it: only 6.4k
+        // movies have one, and the test is a CSR-emptiness check, so it cuts
+        // the drive before the keyword walk.
         db.movie.with(link.and(keyword.eq("character-name-in-title")))
-                .select(link.select(link_ty)
-                        .and(title)
-                        .and(link.select(target).select(title)))
+                .select(link.select(link_ty.and(target.select(title)))
+                        .and(title))
     };
 
     let q33a = move || {
-        let qlink = || link.with(link_ty.is_in(link3())
-                                 .and(target.with(kind.eq("tv series")
-                                                  .and(company)
-                                                  .and(data.with(data_ty.eq("rating").and(data_text.lt("3.0"))))
-                                                  .and(production_year.between(2005, 2008)))));
-        db.movie.with(kind.eq("tv series")
-                      .and(company.select(country).eq("[us]"))
-                      .and(qlink()))
+        db.movie.with(kind.eq("tv series"))
                 .select(company.with(country.eq("[us]")).select(company_name)
-                        .and(qlink().select(target).select(company).select(company_name))
                         .and(data.with(data_ty.eq("rating")).select(data_text))
-                        .and(qlink().select(target)
-                                    .select(data.with(data_ty.eq("rating")).select(data_text.lt("3.0"))))
                         .and(title)
-                        .and(qlink().select(target).select(title)))
+                        .and(link.with(link_ty.is_in(link3()))
+                                 .select(target.with(kind.eq("tv series")
+                                                     .and(production_year.between(2005, 2008))))
+                                 .select(company.select(company_name)
+                                         .and(data.with(data_ty.eq("rating")).select(data_text.lt("3.0")))
+                                         .and(title))))
     };
 
     let q33b = move || {
-        let qlink = || link.with(link_ty.rx(r"follow")
-                                 .and(target.with(kind.eq("tv series")
-                                                  .and(company)
-                                                  .and(data.with(data_ty.eq("rating").and(data_text.lt("3.0"))))
-                                                  .and(production_year.eq(2007)))));
-        db.movie.with(kind.eq("tv series")
-                      .and(company.select(country).eq("[nl]"))
-                      .and(qlink()))
+        db.movie.with(kind.eq("tv series"))
                 .select(company.with(country.eq("[nl]")).select(company_name)
-                        .and(qlink().select(target).select(company).select(company_name))
                         .and(data.with(data_ty.eq("rating")).select(data_text))
-                        .and(qlink().select(target)
-                                    .select(data.with(data_ty.eq("rating")).select(data_text.lt("3.0"))))
                         .and(title)
-                        .and(qlink().select(target).select(title)))
+                        .and(link.with(link_ty.rx(r"follow"))
+                                 .select(target.with(kind.eq("tv series")
+                                                     .and(production_year.eq(2007))))
+                                 .select(company.select(company_name)
+                                         .and(data.with(data_ty.eq("rating")).select(data_text.lt("3.0")))
+                                         .and(title))))
     };
 
     let q33c = move || {
-        let qlink = || link.with(link_ty.is_in(link3())
-                                 .and(target.with(kind.is_in(["tv series", "episode"])
-                                                  .and(company)
-                                                  .and(data.with(data_ty.eq("rating").and(data_text.lt("3.5"))))
-                                                  .and(production_year.between(2000, 2010)))));
-        db.movie.with(kind.is_in(["tv series", "episode"])
-                      .and(company.select(country).ne("[us]"))
-                      .and(qlink()))
+        db.movie.with(kind.is_in(["tv series", "episode"]))
                 .select(company.with(country.ne("[us]")).select(company_name)
-                        .and(qlink().select(target).select(company).select(company_name))
                         .and(data.with(data_ty.eq("rating")).select(data_text))
-                        .and(qlink().select(target)
-                                    .select(data.with(data_ty.eq("rating")).select(data_text.lt("3.5"))))
                         .and(title)
-                        .and(qlink().select(target).select(title)))
+                        .and(link.with(link_ty.is_in(link3()))
+                                 .select(target.with(kind.is_in(["tv series", "episode"])
+                                                     .and(production_year.between(2000, 2010))))
+                                 .select(company.select(company_name)
+                                         .and(data.with(data_ty.eq("rating")).select(data_text.lt("3.5")))
+                                         .and(title))))
     };
 
     vec![
@@ -1300,8 +1209,8 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
         entry("8c", "\"A.J.\" || #1 Cheerleader Camp", move || min_row(q8c())),
         entry("8d", "\"Jenny from the Block\" || #1 Cheerleader Camp", move || min_row(q8d())),
         entry("9a", "AJ || Airport Announcer || Blue Harvest", move || min_row(q9a())),
-        entry("9b", "AJ || Airport Announcer || Bassett, Angela || Blue Harvest", move || min_row(q9b())),
-        entry("9c", "'Annette' || 2nd Balladeer || Alborg, Ana Esther || (1975-01-20)", move || min_row(q9c())),
+        entry("9b", "AJ || Bassett, Angela || Airport Announcer || Blue Harvest", move || min_row(q9b())),
+        entry("9c", "'Annette' || Alborg, Ana Esther || 2nd Balladeer || (1975-01-20)", move || min_row(q9c())),
         entry("9d", "!!!, Toy || Aaron, Caroline || \"Cockamamie's\" Salesgirl || $15,000.00 Error", move || min_row(q9d())),
         entry("10a", "Actor || 12 Rounds", move || min_row(q10a())),
         entry("10b", "(empty)", move || min_row(q10b())),
@@ -1314,8 +1223,8 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
         entry("12b", "$10,000 || Birdemic: Shock and Terror", move || min_row(q12b())),
         entry("12c", "\"Oh That Gus!\" || 7.1 || $1.11", move || min_row(q12c())),
         entry("13a", "Afghanistan:24 June 2012 || 1.0 || &Me", move || min_row(q13a())),
-        entry("13b", "501audio || 1.8 || 5 Time Champion", move || min_row(q13b())),
-        entry("13c", "DL Sites || 1.8 || Champion", move || min_row(q13c())),
+        entry("13b", "5 Time Champion || 501audio || 1.8", move || min_row(q13b())),
+        entry("13c", "Champion || DL Sites || 1.8", move || min_row(q13c())),
         entry("13d", "\"O\" Films || 1.0 || #54 Meets #47", move || min_row(q13d())),
         entry("14a", "1.0 || $lowdown", move || min_row(q14a())),
         entry("14b", "6.4 || Of Dolls and Murder", move || min_row(q14b())),
@@ -1378,10 +1287,10 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
         entry("31b", "Horror || 129755 || Saw || Bousman, Darren Lynn", move || min_row(q31b())),
         entry("31c", "Action || 1008 || 11:14 || Abraham, Brad", move || min_row(q31c())),
         entry("32a", "(empty)", move || min_row(q32a())),
-        entry("32b", "alternate language version of || 12 oz. Mouse || 'Angel': Season 2 Overview", move || min_row(q32b())),
-        entry("33a", "495 Productions || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila", move || min_row(q33a())),
-        entry("33b", "MTV Netherlands || 495 Productions || 3.3 || 2.7 || A Double Shot at Love || A Shot at Love with Tila Tequila", move || min_row(q33b())),
-        entry("33c", "2BE || 495 Productions || 1.3 || 1.0 || A Double Shot at Love || A Double Shot at Love", move || min_row(q33c())),
+        entry("32b", "alternate language version of || 'Angel': Season 2 Overview || 12 oz. Mouse", move || min_row(q32b())),
+        entry("33a", "495 Productions || 3.3 || A Double Shot at Love || 495 Productions || 2.7 || A Shot at Love with Tila Tequila", move || min_row(q33a())),
+        entry("33b", "MTV Netherlands || 3.3 || A Double Shot at Love || 495 Productions || 2.7 || A Shot at Love with Tila Tequila", move || min_row(q33b())),
+        entry("33c", "2BE || 1.3 || A Double Shot at Love || 495 Productions || 1.0 || A Double Shot at Love", move || min_row(q33c())),
         entry("6a/method", "marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert", move || min_row(q6a_methods(db))),
     ]
 }

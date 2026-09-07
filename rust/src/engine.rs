@@ -765,7 +765,8 @@ impl<A: Probe, F: Fn(A::R) -> bool> Probe for Filter<A, F> {
 }
 
 // ===== Restrict =========================
-// Keeps a's pairs where the value is a `member` of b;
+// Keeps a's pairs where the value is a `member` of b; b is only ever asked
+// for membership, so a member-only node such as `Disj` (∨) may sit in it.
 
 pub struct Restrict<A, B> {
     pub a: A,
@@ -792,7 +793,7 @@ impl<A: Probe, B: Member<D = A::R>> Member for Restrict<A, B> {
         self.a.probe_any(x, |v| self.b.member(v))
     }
 }
-impl<A: Probe, B: Probe<D = A::R>> Probe for Restrict<A, B> {
+impl<A: Probe, B: Member<D = A::R>> Probe for Restrict<A, B> {
     #[inline(always)]
     fn probe<K: FnMut(A::R)>(&self, x: A::D, mut k: K) {
         self.a.probe(x, |v| {
@@ -1587,7 +1588,7 @@ pub trait QueryExt: IntoQuery + Sized {
     #[inline(always)]
     fn with<S: IntoQuery>(self, s: S) -> Restrict<Self::Q, S::Q>
     where
-        S::Q: Probe<D = ROf<Self>>,
+        S::Q: Member<D = ROf<Self>>,
     {
         Restrict {
             a: self.iq(),
