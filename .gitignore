@@ -24,3 +24,6 @@ notes/
 sandbox/
 .claude/worktrees
 rust/bench/__pycache__
+
+# SQLStorm port: build artefacts (data lives outside the repo)
+sqlstorm/rust/target/
