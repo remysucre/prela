@@ -40,11 +40,10 @@ use std::path::Path;
 pub type Str = &'static str;
 
 /// A scalar column of entity `E`. Spelled entity-first so a field reads
-/// `Col<Lineitem, i64>` where the bare `VecRel<i64, Id<Lineitem>>` buries
-/// the owner at the end.
-pub type Col<E, T> = VecRel<T, Id<E>>;
+/// `Col<Lineitem, i64>` rather than the bare `VecRel<Id<Lineitem>, i64>`.
+pub type Col<E, T> = VecRel<Id<E>, T>;
 /// A set-valued (CSR) column of entity `E`.
-pub type Set<E, T> = MultiRel<T, Id<E>>;
+pub type Set<E, T> = MultiRel<Id<E>, T>;
 /// The primary key of a densely-addressed entity `E`: its ids, `0..n`.
 pub type Key<E> = Universe<Id<E>>;
 /// The primary key of an entity whose id range has holes.
@@ -52,32 +51,32 @@ pub type SparseKey<E> = SparseUniverse<Id<E>>;
 /// A dictionary-encoded column of entity `E`: what SQL normalises into a
 /// lookup table (`kind_type`) is here just a `T`-valued column, stored as
 /// codes plus a table.
-pub type Dict<E, T> = DictRel<T, Id<E>>;
+pub type Dict<E, T> = DictRel<Id<E>, T>;
 /// A set-valued dictionary-encoded column of entity `E`.
-pub type DictSet<E, T> = DictMultiRel<T, Id<E>>;
+pub type DictSet<E, T> = DictMultiRel<Id<E>, T>;
 
 /// A dense payload type the cache can hold, with its physical kind and
 /// reader. This is what lets `l.dict(..)` pick the table reader from the
 /// declared field type.
 pub trait Scalar: Copy + 'static {
     const KIND: u32;
-    fn load<D: Dense>(dir: &Path, name: &str) -> VecRel<Self, D>;
+    fn load<D: Dense>(dir: &Path, name: &str) -> VecRel<D, Self>;
 }
 impl Scalar for Str {
     const KIND: u32 = KIND_DENSE_STR;
-    fn load<D: Dense>(dir: &Path, name: &str) -> VecRel<Self, D> {
+    fn load<D: Dense>(dir: &Path, name: &str) -> VecRel<D, Self> {
         cache::load_strs_in(dir, name)
     }
 }
 impl Scalar for i64 {
     const KIND: u32 = KIND_DENSE_I64;
-    fn load<D: Dense>(dir: &Path, name: &str) -> VecRel<Self, D> {
+    fn load<D: Dense>(dir: &Path, name: &str) -> VecRel<D, Self> {
         cache::load_i64_in(dir, name)
     }
 }
 impl Scalar for f64 {
     const KIND: u32 = KIND_DENSE_F64;
-    fn load<D: Dense>(dir: &Path, name: &str) -> VecRel<Self, D> {
+    fn load<D: Dense>(dir: &Path, name: &str) -> VecRel<D, Self> {
         cache::load_f64_in(dir, name)
     }
 }
@@ -200,7 +199,7 @@ impl<'a> Loader<'a> {
     }
 
     /// The table of a dictionary column, keyed by code.
-    fn table<T: Scalar>(&mut self, name: &str) -> VecRel<T, usize> {
+    fn table<T: Scalar>(&mut self, name: &str) -> VecRel<usize, T> {
         match self.note(name, T::KIND) {
             Some(dir) => T::load(dir, name),
             None => VecRel::new(Vec::new()),
@@ -234,7 +233,7 @@ impl<'a> Loader<'a> {
 /// A CSR relation over zero keys. `MultiRel` borrows `&'static` slices (in
 /// production they point into the leaked mmap); an empty slice literal is
 /// already `'static` for any element type, so probe mode allocates nothing.
-fn empty_csr<R: Copy + 'static, D: Dense>() -> MultiRel<R, D> {
+fn empty_csr<D: Dense, R: Copy + 'static>() -> MultiRel<D, R> {
     MultiRel::from_csr(&[0u32], &[])
 }
 
@@ -251,7 +250,7 @@ fn empty_csr<R: Copy + 'static, D: Dense>() -> MultiRel<R, D> {
 /// whose foreign key `fk` is a real target (`NO_ID` marks a hole). One pass
 /// over `fk` at load; the mask is leaked because `SparseUniverse` holds
 /// `&'static Bitset` (the same reason `MultiRel` holds `&'static` slices).
-pub fn sparse_key<T: Dense, E: 'static>(fk: &VecRel<T, Id<E>>) -> SparseKey<E> {
+pub fn sparse_key<E: 'static, T: Dense>(fk: &VecRel<Id<E>, T>) -> SparseKey<E> {
     let mask: &'static Bitset<Id<E>> = Box::leak(Box::new(Bitset::validity(&fk.v)));
     SparseUniverse::new(fk.n_dom(), mask)
 }

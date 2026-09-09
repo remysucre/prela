@@ -83,7 +83,7 @@ fn cast_slice<T>(bytes: &'static [u8], off: usize, len: usize) -> &'static [T] {
 // `D = usize` and the default `../cache` dir.
 
 /// Dense i64 column (scalars; dates are pre-parsed yyyymmdd).
-pub fn load_i64_in<D: Dense>(dir: &Path, name: &str) -> VecRel<i64, D> {
+pub fn load_i64_in<D: Dense>(dir: &Path, name: &str) -> VecRel<D, i64> {
     let (n, _, bytes) = open_in(dir, name, KIND_DENSE_I64);
     VecRel::new(cast_slice::<i64>(bytes, HEADER_LEN, n).to_vec())
 }
@@ -93,7 +93,7 @@ pub fn load_i64_in<D: Dense>(dir: &Path, name: &str) -> VecRel<i64, D> {
 /// typed value is produced by BULK REINTERPRET: `Id<T>` is
 /// `repr(transparent)` over `usize`, so `cast_slice::<Id<T>>` reads the
 /// cache words as tagged ids with no per-element conversion.
-pub fn load_ids_in<T: 'static, D: Dense>(dir: &Path, name: &str) -> VecRel<Id<T>, D> {
+pub fn load_ids_in<D: Dense, T: 'static>(dir: &Path, name: &str) -> VecRel<D, Id<T>> {
     let (n, _, bytes) = open_in(dir, name, KIND_DENSE_I64);
     VecRel::new(cast_slice::<Id<T>>(bytes, HEADER_LEN, n).to_vec())
 }
@@ -101,20 +101,23 @@ pub fn load_ids_in<T: 'static, D: Dense>(dir: &Path, name: &str) -> VecRel<Id<T>
 /// A foreign-key column into entity `T`, storing `T::Fk` — `Id<T>` for a dense
 /// entity, `Key<T>` for a non-dense one (both `repr(transparent)` 8-byte ids,
 /// so the same `KIND_DENSE_I64` bytes reinterpret to whichever `T` declares).
-pub fn load_fk_in<T: crate::engine::EntityKind, D: Dense>(dir: &Path, name: &str) -> VecRel<T::Fk, D> {
+pub fn load_fk_in<D: Dense, T: crate::engine::EntityKind>(
+    dir: &Path,
+    name: &str,
+) -> VecRel<D, T::Fk> {
     let (n, _, bytes) = open_in(dir, name, KIND_DENSE_I64);
     VecRel::new(cast_slice::<T::Fk>(bytes, HEADER_LEN, n).to_vec())
 }
 
 /// Dense f64 column.
-pub fn load_f64_in<D: Dense>(dir: &Path, name: &str) -> VecRel<f64, D> {
+pub fn load_f64_in<D: Dense>(dir: &Path, name: &str) -> VecRel<D, f64> {
     let (n, _, bytes) = open_in(dir, name, KIND_DENSE_F64);
     VecRel::new(cast_slice::<f64>(bytes, HEADER_LEN, n).to_vec())
 }
 
 /// Dense string column: one pass over the offsets builds the
 /// `Vec<&'static str>`; the bytes stay in the leaked mmap. Holes are "".
-pub fn load_strs_in<D: Dense>(dir: &Path, name: &str) -> VecRel<&'static str, D> {
+pub fn load_strs_in<D: Dense>(dir: &Path, name: &str) -> VecRel<D, &'static str> {
     let (n, m, bytes) = open_in(dir, name, KIND_DENSE_STR);
     let offsets = cast_slice::<u32>(bytes, HEADER_LEN, n + 1);
     let data = cast_slice::<u8>(bytes, HEADER_LEN + (n + 1) * 4, m);
@@ -124,14 +127,14 @@ pub fn load_strs_in<D: Dense>(dir: &Path, name: &str) -> VecRel<&'static str, D>
 /// Dense id column under `../cache`, untyped keys and values — survives
 /// only as the cross-check side of job_schema's typed-vs-untyped test.
 #[cfg(test)]
-pub fn load_ids(name: &str) -> VecRel<usize> {
+pub fn load_ids(name: &str) -> VecRel<usize, usize> {
     let (n, _, bytes) = open(name, KIND_DENSE_I64);
     VecRel::new(cast_slice::<usize>(bytes, HEADER_LEN, n).to_vec())
 }
 
 /// Dense string column under `../cache`, untyped keys (test cross-check).
 #[cfg(test)]
-pub fn load_strs(name: &str) -> VecRel<&'static str> {
+pub fn load_strs(name: &str) -> VecRel<usize, &'static str> {
     load_strs_in(&cache_dir(), name)
 }
 
@@ -150,13 +153,13 @@ fn strs_from_offsets(offsets: &'static [u32], data: &'static [u8]) -> Vec<&'stat
 
 /// Dense word column read as raw `usize` codes (dictionary codes into a
 /// `strs` table); `NO_ID` holes stay `NO_ID` and fail the lookup.
-pub fn load_words_in<D: Dense>(dir: &Path, name: &str) -> VecRel<usize, D> {
+pub fn load_words_in<D: Dense>(dir: &Path, name: &str) -> VecRel<D, usize> {
     let (n, _, bytes) = open_in(dir, name, KIND_DENSE_I64);
     VecRel::new(cast_slice::<usize>(bytes, HEADER_LEN, n).to_vec())
 }
 
 /// CSR with 8-byte word values read as raw `usize` codes.
-pub fn load_multi_words_in<D: Dense>(dir: &Path, name: &str) -> MultiRel<usize, D> {
+pub fn load_multi_words_in<D: Dense>(dir: &Path, name: &str) -> MultiRel<D, usize> {
     let (offsets, values) = csr_words::<usize>(dir, name);
     MultiRel::from_csr(offsets, values)
 }
@@ -164,20 +167,20 @@ pub fn load_multi_words_in<D: Dense>(dir: &Path, name: &str) -> MultiRel<usize, 
 /// CSR with 8-byte word values, read as 0-based ids tagged with the value
 /// entity `T` (same bulk-reinterpret as `load_ids_in`). Zero-copy: offsets
 /// and values are slices into the leaked mmap.
-pub fn load_multi_ids_in<T: 'static, D: Dense>(dir: &Path, name: &str) -> MultiRel<Id<T>, D> {
+pub fn load_multi_ids_in<D: Dense, T: 'static>(dir: &Path, name: &str) -> MultiRel<D, Id<T>> {
     let (offsets, values) = csr_words::<Id<T>>(dir, name);
     MultiRel::from_csr(offsets, values)
 }
 
 /// CSR with 8-byte word values, read as raw i64 scalars.
-pub fn load_multi_i64_in<D: Dense>(dir: &Path, name: &str) -> MultiRel<i64, D> {
+pub fn load_multi_i64_in<D: Dense>(dir: &Path, name: &str) -> MultiRel<D, i64> {
     let (offsets, values) = csr_words::<i64>(dir, name);
     MultiRel::from_csr(offsets, values)
 }
 
 /// CSR string column: row offsets are zero-copy; the per-string `&str`s
 /// are built in one pass and leaked (they index the leaked mmap bytes).
-pub fn load_multi_strs_in<D: Dense>(dir: &Path, name: &str) -> MultiRel<&'static str, D> {
+pub fn load_multi_strs_in<D: Dense>(dir: &Path, name: &str) -> MultiRel<D, &'static str> {
     let (n, m, bytes) = open_in(dir, name, KIND_CSR_STR);
     let row_off = cast_slice::<u32>(bytes, HEADER_LEN, n + 1);
     let str_off_at = HEADER_LEN + (n + 1) * 4;
@@ -190,7 +193,7 @@ pub fn load_multi_strs_in<D: Dense>(dir: &Path, name: &str) -> MultiRel<&'static
 
 /// CSR id column under `../cache`, untyped keys and values (test cross-check).
 #[cfg(test)]
-pub fn load_multi_ids(name: &str) -> MultiRel<usize> {
+pub fn load_multi_ids(name: &str) -> MultiRel<usize, usize> {
     let (offsets, values) = csr_words::<usize>(&cache_dir(), name);
     MultiRel::from_csr(offsets, values)
 }
