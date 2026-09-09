@@ -1199,19 +1199,19 @@ impl<D: Dense> UnivSize<D> for SparseUniverse<D> {
 
 // ===== GroupBy ==============
 
-pub struct GroupBy<S, R> {
-    pub set: S,
+pub struct GroupBy<R, S> {
     pub key: R,
+    pub set: S,
 }
 
-impl<S: Query, R: Query<D = S::R>> Query for GroupBy<S, R>
+impl<R: Query, S: Query<R = R::D>> Query for GroupBy<R, S>
 where
     R::R: Eq + Hash,
 {
     type D = R::R;
     type R = S::R;
 }
-impl<S: Drive, R: Probe<D = S::R>> Drive for GroupBy<S, R>
+impl<R: Probe, S: Drive<R = R::D>> Drive for GroupBy<R, S>
 where
     R::R: Eq + Hash,
 {
@@ -1676,14 +1676,14 @@ pub trait QueryExt: IntoQuery + Sized {
     }
 
     #[inline(always)]
-    fn group_by<R: IntoQuery>(self, key: R) -> GroupBy<Self::Q, R::Q>
+    fn group_by<R: IntoQuery>(self, key: R) -> GroupBy<R::Q, Self::Q>
     where
         R::Q: Query<D = ROf<Self>>,
         ROf<R>: Eq + Hash,
     {
         GroupBy {
-            set: self.iq(),
             key: key.iq(),
+            set: self.iq(),
         }
     }
 
