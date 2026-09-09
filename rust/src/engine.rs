@@ -1442,9 +1442,29 @@ impl<Q: Probe, F: Fn(Q::R) -> S, S: Copy> Probe for Map<Q, F, S> {
 // Constructors are mode-agnostic (they just build the node; the node's
 // trait impls carry the mode bounds) EXCEPT the eager physical nodes, whose
 // constructors drive their input right here — those require `Self: Drive`
-// and consume their input, exactly like prela's `build_*` inside `prepare`.
+// and consume their input, exactly like Prela's `build_*` inside `prepare`.
 
 pub trait QueryExt: IntoQuery + Sized {
+    /// Relational composition. Walks `self`'s pairs `(x, y)` and probes
+    /// `b` at each `y`, yielding `(x, z)` for every `z` in `b`'s range at
+    /// `y`. Requires `b`'s domain to equal `self`'s range
+    /// (`B::Q: Query<D = ROf<Self>>`). Subsumes both SQL's column
+    /// projection and its foreign-key `JOIN`: a foreign-key field is just
+    /// another relation to compose with, so chaining `.select()` calls
+    /// walks a chain of joins.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a = VecRel::new(vec![1, 2, 0]);
+    /// let b = VecRel::new(vec!["x", "y", "z"]);
+    /// let mut out = Vec::new();
+    /// a.select(&b).drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(0, "y"), (1, "z"), (2, "x")]);
+    /// ```
     #[inline(always)]
     fn select<B: IntoQuery>(self, b: B) -> Compose<Self::Q, B::Q>
     where
@@ -1456,6 +1476,21 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Inverts a relation: every `(x, y)` pair becomes `(y, x)`. Requires
+    /// `ROf<Self>: Eq + Hash`, since the new domain (`self`'s old range)
+    /// must be hashable to build the reverse lookup.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a = VecRel::new(vec![1, 2, 0]);
+    /// let mut out = Vec::new();
+    /// a.inv().drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(0, 2), (1, 0), (2, 1)]);
+    /// ```
     #[inline(always)]
     fn inv(self) -> InvStream<Self::Q>
     where
@@ -1464,6 +1499,25 @@ pub trait QueryExt: IntoQuery + Sized {
         InvStream { q: self.iq() }
     }
 
+    /// Pairs `self` with `b` on a shared domain: `(x, y)` from `self` and
+    /// `(x, z)` from `b` become `(x, (y, z))`. Requires `b`'s domain to
+    /// equal `self`'s domain (`B::Q: Query<D = DOf<Self>>`) — unlike
+    /// [`QueryExt::select`], which composes on `self`'s *range*. Used
+    /// both as logical AND (pairing two predicates over the same domain)
+    /// and as multi-column projection (pairing two output columns).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a = VecRel::new(vec![1, 2, 0]);
+    /// let b = VecRel::new(vec!["x", "y", "z"]);
+    /// let mut out = Vec::new();
+    /// a.and(&b).drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(0, (1, "x")), (1, (2, "y")), (2, (0, "z"))]);
+    /// ```
     #[inline(always)]
     fn and<B: IntoQuery>(self, b: B) -> Prod<Self::Q, B::Q>
     where
@@ -1475,6 +1529,25 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Membership-only disjunction: answers whether `x` is in `self`'s
+    /// domain *or* `b`'s domain, without ever materializing a result
+    /// relation. Requires `b`'s domain to equal `self`'s domain
+    /// (`B::Q: Query<D = DOf<Self>>`), matching [`QueryExt::and`]. The
+    /// result only implements [`Member`], not [`Drive`]/[`Probe`] —
+    /// calling `.drive()`, `.select()`, or `.with()` on it is a compile
+    /// error by design. For a listable result, use [`QueryExt::union`]
+    /// instead.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a = VecRel::new(vec![10, 20]);
+    /// let b = VecRel::new(vec![30, 40, 50]);
+    /// assert!((&a).or(&b).member(2));  // in b's domain {0, 1, 2}
+    /// assert!(!(&a).or(&b).member(5)); // in neither domain
+    /// ```
     #[inline(always)]
     fn or<B: IntoQuery>(self, b: B) -> Disj<Self::Q, B::Q>
     where
@@ -1486,6 +1559,21 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Value-bearing difference: keeps `self`'s pairs `(x, y)` where `x`
+    /// is *not* a member of `b`'s domain — SQL's `EXCEPT`/`NOT IN`.
+    /// Requires `b`'s domain to equal `self`'s domain
+    /// (`B::Q: Query<D = DOf<Self>>`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a: VecRel<usize> = VecRel::new(vec![10, 20, 30]);
+    /// let mut out = Vec::new();
+    /// a.minus(Universe::new(2)).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(2, 30)]); // keys 0, 1 dropped: both in {0, 1}
+    /// ```
     #[inline(always)]
     fn minus<B: IntoQuery>(self, b: B) -> Diff<Self::Q, B::Q>
     where
@@ -1497,6 +1585,23 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Concatenation: drives `self`, then `b`, with no deduplication —
+    /// SQL's `UNION ALL`, not `UNION`. Requires matching domain *and*
+    /// range (`B::Q: Query<D = DOf<Self>, R = ROf<Self>>`), stricter than
+    /// [`QueryExt::and`]/[`QueryExt::minus`], since the two sides must
+    /// produce interchangeable rows to be concatenated meaningfully.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a = VecRel::new(vec![10, 20]);
+    /// let b = VecRel::new(vec![30, 40]);
+    /// let mut out = Vec::new();
+    /// a.union(&b).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(0, 10), (1, 20), (0, 30), (1, 40)]);
+    /// ```
     #[inline(always)]
     fn union<B: IntoQuery>(self, b: B) -> Union<Self::Q, B::Q>
     where
@@ -1508,6 +1613,22 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Keeps pairs whose value equals `v`. All of [`QueryExt::eq`],
+    /// [`QueryExt::ne`], [`QueryExt::gt`], [`QueryExt::lt`],
+    /// [`QueryExt::ge`], [`QueryExt::le`] share this exact shape, a
+    /// one-line closure over `self`'s value, differing only in the
+    /// comparison operator inside.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a: VecRel<usize> = VecRel::new(vec![10, 20, 30]);
+    /// let mut out = Vec::new();
+    /// a.eq(20).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(1, 20)]);
+    /// ```
     #[inline(always)]
     fn eq(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1519,6 +1640,20 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Keeps pairs whose value is not equal to `v`. See [`QueryExt::eq`]
+    /// for the shape every comparator here shares.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a: VecRel<usize> = VecRel::new(vec![10, 20, 30]);
+    /// let mut out = Vec::new();
+    /// a.ne(20).drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(0, 10), (2, 30)]);
+    /// ```
     #[inline(always)]
     fn ne(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1530,6 +1665,20 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Keeps pairs whose value is greater than `v`. See [`QueryExt::eq`]
+    /// for the shape every comparator here shares.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a: VecRel<usize> = VecRel::new(vec![10, 20, 30]);
+    /// let mut out = Vec::new();
+    /// a.gt(15).drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(1, 20), (2, 30)]);
+    /// ```
     #[inline(always)]
     fn gt(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1541,6 +1690,20 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Keeps pairs whose value is less than `v`. See [`QueryExt::eq`] for
+    /// the shape every comparator here shares.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a: VecRel<usize> = VecRel::new(vec![10, 20, 30]);
+    /// let mut out = Vec::new();
+    /// a.lt(25).drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(0, 10), (1, 20)]);
+    /// ```
     #[inline(always)]
     fn lt(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1552,6 +1715,20 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Keeps pairs whose value is greater than or equal to `v`. See
+    /// [`QueryExt::eq`] for the shape every comparator here shares.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a: VecRel<usize> = VecRel::new(vec![10, 20, 30]);
+    /// let mut out = Vec::new();
+    /// a.ge(20).drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(1, 20), (2, 30)]);
+    /// ```
     #[inline(always)]
     fn ge(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1563,6 +1740,20 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Keeps pairs whose value is less than or equal to `v`. See
+    /// [`QueryExt::eq`] for the shape every comparator here shares.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a: VecRel<usize> = VecRel::new(vec![10, 20, 30]);
+    /// let mut out = Vec::new();
+    /// a.le(20).drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(0, 10), (1, 20)]);
+    /// ```
     #[inline(always)]
     fn le(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1574,6 +1765,21 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Keeps pairs whose value is present in `vs`, checked by a linear
+    /// scan. `vs` must already be a `Vec`; for any `IntoIterator`, use
+    /// [`QueryExt::is_in`], which this is a special case of.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a: VecRel<usize> = VecRel::new(vec![10, 20, 30]);
+    /// let mut out = Vec::new();
+    /// a.in_v(vec![10, 30]).drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(0, 10), (2, 30)]);
+    /// ```
     #[inline(always)]
     fn in_v(self, vs: Vec<ROf<Self>>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1585,7 +1791,23 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    /// `in_v` over any `IntoIterator`
+    /// Keeps pairs whose value is present in `vs` — SQL's `IN`. `vs` is
+    /// collected into a `Vec` once, up front, then checked per row by
+    /// linear scan; for a large list, [`QueryExt::collect`] into a
+    /// [`MatSet`]/[`Bitset`] first so each check becomes a lookup instead
+    /// of a scan. `in_v` over any `IntoIterator`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a: VecRel<usize> = VecRel::new(vec![10, 20, 30]);
+    /// let mut out = Vec::new();
+    /// a.is_in([10, 30]).drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(0, 10), (2, 30)]);
+    /// ```
     #[inline(always)]
     fn is_in<I: IntoIterator<Item = ROf<Self>>>(
         self,
@@ -1601,6 +1823,24 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Restriction (semijoin). Keeps a pair `(x, y)` from `self` iff `y`
+    /// is a member of `s`'s domain; `s`'s own values never appear in the
+    /// output; `self`'s domain and range are unchanged. Requires `s`'s
+    /// domain to equal `self`'s range (`S::Q: Member<D = ROf<Self>>`).
+    /// For fetching `s`'s columns instead of merely filtering by them,
+    /// see [`QueryExt::select`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a = VecRel::new(vec![1, 2, 0]);
+    /// let mut out = Vec::new();
+    /// a.with(Universe::new(2)).drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(0, 1), (2, 0)]); // (1, 2) dropped: 2 not in {0, 1}
+    /// ```
     #[inline(always)]
     fn with<S: IntoQuery>(self, s: S) -> Restrict<Self::Q, S::Q>
     where
@@ -1612,6 +1852,22 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Keeps pairs whose string value matches the regex `re`. Requires
+    /// `self`'s range to actually be `&'static str`
+    /// (`Self::Q: Query<R = &'static str>`). The pattern is compiled
+    /// once, up front, before the closure runs, not re-parsed per row.
+    /// See [`QueryExt::nrx`] for the negated form.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let names = VecRel::new(vec!["Jaws", "Alien", "Tron"]);
+    /// let mut out = Vec::new();
+    /// names.rx("^T").drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(2, "Tron")]);
+    /// ```
     #[inline(always)]
     fn rx(self, re: &str) -> Filter<Self::Q, impl Fn(&'static str) -> bool>
     where
@@ -1624,6 +1880,20 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Keeps pairs whose string value does *not* match the regex `re`.
+    /// See [`QueryExt::rx`] for the positive form.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let names = VecRel::new(vec!["Jaws", "Alien", "Tron"]);
+    /// let mut out = Vec::new();
+    /// names.nrx("^T").drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(0, "Jaws"), (1, "Alien")]);
+    /// ```
     #[inline(always)]
     fn nrx(self, re: &str) -> Filter<Self::Q, impl Fn(&'static str) -> bool>
     where
@@ -1636,12 +1906,43 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Escape hatch: keeps pairs where the arbitrary closure `f` returns
+    /// `true`, applied directly to `self`'s value. Every named comparator
+    /// above is really just a convenience wrapper around this — the only
+    /// reason to reach for `.filt()` instead is when the check isn't
+    /// against a fixed constant, e.g. comparing two columns paired up via
+    /// [`QueryExt::and`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a: VecRel<usize> = VecRel::new(vec![10, 20, 30]);
+    /// let mut out = Vec::new();
+    /// a.filt(|v| v % 20 == 0).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(1, 20)]);
+    /// ```
     #[inline(always)]
     fn filt<F: Fn(ROf<Self>) -> bool>(self, f: F) -> Filter<Self::Q, F> {
         Filter { a: self.iq(), p: f }
     }
 
-    /// Half-open range `[lo, hi)` — Julia `during(lo, hi)`.
+    /// Half-open range `[lo, hi)` — inclusive of `lo`, exclusive of `hi`
+    /// (Julia `during(lo, hi)`). See [`QueryExt::between`] for the closed
+    /// variant; the two differ by exactly one comparison operator.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a: VecRel<usize> = VecRel::new(vec![1999, 2010, 2001, 2008]);
+    /// let mut out = Vec::new();
+    /// a.during(2000, 2010).drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(2, 2001), (3, 2008)]); // 2010 excluded
+    /// ```
     #[inline(always)]
     fn during(self, lo: ROf<Self>, hi: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1653,7 +1954,21 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    /// Closed range `[lo, hi]` — Julia `lo..hi`.
+    /// Closed range `[lo, hi]` — inclusive of both ends (Julia
+    /// `lo..hi`), matching SQL's `BETWEEN` exactly. See
+    /// [`QueryExt::during`] for the half-open variant.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a: VecRel<usize> = VecRel::new(vec![1999, 2010, 2001, 2008]);
+    /// let mut out = Vec::new();
+    /// a.between(2000, 2010).drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(1, 2010), (2, 2001), (3, 2008)]); // 2010 included
+    /// ```
     #[inline(always)]
     fn between(self, lo: ROf<Self>, hi: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1665,8 +1980,23 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    /// Materialize into the physical structure named by
-    /// the target type
+    /// Materializes a relation into a concrete physical structure — the
+    /// target type `T` picks which one, e.g. [`MatSet`] (hash set),
+    /// [`Bitset`] (dense bit-vector), or [`HashIdx`] (hash-multimap).
+    /// Requires `Self::Q: Drive`, since materializing means actually
+    /// walking every pair once. Worthwhile when the same relation will be
+    /// checked for membership many times afterward, since each check
+    /// becomes a lookup instead of a re-scan.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a: VecRel<i32> = VecRel::new(vec![10, 20, 30]);
+    /// let set: MatSet<i32> = a.collect();
+    /// assert!(set.member(20) && !set.member(99));
+    /// ```
     #[inline(always)]
     fn collect<T: FromQuery<Self::Q>>(self) -> T
     where
@@ -1675,6 +2005,26 @@ pub trait QueryExt: IntoQuery + Sized {
         T::from_rel(self.iq())
     }
 
+    /// Groups `self`'s pairs by looking each value up through `key`: a
+    /// value `y` becomes group `key(y)`. Requires `key`'s domain to
+    /// equal `self`'s range (`R::Q: Query<D = ROf<Self>>`) and the
+    /// resulting group-key type to be hashable (`ROf<R>: Eq + Hash`).
+    /// Building the group set doesn't do any work itself — see
+    /// [`QueryExt::fold`] (and friends) for the aggregation step.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let cast: MultiRel<usize> = MultiRel::from_csr(&[0, 2, 2, 3], &[7, 8, 7]);
+    /// let fs = Universe::new(3);
+    /// let counts = fs.group_by(&cast).fold(0i64, |acc, _| acc + 1);
+    /// let mut out = Vec::new();
+    /// counts.drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(7, 2), (8, 1)]);
+    /// ```
     #[inline(always)]
     fn group_by<R: IntoQuery>(self, key: R) -> GroupBy<Self::Q, R::Q>
     where
@@ -1687,6 +2037,26 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Aggregates each group down to one value: `init`, then `op` applied
+    /// once per row in the group, the standard `fold`/`reduce`. Requires
+    /// `Self::Q: Drive`. See [`QueryExt::buf_fold`] for aggregates that
+    /// need to see a whole group at once (e.g. median), and
+    /// [`QueryExt::unwrap_fold`] to fold the entire relation to one
+    /// scalar instead of per group.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let cast: MultiRel<usize> = MultiRel::from_csr(&[0, 2, 2, 3], &[7, 8, 7]);
+    /// let fs = Universe::new(3);
+    /// let counts = fs.group_by(&cast).fold(0i64, |acc, _| acc + 1);
+    /// let mut out = Vec::new();
+    /// counts.drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(7, 2), (8, 1)]);
+    /// ```
     #[inline(always)]
     fn fold<OP: Fn(S, ROf<Self>) -> S, S: Copy>(self, init: S, op: OP) -> Fold<DOf<Self>, S>
     where
@@ -1695,6 +2065,28 @@ pub trait QueryExt: IntoQuery + Sized {
         Fold::build(self.iq(), init, op)
     }
 
+    /// Aggregates a whole group at once via `f`, for aggregates
+    /// [`QueryExt::fold`]'s running-accumulator shape can't express
+    /// (e.g. median): every row in the group is collected into an `SVec`
+    /// first, then `f` runs once on the full group. Requires
+    /// `Self::Q: Drive`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let cast: MultiRel<usize> = MultiRel::from_csr(&[0, 2, 2, 3], &[7, 8, 7]);
+    /// let films = VecRel::new(vec![10, 20, 30]);
+    /// let fs = Universe::new(3);
+    /// let ranges = fs.group_by(&cast).select(&films).buf_fold(|vs| {
+    ///     *vs.iter().max().unwrap() - *vs.iter().min().unwrap()
+    /// });
+    /// let mut out = Vec::new();
+    /// ranges.drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(7, 20), (8, 0)]);
+    /// ```
     #[inline(always)]
     fn buf_fold<F: Fn(SVec<ROf<Self>>) -> S, S: Copy>(self, f: F) -> Fold<DOf<Self>, S>
     where
@@ -1703,6 +2095,25 @@ pub trait QueryExt: IntoQuery + Sized {
         Fold::build_buf(self.iq(), f)
     }
 
+    /// Like [`QueryExt::fold`], but for group keys known to be a small,
+    /// dense `0..n` range — skips the hash map in favor of a plain array
+    /// indexed by key. Only groups actually seen are emitted; see
+    /// [`QueryExt::dense_fold_outer`] to emit every key in `0..n`
+    /// regardless.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let cast: MultiRel<usize> = MultiRel::from_csr(&[0, 2, 2, 3], &[7, 8, 7]);
+    /// let fs = Universe::new(3);
+    /// let counts = fs.group_by(&cast).dense_fold(9, 0i64, |acc, _| acc + 1);
+    /// let mut out = Vec::new();
+    /// counts.drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(7, 2), (8, 1)]);
+    /// ```
     #[inline(always)]
     fn dense_fold<OP: Fn(S, ROf<Self>) -> S, S: Copy>(
         self,
@@ -1717,8 +2128,22 @@ pub trait QueryExt: IntoQuery + Sized {
         DenseFold::build(self.iq(), n, init, op)
     }
 
-    /// Left-outer-join aggregate: like `dense_fold`, but every key in `0..n`
-    /// is emitted.
+    /// Left-outer-join aggregate: like [`QueryExt::dense_fold`], but
+    /// every key in `0..n` is emitted, filled with `init` and never
+    /// touched by `op` if the group was never seen.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let g: VecRel<usize> = VecRel::new(vec![0, 0, 1]);
+    /// let counts = g.group_by(Universe::new(2)).dense_fold_outer(3, 0i64, |acc, _| acc + 1);
+    /// let mut out = Vec::new();
+    /// counts.drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(0, 2), (1, 1), (2, 0)]); // key 2 never seen, still emitted
+    /// ```
     #[inline(always)]
     fn dense_fold_outer<OP: Fn(S, ROf<Self>) -> S, S: Copy>(
         self,
@@ -1736,6 +2161,25 @@ pub trait QueryExt: IntoQuery + Sized {
     /// Count-distinct — the `length ∘ unique` instance of `.buf_fold`. The
     /// closure sorts + dedups the per-key SVec on finalization — much
     /// faster than a HashSet per group for the typical small-group case.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let cast: MultiRel<usize> = MultiRel::from_csr(&[0, 2, 2, 3], &[7, 8, 7]);
+    /// let films = VecRel::new(vec![10, 20, 30]);
+    /// let fs = Universe::new(3);
+    /// let cd = fs
+    ///     .group_by(&cast)
+    ///     .select(&films)
+    ///     .union(fs.group_by(&cast).select(&films).filt(|v| v == 10))
+    ///     .count_distinct();
+    /// let mut out = Vec::new();
+    /// cd.drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(7, 2), (8, 1)]); // the duplicate (7, 10) row collapses
+    /// ```
     #[inline(always)]
     fn count_distinct(self) -> Fold<DOf<Self>, i64>
     where
@@ -1749,11 +2193,37 @@ pub trait QueryExt: IntoQuery + Sized {
         })
     }
 
+    /// Applies `f` to every value, lazily — nothing runs until something
+    /// later drives or probes the result.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a = VecRel::new(vec![1999, 2010, 2001]);
+    /// let mut out = Vec::new();
+    /// a.map(|y| (y / 10) * 10).drive(|d, r| out.push((d, r)));
+    /// out.sort();
+    /// assert_eq!(out, vec![(0, 1990), (1, 2010), (2, 2000)]);
+    /// ```
     #[inline(always)]
     fn map<F: Fn(ROf<Self>) -> S, S: Copy>(self, f: F) -> Map<Self::Q, F, S> {
         Map::new(self.iq(), f)
     }
 
+    /// Folds the *entire* relation down to one scalar, ignoring keys
+    /// entirely — unlike [`QueryExt::fold`], which aggregates per group.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// let a: VecRel<usize> = VecRel::new(vec![10, 20, 30]);
+    /// let total = a.unwrap_fold(0usize, |acc, v| acc + v);
+    /// assert_eq!(total, 60);
+    /// ```
     #[inline(always)]
     fn unwrap_fold<OP: Fn(S, ROf<Self>) -> S, S: Copy>(self, init: S, op: OP) -> S
     where
