@@ -11,6 +11,9 @@ pub mod job;
 #[path = "runner/production.rs"]
 pub(crate) mod production;
 
+#[path = "runner/timing.rs"]
+pub(crate) mod timing;
+
 /// Execute one SQL query against a generated fixture.
 pub(crate) fn run_sql(
     connection: &Connection,
@@ -18,9 +21,12 @@ pub(crate) fn run_sql(
     sql: &str,
     order: ResultOrder,
 ) -> Result<(Vec<String>, ResultSet), String> {
+    let prepare_time = timing::Timing::new(format!("SQL Q{name} prepare"));
     let mut statement = connection
         .prepare(sql)
         .map_err(|error| format!("prepare Q{name}: {error}\n{sql}"))?;
+    drop(prepare_time);
+    let _execute_time = timing::Timing::new(format!("SQL Q{name} execute/fetch"));
     let mut cursor = statement
         .query([])
         .map_err(|error| format!("execute Q{name}: {error}"))?;

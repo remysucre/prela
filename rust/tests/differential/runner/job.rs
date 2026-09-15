@@ -550,7 +550,19 @@ mod tests {
         suppress_health_check = [HealthCheck::TooSlow]
     )]
     fn prela_matches_duckdb_on_generated_job_databases(tc: TestCase) {
+        let _case_time = super::super::timing::Timing::new("generated case");
+        let generation_time = super::super::timing::Timing::new("generate/render SQL");
         let fixture = tc.draw(sql_generator(&schema::SCHEMA));
+        drop(generation_time);
+        if let Some(directory) = std::env::var_os("PRELA_PROFILE_DIR") {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let directory = PathBuf::from(directory);
+            std::fs::create_dir_all(&directory).unwrap();
+            let path = directory.join(format!("case-{}.sql", NEXT.fetch_add(1, Ordering::Relaxed)));
+            std::fs::write(&path, &fixture).unwrap();
+            eprintln!("pbt-profile fixture {}", path.display());
+        }
         let prepared = PreparedJob::from_sql(&fixture).unwrap();
         for &query in queries::all() {
             let comparison = prepared.compare(query).unwrap();
