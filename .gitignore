@@ -27,3 +27,7 @@ rust/bench/__pycache__
 
 # SQLStorm port: build artefacts (data lives outside the repo)
 sqlstorm/rust/target/
+
+# Property-test examples and replay artifacts
+rust/.hegel/
+rust/tests/differential/queries/job/*/mismatch.sql

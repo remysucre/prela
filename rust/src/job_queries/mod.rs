@@ -11,8 +11,14 @@ pub mod helpers;
 mod queries;
 pub mod sets;
 
-pub type Entry = (&'static str, &'static str, Box<dyn Fn(&'static crate::job_schema::Job) -> String>);
+pub type Entry<T = String> = (&'static str, &'static str, Box<dyn Fn(&'static crate::job_schema::Job) -> T>);
 
 pub fn all_queries(db: &'static crate::job_schema::Job) -> Vec<Entry> {
-    queries::entries(db)
+    queries::entries::<helpers::TextOutput>(db)
+}
+
+/// The production query plans with typed results for differential comparison.
+#[cfg(feature = "test")]
+pub fn typed_queries(db: &'static crate::job_schema::Job) -> Vec<Entry<Vec<helpers::Result>>> {
+    queries::entries::<helpers::TypedOutput>(db)
 }
