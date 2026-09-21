@@ -1337,11 +1337,6 @@ impl<D: Copy + Eq + Hash, S: Copy> Fold<D, S> {
         Fold { cache: m }
     }
 
-    /// Whole-multiset reduce (Julia's BufFold — julia-engine plan.jl
-    /// `build_buffold`): buffer every group into an `SVec`, then compute
-    /// each cache entry as `f(vs)` over the whole group. For reducers that
-    /// don't fit foldl's `(S, R) -> S` shape — count-distinct, median, … —
-    /// where `build` is the per-key foldl.
     pub fn build_buf<Q, F>(q: Q, f: F) -> Self
     where
         Q: Drive<D = D>,
@@ -2070,9 +2065,9 @@ pub trait QueryExt: IntoQuery + Sized {
         Window::build(self.iq(), order.iq(), cmp, f)
     }
 
-    /// Count-distinct — the `length ∘ unique` instance of `.buf_fold`. The
-    /// closure sorts + dedups the per-key SVec on finalization — much
-    /// faster than a HashSet per group for the typical small-group case.
+    // sort, dedup, then len instead of inserting into a hashset for each key; probably faster
+    // note receiver must be grouped, so count_distinct without GROUP BY needs a wrapper trivial
+    // group
     #[inline(always)]
     fn count_distinct(self) -> Fold<DOf<Self>, i64>
     where
