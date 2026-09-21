@@ -106,7 +106,7 @@ impl<T: Member + ?Sized> Member for &T {
 // `MultiRel<usize, R>` — multi-valued / partial; CSR over the dense domain:
 // row i = `v[offsets[i]..offsets[i+1]]`, empty range for a domain element
 // with no rows. The slices are `&'static` — in production they point into the
-// leaked cache mmap (zero-copy); `from_pairs` (unit tests) leaks two small
+// leaked cache mmap (zero-copy); `from_pairs` (tests, examples) leaks two small
 // Vecs to the same effect.
 
 pub const NO_ID: usize = usize::MAX;
@@ -254,8 +254,9 @@ pub struct MultiRel<D: Dense, R: Copy + 'static> {
     pub v: &'static [R],
 }
 
-#[cfg(test)]
 impl<D: Dense, R: Copy + Default> VecRel<D, R> {
+    /// Build from explicit `(id, value)` pairs over the domain `0..n`;
+    /// ids not listed get `R::default()`. For tests and examples.
     pub fn from_pairs(n: usize, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
         let mut values = vec![R::default(); n];
         for (k, v) in pairs {
@@ -282,7 +283,9 @@ impl<D: Dense, R: Copy + 'static> MultiRel<D, R> {
         self.offsets.len() - 1
     }
 
-    #[cfg(test)]
+    /// Build from explicit `(id, value)` pairs over the domain `0..n`;
+    /// an id may appear any number of times. Leaks the two backing Vecs
+    /// to obtain the `&'static` slices — for tests and examples only.
     pub fn from_pairs(n: usize, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
         let mut buckets: Vec<Vec<R>> = (0..n).map(|_| Vec::new()).collect();
         for (k, v) in pairs {
@@ -1739,6 +1742,25 @@ impl<X: Copy + Eq + Hash, S: Drive, P: Fn(X, S::D) -> bool> Probe for Scan<X, S,
 // and consume their input, exactly like prela's `build_*` inside `prepare`.
 
 pub trait QueryExt: IntoQuery + Sized {
+    /// [Relation composition](https://en.wikipedia.org/wiki/Composition_of_relations).
+    /// Given relations `a` and `b`, `a.select(b)`
+    /// matches every `(x, y_a)` in `a` with all `(y_b, z)`
+    /// in `b` such that `y_a = y_b`, and produces a tuple `(x, z)` for
+    /// each match.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, 1), (0, 2), (1, 2)}: movie id → keyword id
+    /// let a: MultiRel<usize, usize> = MultiRel::from_pairs(2, [(0, 1), (0, 2), (1, 2)]);
+    /// // b = {(0, "shark"), (1, "space"), (2, "robot")}: keyword id → keyword
+    /// let b: VecRel<usize, &str> = VecRel::from_pairs(3, [(0, "shark"), (1, "space"), (2, "robot")]);
+    /// let mut out = Vec::new();
+    /// a.select(&b).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(0, "space"), (0, "robot"), (1, "robot")]);
+    /// ```
     #[inline(always)]
     fn select<B: IntoQuery>(self, b: B) -> Compose<Self::Q, B::Q>
     where
@@ -1766,6 +1788,20 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// [Converse](https://en.wikipedia.org/wiki/Converse_relation).
+    /// `a.inv()` produces `(y, x)` for every `(x, y)` in `a`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, 1), (1, 2), (2, 0)}
+    /// let a: VecRel<usize, usize> = VecRel::from_pairs(3, [(0, 1), (1, 2), (2, 0)]);
+    /// let mut out = Vec::new();
+    /// a.inv().drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(1, 0), (2, 1), (0, 2)]);
+    /// ```
     #[inline(always)]
     fn inv(self) -> InvStream<Self::Q>
     where
@@ -1774,6 +1810,23 @@ pub trait QueryExt: IntoQuery + Sized {
         InvStream { q: self.iq() }
     }
 
+    /// Product.
+    /// For each `(x_a, y)` in `a` and `(x_b, z)` in `b` such that `x_a = x_b`,
+    /// `a.and(b)` produces a tuple `(x, (y, z))` where `x = x_a = x_b`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, 1975), (1, 1979), (2, 1982)}: movie id → year
+    /// let a: VecRel<usize, usize> = VecRel::from_pairs(3, [(0, 1975), (1, 1979), (2, 1982)]);
+    /// // b = {(0, "Jaws"), (1, "Alien"), (2, "Tron")}: movie id → title
+    /// let b: VecRel<usize, &str> = VecRel::from_pairs(3, [(0, "Jaws"), (1, "Alien"), (2, "Tron")]);
+    /// let mut out = Vec::new();
+    /// a.and(&b).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(0, (1975, "Jaws")), (1, (1979, "Alien")), (2, (1982, "Tron"))]);
+    /// ```
     #[inline(always)]
     fn and<B: IntoQuery>(self, b: B) -> Prod<Self::Q, B::Q>
     where
@@ -1793,6 +1846,22 @@ pub trait QueryExt: IntoQuery + Sized {
         Opt { q: self.iq() }
     }
 
+    /// Sum.
+    /// Currently only supports membership tests:
+    /// `x` is a key in `a.or(b)` iff `x` is a key in either `a` or `b`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, 1975), (1, 1979)}: movie id → year
+    /// let a: VecRel<usize, usize> = VecRel::from_pairs(2, [(0, 1975), (1, 1979)]);
+    /// // b = {(0, "Jaws"), (1, "Alien"), (2, "Tron")}: movie id → title
+    /// let b: VecRel<usize, &str> = VecRel::from_pairs(3, [(0, "Jaws"), (1, "Alien"), (2, "Tron")]);
+    /// assert!((&a).or(&b).member(2));  // 2 is a key of b
+    /// assert!(!(&a).or(&b).member(5)); // 5 is a key of neither
+    /// ```
     #[inline(always)]
     fn or<B: IntoQuery>(self, b: B) -> Disj<Self::Q, B::Q>
     where
@@ -1804,6 +1873,23 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Difference.
+    /// `a.minus(b)` removes every tuple `(x, y_a)` in `a`
+    /// such that `(x, y_b)` appears in `b` for some `y_b`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, "Jaws"), (1, "Alien"), (2, "Tron")}: movie id → title
+    /// let a: VecRel<usize, &str> = VecRel::from_pairs(3, [(0, "Jaws"), (1, "Alien"), (2, "Tron")]);
+    /// // b = {(0, 1975), (1, 1979)}: movie id → year
+    /// let b: VecRel<usize, usize> = VecRel::from_pairs(2, [(0, 1975), (1, 1979)]);
+    /// let mut out = Vec::new();
+    /// a.minus(&b).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(2, "Tron")]); // keys 0 and 1 also occur in b
+    /// ```
     #[inline(always)]
     fn minus<B: IntoQuery>(self, b: B) -> Diff<Self::Q, B::Q>
     where
@@ -1815,6 +1901,22 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Union.
+    /// Given relations `a` and `b` of the same type,
+    /// `a.union(b)` returns all tuples from `a` and `b` without deduplication.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, "Jaws"), (1, "Alien")}; b = {(0, "Tron"), (1, "Alien")}
+    /// let a: VecRel<usize, &str> = VecRel::from_pairs(2, [(0, "Jaws"), (1, "Alien")]);
+    /// let b: VecRel<usize, &str> = VecRel::from_pairs(2, [(0, "Tron"), (1, "Alien")]);
+    /// let mut out = Vec::new();
+    /// a.union(&b).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(0, "Jaws"), (1, "Alien"), (0, "Tron"), (1, "Alien")]);
+    /// ```
     #[inline(always)]
     fn union<B: IntoQuery>(self, b: B) -> Union<Self::Q, B::Q>
     where
@@ -1826,6 +1928,19 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// `a.eq(v)` keeps every `(x, y)` in `a` such that `y = v`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, 1975), (1, 1979), (2, 1982)}: movie id → year
+    /// let a: VecRel<usize, usize> = VecRel::from_pairs(3, [(0, 1975), (1, 1979), (2, 1982)]);
+    /// let mut out = Vec::new();
+    /// a.eq(1979).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(1, 1979)]);
+    /// ```
     #[inline(always)]
     fn eq(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1837,6 +1952,19 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// `a.ne(v)` keeps every `(x, y)` in `a` such that `y ≠ v`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, 1975), (1, 1979), (2, 1982)}: movie id → year
+    /// let a: VecRel<usize, usize> = VecRel::from_pairs(3, [(0, 1975), (1, 1979), (2, 1982)]);
+    /// let mut out = Vec::new();
+    /// a.ne(1979).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(0, 1975), (2, 1982)]);
+    /// ```
     #[inline(always)]
     fn ne(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1848,6 +1976,19 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// `a.gt(v)` keeps every `(x, y)` in `a` such that `y > v`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, 1975), (1, 1979), (2, 1982)}: movie id → year
+    /// let a: VecRel<usize, usize> = VecRel::from_pairs(3, [(0, 1975), (1, 1979), (2, 1982)]);
+    /// let mut out = Vec::new();
+    /// a.gt(1979).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(2, 1982)]);
+    /// ```
     #[inline(always)]
     fn gt(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1859,6 +2000,19 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// `a.lt(v)` keeps every `(x, y)` in `a` such that `y < v`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, 1975), (1, 1979), (2, 1982)}: movie id → year
+    /// let a: VecRel<usize, usize> = VecRel::from_pairs(3, [(0, 1975), (1, 1979), (2, 1982)]);
+    /// let mut out = Vec::new();
+    /// a.lt(1979).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(0, 1975)]);
+    /// ```
     #[inline(always)]
     fn lt(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1870,6 +2024,19 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// `a.ge(v)` keeps every `(x, y)` in `a` such that `y ≥ v`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, 1975), (1, 1979), (2, 1982)}: movie id → year
+    /// let a: VecRel<usize, usize> = VecRel::from_pairs(3, [(0, 1975), (1, 1979), (2, 1982)]);
+    /// let mut out = Vec::new();
+    /// a.ge(1979).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(1, 1979), (2, 1982)]);
+    /// ```
     #[inline(always)]
     fn ge(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1881,6 +2048,19 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// `a.le(v)` keeps every `(x, y)` in `a` such that `y ≤ v`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, 1975), (1, 1979), (2, 1982)}: movie id → year
+    /// let a: VecRel<usize, usize> = VecRel::from_pairs(3, [(0, 1975), (1, 1979), (2, 1982)]);
+    /// let mut out = Vec::new();
+    /// a.le(1979).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(0, 1975), (1, 1979)]);
+    /// ```
     #[inline(always)]
     fn le(self, v: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1892,6 +2072,19 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// `a.in_v(vs)` keeps every `(x, y)` in `a` such that `y` is in `vs`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, 1975), (1, 1979), (2, 1982)}: movie id → year
+    /// let a: VecRel<usize, usize> = VecRel::from_pairs(3, [(0, 1975), (1, 1979), (2, 1982)]);
+    /// let mut out = Vec::new();
+    /// a.in_v(vec![1975, 1982]).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(0, 1975), (2, 1982)]);
+    /// ```
     #[inline(always)]
     fn in_v(self, vs: Vec<ROf<Self>>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1919,6 +2112,23 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Semijoin.
+    /// `a.with(b)` keeps every `(x, y)` in `a`
+    /// such that `(y, z)` appears in `b` for some `z`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, 1), (0, 2), (1, 2)}: movie id → keyword id
+    /// let a: MultiRel<usize, usize> = MultiRel::from_pairs(2, [(0, 1), (0, 2), (1, 2)]);
+    /// // b = {(0, "shark"), (1, "space")}: keyword id → keyword
+    /// let b: VecRel<usize, &str> = VecRel::from_pairs(2, [(0, "shark"), (1, "space")]);
+    /// let mut out = Vec::new();
+    /// a.with(&b).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(0, 1)]); // (0, 2) and (1, 2) dropped: 2 is not a key of b
+    /// ```
     #[inline(always)]
     fn with<S: IntoQuery>(self, s: S) -> Restrict<Self::Q, S::Q>
     where
@@ -1930,6 +2140,19 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// `a.rx(s)` keeps every `(x, y)` in `a` such that `y` matches the regex `s`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, "Jaws"), (1, "Alien"), (2, "Tron")}: movie id → title
+    /// let a: VecRel<usize, &str> = VecRel::from_pairs(3, [(0, "Jaws"), (1, "Alien"), (2, "Tron")]);
+    /// let mut out = Vec::new();
+    /// a.rx("^T").drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(2, "Tron")]);
+    /// ```
     #[inline(always)]
     fn rx(self, re: &str) -> Filter<Self::Q, impl Fn(&'static str) -> bool>
     where
@@ -1942,6 +2165,19 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// `a.nrx(s)` keeps every `(x, y)` in `a` such that `y` does not match the regex `s`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, "Jaws"), (1, "Alien"), (2, "Tron")}: movie id → title
+    /// let a: VecRel<usize, &str> = VecRel::from_pairs(3, [(0, "Jaws"), (1, "Alien"), (2, "Tron")]);
+    /// let mut out = Vec::new();
+    /// a.nrx("^T").drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(0, "Jaws"), (1, "Alien")]);
+    /// ```
     #[inline(always)]
     fn nrx(self, re: &str) -> Filter<Self::Q, impl Fn(&'static str) -> bool>
     where
@@ -1954,12 +2190,37 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// `a.filt(f)` keeps every `(x, y)` in `a` such that `f(y)` is `true`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, 1975), (1, 1979), (2, 1982)}: movie id → year
+    /// let a: VecRel<usize, usize> = VecRel::from_pairs(3, [(0, 1975), (1, 1979), (2, 1982)]);
+    /// let mut out = Vec::new();
+    /// a.filt(|year| year % 2 == 0).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(2, 1982)]);
+    /// ```
     #[inline(always)]
     fn filt<F: Fn(ROf<Self>) -> bool>(self, f: F) -> Filter<Self::Q, F> {
         Filter { a: self.iq(), p: f }
     }
 
-    /// Half-open range `[lo, hi)` — Julia `during(lo, hi)`.
+    /// `a.during(low, high)` keeps every `(x, y)` in `a` such that `low ≤ y < high`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, 1975), (1, 1979), (2, 1982), (3, 2010)}: movie id → year
+    /// let a: VecRel<usize, usize> = VecRel::from_pairs(4, [(0, 1975), (1, 1979), (2, 1982), (3, 2010)]);
+    /// let mut out = Vec::new();
+    /// a.during(1979, 2010).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(1, 1979), (2, 1982)]); // 2010 excluded
+    /// ```
     #[inline(always)]
     fn during(self, lo: ROf<Self>, hi: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
@@ -1971,7 +2232,19 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
-    /// Closed range `[lo, hi]` — Julia `lo..hi`.
+    /// `a.between(low, high)` keeps every `(x, y)` in `a` such that `low ≤ y ≤ high`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, 1975), (1, 1979), (2, 1982), (3, 2010)}: movie id → year
+    /// let a: VecRel<usize, usize> = VecRel::from_pairs(4, [(0, 1975), (1, 1979), (2, 1982), (3, 2010)]);
+    /// let mut out = Vec::new();
+    /// a.between(1979, 2010).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(1, 1979), (2, 1982), (3, 2010)]); // 2010 included
+    /// ```
     #[inline(always)]
     fn between(self, lo: ROf<Self>, hi: ROf<Self>) -> Filter<Self::Q, impl Fn(ROf<Self>) -> bool>
     where
