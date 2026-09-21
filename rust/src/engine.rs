@@ -1403,21 +1403,22 @@ impl<D: Copy + Eq + Hash + Ord, S: Copy> Window<D, S> {
         O: Probe<D = D>,
         F: Fn(&[(O::R, D)], &mut Vec<S>),
     {
+        // collect cells
         let mut buf: HashMap<Q::D, SVec<(O::R, D)>> = HashMap::new();
         q.drive(|k, x| order.probe(x, |o| buf.entry(k).or_default().push((o, x))));
         let mut cache: HashMap<D, SVec<S>> = HashMap::new();
         let mut out = Vec::new();
-        for (_, mut g) in buf {
-            // sort g by Order then row id
-            g.sort_unstable_by(|a, b| cmp(&a.0, &b.0).then(a.1.cmp(&b.1)));
+        for (_, mut cell) in buf {
+            // sort cell by Order then row id
+            cell.sort_unstable_by(|a, b| cmp(&a.0, &b.0).then(a.1.cmp(&b.1)));
             out.clear();
-            f(&g, &mut out);
+            f(&cell, &mut out);
             assert_eq!(
                 out.len(),
-                g.len(),
+                cell.len(),
                 "window function must emit one value per row"
             );
-            for (&(_, x), &s) in g.iter().zip(&out) {
+            for (&(_, x), &s) in cell.iter().zip(&out) {
                 cache.entry(x).or_default().push(s);
             }
         }
