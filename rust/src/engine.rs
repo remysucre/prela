@@ -2118,6 +2118,7 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    // fold over whole relation (no grouping)
     #[inline(always)]
     fn unwrap_fold<OP: Fn(S, ROf<Self>) -> S, S: Copy>(self, init: S, op: OP) -> S
     where
