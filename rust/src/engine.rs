@@ -1605,16 +1605,6 @@ pub struct Map<Q, F, S: Copy> {
     _phantom: std::marker::PhantomData<S>,
 }
 
-impl<Q: Query, F: Fn(Q::R) -> S, S: Copy> Map<Q, F, S> {
-    pub fn new(q: Q, f: F) -> Self {
-        Map {
-            q,
-            f,
-            _phantom: std::marker::PhantomData,
-        }
-    }
-}
-
 impl<Q: Query, F: Fn(Q::R) -> S, S: Copy> Query for Map<Q, F, S> {
     type D = Q::D;
     type R = S;
@@ -2356,7 +2346,11 @@ pub trait QueryExt: IntoQuery + Sized {
 
     #[inline(always)]
     fn map<F: Fn(ROf<Self>) -> S, S: Copy>(self, f: F) -> Map<Self::Q, F, S> {
-        Map::new(self.iq(), f)
+        Map {
+            q: self.iq(),
+            f: f,
+            _phantom: std::marker::PhantomData,
+        }
     }
 
     #[inline(always)]
