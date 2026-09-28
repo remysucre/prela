@@ -2706,6 +2706,39 @@ mod tests {
     }
 
     #[test]
+    fn gather_packs_groups() {
+        let f = films();
+        let c = cast();
+        let fs = Universe::new(3);
+        let g = fs.gather_by(&c);
+        let mut got: Vec<(usize, Vec<usize>)> = Vec::new();
+        (&g).drive(|k, xs| {
+            let mut xs = xs.to_vec();
+            xs.sort();
+            got.push((k, xs));
+        });
+        got.sort();
+        assert_eq!(got, vec![(7, vec![0, 2]), (8, vec![0])]);
+        assert_eq!((&g).get(8), Some(&[0usize][..]));
+        assert!((&g).member(7) && !(&g).member(9));
+        let sums = (&g).map(|xs| xs.iter().map(|&x| f.get(x).unwrap()).sum::<usize>());
+        assert_eq!(drive_all(&sums), vec![(7, 40), (8, 10)]);
+
+        let pairs = fs.group_by(&c).select((&f).and(&f)).gather();
+        let mut got: Vec<(usize, Vec<(usize, usize)>)> = Vec::new();
+        (&pairs).drive(|k, xs| {
+            let mut xs = xs.to_vec();
+            xs.sort();
+            got.push((k, xs));
+        });
+        got.sort();
+        assert_eq!(
+            got,
+            vec![(7, vec![(10, 10), (30, 30)]), (8, vec![(10, 10)])]
+        );
+    }
+
+    #[test]
     fn opt_keys_null_group() {
         let f = films();
         let c = cast();
