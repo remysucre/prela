@@ -2830,55 +2830,119 @@ mod tests {
             VecRel::from_pairs(5, [(0, 0), (1, 0), (2, 0), (3, 0), (4, 1)]);
         let score: VecRel<usize, i64> =
             VecRel::from_pairs(5, [(0, 5), (1, 5), (2, 3), (3, 9), (4, 1)]);
+        let id: VecRel<usize, usize> =
+            VecRel::from_pairs(5, [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4)]);
         let rows = Universe::new(5);
         let desc = |a: &i64, b: &i64| b.cmp(a);
+        // the row id is selected beside the score, so the output can say which
+        // row each value belongs to; the result itself is keyed by partition
+        let by = |(_, s): (usize, i64)| s;
 
-        let rn = rows.group_by(&part).window(&score, desc, row_number);
-        assert_eq!(drive_all(&rn), vec![(0, 2), (1, 3), (2, 4), (3, 1), (4, 1)]);
-        let rk = rows.group_by(&part).window(&score, desc, rank);
-        assert_eq!(drive_all(&rk), vec![(0, 2), (1, 2), (2, 4), (3, 1), (4, 1)]);
-        let dr = rows.group_by(&part).window(&score, desc, dense_rank);
-        assert_eq!(drive_all(&dr), vec![(0, 2), (1, 2), (2, 3), (3, 1), (4, 1)]);
-        let lg = rows.group_by(&part).window(&score, desc, lag);
+        // partition -> ((row, score), output), flattened to (partition, row, output)
+        fn per_row<S: Copy + Ord>(w: &Window<usize, (usize, i64), S>) -> Vec<(usize, usize, S)> {
+            let mut v: Vec<_> = Vec::new();
+            w.drive(|p, ((r, _), s)| v.push((p, r, s)));
+            v.sort();
+            v
+        }
+
+        let rn = rows
+            .group_by(&part)
+            .select((&id).and(&score))
+            .window(row_number, by, desc);
         assert_eq!(
-            drive_all(&lg),
+            per_row(&rn),
+            vec![(0, 0, 2), (0, 1, 3), (0, 2, 4), (0, 3, 1), (1, 4, 1)]
+        );
+        let rk = rows
+            .group_by(&part)
+            .select((&id).and(&score))
+            .window(rank, by, desc);
+        assert_eq!(
+            per_row(&rk),
+            vec![(0, 0, 2), (0, 1, 2), (0, 2, 4), (0, 3, 1), (1, 4, 1)]
+        );
+        let dr = rows
+            .group_by(&part)
+            .select((&id).and(&score))
+            .window(dense_rank, by, desc);
+        assert_eq!(
+            per_row(&dr),
+            vec![(0, 0, 2), (0, 1, 2), (0, 2, 3), (0, 3, 1), (1, 4, 1)]
+        );
+        let lg = rows
+            .group_by(&part)
+            .select((&id).and(&score))
+            .window(lag, by, desc);
+        assert_eq!(
+            per_row(&lg),
             vec![
-                (0, Some(9)),
-                (1, Some(5)),
-                (2, Some(5)),
-                (3, None),
-                (4, None)
+                (0, 0, Some(9)),
+                (0, 1, Some(5)),
+                (0, 2, Some(5)),
+                (0, 3, None),
+                (1, 4, None)
             ]
         );
-        let ld = rows.group_by(&part).window(&score, desc, lead);
+        let ld = rows
+            .group_by(&part)
+            .select((&id).and(&score))
+            .window(lead, by, desc);
         assert_eq!(
-            drive_all(&ld),
+            per_row(&ld),
             vec![
-                (0, Some(5)),
-                (1, Some(3)),
-                (2, None),
-                (3, Some(5)),
-                (4, None)
+                (0, 0, Some(5)),
+                (0, 1, Some(3)),
+                (0, 2, None),
+                (0, 3, Some(5)),
+                (1, 4, None)
             ]
         );
 
-        let top2: Vec<_> = drive_all(&rows.with((&rn).le(2)))
-            .into_iter()
-            .map(|p| p.0)
-            .collect();
+        // top two per partition: filter on the output, read the row out of the value
+        let mut top2: Vec<usize> = Vec::new();
+        (&rn)
+            .filt(|(_, n)| n <= 2)
+            .drive(|_, ((r, _), _)| top2.push(r));
+        top2.sort();
         assert_eq!(top2, vec![0, 3, 4]);
-        assert!((&rn).member(2) && !(&rn).probe_any(2, |r| r <= 2));
+        assert!((&rn).member(0) && (&rn).member(1) && !(&rn).member(2));
+
+        // a second window over the first ranks the rows as if the first were
+        // not there: ties on the second key fall back to the drive order, not
+        // to the order the first window sorted into
+        let two = rows
+            .group_by(&part)
+            .select((&id).and(&score))
+            .window(row_number, by, desc)
+            .window(row_number, |_| 0i64, |a: &i64, b: &i64| a.cmp(b));
+        let mut got: Vec<(usize, usize, i64)> = Vec::new();
+        two.drive(|p, (((r, _), _), n)| got.push((p, r, n)));
+        got.sort();
+        // every row ties on the second key, so it numbers them in drive order
+        // (0, 1, 2, 3) and not in the first window's order (3, 0, 1, 2)
+        assert_eq!(
+            got,
+            vec![(0, 0, 1), (0, 1, 2), (0, 2, 3), (0, 3, 4), (1, 4, 1)]
+        );
     }
 
     #[test]
     fn window_row_in_two_partitions() {
+        // film 0 is in both actor 7's and actor 8's partitions and is ranked in
+        // each independently; keying by partition keeps the two apart
         let f = films();
         let c = cast();
-        let rn =
-            Universe::new(3)
-                .group_by(&c)
-                .window(&f, |a: &usize, b: &usize| b.cmp(a), row_number);
-        assert_eq!(drive_all(&rn), vec![(0, 1), (0, 2), (2, 1)]);
+        let id: VecRel<usize, usize> = VecRel::from_pairs(3, [(0, 0), (1, 1), (2, 2)]);
+        let rn = Universe::new(3).group_by(&c).select((&id).and(&f)).window(
+            row_number,
+            |(_, v): (usize, usize)| v,
+            |a: &usize, b: &usize| b.cmp(a),
+        );
+        assert_eq!(
+            drive_all(&rn),
+            vec![(7, ((0, 10), 2)), (7, ((2, 30), 1)), (8, ((0, 10), 1))]
+        );
     }
 
     #[test]
