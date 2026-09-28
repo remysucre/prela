@@ -1520,40 +1520,12 @@ impl<D: Copy + Eq + Hash, S: Copy> Probe for Fold<D, S> {
 
 // ===== Window ==================
 
-pub struct Window<D: Copy + Eq + Hash, S: Copy> {
-    pub cache: HashMap<D, SVec<S>>,
-}
+// what the `window` operator returns
+// type: partition -> (row value, window output). It is an
+// ordinary multimap; `window` is a way of building one, not a node of its own.
+pub type Window<P, R, S> = HashIdx<P, (R, S)>;
 
-impl<D: Copy + Eq + Hash + Ord, S: Copy> Window<D, S> {
-    pub fn build<Q, O, C, F>(q: Q, order: O, cmp: C, f: F) -> Self
-    where
-        Q: Drive<R = D>,
-        C: Fn(&O::R, &O::R) -> Ordering,
-        O: Probe<D = D>,
-        F: Fn(&[(O::R, D)], &mut Vec<S>),
-    {
-        // collect cells
-        let mut buf: HashMap<Q::D, SVec<(O::R, D)>> = HashMap::new();
-        q.drive(|k, x| order.probe(x, |o| buf.entry(k).or_default().push((o, x))));
-        let mut cache: HashMap<D, SVec<S>> = HashMap::new();
-        let mut out = Vec::new();
-        for (_, mut cell) in buf {
-            // sort cell by Order then row id
-            cell.sort_unstable_by(|a, b| cmp(&a.0, &b.0).then(a.1.cmp(&b.1)));
-            out.clear();
-            f(&cell, &mut out);
-            assert_eq!(
-                out.len(),
-                cell.len(),
-                "window function must emit one value per row"
-            );
-            for (&(_, x), &s) in cell.iter().zip(&out) {
-                cache.entry(x).or_default().push(s);
-            }
-        }
-        Window { cache }
-    }
-}
+// window functions: row_number, rank, dense_rank, lead, lag
 
 pub fn row_number<O, R>(g: &[(O, R)], out: &mut Vec<i64>) {
     out.extend(1..=g.len() as i64);
@@ -2476,18 +2448,57 @@ pub trait QueryExt: IntoQuery + Sized {
         DenseFold::build_outer(self.iq(), n, init, op)
     }
 
-    #[inline(always)]
-    fn window<O, C, F, S>(self, order: O, cmp: C, f: F) -> Window<ROf<Self>, S>
+    /// A window function over each group: partition -> (row value, output).
+    ///
+    /// ```text
+    /// movie.group_by(kind)
+    ///      .select(year.and(title))
+    ///      .window(rank, |(year, _)| year, desc)     // kind -> ((year, title), rank)
+    /// ```
+    ///
+    /// The input must already be grouped by the partition attribute and the
+    /// sorting and payload columns must already be joined.
+    /// Calling `window` requires specifying the window function to be used (`rank`,
+    /// `row_number`, etc.), extracting the ORDER BY column with a lambda, and specifying
+    /// whether the order is ascending or descending.
+    ///
+    /// It is implemented as `gather` followed by `flat_map`: each partition's values
+    /// are gathered into a cell, the cell is sorted by `order` under `cmp`, and `f` reads
+    /// along it to produce one output per row. The result stays keyed by the
+    /// partition. If you need to join on the row, select it with `Ident`. The sort is stable.
+    fn window<K, O, C, F, S>(self, f: F, order: O, cmp: C) -> Window<DOf<Self>, ROf<Self>, S>
     where
         Self::Q: Drive,
-        ROf<Self>: Ord + Hash,
-        O: IntoQuery,
-        O::Q: Probe<D = ROf<Self>>,
-        C: Fn(&ROf<O>, &ROf<O>) -> Ordering,
-        F: Fn(&[(ROf<O>, ROf<Self>)], &mut Vec<S>),
+        O: Fn(ROf<Self>) -> K,
+        K: Copy,
+        C: Fn(&K, &K) -> Ordering,
+        F: Fn(&[(K, ROf<Self>)], &mut Vec<S>),
         S: Copy,
     {
-        Window::build(self.iq(), order.iq(), cmp, f)
+        let cells = self.gather();
+        (&cells)
+            .flat_map(move |cell: &[ROf<Self>]| {
+                let keys: Vec<K> = cell.iter().map(|&r| order(r)).collect(); // comparison keys
+                let mut by: Vec<usize> = (0..cell.len()).collect(); // ids
+                by.sort_by(|&i, &j| cmp(&keys[i], &keys[j])); // ids sorted by keys
+                let sorted: Vec<(K, ROf<Self>)> = by.iter().map(|&i| (keys[i], cell[i])).collect(); // map sorted ids to vals
+                let mut out = Vec::with_capacity(cell.len()); // allocate out
+                f(&sorted, &mut out); // fill out with sorted cell
+                assert_eq!(
+                    out.len(),
+                    cell.len(),
+                    "window function must emit one value per row"
+                );
+                let mut at = vec![0; cell.len()]; // invert the by mapping
+                for (pos, &i) in by.iter().enumerate() {
+                    at[i] = pos;
+                }
+                cell.iter()
+                    .zip(at)
+                    .map(|(&r, pos)| (r, out[pos]))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
     }
 
     // sort, dedup, then len instead of inserting into a hashset for each key; probably faster
