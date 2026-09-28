@@ -581,6 +581,43 @@ impl<E> Default for Ident<E> {
         Ident(PhantomData)
     }
 }
+// identity relation
+// Like `Ident`, but for an arbitrary col
+// currently used to include row infor in window function payload
+pub struct Same<D>(pub PhantomData<D>);
+impl<D> Same<D> {
+    #[inline(always)]
+    pub fn new() -> Self {
+        Same(PhantomData)
+    }
+}
+impl<D> Default for Same<D> {
+    #[inline(always)]
+    fn default() -> Self {
+        Same(PhantomData)
+    }
+}
+impl<D: Copy + Eq + Hash> Query for Same<D> {
+    type D = D;
+    type R = D;
+}
+impl<D: Copy + Eq + Hash> Member for Same<D> {
+    #[inline(always)]
+    fn member(&self, _x: D) -> bool {
+        true
+    }
+}
+impl<D: Copy + Eq + Hash> Probe for Same<D> {
+    #[inline(always)]
+    fn probe<K: FnMut(D)>(&self, x: D, mut k: K) {
+        k(x)
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut(D) -> bool>(&self, x: D, mut k: K) -> bool {
+        k(x)
+    }
+}
+
 impl<E: 'static> Query for Ident<E> {
     type D = Id<E>;
     type R = Id<E>;
