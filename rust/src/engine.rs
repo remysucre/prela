@@ -964,6 +964,42 @@ impl<A: Probe, B: Probe<D = A::D>> Probe for Prod<A, B> {
     }
 }
 
+// ===== Cross ===================
+
+// cross product
+// drive is a nested loop
+pub struct Cross<A, B> {
+    pub a: A,
+    pub b: B,
+}
+
+impl<A: Query, B: Query> Query for Cross<A, B> {
+    type D = (A::D, B::D);
+    type R = (A::R, B::R);
+}
+impl<A: Drive, B: Drive> Drive for Cross<A, B> {
+    #[inline(always)]
+    fn drive<K: FnMut((A::D, B::D), (A::R, B::R))>(&self, mut k: K) {
+        self.a.drive(|x, a| self.b.drive(|y, b| k((x, y), (a, b))));
+    }
+}
+impl<A: Member, B: Member> Member for Cross<A, B> {
+    #[inline(always)]
+    fn member(&self, (x, y): (A::D, B::D)) -> bool {
+        self.a.member(x) && self.b.member(y)
+    }
+}
+impl<A: Probe, B: Probe> Probe for Cross<A, B> {
+    #[inline(always)]
+    fn probe<K: FnMut((A::R, B::R))>(&self, (x, y): (A::D, B::D), mut k: K) {
+        self.a.probe(x, |a| self.b.probe(y, |b| k((a, b))));
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut((A::R, B::R)) -> bool>(&self, (x, y): (A::D, B::D), mut k: K) -> bool {
+        self.a.probe_any(x, |a| self.b.probe_any(y, |b| k((a, b))))
+    }
+}
+
 // ===== Opt ===================
 
 pub struct Opt<Q> {
@@ -1860,6 +1896,16 @@ pub trait QueryExt: IntoQuery + Sized {
         B::Q: Query<D = DOf<Self>>,
     {
         Prod {
+            a: self.iq(),
+            b: b.iq(),
+        }
+    }
+
+    // Full cross product
+    // For each `(i, x)` in `a` and `(j, y)` in `b`, produces `((i, j), (x, y))`
+    #[inline(always)]
+    fn cross<B: IntoQuery>(self, b: B) -> Cross<Self::Q, B::Q> {
+        Cross {
             a: self.iq(),
             b: b.iq(),
         }
