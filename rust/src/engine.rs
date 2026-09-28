@@ -1090,6 +1090,16 @@ impl<K: Copy + Eq + Hash, V: Copy> Query for HashIdx<K, V> {
     type D = K;
     type R = V;
 }
+impl<K: Copy + Eq + Hash, V: Copy> Drive for HashIdx<K, V> {
+    #[inline(always)]
+    fn drive<F: FnMut(K, V)>(&self, mut k: F) {
+        for (&d, vs) in &self.idx {
+            for &v in vs {
+                k(d, v);
+            }
+        }
+    }
+}
 impl<K: Copy + Eq + Hash, V: Copy> Member for HashIdx<K, V> {
     #[inline(always)]
     fn member(&self, x: K) -> bool {
