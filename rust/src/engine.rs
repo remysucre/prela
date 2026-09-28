@@ -1566,43 +1566,6 @@ pub fn lead<O: Copy, R>(g: &[(O, R)], out: &mut Vec<Option<O>>) {
     }
 }
 
-impl<D: Copy + Eq + Hash, S: Copy> Query for Window<D, S> {
-    type D = D;
-    type R = S;
-}
-impl<D: Copy + Eq + Hash, S: Copy> Drive for Window<D, S> {
-    #[inline(always)]
-    fn drive<K: FnMut(D, S)>(&self, mut k: K) {
-        for (&d, ss) in &self.cache {
-            for &s in ss {
-                k(d, s);
-            }
-        }
-    }
-}
-impl<D: Copy + Eq + Hash, S: Copy> Member for Window<D, S> {
-    #[inline(always)]
-    fn member(&self, x: D) -> bool {
-        self.cache.contains_key(&x)
-    }
-}
-impl<D: Copy + Eq + Hash, S: Copy> Probe for Window<D, S> {
-    #[inline(always)]
-    fn probe<K: FnMut(S)>(&self, x: D, mut k: K) {
-        if let Some(ss) = self.cache.get(&x) {
-            for &s in ss {
-                k(s);
-            }
-        }
-    }
-    #[inline(always)]
-    fn probe_any<K: FnMut(S) -> bool>(&self, x: D, mut k: K) -> bool {
-        self.cache
-            .get(&x)
-            .is_some_and(|ss| ss.iter().any(|&s| k(s)))
-    }
-}
-
 // ===== DenseFold ==================
 //
 // Drop-in replacement for `Fold` when `D = usize` and the key range is a
@@ -2664,6 +2627,30 @@ mod tests {
 
         let set: MatSet<usize> = (&names).inv().collect();
         assert_eq!(drive_all(&set), vec![(0, 0), (1, 1), (2, 2)]);
+    }
+
+    #[test]
+    fn cross_pairs_every_row() {
+        let a: VecRel<usize, &'static str> = VecRel::from_pairs(2, [(0, "q"), (1, "a")]);
+        let b: MultiRel<usize, i64> = MultiRel::from_pairs(3, [(0, 1), (2, 2), (2, 3)]);
+        let mut got = drive_all(&(&a).cross(&b));
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                ((0, 0), ("q", 1)),
+                ((0, 2), ("q", 2)),
+                ((0, 2), ("q", 3)),
+                ((1, 0), ("a", 1)),
+                ((1, 2), ("a", 2)),
+                ((1, 2), ("a", 3)),
+            ]
+        );
+        let x = (&a).cross(&b);
+        assert!(x.member((1, 2)) && !x.member((2, 2)) && !x.member((0, 1)));
+        let mut hit = Vec::new();
+        x.probe((1, 2), |r| hit.push(r));
+        assert_eq!(hit, vec![("a", 2), ("a", 3)]);
     }
 
     #[test]
