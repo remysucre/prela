@@ -1403,6 +1403,54 @@ where
     }
 }
 
+// ===== Gather ==============
+
+pub struct Gather<K: Copy + Eq + Hash, V: Copy> {
+    pub idx: HashMap<K, SVec<V>>,
+}
+
+impl<K: Copy + Eq + Hash, V: Copy> Gather<K, V> {
+    pub fn build<Q: Drive<D = K, R = V>>(q: Q) -> Self {
+        let mut idx: HashMap<K, SVec<V>> = HashMap::new();
+        q.drive(|d, v| idx.entry(d).or_default().push(v));
+        Gather { idx }
+    }
+}
+
+impl<'a, K: Copy + Eq + Hash, V: Copy> Query for &'a Gather<K, V> {
+    type D = K;
+    type R = &'a [V];
+}
+impl<'a, K: Copy + Eq + Hash, V: Copy> Drive for &'a Gather<K, V> {
+    #[inline(always)]
+    fn drive<F: FnMut(K, &'a [V])>(&self, mut k: F) {
+        for (&d, vs) in &self.idx {
+            k(d, vs);
+        }
+    }
+}
+impl<'a, K: Copy + Eq + Hash, V: Copy> Member for &'a Gather<K, V> {
+    #[inline(always)]
+    fn member(&self, x: K) -> bool {
+        self.idx.contains_key(&x)
+    }
+}
+impl<'a, K: Copy + Eq + Hash, V: Copy> Probe for &'a Gather<K, V> {
+    #[inline(always)]
+    fn probe<F: FnMut(&'a [V])>(&self, x: K, mut k: F) {
+        if let Some(vs) = self.idx.get(&x) {
+            k(vs);
+        }
+    }
+    #[inline(always)]
+    fn probe_any<F: FnMut(&'a [V]) -> bool>(&self, x: K, mut k: F) -> bool {
+        match self.idx.get(&x) {
+            Some(vs) => k(vs),
+            None => false,
+        }
+    }
+}
+
 // ===== Fold  ==================
 
 pub struct Fold<D: Copy + Eq + Hash, S: Copy> {
@@ -2359,6 +2407,27 @@ pub trait QueryExt: IntoQuery + Sized {
             key: key.iq(),
             set: self.iq(),
         }
+    }
+
+    /// `r.gather()` groups rows of `r` by key and packs values corresponding to
+    /// a key in an SVec.
+    #[inline(always)]
+    fn gather(self) -> Gather<DOf<Self>, ROf<Self>>
+    where
+        Self::Q: Drive,
+    {
+        Gather::build(self.iq())
+    }
+
+    /// Syntactic sugar: `r.gather_by(s) = r.group_by(s).gather()`
+    #[inline(always)]
+    fn gather_by<R: IntoQuery>(self, key: R) -> Gather<ROf<R>, ROf<Self>>
+    where
+        R::Q: Probe<D = ROf<Self>>,
+        Self::Q: Drive,
+        ROf<R>: Eq + Hash,
+    {
+        self.group_by(key).gather()
     }
 
     #[inline(always)]
