@@ -29,12 +29,15 @@ pub type Entry = crate::Entry<Tpch>;
 
 // ---------- formatting ----------
 
-pub fn f(x: f64) -> String { format!("{x:.2}") }
+pub fn f(x: f64) -> String {
+    format!("{x:.2}")
+}
 
 /// Packed-i64-date (yyyymmdd) → "YYYY-MM-DD" — used for output formatting
 /// (Q3, Q10, Q18). The parse direction lives in regen, which bakes dates
 /// into the cache as i64.
-#[inline] pub fn fmt_yyyymmdd(d: i64) -> String {
+#[inline]
+pub fn fmt_yyyymmdd(d: i64) -> String {
     format!("{:04}-{:02}-{:02}", d / 10000, (d / 100) % 100, d % 100)
 }
 
@@ -49,7 +52,10 @@ pub fn oracle(name: &'static str) -> &'static str {
     static CACHE: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     let map = CACHE.get_or_init(|| {
         let mut m: HashMap<&'static str, &'static str> = HashMap::new();
-        for n in ["Q2", "Q7", "Q8", "Q9", "Q11", "Q13", "Q15", "Q16", "Q17", "Q18", "Q19", "Q20", "Q21", "Q22"] {
+        for n in [
+            "Q2", "Q7", "Q8", "Q9", "Q11", "Q13", "Q15", "Q16", "Q17", "Q18", "Q19", "Q20", "Q21",
+            "Q22",
+        ] {
             let path = format!("{DIR}/{n}.txt");
             let s = std::fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("read oracle {path}: {e}"));
@@ -75,28 +81,47 @@ pub const Q1: &str = "A|F|37734107.00|56586554400.73|53758257134.87|55909065222.
 
 fn q1(db: &'static Tpch) -> String {
     let Lineitem {
-        shipdate, returnflag, status: l_status,
-        quantity, extendedprice, discount, tax, ..
+        shipdate,
+        returnflag,
+        status: l_status,
+        quantity,
+        extendedprice,
+        discount,
+        tax,
+        ..
     } = &db.lineitem;
 
-    let grouped = db.lineitem
-            .with(shipdate.le(19980902))
+    let grouped = db
+        .lineitem
+        .with(shipdate.le(19980902))
         .group_by(returnflag.and(l_status))
-          .select(quantity.and(extendedprice).and(discount).and(tax))
-            .fold((0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0_i64),
-                  |(qty, ext, di, dp, chg, n), (((q, e), dc), tx)| {
-                      let dp_inc = e * (1.0 - dc);
-                      let chg_inc = dp_inc * (1.0 + tx);
-                      (qty + q, ext + e, di + dc, dp + dp_inc, chg + chg_inc, n + 1)
-                  });
+        .select(quantity.and(extendedprice).and(discount).and(tax))
+        .fold(
+            (0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0_i64),
+            |(qty, ext, di, dp, chg, n), (((q, e), dc), tx)| {
+                let dp_inc = e * (1.0 - dc);
+                let chg_inc = dp_inc * (1.0 + tx);
+                (qty + q, ext + e, di + dc, dp + dp_inc, chg + chg_inc, n + 1)
+            },
+        );
     let mut rows: Vec<((&str, &str), (f64, f64, f64, f64, f64, i64))> = Vec::new();
     grouped.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|a, b| a.0.cmp(&b.0));
     join_lines(rows.iter().map(|(k, (qty, ext, di, dp, chg, n))| {
         let nf = *n as f64;
-        format!("{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-                k.0, k.1, f(*qty), f(*ext), f(*dp), f(*chg),
-                f(qty / nf), f(ext / nf), f(di / nf), n)
+        format!(
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            k.0,
+            k.1,
+            f(*qty),
+            f(*ext),
+            f(*dp),
+            f(*chg),
+            f(qty / nf),
+            f(ext / nf),
+            f(di / nf),
+            n
+        )
     }))
 }
 
@@ -105,14 +130,24 @@ fn q1(db: &'static Tpch) -> String {
 const Q6: &str = "123141078.23";
 
 fn q6(db: &'static Tpch) -> String {
-    let Lineitem { shipdate, discount, quantity, extendedprice, .. } = &db.lineitem;
+    let Lineitem {
+        shipdate,
+        discount,
+        quantity,
+        extendedprice,
+        ..
+    } = &db.lineitem;
 
-    let sum = db.lineitem
-        .with(shipdate.during(19940101, 19950101)
-         .and(discount.between(0.05, 0.07))
-         .and(quantity.lt(24.0)))
+    let sum = db
+        .lineitem
+        .with(
+            shipdate
+                .during(19940101, 19950101)
+                .and(discount.between(0.05, 0.07))
+                .and(quantity.lt(24.0)),
+        )
         .select(extendedprice.and(discount))
-        .unwrap_fold(0.0, |acc, (e, dc)| acc + e * dc);
+        .fold_flat(0.0, |acc, (e, dc)| acc + e * dc);
     f(sum)
 }
 
@@ -121,39 +156,65 @@ fn q6(db: &'static Tpch) -> String {
 const Q14: &str = "16.38";
 
 const Q10: &str = concat!(
-    "57040|Customer#000057040|734235.25|632.87|JAPAN|nICtsILWBB|22-895-641-3466|ep. blithely regular foxes promise slyly furiously ironic depend", "\n",
-    "143347|Customer#000143347|721002.69|2557.47|EGYPT|,Q9Ml3w0gvX|14-742-935-3718|endencies sleep. slyly express deposits nag carefully around the even tithes. slyly regular ", "\n",
-    "60838|Customer#000060838|679127.31|2454.77|BRAZIL|VWmQhWweqj5hFpcvhGFBeOY9hJ4m|12-913-494-9813|tes. final instructions nag quickly according to", "\n",
-    "101998|Customer#000101998|637029.57|3790.89|UNITED KINGDOM|0,ORojfDdyMca2E2H|33-593-865-6378|ost carefully. slyly regular packages cajole about the blithely final ideas. permanently daring deposit", "\n",
-    "125341|Customer#000125341|633508.09|4983.51|GERMANY|9YRcnoUPOM7Sa8xymhsDHdQg|17-582-695-5962|ly furiously brave packages. quickly regular dugouts kindle furiously carefully bold theodolites. ", "\n",
-    "25501|Customer#000025501|620269.78|7725.04|ETHIOPIA|sr4VVVe3xCJQ2oo2QEhi19D,pXqo6kOGaSn2|15-874-808-6793|y ironic foxes hinder according to the furiously permanent dolphins. pending ideas integrate blithely from ", "\n",
-    "115831|Customer#000115831|596423.87|5098.10|FRANCE|AlMpPnmtGrOFrDMUs5VLo EIA,Cg,Rw5TBuBoKiO|16-715-386-3788|unts nag carefully final packages. express theodolites are regular ac", "\n",
-    "84223|Customer#000084223|594998.02|528.65|UNITED KINGDOM|Eq51o UpQ4RBr  fYTdrZApDsPV4pQyuPq|33-442-824-8191|longside of the slyly final deposits. blithely final platelets about the blithely i", "\n",
-    "54289|Customer#000054289|585603.39|5583.02|IRAN|x3ouCpz6,pRNVhajr0CCQG1|20-834-292-4707| cajole furiously after the quickly unusual fo", "\n",
-    "39922|Customer#000039922|584878.11|7321.11|GERMANY|2KtWzW,FYkhdWBfobp6SFXWYKjvU9|17-147-757-8036|ironic deposits sublate furiously. carefully regular theodolites along the b", "\n",
-    "6226|Customer#000006226|576783.76|2230.09|UNITED KINGDOM|TKbxS1dbkGMtaa,KOi26lbip4P0tPbWK0|33-657-701-3391|nal packages are alongside of the quickly bold deposits. carefully ", "\n",
-    "922|Customer#000000922|576767.53|3869.25|GERMANY|rsR9lRxyTdHbDOVt8nYbwjK5vAWH9sB|17-945-916-9648|cuses cajole carefully regular idea", "\n",
-    "147946|Customer#000147946|576455.13|2030.13|ALGERIA|Jqdt1kHAJtuTqHQK,B7 3tJh|10-886-956-3143|ly pending platelets. ironic requests haggle alongside of the furiou", "\n",
-    "115640|Customer#000115640|569341.19|6436.10|ARGENTINA|6yKLIRRAirUmBjKNO6Z3|11-411-543-4901|ffily ironic deposits. blithely specia", "\n",
-    "73606|Customer#000073606|568656.86|1785.67|JAPAN|vx9,7ACVtoKnLcoAHGNYDF|22-437-653-6966|uests cajole according to the foxe", "\n",
-    "110246|Customer#000110246|566842.98|7763.35|VIETNAM|UgsLFL3rendATzcHi|31-943-426-9837|ow carefully. blithely careful packages hag", "\n",
-    "142549|Customer#000142549|563537.24|5085.99|INDONESIA|pJAmChWXct HNjPzgoBUOgAHduwwIR|19-955-562-2398|. slyly bold packages nag quickly against the unusual deposits. express asymptotes detect furiously pending, eve", "\n",
-    "146149|Customer#000146149|557254.99|1791.55|ROMANIA| STLwtlaB6|29-744-164-6487|nic, special instructions. multipliers run carefully blithely iro", "\n",
-    "52528|Customer#000052528|556397.35|551.79|ARGENTINA|elsyt8c9Z,7ch|11-208-192-3205|olphins. blithely silent platelets affix carefully even platelets. ca", "\n",
+    "57040|Customer#000057040|734235.25|632.87|JAPAN|nICtsILWBB|22-895-641-3466|ep. blithely regular foxes promise slyly furiously ironic depend",
+    "\n",
+    "143347|Customer#000143347|721002.69|2557.47|EGYPT|,Q9Ml3w0gvX|14-742-935-3718|endencies sleep. slyly express deposits nag carefully around the even tithes. slyly regular ",
+    "\n",
+    "60838|Customer#000060838|679127.31|2454.77|BRAZIL|VWmQhWweqj5hFpcvhGFBeOY9hJ4m|12-913-494-9813|tes. final instructions nag quickly according to",
+    "\n",
+    "101998|Customer#000101998|637029.57|3790.89|UNITED KINGDOM|0,ORojfDdyMca2E2H|33-593-865-6378|ost carefully. slyly regular packages cajole about the blithely final ideas. permanently daring deposit",
+    "\n",
+    "125341|Customer#000125341|633508.09|4983.51|GERMANY|9YRcnoUPOM7Sa8xymhsDHdQg|17-582-695-5962|ly furiously brave packages. quickly regular dugouts kindle furiously carefully bold theodolites. ",
+    "\n",
+    "25501|Customer#000025501|620269.78|7725.04|ETHIOPIA|sr4VVVe3xCJQ2oo2QEhi19D,pXqo6kOGaSn2|15-874-808-6793|y ironic foxes hinder according to the furiously permanent dolphins. pending ideas integrate blithely from ",
+    "\n",
+    "115831|Customer#000115831|596423.87|5098.10|FRANCE|AlMpPnmtGrOFrDMUs5VLo EIA,Cg,Rw5TBuBoKiO|16-715-386-3788|unts nag carefully final packages. express theodolites are regular ac",
+    "\n",
+    "84223|Customer#000084223|594998.02|528.65|UNITED KINGDOM|Eq51o UpQ4RBr  fYTdrZApDsPV4pQyuPq|33-442-824-8191|longside of the slyly final deposits. blithely final platelets about the blithely i",
+    "\n",
+    "54289|Customer#000054289|585603.39|5583.02|IRAN|x3ouCpz6,pRNVhajr0CCQG1|20-834-292-4707| cajole furiously after the quickly unusual fo",
+    "\n",
+    "39922|Customer#000039922|584878.11|7321.11|GERMANY|2KtWzW,FYkhdWBfobp6SFXWYKjvU9|17-147-757-8036|ironic deposits sublate furiously. carefully regular theodolites along the b",
+    "\n",
+    "6226|Customer#000006226|576783.76|2230.09|UNITED KINGDOM|TKbxS1dbkGMtaa,KOi26lbip4P0tPbWK0|33-657-701-3391|nal packages are alongside of the quickly bold deposits. carefully ",
+    "\n",
+    "922|Customer#000000922|576767.53|3869.25|GERMANY|rsR9lRxyTdHbDOVt8nYbwjK5vAWH9sB|17-945-916-9648|cuses cajole carefully regular idea",
+    "\n",
+    "147946|Customer#000147946|576455.13|2030.13|ALGERIA|Jqdt1kHAJtuTqHQK,B7 3tJh|10-886-956-3143|ly pending platelets. ironic requests haggle alongside of the furiou",
+    "\n",
+    "115640|Customer#000115640|569341.19|6436.10|ARGENTINA|6yKLIRRAirUmBjKNO6Z3|11-411-543-4901|ffily ironic deposits. blithely specia",
+    "\n",
+    "73606|Customer#000073606|568656.86|1785.67|JAPAN|vx9,7ACVtoKnLcoAHGNYDF|22-437-653-6966|uests cajole according to the foxe",
+    "\n",
+    "110246|Customer#000110246|566842.98|7763.35|VIETNAM|UgsLFL3rendATzcHi|31-943-426-9837|ow carefully. blithely careful packages hag",
+    "\n",
+    "142549|Customer#000142549|563537.24|5085.99|INDONESIA|pJAmChWXct HNjPzgoBUOgAHduwwIR|19-955-562-2398|. slyly bold packages nag quickly against the unusual deposits. express asymptotes detect furiously pending, eve",
+    "\n",
+    "146149|Customer#000146149|557254.99|1791.55|ROMANIA| STLwtlaB6|29-744-164-6487|nic, special instructions. multipliers run carefully blithely iro",
+    "\n",
+    "52528|Customer#000052528|556397.35|551.79|ARGENTINA|elsyt8c9Z,7ch|11-208-192-3205|olphins. blithely silent platelets affix carefully even platelets. ca",
+    "\n",
     "23431|Customer#000023431|554269.54|3381.86|ROMANIA|kKI5,CJAJQjQRQtOdCiFQ|29-915-458-2654|the final sentiments. carefully ironic packages",
 );
 
 fn q14(db: &'static Tpch) -> String {
-    let Lineitem { shipdate, extendedprice, discount, part: l_part, .. } = &db.lineitem;
+    let Lineitem {
+        shipdate,
+        extendedprice,
+        discount,
+        part: l_part,
+        ..
+    } = &db.lineitem;
     let Part { ty: p_ty, .. } = &db.part;
 
-    let (promo, total) = db.lineitem
-               .with(shipdate.during(19950901, 19951001))
-             .select(extendedprice.and(discount).and(l_part.select(p_ty)))
-        .unwrap_fold((0.0, 0.0), |(p, t), ((e, dc), typ)| {
-                     let dp = e * (1.0 - dc);
-                     (p + if typ.starts_with("PROMO") { dp } else { 0.0 }, t + dp)
-                     });
+    let (promo, total) = db
+        .lineitem
+        .with(shipdate.during(19950901, 19951001))
+        .select(extendedprice.and(discount).and(l_part.select(p_ty)))
+        .fold_flat((0.0, 0.0), |(p, t), ((e, dc), typ)| {
+            let dp = e * (1.0 - dc);
+            (p + if typ.starts_with("PROMO") { dp } else { 0.0 }, t + dp)
+        });
     f(100.0 * promo / total)
 }
 
@@ -175,22 +236,42 @@ fn q3(db: &'static Tpch) -> String {
     //      ORDER BY revenue DESC, o_orderdate
     // orderkey FD's date and shippriority, so all three ride in the group key
     // — the sort and output read them straight off the key, no column lookups.
-    let Lineitem { shipdate, order: l_order, extendedprice, discount, .. } = &db.lineitem;
-    let Order { date: o_date, customer: o_customer, shippriority, .. } = &db.order;
+    let Lineitem {
+        shipdate,
+        order: l_order,
+        extendedprice,
+        discount,
+        ..
+    } = &db.lineitem;
+    let Order {
+        date: o_date,
+        customer: o_customer,
+        shippriority,
+        ..
+    } = &db.order;
     let Customer { mktsegment, .. } = &db.customer;
 
-    let revenue = db.lineitem
-        .with(shipdate.gt(19950315)
-         .and(l_order.select(o_date).lt(19950315))
-         .and(l_order.select(o_customer).select(mktsegment).eq("BUILDING")))
-        .group_by(l_order.and(l_order.select(o_date)).and(l_order.select(shippriority)))
+    let revenue = db
+        .lineitem
+        .with(
+            shipdate
+                .gt(19950315)
+                .and(l_order.select(o_date).lt(19950315))
+                .and(l_order.select(o_customer).select(mktsegment).eq("BUILDING")),
+        )
+        .group_by(
+            l_order
+                .and(l_order.select(o_date))
+                .and(l_order.select(shippriority)),
+        )
         .select(extendedprice.and(discount))
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
     let mut rows: Vec<(((Id<Order>, i64), i64), f64)> = Vec::new();
     revenue.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|(((_, da), _), ra), (((_, db_), _), rb)| {
-        rb.partial_cmp(ra).unwrap()    // revenue desc
-            .then(da.cmp(db_))         // orderdate asc
+        rb.partial_cmp(ra)
+            .unwrap() // revenue desc
+            .then(da.cmp(db_)) // orderdate asc
     });
     rows.truncate(10);
     join_lines(rows.iter().map(|(((o, d), sp), r)| {
@@ -208,13 +289,25 @@ const Q4: &str = "1-URGENT|10594\n\
                   5-LOW|10487";
 
 fn q4(db: &'static Tpch) -> String {
-    let Lineitem { commitdate, receiptdate, order: l_order, .. } = &db.lineitem;
-    let Order { date: o_date, priority, .. } = &db.order;
+    let Lineitem {
+        commitdate,
+        receiptdate,
+        order: l_order,
+        ..
+    } = &db.lineitem;
+    let Order {
+        date: o_date,
+        priority,
+        ..
+    } = &db.order;
 
-    let late_order = db.lineitem
+    let late_order = db
+        .lineitem
         .with(commitdate.and(receiptdate).filt(|(c, r)| c < r))
-        .select(l_order).collect::<MatSet<_>>();
-    let counts = db.order
+        .select(l_order)
+        .collect::<MatSet<_>>();
+    let counts = db
+        .order
         .with(o_date.during(19930701, 19931001))
         .with(late_order)
         .group_by(priority)
@@ -240,20 +333,43 @@ fn q5(db: &'static Tpch) -> String {
     // nation (the `.filt`, then `.map` keeps the shared nation). A row
     // whose key probe yields nothing drops out, so the key doubles as a
     // filter; only the order-date window rides on the receiver set.
-    let Lineitem { order: l_order, supplier: l_supplier, extendedprice, discount, .. } = &db.lineitem;
-    let Order { date: o_date, customer: o_customer, .. } = &db.order;
-    let Customer { nation: c_nation, .. } = &db.customer;
-    let Supplier { nation: s_nation, .. } = &db.supplier;
-    let Nation { name: n_name, region: n_region, .. } = &db.nation;
+    let Lineitem {
+        order: l_order,
+        supplier: l_supplier,
+        extendedprice,
+        discount,
+        ..
+    } = &db.lineitem;
+    let Order {
+        date: o_date,
+        customer: o_customer,
+        ..
+    } = &db.order;
+    let Customer {
+        nation: c_nation, ..
+    } = &db.customer;
+    let Supplier {
+        nation: s_nation, ..
+    } = &db.supplier;
+    let Nation {
+        name: n_name,
+        region: n_region,
+        ..
+    } = &db.nation;
     let Region { name: r_name, .. } = &db.region;
 
-    let result = db.lineitem
+    let result = db
+        .lineitem
         .with(l_order.select(o_date).during(19940101, 19950101))
-        .group_by(l_supplier.select(s_nation).with(n_region.select(r_name).eq("ASIA"))
-            .and(l_order.select(o_customer).select(c_nation))
-            .filt(|(s, c)| s == c)
-            .map(|(s, _)| s)
-            .select(n_name))
+        .group_by(
+            l_supplier
+                .select(s_nation)
+                .with(n_region.select(r_name).eq("ASIA"))
+                .and(l_order.select(o_customer).select(c_nation))
+                .filt(|(s, c)| s == c)
+                .map(|(s, _)| s)
+                .select(n_name),
+        )
         .select(extendedprice.and(discount))
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
     let mut rows: Vec<(&str, f64)> = Vec::new();
@@ -265,26 +381,53 @@ fn q5(db: &'static Tpch) -> String {
 // ---------- Q7 — volume shipping between nation pairs ----------
 
 fn q7(db: &'static Tpch) -> String {
-    let Lineitem { shipdate, order: l_order, supplier: l_supplier, extendedprice, discount, .. } = &db.lineitem;
-    let Order { customer: o_customer, .. } = &db.order;
-    let Customer { nation: c_nation, .. } = &db.customer;
-    let Supplier { nation: s_nation, .. } = &db.supplier;
+    let Lineitem {
+        shipdate,
+        order: l_order,
+        supplier: l_supplier,
+        extendedprice,
+        discount,
+        ..
+    } = &db.lineitem;
+    let Order {
+        customer: o_customer,
+        ..
+    } = &db.order;
+    let Customer {
+        nation: c_nation, ..
+    } = &db.customer;
+    let Supplier {
+        nation: s_nation, ..
+    } = &db.supplier;
     let Nation { name: n_name, .. } = &db.nation;
 
-    let result = db.lineitem
-        .group_by(shipdate.between(19950101, 19961231).map(|d: i64| d / 10000)
-            .and(l_supplier.select(s_nation).select(n_name)
-                .and(l_order.select(o_customer).select(c_nation).select(n_name))
-                .filt(|(s, c)| {
-                    (s == "FRANCE" && c == "GERMANY") || (s == "GERMANY" && c == "FRANCE")
-                })))
+    let result = db
+        .lineitem
+        .group_by(
+            shipdate
+                .between(19950101, 19961231)
+                .map(|d: i64| d / 10000)
+                .and(
+                    l_supplier
+                        .select(s_nation)
+                        .select(n_name)
+                        .and(l_order.select(o_customer).select(c_nation).select(n_name))
+                        .filt(|(s, c)| {
+                            (s == "FRANCE" && c == "GERMANY") || (s == "GERMANY" && c == "FRANCE")
+                        }),
+                ),
+        )
         .select(extendedprice.and(discount))
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
     let mut rows: Vec<((i64, (&str, &str)), f64)> = Vec::new();
     result.drive(|k, v| rows.push((k, v)));
-    rows.sort_by(|((y1, (s1, c1)), _), ((y2, (s2, c2)), _)|
-        s1.cmp(s2).then(c1.cmp(c2)).then(y1.cmp(y2)));
-    join_lines(rows.iter().map(|((y, (s, c)), v)| format!("{}|{}|{}|{}", s, c, y, f(*v))))
+    rows.sort_by(|((y1, (s1, c1)), _), ((y2, (s2, c2)), _)| {
+        s1.cmp(s2).then(c1.cmp(c2)).then(y1.cmp(y2))
+    });
+    join_lines(
+        rows.iter()
+            .map(|((y, (s, c)), v)| format!("{}|{}|{}|{}", s, c, y, f(*v))),
+    )
 }
 
 // ---------- Q8 — market share for BRAZIL ----------
@@ -298,19 +441,53 @@ fn q8(db: &'static Tpch) -> String {
     // hop; rows failing those predicates yield no key and drop out. The
     // volume/supplier-nation payload is navigated after the grouping;
     // fold BRAZIL-volume and total-volume together, then divide.
-    let Lineitem { part: l_part, order: l_order, supplier: l_supplier, extendedprice, discount, .. } = &db.lineitem;
-    let Order { customer: o_customer, date: o_date, .. } = &db.order;
-    let Customer { nation: c_nation, .. } = &db.customer;
-    let Supplier { nation: s_nation, .. } = &db.supplier;
-    let Nation { name: n_name, region: n_region, .. } = &db.nation;
+    let Lineitem {
+        part: l_part,
+        order: l_order,
+        supplier: l_supplier,
+        extendedprice,
+        discount,
+        ..
+    } = &db.lineitem;
+    let Order {
+        customer: o_customer,
+        date: o_date,
+        ..
+    } = &db.order;
+    let Customer {
+        nation: c_nation, ..
+    } = &db.customer;
+    let Supplier {
+        nation: s_nation, ..
+    } = &db.supplier;
+    let Nation {
+        name: n_name,
+        region: n_region,
+        ..
+    } = &db.nation;
     let Region { name: r_name, .. } = &db.region;
     let Part { ty: p_ty, .. } = &db.part;
 
-    let result = db.lineitem
+    let result = db
+        .lineitem
         .with(l_part.select(p_ty).eq("ECONOMY ANODIZED STEEL"))
-        .group_by(l_order.with(o_customer.select(c_nation).select(n_region).select(r_name).eq("AMERICA"))
-            .select(o_date.between(19950101, 19961231)).map(|d: i64| d / 10000))
-        .select(extendedprice.and(discount).and(l_supplier.select(s_nation).select(n_name)))
+        .group_by(
+            l_order
+                .with(
+                    o_customer
+                        .select(c_nation)
+                        .select(n_region)
+                        .select(r_name)
+                        .eq("AMERICA"),
+                )
+                .select(o_date.between(19950101, 19961231))
+                .map(|d: i64| d / 10000),
+        )
+        .select(
+            extendedprice
+                .and(discount)
+                .and(l_supplier.select(s_nation).select(n_name)),
+        )
         .fold((0.0_f64, 0.0_f64), |(b, t), ((e, dc), nm)| {
             let v = e * (1.0 - dc);
             (b + if nm == "BRAZIL" { v } else { 0.0 }, t + v)
@@ -325,85 +502,167 @@ fn q8(db: &'static Tpch) -> String {
 // ---------- Q9 — product type profit measure ----------
 
 fn q9(db: &'static Tpch) -> String {
-    let Lineitem { part: l_part, supplier: l_supplier, order: l_order,
-                   extendedprice, discount, quantity, .. } = &db.lineitem;
-    let PartSupp { part: ps_part, supplier: ps_supplier, supplycost, .. } = &db.partsupp;
+    let Lineitem {
+        part: l_part,
+        supplier: l_supplier,
+        order: l_order,
+        extendedprice,
+        discount,
+        quantity,
+        ..
+    } = &db.lineitem;
+    let PartSupp {
+        part: ps_part,
+        supplier: ps_supplier,
+        supplycost,
+        ..
+    } = &db.partsupp;
     let Part { name: p_name, .. } = &db.part;
     let Order { date: o_date, .. } = &db.order;
-    let Supplier { nation: s_nation, .. } = &db.supplier;
+    let Supplier {
+        nation: s_nation, ..
+    } = &db.supplier;
     let Nation { name: n_name, .. } = &db.nation;
 
-    let sc: HashIdx<_, _> = db.partsupp
-        .group_by(ps_part.with(p_name.filt(|n: &str| n.contains("green")))
-                  .and(ps_supplier))
+    let sc: HashIdx<_, _> = db
+        .partsupp
+        .group_by(
+            ps_part
+                .with(p_name.filt(|n: &str| n.contains("green")))
+                .and(ps_supplier),
+        )
         .select(supplycost)
         .collect();
     let cost_per_li = l_part.and(l_supplier).select(&sc);
     // The `sc` probe misses on non-green parts, so restricting the receiver
     // by it culls ~95% of the scan before the group key's nation/year
     // navigation; the payload re-probes it for the cost value.
-    let result = db.lineitem
+    let result = db
+        .lineitem
         .with(&cost_per_li)
-        .group_by(l_supplier.select(s_nation).select(n_name)
-            .and(l_order.select(o_date).map(|d: i64| d / 10000)))
-        .select((&cost_per_li).and(extendedprice).and(discount).and(quantity))
-        .fold(0.0_f64, |a, (((cost, e), dc), q)| a + e * (1.0 - dc) - cost * q);
+        .group_by(
+            l_supplier
+                .select(s_nation)
+                .select(n_name)
+                .and(l_order.select(o_date).map(|d: i64| d / 10000)),
+        )
+        .select(
+            (&cost_per_li)
+                .and(extendedprice)
+                .and(discount)
+                .and(quantity),
+        )
+        .fold(0.0_f64, |a, (((cost, e), dc), q)| {
+            a + e * (1.0 - dc) - cost * q
+        });
     let mut rows: Vec<((&str, i64), f64)> = Vec::new();
     result.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|((n1, y1), _), ((n2, y2), _)| n1.cmp(n2).then(y2.cmp(y1)));
-    join_lines(rows.iter().map(|((n, y), v)| format!("{}|{}|{}", n, y, f(*v))))
+    join_lines(
+        rows.iter()
+            .map(|((n, y), v)| format!("{}|{}|{}", n, y, f(*v))),
+    )
 }
 
 // ---------- Q10 — returned-item reporting ----------
 
 fn q10(db: &'static Tpch) -> String {
-    let Lineitem { returnflag, order: l_order, extendedprice, discount, .. } = &db.lineitem;
-    let Order { date: o_date, customer: o_customer, .. } = &db.order;
-    let Customer { name: c_name, acctbal: c_acctbal, nation: c_nation,
-                   address: c_address, phone: c_phone, comment: c_comment, .. } = &db.customer;
+    let Lineitem {
+        returnflag,
+        order: l_order,
+        extendedprice,
+        discount,
+        ..
+    } = &db.lineitem;
+    let Order {
+        date: o_date,
+        customer: o_customer,
+        ..
+    } = &db.order;
+    let Customer {
+        name: c_name,
+        acctbal: c_acctbal,
+        nation: c_nation,
+        address: c_address,
+        phone: c_phone,
+        comment: c_comment,
+        ..
+    } = &db.customer;
     let Nation { name: n_name, .. } = &db.nation;
 
-    let revenue = db.lineitem
-        .with(returnflag.eq("R")
-         .and(l_order.select(o_date).during(19931001, 19940101)))
+    let revenue = db
+        .lineitem
+        .with(
+            returnflag
+                .eq("R")
+                .and(l_order.select(o_date).during(19931001, 19940101)),
+        )
         .group_by(l_order.select(o_customer))
         .select(extendedprice.and(discount))
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc))
-        .and(c_name
-            .and(c_acctbal)
-            .and(c_nation.select(n_name))
-            .and(c_address)
-            .and(c_phone)
-            .and(c_comment));
-    let mut rows: Vec<(Id<Customer>, (f64, (((((&str, f64), &str), &str), &str), &str)))> = Vec::new();
+        .and(
+            c_name
+                .and(c_acctbal)
+                .and(c_nation.select(n_name))
+                .and(c_address)
+                .and(c_phone)
+                .and(c_comment),
+        );
+    let mut rows: Vec<(
+        Id<Customer>,
+        (f64, (((((&str, f64), &str), &str), &str), &str)),
+    )> = Vec::new();
     revenue.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|(_, (r1, _)), (_, (r2, _))| r2.partial_cmp(r1).unwrap());
     rows.truncate(20);
-    join_lines(rows.iter().map(|(c, (r, (((((name, acctbal), nat), addr), phone), comment)))| {
-        // natural custkey = internal id + 1
-        format!("{}|{}|{}|{}|{}|{}|{}|{}",
-                c.idx() + 1, name, f(*r), f(*acctbal), nat, addr, phone, comment)
-    }))
+    join_lines(rows.iter().map(
+        |(c, (r, (((((name, acctbal), nat), addr), phone), comment)))| {
+            // natural custkey = internal id + 1
+            format!(
+                "{}|{}|{}|{}|{}|{}|{}|{}",
+                c.idx() + 1,
+                name,
+                f(*r),
+                f(*acctbal),
+                nat,
+                addr,
+                phone,
+                comment
+            )
+        },
+    ))
 }
 
 // ---------- Q11 — important stock ----------
 
 fn q11(db: &'static Tpch) -> String {
-    let PartSupp { part: ps_part, supplier: ps_supplier, supplycost, availqty, .. } = &db.partsupp;
-    let Supplier { nation: s_nation, .. } = &db.supplier;
+    let PartSupp {
+        part: ps_part,
+        supplier: ps_supplier,
+        supplycost,
+        availqty,
+        ..
+    } = &db.partsupp;
+    let Supplier {
+        nation: s_nation, ..
+    } = &db.supplier;
     let Nation { name: n_name, .. } = &db.nation;
 
-    let value_per_part = db.partsupp
+    let value_per_part = db
+        .partsupp
         .with(ps_supplier.select(s_nation).select(n_name).eq("GERMANY"))
         .group_by(ps_part)
         .select(supplycost.and(availqty))
         .fold(0.0, |a, (c, q)| a + c * (q as f64));
-    let threshold = 0.0001 * (&value_per_part).unwrap_fold(0.0, |a, v| a + v);
+    let threshold = 0.0001 * (&value_per_part).fold_flat(0.0, |a, v| a + v);
     let mut rows: Vec<(Id<Part>, f64)> = Vec::new();
     value_per_part.gt(threshold).drive(|k, v| rows.push((k, v)));
     rows.sort_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap());
     // natural partkey = internal id + 1
-    join_lines(rows.iter().map(|(k, v)| format!("{}|{}", k.idx() + 1, f(*v))))
+    join_lines(
+        rows.iter()
+            .map(|(k, v)| format!("{}|{}", k.idx() + 1, f(*v))),
+    )
 }
 
 // ---------- Q12 — shipping modes and order priority ----------
@@ -412,13 +671,29 @@ const Q12: &str = "MAIL|6202|9324\n\
                    SHIP|6200|9262";
 
 fn q12(db: &'static Tpch) -> String {
-    let Lineitem { shipmode, shipdate, commitdate, receiptdate, order: l_order, .. } = &db.lineitem;
+    let Lineitem {
+        shipmode,
+        shipdate,
+        commitdate,
+        receiptdate,
+        order: l_order,
+        ..
+    } = &db.lineitem;
     let Order { priority, .. } = &db.order;
 
-    let result = db.lineitem
-        .with(shipmode.is_in(["MAIL", "SHIP"])
-         .and(shipdate.and(commitdate).and(receiptdate).filt(|((s, c), r)| s < c && c < r))
-         .and(receiptdate.during(19940101, 19950101)))
+    let result = db
+        .lineitem
+        .with(
+            shipmode
+                .is_in(["MAIL", "SHIP"])
+                .and(
+                    shipdate
+                        .and(commitdate)
+                        .and(receiptdate)
+                        .filt(|((s, c), r)| s < c && c < r),
+                )
+                .and(receiptdate.during(19940101, 19950101)),
+        )
         .group_by(shipmode)
         .select(l_order.select(priority))
         .fold((0_i64, 0_i64), |(h, l), pr| {
@@ -436,9 +711,14 @@ fn q12(db: &'static Tpch) -> String {
 fn q13(db: &'static Tpch) -> String {
     // `&db.order` is a SPARSE universe — driving it skips the orderkey-gap
     // holes, so the group key is the bare customer FK, no per-row validity guard.
-    let Order { comment: o_comment, customer: o_customer, .. } = &db.order;
+    let Order {
+        comment: o_comment,
+        customer: o_customer,
+        ..
+    } = &db.order;
 
-    let count_per_cust = db.order
+    let count_per_cust = db
+        .order
         .with(o_comment.nrx("special.*requests"))
         .group_by(o_customer)
         .dense_fold_outer(db.customer.id.n, 0_i64, |a, _| a + 1);
@@ -453,17 +733,28 @@ fn q13(db: &'static Tpch) -> String {
 // ---------- Q15 — top supplier ----------
 
 fn q15(db: &'static Tpch) -> String {
-    let Lineitem { shipdate, supplier: l_supplier, extendedprice, discount, .. } = &db.lineitem;
-    let Supplier { name: s_name, address: s_address, phone: s_phone, .. } = &db.supplier;
+    let Lineitem {
+        shipdate,
+        supplier: l_supplier,
+        extendedprice,
+        discount,
+        ..
+    } = &db.lineitem;
+    let Supplier {
+        name: s_name,
+        address: s_address,
+        phone: s_phone,
+        ..
+    } = &db.supplier;
 
-    let revenue = db.lineitem
+    let revenue = db
+        .lineitem
         .with(shipdate.during(19960101, 19960401))
         .group_by(l_supplier)
         .select(extendedprice.and(discount))
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
-    let max_rev = (&revenue).unwrap_fold(0.0, f64::max);
-    let result = revenue.eq(max_rev)
-        .and(s_name.and(s_address).and(s_phone));
+    let max_rev = (&revenue).fold_flat(0.0, f64::max);
+    let result = revenue.eq(max_rev).and(s_name.and(s_address).and(s_phone));
     let mut rows: Vec<(Id<Supplier>, (f64, ((&str, &str), &str)))> = Vec::new();
     result.drive(|k, v| rows.push((k, v)));
     rows.sort_by_key(|r| r.0);
@@ -476,23 +767,48 @@ fn q15(db: &'static Tpch) -> String {
 // ---------- Q16 — distinct supplier count ----------
 
 fn q16(db: &'static Tpch) -> String {
-    let PartSupp { part: ps_part, supplier: ps_supplier, .. } = &db.partsupp;
-    let Part { brand, ty: p_ty, size, .. } = &db.part;
-    let Supplier { comment: s_comment, .. } = &db.supplier;
+    let PartSupp {
+        part: ps_part,
+        supplier: ps_supplier,
+        ..
+    } = &db.partsupp;
+    let Part {
+        brand,
+        ty: p_ty,
+        size,
+        ..
+    } = &db.part;
+    let Supplier {
+        comment: s_comment, ..
+    } = &db.supplier;
 
-    let counts = db.partsupp
-        .with(ps_part.with(brand.ne("Brand#45")
-                             .and(p_ty.filt(|s: &str| !s.starts_with("MEDIUM POLISHED")))
-                             .and(size.is_in([49, 14, 23, 45, 19, 3, 36, 9])))
-         .and(ps_supplier.select(s_comment).nrx("Customer.*Complaints")))
+    let counts = db
+        .partsupp
+        .with(
+            ps_part
+                .with(
+                    brand
+                        .ne("Brand#45")
+                        .and(p_ty.filt(|s: &str| !s.starts_with("MEDIUM POLISHED")))
+                        .and(size.is_in([49, 14, 23, 45, 19, 3, 36, 9])),
+                )
+                .and(ps_supplier.select(s_comment).nrx("Customer.*Complaints")),
+        )
         .group_by(ps_part.select(brand.and(p_ty).and(size)))
         .select(ps_supplier)
         .count_distinct();
     let mut rows: Vec<(((&str, &str), i64), i64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
-    rows.sort_by(|(((b1, t1), s1), c1), (((b2, t2), s2), c2)|
-        c2.cmp(c1).then(b1.cmp(b2)).then(t1.cmp(t2)).then(s1.cmp(s2)));
-    join_lines(rows.iter().map(|(((b, t), s), c)| format!("{}|{}|{}|{}", b, t, s, c)))
+    rows.sort_by(|(((b1, t1), s1), c1), (((b2, t2), s2), c2)| {
+        c2.cmp(c1)
+            .then(b1.cmp(b2))
+            .then(t1.cmp(t2))
+            .then(s1.cmp(s2))
+    });
+    join_lines(
+        rows.iter()
+            .map(|(((b, t), s), c)| format!("{}|{}|{}|{}", b, t, s, c)),
+    )
 }
 
 // ---------- Q17 — small-quantity order revenue ----------
@@ -502,18 +818,32 @@ fn q17(db: &'static Tpch) -> String {
     //      whose quantity < 0.2 * avg(quantity) for that part.
     // Per-part 0.2*avg threshold (one fused (sum, count) fold), materialized so
     // the cross-column compare is a probe rather than a re-fold per row.
-    let Lineitem { part: l_part, quantity, extendedprice, .. } = &db.lineitem;
-    let Part { brand, container, .. } = &db.part;
+    let Lineitem {
+        part: l_part,
+        quantity,
+        extendedprice,
+        ..
+    } = &db.lineitem;
+    let Part {
+        brand, container, ..
+    } = &db.part;
 
-    let tpp: HashIdx<_, _> = db.lineitem.group_by(l_part).select(quantity)
+    let tpp: HashIdx<_, _> = db
+        .lineitem
+        .group_by(l_part)
+        .select(quantity)
         .fold((0.0_f64, 0_i64), |(s, n), q| (s + q, n + 1))
         .map(|(s, n)| 0.2 * s / n as f64)
         .collect();
-    let sum = db.lineitem
-        .with(l_part.with(brand.eq("Brand#23").and(container.eq("MED BOX")))
-         .and(quantity.and(l_part.select(&tpp)).filt(|(q, t)| q < t)))
+    let sum = db
+        .lineitem
+        .with(
+            l_part
+                .with(brand.eq("Brand#23").and(container.eq("MED BOX")))
+                .and(quantity.and(l_part.select(&tpp)).filt(|(q, t)| q < t)),
+        )
         .select(extendedprice)
-        .unwrap_fold(0.0_f64, |a, e| a + e);
+        .fold_flat(0.0_f64, |a, e| a + e);
     f(sum / 7.0)
 }
 
@@ -524,25 +854,47 @@ fn q18(db: &'static Tpch) -> String {
     //      key/date/totalprice and the sum.  ORDER BY o_totalprice DESC,
     //      o_orderdate, LIMIT 100.  All output columns are FD'd by the order,
     //      so attach them (order info, then customer info) after the fold.
-    let Lineitem { order: l_order, quantity, .. } = &db.lineitem;
-    let Order { totalprice, date: o_date, customer: o_customer, .. } = &db.order;
+    let Lineitem {
+        order: l_order,
+        quantity,
+        ..
+    } = &db.lineitem;
+    let Order {
+        totalprice,
+        date: o_date,
+        customer: o_customer,
+        ..
+    } = &db.order;
     let Customer { name: c_name, .. } = &db.customer;
 
-    let result = db.lineitem.group_by(l_order).select(quantity)
+    let result = db
+        .lineitem
+        .group_by(l_order)
+        .select(quantity)
         .fold(0.0_f64, |a, q| a + q)
         .gt(300.0)
-        .and(totalprice.and(o_date)
-            .and(o_customer.select(c_name).and(o_customer)));
+        .and(
+            totalprice
+                .and(o_date)
+                .and(o_customer.select(c_name).and(o_customer)),
+        );
     let mut rows: Vec<(Id<Order>, (f64, ((f64, i64), (&str, Id<Customer>))))> = Vec::new();
     result.drive(|k, v| rows.push((k, v)));
-    rows.sort_by(|(_, (_, ((tp1, dt1), _))), (_, (_, ((tp2, dt2), _)))|
-        tp2.partial_cmp(tp1).unwrap().then(dt1.cmp(dt2)));
+    rows.sort_by(|(_, (_, ((tp1, dt1), _))), (_, (_, ((tp2, dt2), _)))| {
+        tp2.partial_cmp(tp1).unwrap().then(dt1.cmp(dt2))
+    });
     rows.truncate(100);
     join_lines(rows.iter().map(|(o, (sum_q, ((tp, dt), (name, cust))))| {
         // natural custkey / orderkey = internal id + 1
-        format!("{}|{}|{}|{}|{}|{}",
-                name, cust.idx() + 1, o.idx() + 1,
-                fmt_yyyymmdd(*dt), f(*tp), f(*sum_q))
+        format!(
+            "{}|{}|{}|{}|{}|{}",
+            name,
+            cust.idx() + 1,
+            o.idx() + 1,
+            fmt_yyyymmdd(*dt),
+            f(*tp),
+            f(*sum_q)
+        )
     }))
 }
 
@@ -551,28 +903,58 @@ fn q18(db: &'static Tpch) -> String {
 fn q19(db: &'static Tpch) -> String {
     // 3-branch disjunctive predicate folded into a single closure-filter.
     // The compose chain produces (brand, container, size, qty) per lineitem.
-    let Lineitem { part: l_part, quantity, shipmode, shipinstruct, extendedprice, discount, .. } = &db.lineitem;
-    let Part { brand, container, size, .. } = &db.part;
+    let Lineitem {
+        part: l_part,
+        quantity,
+        shipmode,
+        shipinstruct,
+        extendedprice,
+        discount,
+        ..
+    } = &db.lineitem;
+    let Part {
+        brand,
+        container,
+        size,
+        ..
+    } = &db.part;
 
-    let pred = l_part.select(brand.and(container).and(size))
+    let pred = l_part
+        .select(brand.and(container).and(size))
         .and(quantity)
         .filt(|(((br, ct), sz), q)| {
             let in_v = |arr: &[&str], s: &str| arr.iter().any(|&a| a == s);
-            (br == "Brand#12" && in_v(&["SM CASE","SM BOX","SM PACK","SM PKG"], ct)
-                && q >= 1.0 && q <= 11.0 && sz >= 1 && sz <= 5)
-            || (br == "Brand#23" && in_v(&["MED BAG","MED BOX","MED PKG","MED PACK"], ct)
-                && q >= 10.0 && q <= 20.0 && sz >= 1 && sz <= 10)
-            || (br == "Brand#34" && in_v(&["LG CASE","LG BOX","LG PACK","LG PKG"], ct)
-                && q >= 20.0 && q <= 30.0 && sz >= 1 && sz <= 15)
+            (br == "Brand#12"
+                && in_v(&["SM CASE", "SM BOX", "SM PACK", "SM PKG"], ct)
+                && q >= 1.0
+                && q <= 11.0
+                && sz >= 1
+                && sz <= 5)
+                || (br == "Brand#23"
+                    && in_v(&["MED BAG", "MED BOX", "MED PKG", "MED PACK"], ct)
+                    && q >= 10.0
+                    && q <= 20.0
+                    && sz >= 1
+                    && sz <= 10)
+                || (br == "Brand#34"
+                    && in_v(&["LG CASE", "LG BOX", "LG PACK", "LG PKG"], ct)
+                    && q >= 20.0
+                    && q <= 30.0
+                    && sz >= 1
+                    && sz <= 15)
         });
     // shipmode / shipinstruct are common to all three branches, so they sit
     // outside `pred` as shared conjuncts.
-    let sum = db.lineitem
-        .with(shipmode.is_in(["AIR", "AIR REG"])
-         .and(shipinstruct.eq("DELIVER IN PERSON"))
-         .and(pred))
+    let sum = db
+        .lineitem
+        .with(
+            shipmode
+                .is_in(["AIR", "AIR REG"])
+                .and(shipinstruct.eq("DELIVER IN PERSON"))
+                .and(pred),
+        )
         .select(extendedprice.and(discount))
-        .unwrap_fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
+        .fold_flat(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
     f(sum)
 }
 
@@ -583,13 +965,30 @@ fn q20(db: &'static Tpch) -> String {
     //      exceeds 0.5 * that (part, supplier)'s 1994-shipped quantity.
     //      ORDER BY s_name.
     // Correlated aggregate: per (part, supplier), the 1994 shipped quantity.
-    let Lineitem { shipdate, part: l_part, supplier: l_supplier, quantity, .. } = &db.lineitem;
-    let PartSupp { part: ps_part, supplier: ps_supplier, availqty, .. } = &db.partsupp;
+    let Lineitem {
+        shipdate,
+        part: l_part,
+        supplier: l_supplier,
+        quantity,
+        ..
+    } = &db.lineitem;
+    let PartSupp {
+        part: ps_part,
+        supplier: ps_supplier,
+        availqty,
+        ..
+    } = &db.partsupp;
     let Part { name: p_name, .. } = &db.part;
-    let Supplier { name: s_name, address: s_address, nation: s_nation, .. } = &db.supplier;
+    let Supplier {
+        name: s_name,
+        address: s_address,
+        nation: s_nation,
+        ..
+    } = &db.supplier;
     let Nation { name: n_name, .. } = &db.nation;
 
-    let sum_qty = db.lineitem
+    let sum_qty = db
+        .lineitem
         .with(shipdate.during(19940101, 19950101))
         .group_by(l_part.and(l_supplier))
         .select(quantity)
@@ -601,8 +1000,17 @@ fn q20(db: &'static Tpch) -> String {
     let qual_supps = Bitset::over(
         &db.supplier,
         &db.partsupp
-            .with(ps_part.select(p_name).filt(|n: &str| n.starts_with("forest"))
-             .and(availqty.map(|q| q as f64).and(threshold).filt(|(a, t)| a > t)))
+            .with(
+                ps_part
+                    .select(p_name)
+                    .filt(|n: &str| n.starts_with("forest"))
+                    .and(
+                        availqty
+                            .map(|q| q as f64)
+                            .and(threshold)
+                            .filt(|(a, t)| a > t),
+                    ),
+            )
             .select(ps_supplier),
     );
     let result = qual_supps
@@ -621,21 +1029,47 @@ fn q21(db: &'static Tpch) -> String {
     //      commit) on status-F orders that have >1 supplier (EXISTS other) but
     //      only this one late (NOT EXISTS other late).  ORDER BY numwait DESC,
     //      s_name, LIMIT 100.
-    let Lineitem { commitdate, receiptdate, order: l_order, supplier: l_supplier, .. } = &db.lineitem;
-    let Order { status: o_status, .. } = &db.order;
-    let Supplier { name: s_name, nation: s_nation, .. } = &db.supplier;
+    let Lineitem {
+        commitdate,
+        receiptdate,
+        order: l_order,
+        supplier: l_supplier,
+        ..
+    } = &db.lineitem;
+    let Order {
+        status: o_status, ..
+    } = &db.order;
+    let Supplier {
+        name: s_name,
+        nation: s_nation,
+        ..
+    } = &db.supplier;
     let Nation { name: n_name, .. } = &db.nation;
 
-    let late = db.lineitem.with(commitdate.and(receiptdate).filt(|(c, r)| c < r));
+    let late = db
+        .lineitem
+        .with(commitdate.and(receiptdate).filt(|(c, r)| c < r));
     // multi_supp: order has >1 distinct supplier across all its lines.
-    let multi_supp = db.lineitem.group_by(l_order)
-        .select(l_supplier).count_distinct().gt(1);
+    let multi_supp = db
+        .lineitem
+        .group_by(l_order)
+        .select(l_supplier)
+        .count_distinct()
+        .gt(1);
     // only_late: among the order's LATE lines, exactly one distinct supplier.
-    let only_late = (&late).group_by(l_order)
-        .select(l_supplier).count_distinct().eq(1);
+    let only_late = (&late)
+        .group_by(l_order)
+        .select(l_supplier)
+        .count_distinct()
+        .eq(1);
     let counts = (&late)
-        .with(l_supplier.select(s_nation).select(n_name).eq("SAUDI ARABIA")
-         .and(l_order.with(o_status.eq("F").and(multi_supp).and(only_late))))
+        .with(
+            l_supplier
+                .select(s_nation)
+                .select(n_name)
+                .eq("SAUDI ARABIA")
+                .and(l_order.with(o_status.eq("F").and(multi_supp).and(only_late))),
+        )
         .group_by(l_supplier)
         .fold(0_i64, |a, _| a + 1)
         .and(s_name);
@@ -653,19 +1087,28 @@ fn q22(db: &'static Tpch) -> String {
     //      the avg of positive-balance such customers, and no orders (NOT
     //      EXISTS).  GROUP BY cntrycode → count, sum(acctbal).  ORDER BY
     //      cntrycode.
-    let Customer { phone: c_phone, acctbal: c_acctbal, .. } = &db.customer;
-    let Order { customer: o_customer, .. } = &db.order;
+    let Customer {
+        phone: c_phone,
+        acctbal: c_acctbal,
+        ..
+    } = &db.customer;
+    let Order {
+        customer: o_customer,
+        ..
+    } = &db.order;
 
     let prefix = c_phone.map(|p: &str| &p[..2]);
-    let codes = ["13","31","23","29","30","18","17"];
+    let codes = ["13", "31", "23", "29", "30", "18", "17"];
     let prefix_ok = db.customer.with((&prefix).is_in(codes));
     // Scalar subquery: avg balance over positive-balance prefix-ok customers.
-    let (sum_p, cnt_p) = (&prefix_ok).with(c_acctbal.gt(0.0))
+    let (sum_p, cnt_p) = (&prefix_ok)
+        .with(c_acctbal.gt(0.0))
         .select(c_acctbal)
-        .unwrap_fold((0.0_f64, 0_i64), |(s, n), v| (s + v, n + 1));
+        .fold_flat((0.0_f64, 0_i64), |(s, n), v| (s + v, n + 1));
     let avg = sum_p / cnt_p as f64;
     let custs_with_orders: MatSet<_> = o_customer.collect();
-    let counts = (&prefix_ok).with(c_acctbal.gt(avg))
+    let counts = (&prefix_ok)
+        .with(c_acctbal.gt(avg))
         .minus(custs_with_orders)
         .group_by(&prefix)
         .select(c_acctbal)
@@ -673,7 +1116,10 @@ fn q22(db: &'static Tpch) -> String {
     let mut rows: Vec<(&str, (i64, f64))> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
     rows.sort_by_key(|r| r.0);
-    join_lines(rows.iter().map(|(k, (cnt, sm))| format!("{}|{}|{}", k, cnt, f(*sm))))
+    join_lines(
+        rows.iter()
+            .map(|(k, (cnt, sm))| format!("{}|{}|{}", k, cnt, f(*sm))),
+    )
 }
 
 // ---------- Q2 — minimum-cost supplier per part ----------
@@ -682,15 +1128,41 @@ fn q2(db: &'static Tpch) -> String {
     // SQL: parts of size 15 / type %BRASS supplied from EUROPE at the minimum
     //      supplycost for that part; project supplier + part + nation columns.
     //      ORDER BY s_acctbal DESC, n_name, s_name, p_partkey, LIMIT 100.
-    let PartSupp { part: ps_part, supplier: ps_supplier, supplycost, .. } = &db.partsupp;
-    let Part { size, ty: p_ty, mfgr, .. } = &db.part;
-    let Supplier { acctbal: s_acctbal, name: s_name, nation: s_nation,
-                   address: s_address, phone: s_phone, comment: s_comment, .. } = &db.supplier;
-    let Nation { name: n_name, region: n_region, .. } = &db.nation;
+    let PartSupp {
+        part: ps_part,
+        supplier: ps_supplier,
+        supplycost,
+        ..
+    } = &db.partsupp;
+    let Part {
+        size,
+        ty: p_ty,
+        mfgr,
+        ..
+    } = &db.part;
+    let Supplier {
+        acctbal: s_acctbal,
+        name: s_name,
+        nation: s_nation,
+        address: s_address,
+        phone: s_phone,
+        comment: s_comment,
+        ..
+    } = &db.supplier;
+    let Nation {
+        name: n_name,
+        region: n_region,
+        ..
+    } = &db.nation;
     let Region { name: r_name, .. } = &db.region;
 
-    let eu_ps = db.partsupp
-        .with(ps_supplier.select(s_nation).select(n_region).select(r_name).eq("EUROPE"));
+    let eu_ps = db.partsupp.with(
+        ps_supplier
+            .select(s_nation)
+            .select(n_region)
+            .select(r_name)
+            .eq("EUROPE"),
+    );
     // Correlated min: cheapest EUROPE supplycost per part.
     let min_per_part = (&eu_ps)
         .group_by(ps_part)
@@ -700,28 +1172,55 @@ fn q2(db: &'static Tpch) -> String {
     // by navigation; flatten the tuple as it's collected.
     let mut rows: Vec<(f64, &str, &str, Id<Part>, &str, &str, &str, &str)> = Vec::new();
     (&eu_ps)
-        .with(ps_part.with(size.eq(15).and(p_ty.filt(|s: &str| s.ends_with("BRASS"))))
-         .and(supplycost.and(ps_part.select(&min_per_part)).filt(|(c, m)| c == m)))
-        .select(ps_supplier.select(s_acctbal
-                .and(s_name)
-                .and(s_nation.select(n_name))
-                .and(s_address)
-                .and(s_phone)
-                .and(s_comment))
-            .and(ps_part)
-            .and(ps_part.select(mfgr)))
-        .drive(|_, (((((((acct, sname), nname), addr), phone), comm), pkey), mfg)|
-            rows.push((acct, sname, nname, pkey, mfg, addr, phone, comm)));
+        .with(
+            ps_part
+                .with(size.eq(15).and(p_ty.filt(|s: &str| s.ends_with("BRASS"))))
+                .and(
+                    supplycost
+                        .and(ps_part.select(&min_per_part))
+                        .filt(|(c, m)| c == m),
+                ),
+        )
+        .select(
+            ps_supplier
+                .select(
+                    s_acctbal
+                        .and(s_name)
+                        .and(s_nation.select(n_name))
+                        .and(s_address)
+                        .and(s_phone)
+                        .and(s_comment),
+                )
+                .and(ps_part)
+                .and(ps_part.select(mfgr)),
+        )
+        .drive(
+            |_, (((((((acct, sname), nname), addr), phone), comm), pkey), mfg)| {
+                rows.push((acct, sname, nname, pkey, mfg, addr, phone, comm))
+            },
+        );
     rows.sort_by(|a, b| {
-        b.0.partial_cmp(&a.0).unwrap()
+        b.0.partial_cmp(&a.0)
+            .unwrap()
             .then(a.2.cmp(b.2))
             .then(a.1.cmp(b.1))
             .then(a.3.cmp(&b.3))
     });
     rows.truncate(100);
     // natural partkey = internal id + 1
-    join_lines(rows.iter().map(|r| format!("{}|{}|{}|{}|{}|{}|{}|{}",
-        f(r.0), r.1, r.2, r.3.idx() + 1, r.4, r.5, r.6, r.7)))
+    join_lines(rows.iter().map(|r| {
+        format!(
+            "{}|{}|{}|{}|{}|{}|{}|{}",
+            f(r.0),
+            r.1,
+            r.2,
+            r.3.idx() + 1,
+            r.4,
+            r.5,
+            r.6,
+            r.7
+        )
+    }))
 }
 
 // ---------- registry ----------
@@ -729,15 +1228,15 @@ fn q2(db: &'static Tpch) -> String {
 /// The baseline (idiomatic) registry: every query paired with its oracle.
 pub fn base() -> Vec<Entry> {
     vec![
-        ("1",  Q1, q1),
-        ("2",  oracle("Q2"), q2),
-        ("3",  Q3, q3),
-        ("4",  Q4, q4),
-        ("5",  Q5, q5),
-        ("6",  Q6, q6),
-        ("7",  oracle("Q7"), q7),
-        ("8",  oracle("Q8"), q8),
-        ("9",  oracle("Q9"), q9),
+        ("1", Q1, q1),
+        ("2", oracle("Q2"), q2),
+        ("3", Q3, q3),
+        ("4", Q4, q4),
+        ("5", Q5, q5),
+        ("6", Q6, q6),
+        ("7", oracle("Q7"), q7),
+        ("8", oracle("Q8"), q8),
+        ("9", oracle("Q9"), q9),
         ("10", Q10, q10),
         ("11", oracle("Q11"), q11),
         ("12", Q12, q12),
@@ -759,7 +1258,10 @@ pub fn base() -> Vec<Entry> {
 pub fn with_overrides(overrides: &[(&'static str, QFn)]) -> Vec<Entry> {
     let mut qs = base();
     for &(name, q) in overrides {
-        qs.iter_mut().find(|e| e.0 == name).expect("unknown query name").2 = q;
+        qs.iter_mut()
+            .find(|e| e.0 == name)
+            .expect("unknown query name")
+            .2 = q;
     }
     qs
 }

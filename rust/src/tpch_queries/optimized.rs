@@ -25,22 +25,24 @@ pub fn queries() -> Vec<super::Entry> {
 // a dense key over a universe of size 282 and use a `dense_fold` instead of a `fold`.
 fn q1(db: &'static Tpch) -> String {
     let Lineitem {
-        shipdate, returnflag, status: l_status,
-        quantity, extendedprice, discount, tax, ..
+        shipdate,
+        returnflag,
+        status: l_status,
+        quantity,
+        extendedprice,
+        discount,
+        tax,
+        ..
     } = &db.lineitem;
 
     let mut rows: Vec<(usize, (f64, f64, f64, f64, f64, i64))> = Vec::new();
 
     db.lineitem
         .with(shipdate.le(19980902))
-        .group_by(
-            returnflag
-                .and(l_status)
-                .map(|(rf, ls): (&str, &str)| {
-                    ((rf.as_bytes()[0].wrapping_sub(b'A') as usize) << 4)
-                        | (ls.as_bytes()[0].wrapping_sub(b'F') as usize)
-                }),
-        )
+        .group_by(returnflag.and(l_status).map(|(rf, ls): (&str, &str)| {
+            ((rf.as_bytes()[0].wrapping_sub(b'A') as usize) << 4)
+                | (ls.as_bytes()[0].wrapping_sub(b'F') as usize)
+        }))
         .select(quantity.and(extendedprice).and(discount).and(tax))
         .dense_fold(
             282,
@@ -60,8 +62,16 @@ fn q1(db: &'static Tpch) -> String {
         let nf = *n as f64;
         format!(
             "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-            rf, ls, f(*qty), f(*ext), f(*dp), f(*chg),
-            f(qty / nf), f(ext / nf), f(di / nf), n
+            rf,
+            ls,
+            f(*qty),
+            f(*ext),
+            f(*dp),
+            f(*chg),
+            f(qty / nf),
+            f(ext / nf),
+            f(di / nf),
+            n
         )
     }))
 }
@@ -69,22 +79,54 @@ fn q1(db: &'static Tpch) -> String {
 // Optimizations:
 // We replace the `fold` over the `part -> cost` relation with a `dense_fold`.
 fn q2(db: &'static Tpch) -> String {
-    let PartSupp { part: ps_part, supplier: ps_supplier, supplycost, .. } = &db.partsupp;
-    let Part { size, ty: p_ty, mfgr, .. } = &db.part;
-    let Supplier { acctbal: s_acctbal, name: s_name, nation: s_nation,
-                   address: s_address, phone: s_phone, comment: s_comment, .. } = &db.supplier;
-    let Nation { name: n_name, region: n_region, .. } = &db.nation;
+    let PartSupp {
+        part: ps_part,
+        supplier: ps_supplier,
+        supplycost,
+        ..
+    } = &db.partsupp;
+    let Part {
+        size,
+        ty: p_ty,
+        mfgr,
+        ..
+    } = &db.part;
+    let Supplier {
+        acctbal: s_acctbal,
+        name: s_name,
+        nation: s_nation,
+        address: s_address,
+        phone: s_phone,
+        comment: s_comment,
+        ..
+    } = &db.supplier;
+    let Nation {
+        name: n_name,
+        region: n_region,
+        ..
+    } = &db.nation;
     let Region { name: r_name, .. } = &db.region;
 
     let mut rows: Vec<(f64, &str, &str, Id<Part>, &str, &str, &str, &str)> = Vec::new();
 
-    let eu = || ps_supplier.select(s_nation).select(n_region).select(r_name).eq("EUROPE");
+    let eu = || {
+        ps_supplier
+            .select(s_nation)
+            .select(n_region)
+            .select(r_name)
+            .eq("EUROPE")
+    };
 
-    let min_per_part = db.partsupp
+    let min_per_part = db
+        .partsupp
         .with(eu())
         .group_by(ps_part)
         .select(supplycost)
-        .dense_fold(db.part.id.n, f64::INFINITY, |a, c| if c < a { c } else { a });
+        .dense_fold(
+            db.part.id.n,
+            f64::INFINITY,
+            |a, c| if c < a { c } else { a },
+        );
 
     db.partsupp
         .with(eu())
@@ -127,7 +169,14 @@ fn q2(db: &'static Tpch) -> String {
     join_lines(rows.iter().map(|r| {
         format!(
             "{}|{}|{}|{}|{}|{}|{}|{}",
-            f(r.0), r.1, r.2, r.3.idx() + 1, r.4, r.5, r.6, r.7
+            f(r.0),
+            r.1,
+            r.2,
+            r.3.idx() + 1,
+            r.4,
+            r.5,
+            r.6,
+            r.7
         )
     }))
 }
@@ -135,8 +184,17 @@ fn q2(db: &'static Tpch) -> String {
 // Optimizations:
 // Use `Bitset` instead of `MatSet` to materialize late orders.
 fn q4(db: &'static Tpch) -> String {
-    let Lineitem { commitdate, receiptdate, order: l_order, .. } = &db.lineitem;
-    let Order { date: o_date, priority, .. } = &db.order;
+    let Lineitem {
+        commitdate,
+        receiptdate,
+        order: l_order,
+        ..
+    } = &db.lineitem;
+    let Order {
+        date: o_date,
+        priority,
+        ..
+    } = &db.order;
 
     let mut rows: Vec<(&str, i64)> = Vec::new();
     db.order
@@ -159,12 +217,26 @@ fn q4(db: &'static Tpch) -> String {
 // Materialize green parts into a `Bitset` instead of a `HashIdx`.
 // Materialize nation names after the `fold`.
 fn q9(db: &'static Tpch) -> String {
-    let Lineitem { part: l_part, supplier: l_supplier, order: l_order,
-                   extendedprice, discount, quantity, .. } = &db.lineitem;
-    let PartSupp { part: ps_part, supplier: ps_supplier, supplycost, .. } = &db.partsupp;
+    let Lineitem {
+        part: l_part,
+        supplier: l_supplier,
+        order: l_order,
+        extendedprice,
+        discount,
+        quantity,
+        ..
+    } = &db.lineitem;
+    let PartSupp {
+        part: ps_part,
+        supplier: ps_supplier,
+        supplycost,
+        ..
+    } = &db.partsupp;
     let Part { name: p_name, .. } = &db.part;
     let Order { date: o_date, .. } = &db.order;
-    let Supplier { nation: s_nation, .. } = &db.supplier;
+    let Supplier {
+        nation: s_nation, ..
+    } = &db.supplier;
 
     let mut rows: Vec<((&str, i64), f64)> = Vec::new();
 
@@ -173,7 +245,8 @@ fn q9(db: &'static Tpch) -> String {
         &db.part.with(p_name.filt(|n: &str| n.contains("green"))),
     );
 
-    let sc: HashIdx<_, _> = db.partsupp
+    let sc: HashIdx<_, _> = db
+        .partsupp
         .group_by(ps_part.select(&green_parts).and(ps_supplier))
         .select(supplycost)
         .collect();
@@ -206,10 +279,18 @@ fn q9(db: &'static Tpch) -> String {
 // Optimizations
 // Order conjuncts by selectivity.
 fn q12(db: &'static Tpch) -> String {
-    let Lineitem { receiptdate, shipmode, shipdate, commitdate, order: l_order, .. } = &db.lineitem;
+    let Lineitem {
+        receiptdate,
+        shipmode,
+        shipdate,
+        commitdate,
+        order: l_order,
+        ..
+    } = &db.lineitem;
     let Order { priority, .. } = &db.order;
 
-    let result = db.lineitem
+    let result = db
+        .lineitem
         .with(
             receiptdate
                 .during(19940101, 19950101)
@@ -237,7 +318,11 @@ fn q12(db: &'static Tpch) -> String {
 // 0 as the difference between total number of customers and customers with special orders.
 fn q13(db: &'static Tpch) -> String {
     use memchr::memmem;
-    let Order { customer: o_customer, comment: o_comment, .. } = &db.order;
+    let Order {
+        customer: o_customer,
+        comment: o_comment,
+        ..
+    } = &db.order;
 
     let f_special = memmem::Finder::new("special");
     let mut dist: HashMap<i64, i64> = HashMap::new();
@@ -276,35 +361,41 @@ fn q13(db: &'static Tpch) -> String {
 // NOTE: materializing the `Bitset` is somehow faster than composing/restricting to the right
 // attributes, as the original idiomatic query does.
 fn q17(db: &'static Tpch) -> String {
-    let Lineitem { part: l_part, quantity, extendedprice, .. } = &db.lineitem;
-    let Part { brand, container, .. } = &db.part;
+    let Lineitem {
+        part: l_part,
+        quantity,
+        extendedprice,
+        ..
+    } = &db.lineitem;
+    let Part {
+        brand, container, ..
+    } = &db.part;
 
     let qual_parts = || {
         Bitset::over(
             &db.part,
-            &db.part.with(brand.eq("Brand#23").and(container.eq("MED BOX"))),
+            &db.part
+                .with(brand.eq("Brand#23").and(container.eq("MED BOX"))),
         )
     };
 
-    let tpp: HashIdx<_, _> = db.lineitem
+    let tpp: HashIdx<_, _> = db
+        .lineitem
         .group_by(l_part.with(qual_parts())) // restrict to qual parts
         .select(quantity)
         .fold((0.0_f64, 0_i64), |(s, n), q| (s + q, n + 1))
         .map(|(s, n)| 0.2 * s / n as f64)
         .collect();
 
-    let sum = db.lineitem
+    let sum = db
+        .lineitem
         .with(
             l_part
                 .with(qual_parts())
-                .and(
-                    quantity
-                        .and(l_part.select(&tpp))
-                        .filt(|(q, t)| q < t),
-                ),
+                .and(quantity.and(l_part.select(&tpp)).filt(|(q, t)| q < t)),
         )
         .select(extendedprice)
-        .unwrap_fold(0.0_f64, |a, e| a + e);
+        .fold_flat(0.0_f64, |a, e| a + e);
 
     f(sum / 7.0)
 }
@@ -312,8 +403,17 @@ fn q17(db: &'static Tpch) -> String {
 // Optimizations:
 // Use `dense_fold` instead of `fold` on the dense order keys.
 fn q18(db: &'static Tpch) -> String {
-    let Lineitem { order: l_order, quantity, .. } = &db.lineitem;
-    let Order { totalprice, date: o_date, customer: o_customer, .. } = &db.order;
+    let Lineitem {
+        order: l_order,
+        quantity,
+        ..
+    } = &db.lineitem;
+    let Order {
+        totalprice,
+        date: o_date,
+        customer: o_customer,
+        ..
+    } = &db.order;
     let Customer { name: c_name, .. } = &db.customer;
 
     let mut rows: Vec<(Id<Order>, (f64, ((f64, i64), (&str, Id<Customer>))))> = Vec::new();
@@ -338,8 +438,12 @@ fn q18(db: &'static Tpch) -> String {
         // natural custkey / orderkey = internal id + 1
         format!(
             "{}|{}|{}|{}|{}|{}",
-            name, cust.idx() + 1, o.idx() + 1,
-            fmt_yyyymmdd(*dt), f(*tp), f(*sum_q)
+            name,
+            cust.idx() + 1,
+            o.idx() + 1,
+            fmt_yyyymmdd(*dt),
+            f(*tp),
+            f(*sum_q)
         )
     }))
 }
@@ -355,7 +459,10 @@ const Q21_ID: u32 = !Q21_MULTI;
 
 #[inline(always)]
 fn q21_note(slot: u32, s: Id<Supplier>) -> u32 {
-    debug_assert!(s.0 + 1 < Q21_MULTI as usize, "supplier id needs the flag bit");
+    debug_assert!(
+        s.0 + 1 < Q21_MULTI as usize,
+        "supplier id needs the flag bit"
+    );
     let id = s.0 as u32 + 1;
     if slot == 0 {
         id
@@ -381,9 +488,21 @@ fn q21_note(slot: u32, s: Id<Supplier>) -> u32 {
 // lineitems whose supplier can possibly qualify (`Restrict` short-circuits
 // left to right).
 fn q21(db: &'static Tpch) -> String {
-    let Lineitem { order: l_order, supplier: l_supplier, commitdate, receiptdate, .. } = &db.lineitem;
-    let Order { status: o_status, .. } = &db.order;
-    let Supplier { name: s_name, nation: s_nation, .. } = &db.supplier;
+    let Lineitem {
+        order: l_order,
+        supplier: l_supplier,
+        commitdate,
+        receiptdate,
+        ..
+    } = &db.lineitem;
+    let Order {
+        status: o_status, ..
+    } = &db.order;
+    let Supplier {
+        name: s_name,
+        nation: s_nation,
+        ..
+    } = &db.supplier;
     let Nation { name: n_name, .. } = &db.nation;
 
     let mut rows: Vec<(&str, i64)> = Vec::new();
@@ -391,14 +510,16 @@ fn q21(db: &'static Tpch) -> String {
     // track overall suppliers and late suppliers
     let track = |(all, late): (u32, u32), ((s, c), r): ((Id<Supplier>, i64), i64)| {
         // if the line is late, update the late-supplier state too
-        (q21_note(all, s), if c < r { q21_note(late, s) } else { late })
+        (
+            q21_note(all, s),
+            if c < r { q21_note(late, s) } else { late },
+        )
     };
 
-    let state = db.lineitem
+    let state = db
+        .lineitem
         .group_by(l_order)
-        .select(l_supplier
-           .and(commitdate)
-           .and(receiptdate))
+        .select(l_supplier.and(commitdate).and(receiptdate))
         .dense_fold(db.order.id.n, (0, 0), track);
 
     let saudi = Bitset::over(
@@ -409,13 +530,13 @@ fn q21(db: &'static Tpch) -> String {
     db.lineitem
         .with(l_supplier.select(&saudi))
         .with(commitdate.and(receiptdate).filt(|(c, r)| c < r))
-        .with(l_order.select(o_status.eq("F").and(
-            state.filt(|(all, late)| {
+        .with(
+            l_order.select(o_status.eq("F").and(state.filt(|(all, late)| {
                 // order has > 1 supplier, and exactly one distinct late one
                 // (which must be this line's, since this line is late)
                 all & Q21_MULTI != 0 && late != 0 && late & Q21_MULTI == 0
-            }),
-        )))
+            }))),
+        )
         .group_by(l_supplier)
         .fold(0_i64, |a, _| a + 1)
         .and(s_name)
@@ -429,17 +550,25 @@ fn q21(db: &'static Tpch) -> String {
 // Optimizations:
 // `Bitset` instead of `MatSet` to materialize customers with orders.
 fn q22(db: &'static Tpch) -> String {
-    let Customer { phone: c_phone, acctbal: c_acctbal, .. } = &db.customer;
-    let Order { customer: o_customer, .. } = &db.order;
+    let Customer {
+        phone: c_phone,
+        acctbal: c_acctbal,
+        ..
+    } = &db.customer;
+    let Order {
+        customer: o_customer,
+        ..
+    } = &db.order;
 
     let prefix = c_phone.map(|p: &str| &p[..2]);
     let codes = ["13", "31", "23", "29", "30", "18", "17"];
 
-    let (sum_p, cnt_p) = db.customer
+    let (sum_p, cnt_p) = db
+        .customer
         .with((&prefix).is_in(codes))
         .with(c_acctbal.gt(0.0))
         .select(c_acctbal)
-        .unwrap_fold((0.0_f64, 0_i64), |(s, n), v| (s + v, n + 1));
+        .fold_flat((0.0_f64, 0_i64), |(s, n), v| (s + v, n + 1));
     let avg = sum_p / cnt_p as f64;
 
     let mut rows: Vec<(&str, (i64, f64))> = Vec::new();
@@ -450,9 +579,7 @@ fn q22(db: &'static Tpch) -> String {
         .minus(Bitset::over(&db.customer, o_customer))
         .group_by(&prefix)
         .select(c_acctbal)
-        .fold((0_i64, 0.0_f64), |(cnt, sm), ab| {
-            (cnt + 1, sm + ab)
-        })
+        .fold((0_i64, 0.0_f64), |(cnt, sm), ab| (cnt + 1, sm + ab))
         .drive(|k, v| rows.push((k, v)));
 
     rows.sort_by_key(|r| r.0);
