@@ -1,0 +1,8 @@
+[package]
+name = "c14"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+harness = { workspace = true }
+prela = { workspace = true }
