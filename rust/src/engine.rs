@@ -1458,6 +1458,8 @@ pub struct Fold<D: Copy + Eq + Hash, S: Copy> {
 }
 
 impl<D: Copy + Eq + Hash, S: Copy> Fold<D, S> {
+    /// Build a Fold node over a HashMap mapping distinct values of Q::D
+    /// to a foldl of `op` over corresponding Q::R values.
     pub fn build<Q, OP>(q: Q, init: S, op: OP) -> Self
     where
         Q: Drive<D = D>,
@@ -1471,6 +1473,10 @@ impl<D: Copy + Eq + Hash, S: Copy> Fold<D, S> {
         Fold { cache: m }
     }
 
+    /// Build a Fold node where each Q::D key maps to `f(vs)`, where `vs` collects all corresponding
+    /// Q::R values.
+    /// Use when the value for a given Q::D cannot be computed incrementally and instead requires
+    /// seeing the whole group at once.
     pub fn build_buf<Q, F>(q: Q, f: F) -> Self
     where
         Q: Drive<D = D>,
@@ -2373,6 +2379,7 @@ pub trait QueryExt: IntoQuery + Sized {
         Fold::build(self.iq(), init, op)
     }
 
+    // Fold per S::D key, collecting S::R values into buffers before applying f to each buffer.
     #[inline(always)]
     fn buf_fold<F: Fn(SVec<ROf<Self>>) -> S, S: Copy>(self, f: F) -> Fold<DOf<Self>, S>
     where
@@ -2444,7 +2451,7 @@ pub trait QueryExt: IntoQuery + Sized {
                 let keys: Vec<K> = cell.iter().map(|&r| order(r)).collect(); // comparison keys
                 let mut by: Vec<usize> = (0..cell.len()).collect(); // ids
                 by.sort_by(|&i, &j| cmp(&keys[i], &keys[j])); // ids sorted by keys
-                let sorted: Vec<(K, ROf<Self>)> = by.iter().map(|&i| (keys[i], cell[i])).collect(); // map sorted ids to vals
+                let sorted: Vec<(K, ROf<Self>)> = by.iter().map(|&i| (keys[i], cell[i])).collect(); // map sorted ids to (order, cell) vals
                 let mut out = Vec::with_capacity(cell.len()); // allocate out
                 f(&sorted, &mut out); // fill out with sorted cell
                 assert_eq!(
@@ -2523,7 +2530,7 @@ pub trait QueryExt: IntoQuery + Sized {
 
     // fold over whole relation (no grouping)
     #[inline(always)]
-    fn unwrap_fold<OP: Fn(S, ROf<Self>) -> S, S: Copy>(self, init: S, op: OP) -> S
+    fn fold_flat<OP: Fn(S, ROf<Self>) -> S, S: Copy>(self, init: S, op: OP) -> S
     where
         Self::Q: Drive,
     {
@@ -2702,7 +2709,7 @@ mod tests {
             .count_distinct();
         assert_eq!(drive_all(&cd), vec![(7, 2), (8, 1)]);
         // scalar
-        assert_eq!((&f).unwrap_fold(0usize, |a, v| a + v), 60);
+        assert_eq!((&f).fold_flat(0usize, |a, v| a + v), 60);
     }
 
     #[test]
