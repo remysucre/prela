@@ -1359,26 +1359,29 @@ fn q7565(db: &'static So) -> String {
 // CommentCount DESC,
 // HistoryChanges DESC;
 fn q20706(db: &'static So) -> String {
+    type K = (Id<Post>, Str);
     let tm = tag_mentions(db);
     let ti: HashIdx<Id<Post>, (Id<Post>, Id<Tag>)> = (&tm).map(|(p, _)| p).inv().collect();
     let v23 = db.vote.with((&db.vote.vote_type_id).filt(|t: i64| matches!(t, 2 | 3))).group_by(&db.vote.post).select(&db.vote.vote_type_id).fold(0i64, |a, _| a + 1);
     let uv = db.vote.group_by(&db.vote.user).select(&db.vote.vote_type_id).fold([0i64; 3], |a, t| [a[0] + matches!(t, 2 | 3) as i64, a[1] + (t == 4) as i64, a[2] + (t == 10) as i64]);
     let cp = comments_per_post(db);
     let hp = history_per_post(db);
-    let ans = || db.post.with((&db.post.post_type_id).eq(2)).with((&db.post.parent).select(&db.post.post_type_id).filt(|t: i64| t == 1)).with((&db.post.parent).select(&v23));
-    let h10 = ans()
-        .group_by(Ident::<Post>::new())
-        .select(comments_of(db).opt().and(history_of(db).select(&db.post_history.post_history_type_id).opt()))
+    let ans = db.post.with((&db.post.post_type_id).eq(2)).with((&db.post.parent).select(&db.post.post_type_id).filt(|t: i64| t == 1)).with((&db.post.parent).select(&v23));
+    let h10 = ans
+        .select(Ident::<Post>::new().and((&db.post.parent).select(&ti).map(|(_, t): (Id<Post>, Id<Tag>)| t).select(&db.tag.tag_name)))
+        .group_by(Same::<K>::new())
+        .select(Same::<K>::new().map(|(a, _): K| a).select(comments_of(db).opt().and(history_of(db).select(&db.post_history.post_history_type_id).opt())))
         .fold(0i64, |n, (_, t)| n + (t == Some(10)) as i64);
     let mut v = Vec::new();
-    ans().select(Ident::<Post>::new().and(&cp).and(&hp).and(&h10).and((&db.post.parent).select(&ti).map(|(_, t): (Id<Post>, Id<Tag>)| t)).and((&db.post.owner_user).select(&uv).opt()))
-        .filt(|(((((_, c), _), k), _), _): (((((Id<Post>, i64), i64), i64), Id<Tag>), Option<[i64; 3]>)| c > 5 || k > 2)
-        .drive(|_, x| v.push(x));
-    rows(v.iter().map(|&(((((p, c), h), _), t), x)| {
+    (&h10)
+        .and(Same::<K>::new().map(|(a, _): K| a).select((&cp).and(&hp).and((&db.post.owner_user).select(&uv).opt())))
+        .filt(|(k, ((c, _), _)): (i64, ((i64, i64), Option<[i64; 3]>))| c > 5 || k > 2)
+        .drive(|g, x| v.push((g, x)));
+    rows(v.iter().map(|&((p, t), (_, ((c, h), x)))| {
         let x = x.unwrap_or([0; 3]);
         let mut f = post_fields(db, p, &["owner_id", "title", "id"]);
         f.extend(ints(&x));
-        f.extend([V::S(db.tag.tag_name.get(t).unwrap()), V::I(c), V::I(h)]);
+        f.extend([V::S(t), V::I(c), V::I(h)]);
         row(f)
     }))
 }
@@ -2695,6 +2698,7 @@ fn q9245(db: &'static So) -> String {
 // ORDER BY
 // PS.PostId;
 fn q5869(db: &'static So) -> String {
+    let bu: HashIdx<i64, Id<Badge>> = (&db.badge.user_id).inv().collect();
     let pf = since(db, year_ago())
         .group_by(Ident::<Post>::new())
         .select(
@@ -2702,7 +2706,7 @@ fn q5869(db: &'static So) -> String {
                 .select(&db.post_history.post_history_type_id)
                 .opt()
                 .and(votes_of(db).select(&db.vote.vote_type_id).opt())
-                .and((&db.post.owner_user).select(badges_of(db)).opt()),
+                .and((&db.post.owner_user_id).select(&bu).opt()),
         )
         .fold([0i64; 5], |a, ((h, t), b)| {
             [a[0] + (h == Some(10)) as i64, a[1] + matches!(h, Some(1 | 2 | 4 | 5)) as i64, a[2] + (t == Some(2)) as i64, a[3] + (t == Some(3)) as i64, a[4] + b.is_some() as i64]
@@ -5130,7 +5134,7 @@ fn q25760(db: &'static So) -> String {
     let ph = db.post_history.group_by(&db.post_history.post).select((&db.post_history.post_history_type_id).and(&db.post_history.creation_date)).fold([i64::MIN, 0, 0], |a: [i64; 3], (t, d)| {
         [a[0].max(d), a[1] + (t == 10) as i64, a[2] + matches!(t, 24 | 25) as i64]
     });
-    let pu = db.post_history.group_by(&db.post_history.post).select(&db.post_history.user).count_distinct();
+    let pu = db.post_history.group_by(&db.post_history.post).select(&db.post_history.user_id).count_distinct();
     let mut v = Vec::new();
     questions_only(db)
         .select(Ident::<Post>::new().and((&db.post.tags_str).map(|t: Str| split_n(t, ">")).opt()).and(&cb).and(&ph).and((&pu).opt()))

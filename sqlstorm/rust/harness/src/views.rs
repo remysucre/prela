@@ -8,7 +8,7 @@ pub struct Question {
     pub uid: Id<User>,
     pub id: i64,
     pub score: i64,
-    pub views: i64,
+    pub views: Option<i64>,
     pub created: i64,
     pub body: &'static str,
     pub display_name: &'static str,
@@ -27,7 +27,7 @@ pub fn questions(db: &'static So) -> Vec<Question> {
         .select(
             origid
                 .and(score)
-                .and(view_count)
+                .and(view_count.opt())
                 .and(creation_date)
                 .and(body)
                 .and(owner_user)
@@ -68,7 +68,7 @@ pub fn by_score(db: &'static So) -> Vec<Question> {
 
 pub fn by_views(db: &'static So) -> Vec<Question> {
     let mut v = questions(db);
-    v.sort_by(|a, b| b.views.cmp(&a.views));
+    v.sort_by(|a, b| desc_nulls_last(a.views, b.views));
     v.truncate(10);
     v
 }
@@ -519,21 +519,23 @@ where
         )
         .fold(
             (0i64, 0i64, 0i64, 0i64, 0i64, 0i64),
-            move |(n, c, v, a, b, h), ((((nc, nv), na), nb), nh)| {
+            move |(n, c, v, a, b, h), ((((nc, nv), na), _nb), nh)| {
                 (
                     n + 1,
                     c + if j.c { nc } else { 0 },
                     v + if j.v { nv } else { 0 },
                     a + if j.a { na } else { 0 },
-                    b + if j.b { nb.unwrap_or(0) } else { 0 },
+                    b,
                     h + if j.h { nh } else { 0 },
                 )
             },
         );
 
+    let bdist = posts.group_by(key).select((&db.post.owner_user).select(badges_of_if(db, j.b))).count_distinct();
     let mut out = Vec::new();
-    rows.and(&distinct).drive(
-        |k, ((rows, cx, vx, ax, bx, hx, up, down, hmax), (n, c, v, a, b, h))| {
+    rows.and(&distinct).and((&bdist).opt()).drive(
+        |k, (((rows, cx, vx, ax, bx, hx, up, down, hmax), (n, c, v, a, _, h)), b)| {
+            let b = b.unwrap_or(0);
             out.push((
                 k,
                 Agg { n, rows, c, v, a, b, h, cx, vx, ax, bx, hx, up, down, hmax },
@@ -1368,11 +1370,12 @@ pub fn users_where(db: &'static So, joins: &str, inner: bool, w: UserWhere) -> V
                 .and(&agg)
                 .and(&dis),
         )
+        .filt(move |x| !inner || (x.1).0 > 0)
         .drive(
             |_,
              ((((((((((((uid, name), rep), ucreated), last_access), uviews), uup), udown), nb), ncu), nvu), agg), (n, c, v))| {
                 let agg = UserAgg { n, c, v, ..agg };
-                if !inner || n > 0 {
+                {
                     out.push(UserRow {
                         ncu,
                         nvu,

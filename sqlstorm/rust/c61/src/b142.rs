@@ -384,15 +384,11 @@ fn q14612(db: &'static So) -> String {
             Some(Some(t)) => (u + (t == 2) as i64, d + (t == 3) as i64),
             _ => (u, d),
         });
-    let n = db.user.group_by(Ident::<User>::new()).select((&answers).opt()).buf_fold(|v| {
-        let mut ps: Vec<_> = v.iter().flatten().copied().collect();
-        ps.sort_unstable();
-        ps.dedup();
-        ps.len() as i64
-    });
-    let v = top_n(drain((&n).and(&votes)), |&(u, (n, _))| (std::cmp::Reverse(n), u), 0);
-    let v = top_n(v, |&(_, (n, _))| std::cmp::Reverse(n), 100);
-    rows(v.iter().map(|&(u, (n, (up, down)))| {
+    let n = db.user.group_by(Ident::<User>::new()).select(&answers).count_distinct();
+    let v = top_n(drain((&votes).and((&n).opt())), |&(u, (_, n))| (std::cmp::Reverse(n.unwrap_or(0)), u), 0);
+    let v = top_n(v, |&(_, (_, n))| std::cmp::Reverse(n.unwrap_or(0)), 100);
+    rows(v.iter().map(|&(u, ((up, down), n))| {
+        let n = n.unwrap_or(0);
         let mut f = ucols(db, u, &["uid", "name"]);
         f.extend([V::I(n), V::I(up), V::I(down)]);
         row(f)
@@ -416,21 +412,20 @@ fn q11134(db: &'static So) -> String {
     let rp: MatSet<Id<Post>> = rel(top_n(drain(owned(db).select(&db.post.creation_date)), |&(_, d)| std::cmp::Reverse(d), 10)).map(|(p, _)| p).collect();
     let author = (&db.post.owner_user).select(&db.user.display_name);
     let by_author: HashIdx<Str, Id<Post>> = db.post.with(&rp).select(&author).inv().collect();
-    let names: MatSet<Str> = (&tu).map(|(u, _)| db.user.display_name.get(u).unwrap()).collect();
+    let names: MatSet<Str> = (&tu).map(|(u, _)| u).select(&db.user.display_name).collect();
     let recent = |p: Id<Post>| {
         let mut f = post_fields(db, p, &["id", "title", "created"]);
         f.push(post_fields(db, p, &["owner"]).remove(0));
         f
     };
+    type R = (Option<(Id<User>, i64)>, Option<Id<Post>>);
+    let top_users = (&tu).map(|(u, _)| u).inv().map(|_| ()).inv();
+    let left = top_users.select(Ident::<User>::new().and(&per).and((&db.user.display_name).select((&by_author).opt()))).map(|(u, p)| -> R { (Some(u), p) });
+    let right = whole(db.post.with(&rp).minus((&author).with(&names))).map(|p| -> R { (None, Some(p)) });
     let mut out = Vec::new();
-    (&tu).map(|(u, _)| u).select(Ident::<User>::new().and(&per).and((&db.user.display_name).select((&by_author).opt()))).drive(|_, ((u, n), p)| {
-        let mut f = vec![user_col(db, u, "name"), V::I(n)];
+    left.union(right).drive(|_, (u, p): R| {
+        let mut f = u.map_or(vec![V::Null, V::Null], |(u, n)| vec![user_col(db, u, "name"), V::I(n)]);
         f.extend(p.map_or_else(|| (0..4).map(|_| V::Null).collect(), recent));
-        out.push(row(f))
-    });
-    db.post.with(&rp).minus((&author).with(&names)).drive(|p, _| {
-        let mut f = vec![V::Null, V::Null];
-        f.extend(recent(p));
         out.push(row(f))
     });
     rows(out)
@@ -502,9 +497,6 @@ fn q14810(db: &'static So) -> String {
 //        US.TotalViews AS UserTotalViews
 // FROM PostStatistics PS LEFT JOIN UserStatistics US ON US.TotalPosts > 0
 // ORDER BY PS.TotalPosts DESC, US.TotalPosts DESC;
-//
-// The LEFT JOIN's condition does not mention PS, so every PS row matches
-// every qualifying US row, or none does and it keeps one NULL row.
 fn q13038(db: &'static So) -> String {
     let ps = stats_by_type(db);
     let us = db
@@ -512,9 +504,9 @@ fn q13038(db: &'static So) -> String {
         .group_by(&db.user.display_name)
         .select((&db.user.reputation).and(posts_of(db).select((&db.post.view_count).opt()).opt()))
         .fold([0i64; 5], |a, (r, p)| [a[0] + 1, a[1] + p.is_some() as i64, a[2] + r, a[3] + p.flatten().is_some() as i64, a[4] + p.flatten().unwrap_or(0)]);
-    let us = left_all(drain((&us).filt(|a| a[1] > 0)));
+    let us: HashIdx<(), (Str, [i64; 5])> = (&us).filt(|a| a[1] > 0).map(|_| ()).inv().select(Same::<Str>::new().and(&us)).collect();
     let mut out = Vec::new();
-    (&ps).cross(&us).drive(|(t, _), (a, u)| {
+    (&ps).and((&ps).map(|_| ()).select(&us).opt()).drive(|t, (a, u)| {
         let mut f = vec![V::S(t), V::I(a[0]), avg(a[1], a[0]), nullable(a[3], a[2]), nullable(a[5], a[4]), V::I(a[6]), nullable(a[8], a[7])];
         f.extend(match u {
             Some((name, u)) => [V::S(name), V::I(u[1]), avg(u[2], u[0]), nullable(u[4], u[3])],
@@ -603,8 +595,11 @@ fn q11510(db: &'static So) -> String {
 fn q11488(db: &'static So) -> String {
     let pts = owned(db).group_by(ptype_name(db)).select((&db.post.owner_user).select(&db.user.reputation)).fold((0i64, 0i64), |(n, s), r| (n + 1, s + r));
     let phs = db.post_history.group_by(htype_name(db)).fold(0i64, |n, _| n + 1);
+    let phs: HashIdx<(), (Str, i64)> = (&phs).map(|_| ()).inv().select(Same::<Str>::new().and(&phs)).collect();
     let mut out = Vec::new();
-    (&pts).cross(&phs).drive(|(t, h), ((n, s), hn)| out.push(row(vec![V::S(t), V::I(n), avg(s, n), V::S(h), V::I(hn)])));
+    (&pts).and((&pts).map(|_| ()).select(&phs).opt()).drive(|t, ((n, s), h)| {
+        out.push(row(vec![V::S(t), V::I(n), avg(s, n), h.map_or(V::Null, |h| V::S(h.0)), h.map_or(V::Null, |h| V::I(h.1))]))
+    });
     rows(out)
 }
 
@@ -641,9 +636,11 @@ fn q14547(db: &'static So) -> String {
     let ps = stats_by_type(db);
     let per = db.user.group_by(Ident::<User>::new()).select(posts_of(db).opt()).fold(0i64, |n, p| n + p.is_some() as i64);
     let au = rel(top_n(drain(&per), |&(_, n)| std::cmp::Reverse(n), 10));
+    let au: HashIdx<(), (Id<User>, i64)> = (&au).map(|_| ()).inv().select(&au).collect();
     let mut out = Vec::new();
-    (&ps).cross(&au).drive(|(t, _), (a, (u, n))| {
-        out.push(row(vec![V::S(t), V::I(a[0]), avg(a[1], a[0]), avg(a[3], a[2]), avg(a[5], a[0]), user_col(db, u, "name"), V::I(n)]))
+    (&ps).and((&ps).map(|_| ()).select(&au).opt()).drive(|t, (a, x)| {
+        let (name, n) = x.map_or((V::Null, V::Null), |(u, n)| (user_col(db, u, "name"), V::I(n)));
+        out.push(row(vec![V::S(t), V::I(a[0]), avg(a[1], a[0]), avg(a[3], a[2]), avg(a[5], a[0]), name, n]))
     });
     rows(out)
 }
@@ -783,9 +780,10 @@ fn q13467(db: &'static So) -> String {
     let bc = count(&db.badge.id);
     let vc = db.vote.with((&db.vote.vote_type_id).is_in([1, 2, 3, 4, 5])).group_by(&db.vote.vote_type_id).fold(0i64, |n, _| n + 1);
     let cc = db.comment.group_by(&db.comment.post_id).fold(0i64, |n, _| n + 1);
+    let vc: HashIdx<(), (i64, i64)> = (&vc).map(|_| ()).inv().select(Same::<i64>::new().and(&vc)).collect();
     let mut out = Vec::new();
-    (&pc).and((&cc).opt()).cross(&vc).drive(|(t, _), ((n, c), v)| {
-        out.push(row(vec![V::I(t), V::I(n), V::I(uc), V::I(bc), V::I(v), V::I(c.unwrap_or(0))]))
+    (&pc).and((&cc).opt()).and((&pc).map(|_| ()).select(&vc).opt()).drive(|t, ((n, c), v)| {
+        out.push(row(vec![V::I(t), V::I(n), V::I(uc), V::I(bc), V::I(v.map_or(0, |v| v.1)), V::I(c.unwrap_or(0))]))
     });
     rows(out)
 }
@@ -849,11 +847,17 @@ fn q11681(db: &'static So) -> String {
             let v = v.flatten();
             (b + x.is_some() as i64, bn + v.is_some() as i64, bs + v.unwrap_or(0))
         });
+    let us: HashIdx<(), (Id<User>, (i64, i64, i64))> = (&us).map(|_| ()).inv().select(Ident::<User>::new().and(&us)).collect();
     let mut out = Vec::new();
-    (&ps).cross(&us).drive(|(t, u), (a, (b, bn, bs))| {
+    (&ps).and((&ps).map(|_| ()).select(&us).opt()).drive(|t, (a, x)| {
         let mut f = vec![V::S(t), V::I(a[0]), avg(a[1], a[0]), nullable(a[3], a[2]), nullable(a[5], a[4]), nullable(a[8], a[7])];
-        f.extend(ucols(db, u, &["uid", "name"]));
-        f.extend([V::I(b), nullable(bs, bn)]);
+        match x {
+            Some((u, (b, bn, bs))) => {
+                f.extend(ucols(db, u, &["uid", "name"]));
+                f.extend([V::I(b), nullable(bs, bn)]);
+            }
+            None => f.extend((0..4).map(|_| V::Null)),
+        }
         out.push(row(f))
     });
     rows(out)
@@ -902,6 +906,18 @@ fn type_left_posts(db: &'static So) -> Fold<Id<PostType>, [i64; 4]> {
         })
 }
 
+/// `type_left_posts` grouped by the type's name.
+fn type_left_posts_by_name(db: &'static So) -> Fold<Str, [i64; 4]> {
+    let of_type: HashIdx<Id<PostType>, Id<Post>> = (&db.post.post_type).inv().collect();
+    db.post_type
+        .group_by(&db.post_type.name)
+        .select(of_type.select((&db.post.score).and((&db.post.view_count).opt())).opt())
+        .fold([0i64; 4], |a, p| match p {
+            Some((s, v)) => [a[0] + 1, a[1] + s, a[2] + v.is_some() as i64, a[3] + v.unwrap_or(0)],
+            None => a,
+        })
+}
+
 // WITH PostStats AS (
 //     SELECT u.Id AS UserId, u.DisplayName, COUNT(p.Id) AS PostCount,
 //            SUM(CASE WHEN v.VoteTypeId = 2 THEN 1 ELSE 0 END) AS UpvoteCount,
@@ -924,11 +940,11 @@ fn q13115(db: &'static So) -> String {
             Some((v, c)) => [a[0] + 1, a[1] + (v == Some(2)) as i64, a[2] + (v == Some(3)) as i64, a[3] + c.is_some() as i64],
             None => a,
         });
-    let pts = type_left_posts(db);
+    let pts = type_left_posts_by_name(db);
     let mut out = Vec::new();
     (&ps).filt(|a| a[0] > 0).cross(&pts).drive(|(u, t), (a, b)| {
         let mut f = ucols(db, u, &["uid", "name"]);
-        f.extend([V::I(a[0]), V::I(a[1]), V::I(a[2]), V::I(a[3]), V::S(db.post_type.name.get(t).unwrap()), V::I(b[0])]);
+        f.extend([V::I(a[0]), V::I(a[1]), V::I(a[2]), V::I(a[3]), V::S(t), V::I(b[0])]);
         out.push(row(f))
     });
     rows(out)
@@ -981,15 +997,15 @@ fn q14777(db: &'static So) -> String {
 //        u.TotalScore, u.LatestPostDate, pt.PostType, pt.PostCount
 // FROM UserPostStats u LEFT JOIN PostTypesCount pt ON pt.PostCount > 0
 // ORDER BY u.TotalScore DESC, u.TotalPosts DESC, u.DisplayName;
-//
-// Some type has posts, so the LEFT JOIN never falls back to its NULL row.
 fn q13234(db: &'static So) -> String {
     let ups = user_posts(db);
     let pt = type_left_posts(db);
+    let pt: HashIdx<(), (Id<PostType>, [i64; 4])> = (&pt).filt(|b| b[0] > 0).map(|_| ()).inv().select(Ident::<PostType>::new().and(&pt)).collect();
     let mut out = Vec::new();
-    (&ups).cross((&pt).filt(|b| b[0] > 0)).drive(|(u, t), (a, b)| {
+    (&ups).and((&ups).map(|_| ()).select(&pt).opt()).drive(|u, (a, x)| {
         let mut f = ucols(db, u, &["uid", "name"]);
-        f.extend([V::I(a[1]), V::I(a[2]), V::I(a[3]), nullable(a[6], a[5]), nullable(a[4], a[1]), tmax(a[7]), V::S(db.post_type.name.get(t).unwrap()), V::I(b[0])]);
+        f.extend([V::I(a[1]), V::I(a[2]), V::I(a[3]), nullable(a[6], a[5]), nullable(a[4], a[1]), tmax(a[7])]);
+        f.extend(x.map_or([V::Null, V::Null], |(t, b)| [V::S(db.post_type.name.get(t).unwrap()), V::I(b[0])]));
         out.push(row(f))
     });
     rows(out)
@@ -1150,7 +1166,7 @@ fn q11336(db: &'static So) -> String {
 // ORDER BY ups.TotalPosts DESC, ptb.PostCount DESC;
 fn q11182(db: &'static So) -> String {
     let ups = user_posts(db);
-    let ptb = type_left_posts(db);
+    let ptb = type_left_posts_by_name(db);
     let mut out = Vec::new();
     (&ups).filt(|a| a[1] > 0).cross(&ptb).drive(|(u, t), (a, b)| {
         out.push(row(vec![
@@ -1160,7 +1176,7 @@ fn q11182(db: &'static So) -> String {
             V::I(a[3]),
             nullable(a[4], a[1]),
             avg(a[9], a[0]),
-            V::S(db.post_type.name.get(t).unwrap()),
+            V::S(t),
             V::I(b[0]),
             nullable(b[3], b[2]),
             avg(b[1], b[0]),

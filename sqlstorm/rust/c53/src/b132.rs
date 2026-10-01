@@ -1296,8 +1296,10 @@ fn q318(db: &'static So) -> String {
     let bu = badges_per_user(db);
     let ps = pstat(db, db.post.iq());
     let mut v = Vec::new();
-    db.user.select(Ident::<User>::new().and(&bu).and((&ps).opt())).drive(|_, ((u, b), p)| v.push((u, b, p)));
-    let v: Vec<_> = drain(rel(v).filt(|(_, b, p)| b > 0 || p.map_or(0, |p| p[0]) > 0)).into_iter().map(|x| x.1).collect();
+    db.user
+        .select(Ident::<User>::new().and(&bu).and((&ps).opt()))
+        .filt(|((_, b), p): ((Id<User>, i64), Option<[i64; 13]>)| b > 0 || p.map_or(0, |p| p[0]) > 0)
+        .drive(|_, ((u, b), p)| v.push((u, b, p)));
     out(v, |&(_, b, p)| (Reverse(b), Reverse(p.map_or(0, |p| p[0]))), 100, |&(u, b, p)| {
         let q = p.unwrap_or(Z);
         vec![
@@ -2393,8 +2395,7 @@ fn q3273(db: &'static So) -> String {
     let ub = ubc(db);
     let ps = pstat(db, db.post.iq());
     let mut v = Vec::new();
-    (&ub).and((&ps).opt()).drive(|u, (b, p)| v.push((u, b, p)));
-    let v: Vec<_> = drain(rel(v).filt(|(_, b, p)| p.map_or(0, |p| p[0]) > 0 || b[1] > 0)).into_iter().map(|x| x.1).collect();
+    (&ub).and((&ps).opt()).filt(|(b, p): ([i64; 4], Option<[i64; 13]>)| p.map_or(0, |p| p[0]) > 0 || b[1] > 0).drive(|u, (b, p)| v.push((u, b, p)));
     out(v, |&(u, _, _)| rep_desc(db, u), 10, |&(u, b, p)| {
         let r = db.user.reputation.get(u).unwrap();
         let q = p.unwrap_or(Z);
@@ -2686,8 +2687,11 @@ fn q919(db: &'static So) -> String {
         .map(|(((u, _), _), _)| u)
         .collect();
     let mut v = Vec::new();
-    (&top).select(Ident::<User>::new().and(&bu).and((&ps).opt())).drive(|_, x| v.push(x));
-    rows(drain(rel(v).filt(|((_, b), p)| p.map_or(0, |p| p[1]) > 10 && (p.map_or(0, |p| p[2]) > 5 || b > 5))).into_iter().map(|(_, ((u, b), p))| {
+    (&top)
+        .select(Ident::<User>::new().and(&bu).and((&ps).opt()))
+        .filt(|((_, b), p): ((Id<User>, i64), Option<[i64; 13]>)| p.map_or(0, |p| p[1]) > 10 && (p.map_or(0, |p| p[2]) > 5 || b > 5))
+        .drive(|_, x| v.push(x));
+    rows(v.into_iter().map(|((u, b), p)| {
         let q = p.unwrap_or(Z);
         row(vec![user_col(db, u, "uid"), user_col(db, u, "name"), V::I(b), V::I(q[1]), V::I(q[2]), V::I(q[5]), p.map_or(V::F(0.0), pscore_avg), V::F(perf(b, p))])
     }))
@@ -2860,8 +2864,7 @@ fn q3691(db: &'static So) -> String {
     let t = (&grp).fold_flat([0i64; 2], |a, g: [i64; 2]| if g[0] > 0 { [a[0] + 1, a[1] + g[1]] } else { a });
     let avgv = t[1] as f64 / t[0] as f64;
     let mut v = Vec::new();
-    (&ub).and((&ps).opt()).drive(|u, (b, p)| v.push((u, b, p)));
-    let v: Vec<_> = drain(rel(v).filt(|(_, _, p)| p.map_or(false, |p| (p[1] > 0 || p[2] > 0) && p[5] as f64 > avgv))).into_iter().map(|x| x.1).collect();
+    (&ub).and((&ps).filt(move |p: [i64; 13]| (p[1] > 0 || p[2] > 0) && p[5] as f64 > avgv)).drive(|u, (b, p)| v.push((u, b, Some(p))));
     out(v, |&(_, _, p)| Reverse(p.map_or(0, |p| p[5])), 10, |&(u, b, p)| {
         let q = p.unwrap_or(Z);
         let mut f = vec![user_col(db, u, "uid"), user_col(db, u, "name"), V::I(q[1]), V::I(q[2]), V::I(q[5]), if q[4] > 0 { pviews_avg(q) } else { V::F(0.0) }];
@@ -3504,8 +3507,7 @@ fn q34003(db: &'static So) -> String {
     let ub = ubc(db);
     let ps = pstat(db, db.post.iq());
     let mut v = Vec::new();
-    (&ub).and((&ps).opt()).drive(|u, (b, p)| v.push((u, b, p)));
-    let v: Vec<_> = drain(rel(v).filt(|(_, b, p)| p.map_or(0, |p| p[0]) > 0 || b[1] > 0 || b[2] > 0 || b[3] > 0)).into_iter().map(|x| x.1).collect();
+    (&ub).and((&ps).opt()).filt(|(b, p): ([i64; 4], Option<[i64; 13]>)| p.map_or(0, |p| p[0]) > 0 || b[1] > 0 || b[2] > 0 || b[3] > 0).drive(|u, (b, p)| v.push((u, b, p)));
     let av = |p: Option<[i64; 13]>| p.map_or(0.0, |p| p[3] as f64 / p[0] as f64);
     out(v, |&(_, _, p)| (Reverse(p.map_or(0, |p| p[0])), Reverse(fkey(av(p)))), 50, |&(u, b, p)| {
         let q = p.unwrap_or(Z);

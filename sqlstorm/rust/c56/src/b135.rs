@@ -391,6 +391,21 @@ fn pcc(db: &'static So) -> Fold<Id<User>, [i64; 3]> {
     owned(db).group_by(&db.post.owner_user).select(comment_count.and(answer_count.opt())).fold([0i64; 3], |a, (c, an)| [a[0] + c, a[1] + an.is_some() as i64, a[2] + an.unwrap_or(0)])
 }
 
+fn badges_by_uid(db: &'static So) -> HashIdx<i64, Id<Badge>> {
+    (&db.badge.user_id).inv().collect()
+}
+
+/// Per post over `Posts LEFT JOIN Comments LEFT JOIN Votes LEFT JOIN Badges ON
+/// p.OwnerUserId = b.UserId` (the product, badges on the raw id): [comment rows,
+/// vote rows, up rows, down rows, gold rows, silver rows, bronze rows].
+fn cvb_raw<Q: Drive<D = Id<Post>, R = Id<Post>>>(db: &'static So, base: Q, bu: &HashIdx<i64, Id<Badge>>) -> Fold<Id<Post>, [i64; 7]> {
+    base.group_by(Ident::<Post>::new())
+        .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()).and((&db.post.owner_user_id).select(bu.select(&db.badge.class)).opt()))
+        .fold([0i64; 7], |a, ((c, t), b)| {
+            [a[0] + c.is_some() as i64, a[1] + t.is_some() as i64, a[2] + (t == Some(2)) as i64, a[3] + (t == Some(3)) as i64, a[4] + (b == Some(1)) as i64, a[5] + (b == Some(2)) as i64, a[6] + (b == Some(3)) as i64]
+        })
+}
+
 fn vid_sum(db: &'static So) -> Fold<Id<Post>, (i64, i64)> {
     db.vote.group_by(&db.vote.post).select(&db.vote.origid).fold((0i64, 0i64), |(n, s), i| (n + 1, s + i))
 }
@@ -730,16 +745,24 @@ fn q8324(db: &'static So) -> String {
 // pt.Name;
 fn q10285(db: &'static So) -> String {
     let base = || db.post.with((&db.post.creation_date).gt(year_ago()));
-    let sf = stats_fold(db, base(), Ident::<Post>::new(), "cvb", &[]);
-    let bu = badges_per_user(db);
-    let tf = base().group_by(&db.post.post_type).select((&sf).and((&db.post.owner_user).select(&bu).opt())).fold([0i64; 6], |a, (s, b)| {
-        [a[0] + 1, a[1] + s.cx, a[2] + s.vx, a[3] + s.up, a[4] + s.down, a[5] + b.unwrap_or(0)]
+    let bu = badges_by_uid(db);
+    let sf = cvb_raw(db, base(), &bu);
+    let nb = base().group_by(Ident::<Post>::new()).select((&db.post.owner_user_id).select(&bu)).fold(0i64, |n, _| n + 1);
+    let tf = base().group_by(&db.post.post_type).select((&sf).and((&nb).opt())).fold([0i64; 6], |a, (s, b)| {
+        [a[0] + 1, a[1] + s[0], a[2] + s[1], a[3] + s[2], a[4] + s[3], a[5] + b.unwrap_or(0)]
+    });
+    let tn = db.post_type.with(&tf).group_by(&db.post_type.name).select(&tf).fold(([0f64; 5], 0i64), |(m, n), a: [i64; 6]| {
+        let mut m = m;
+        for i in 0..5 {
+            m[i] += a[i + 1] as f64 / a[0] as f64;
+        }
+        (m, n + 1)
     });
     let mut v = Vec::new();
-    (&tf).drive(|t, a| v.push((t, a)));
-    rows(v.iter().map(|&(t, a)| {
-        let mut f = vec![V::S(db.post_type.name.get(t).unwrap())];
-        f.extend((1..6).map(|i| avg(a[i], a[0])));
+    (&tn).drive(|t, a| v.push((t, a)));
+    rows(v.iter().map(|&(t, (m, n))| {
+        let mut f = vec![V::S(t)];
+        f.extend(m.iter().map(|&x| V::F(x / n as f64)));
         row(f)
     }))
 }
@@ -1150,8 +1173,9 @@ fn q12677(db: &'static So) -> String {
 // PostVotes pv ON pa.PostId = pv.PostId
 // ORDER BY
 // pa.Score DESC,
-// pa.ViewCount DESC
+// pa.ViewCount DESC, pa.PostId
 // LIMIT 100;
+// (rewrites/13658.sql: PostId tiebreak added)
 fn q13658(db: &'static So) -> String {
     let bu = badges_per_user(db);
     let pv = post_votes(db);
@@ -1282,10 +1306,10 @@ fn q13478(db: &'static So) -> String {
             Some(((t, s), i)) => [a[0] + (t == 1) as i64, a[1] + (t == 2) as i64, a[2] + if t == 1 { s } else { 0 }, a[3] + if t == 2 { s } else { 0 }, a[4] + i.unwrap_or(0)],
             None => a,
         });
-    let np = user_distinct_posts(db);
+    let np = ud(db, UserWhere::All, posts_of(db));
     let bc = badge_classes(db);
     let mut v = Vec::new();
-    (&uf).and(&np).and((&bc).opt()).drive(|u, ((a, n), b)| v.push((u, [n, a[0], a[1], a[2], a[3], a[4]], b)));
+    (&uf).and((&np).opt()).and((&bc).opt()).drive(|u, ((a, n), b)| v.push((u, [n.unwrap_or(0), a[0], a[1], a[2], a[3], a[4]], b)));
     out(v, |&(_, p, _)| (Reverse(p[5]), Reverse(p[0])), 100, |&(u, p, b)| {
         let mut f = vec![user_col(db, u, "uid"), user_col(db, u, "name")];
         f.extend(ints(&p));
@@ -2299,10 +2323,11 @@ fn q5191(db: &'static So) -> String {
 fn q13747(db: &'static So) -> String {
     let hf = history_n_max(db);
     let mut v = Vec::new();
-    stats_fold(db, db.post.iq(), Ident::<Post>::new(), "cvb", &[]).and(votes_per_post(db)).and((&hf).opt()).drive(|p, ((s, x), h)| v.push((p, s, x, h)));
+    let bu = badges_by_uid(db);
+    cvb_raw(db, db.post.iq(), &bu).and(votes_per_post(db)).and((&hf).opt()).drive(|p, ((s, x), h)| v.push((p, s, x, h)));
     out(v, |&(p, ..)| Reverse(db.post.creation_date.get(p).unwrap()), 100, |&(p, s, x, h)| {
         let mut f = post_fields(db, p, &["id", "title", "created"]);
-        f.extend(ints(&[s.cx, x, s.up, s.down, s.bcls[1], s.bcls[2], s.bcls[3], h.map_or(0, |h| h.0)]));
+        f.extend(ints(&[s[0], x, s[2], s[3], s[4], s[5], s[6], h.map_or(0, |h| h.0)]));
         f.push(ots(h.map(|h| h.1)));
         f
     })
@@ -2584,12 +2609,12 @@ fn q14282(db: &'static So) -> String {
             let s = p.map(|(s, _)| s);
             [a[0] + (s.map_or(false, |s| s > 0)) as i64, a[1] + (s.map_or(false, |s| s < 0)) as i64, a[2] + b.is_some() as i64]
         });
-    let np = user_distinct_posts(db);
+    let np = ud(db, UserWhere::All, posts_of(db));
     let nc = db.user.group_by(Ident::<User>::new()).select(posts_of(db).select(comments_of(db)).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
     let mut v = Vec::new();
     db.post
-        .select(Ident::<Post>::new().and(&cp).and(votes_per_post(db)).and((&db.post.origid).select(&uid).select(Ident::<User>::new().and(&uf).and(&np).and(&nc))))
-        .drive(|_, (((p, c), x), (((u, a), n), k))| v.push((p, c, x, u, [n, a[0], a[1], a[2], k])));
+        .select(Ident::<Post>::new().and(&cp).and(votes_per_post(db)).and((&db.post.origid).select(&uid).select(Ident::<User>::new().and(&uf).and((&np).opt()).and(&nc))))
+        .drive(|_, (((p, c), x), (((u, a), n), k))| v.push((p, c, x, u, [n.unwrap_or(0), a[0], a[1], a[2], k])));
     out(v, |&(.., a)| Reverse(a[3]), 100, |&(p, c, x, u, a)| {
         let mut f = vec![user_col(db, u, "uid"), user_col(db, u, "name")];
         f.extend(ints(&a));
@@ -2986,12 +3011,12 @@ fn q14629(db: &'static So) -> String {
 // ORDER BY
 // ad.TagCount;
 fn q28876(db: &'static So) -> String {
-    let bu = badges_per_user(db);
+    let bu = db.badge.group_by(&db.badge.user_id).fold(0i64, |n, _| n + 1);
     let cp = comments_per_post(db);
     let Post { body, title, .. } = &db.post;
     let tf = db.post
         .group_by((&db.post.tags_str).map(tag_n).opt())
-        .select(body.and(title.opt()).and(&cp).and((&db.post.owner_user).select(&bu).opt()))
+        .select(body.and(title.opt()).and(&cp).and((&db.post.owner_user_id).select(&bu).opt()))
         .fold([0i64; 6], |a, (((b, t), c), n)| {
             [a[0] + 1, a[1] + chars(b), a[2] + t.is_some() as i64, a[3] + t.map_or(0, chars), a[4] + c, a[5] + n.unwrap_or(0)]
         });
@@ -3701,11 +3726,11 @@ fn q152(db: &'static So) -> String {
     let mut v = Vec::new();
     db.post
         .with((&db.post.creation_date).filt(move |d: i64| d >= lo && d < hi))
-        .select(Ident::<Post>::new().and((&db.post.tags_str).map(tag_n).opt()).and(ta.opt()).and(owner.opt()).and((&ht).opt()))
-        .filt(|((((p, t), a), _), _): ((((Id<Post>, Option<i64>), Option<i64>), Option<Str>), Option<[i64; 4]>)| {
-            (t.map_or(false, |t| t > 3) || db.post.view_count.get(p).map_or(false, |w| w > 100)) && (a.is_some() || db.post.score.get(p).unwrap() > 10)
+        .select(Ident::<Post>::new().and((&db.post.tags_str).map(tag_n).opt()).and(ta.opt()).and(owner.opt()).and((&ht).opt()).and((&db.post.view_count).opt()).and(&db.post.score))
+        .filt(|((((((_, t), a), _), _), w), s): ((((((Id<Post>, Option<i64>), Option<i64>), Option<Str>), Option<[i64; 4]>), Option<i64>), i64)| {
+            (t.map_or(false, |t| t > 3) || w.map_or(false, |w| w > 100)) && (a.is_some() || s > 10)
         })
-        .drive(|_, x| v.push(x));
+        .drive(|_, (x, _)| v.push(x.0));
     out(v, |&((((p, _), _), _), _)| score_views(db, p), 100, |&((((p, t), a), o), h)| {
         let mut f = post_fields(db, p, &["title"]);
         f.push(ostr(o));
@@ -3792,7 +3817,7 @@ fn q11772(db: &'static So) -> String {
 // COUNT(p.Id) AS PostCount,
 // SUM(COALESCE(p.Score, 0)) AS TotalScore,
 // SUM(COALESCE(p.ViewCount, 0)) AS TotalViews,
-// AVG(EXTRACT(EPOCH FROM (cast('2024-10-01 12:34:56' as timestamp) - p.CreationDate)) / 60) AS AvgPostAgeInMinutes
+// SUM(epoch_us(cast('2024-10-01 12:34:56' as timestamp)) - epoch_us(p.CreationDate))::DOUBLE / COUNT(p.CreationDate) / 1e6 / 60 AS AvgPostAgeInMinutes
 // FROM
 // Posts p
 // GROUP BY
@@ -3832,6 +3857,7 @@ fn q11772(db: &'static So) -> String {
 // Benchmark
 // ORDER BY
 // Reputation DESC, PostCount DESC;
+// (rewrites/14369.sql: exact AVG of the epoch)
 fn q14369(db: &'static So) -> String {
     let t0 = ts(2024, 10, 1, 12, 34, 56);
     let bv = user_bv(db);
@@ -4006,7 +4032,7 @@ fn q13888(db: &'static So) -> String {
 // SUM(CASE WHEN p.PostTypeId = 2 THEN 1 ELSE 0 END) AS TotalAnswers,
 // SUM(p.ViewCount) AS TotalViews,
 // SUM(p.Score) AS TotalScore,
-// AVG(COALESCE(EXTRACT(EPOCH FROM (p.LastActivityDate - p.CreationDate)), 0)) AS AvgPostLifetimeInSeconds
+// COALESCE(SUM(epoch_us(p.LastActivityDate) - epoch_us(p.CreationDate))::DOUBLE / COUNT(p.Id) / 1e6, 0) AS AvgPostLifetimeInSeconds
 // FROM
 // Users u
 // LEFT JOIN
@@ -4045,6 +4071,7 @@ fn q13888(db: &'static So) -> String {
 // BadgeStatistics b ON u.UserId = b.UserId
 // ORDER BY
 // u.TotalPosts DESC;
+// (rewrites/14795.sql: exact AVG of the epoch)
 fn q14795(db: &'static So) -> String {
     let Post { post_type_id, score, view_count, creation_date, last_activity_date, .. } = &db.post;
     let pf = owned(db).group_by(&db.post.owner_user).select(post_type_id.and(score).and(view_count.opt()).and(creation_date).and(last_activity_date)).fold(([0i64; 6], 0i128), |(a, e), ((((t, s), w), c), l)| {

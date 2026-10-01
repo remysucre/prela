@@ -1602,12 +1602,19 @@ fn q14990(db: &'static So) -> String {
 // CreationDate DESC
 // LIMIT 100;
 fn q14992(db: &'static So) -> String {
-    let b = per_post_distinct(db, (&db.post.owner_user).select(badges_of(db)));
+    let owner_user_id = &db.post.owner_user_id;
+    let by_uid: HashIdx<i64, Id<Badge>> = (&db.badge.user_id).inv().collect();
+    let base = || since(db, date(2023, 1, 1));
+    let cf = base()
+        .group_by(Ident::<Post>::new())
+        .select(comments_of(db).opt().and(votes_of(db).opt()).and(owner_user_id.select(&by_uid).opt()))
+        .fold(0i64, |a, ((c, _), _)| a + c.is_some() as i64);
+    let bd = base().group_by(Ident::<Post>::new()).select(owner_user_id.select(&by_uid)).count_distinct();
     let mut v = Vec::new();
-    stats_fold(db, since(db, date(2023, 1, 1)), Ident::<Post>::new(), "cvb", &[]).and(votes_per_post(db)).and((&b).opt()).drive(|p, ((s, x), b)| v.push((p, s, x, b.unwrap_or(0))));
-    out(v, |&(p, ..)| newest(db, p), 100, |&(p, s, x, b)| {
+    (&cf).and(votes_per_post(db)).and((&bd).opt()).drive(|p, ((c, x), b)| v.push((p, c, x, b.unwrap_or(0))));
+    out(v, |&(p, ..)| newest(db, p), 100, |&(p, c, x, b)| {
         let mut f = post_fields(db, p, &["id", "title", "created", "score", "views"]);
-        f.extend([V::I(s.cx), V::I(x), V::I(b)]);
+        f.extend([V::I(c), V::I(x), V::I(b)]);
         f.push(V::S(db.post.accepted_answer.get(p).and_then(|a| db.post.title.get(a)).unwrap_or("No Accepted Answer")));
         f
     })
@@ -2289,8 +2296,9 @@ fn q25433(db: &'static So) -> String {
     let t = questions_only(db).select(title).fold_flat([0, 0, i64::MAX, i64::MIN], lens);
     let b = db.post.with(post_type_id.in_v(vec![1, 2])).select(body).fold_flat([0, 0, i64::MAX, i64::MIN], lens);
     let dt = one(whole(questions_only(db)).select(tags_str).count_distinct());
-    let tc = questions_only(db).select(tags_str).fold_flat(0.0f64, move |a, s| a + (len(s) as f64 - len(Box::leak(s.replace('<', "").into_boxed_str())) as f64 / 1.0));
-    row(vec![avg(t[1], t[0]), V::I(t[2]), V::I(t[3]), avg(b[1], b[0]), V::I(b[2]), V::I(b[3]), V::I(dt), V::F(tc)])
+    let tc = questions_only(db).select(tags_str).fold_flat((0i64, 0.0f64), move |(n, a), s| (n + 1, a + (len(s) as f64 - s.replace('<', "").chars().count() as f64 / 1.0)));
+    let tsum = if tc.0 == 0 { V::Null } else { V::F(tc.1) };
+    row(vec![avg(t[1], t[0]), omax(t[2], t[0]), omax(t[3], t[0]), avg(b[1], b[0]), omax(b[2], b[0]), omax(b[3], b[0]), V::I(dt), tsum])
 }
 
 // WITH UserReputation AS (

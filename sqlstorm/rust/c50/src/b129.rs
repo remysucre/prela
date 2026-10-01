@@ -447,8 +447,10 @@ fn q5572(db: &'static So) -> String {
     let bu = badges_per_user(db);
     let ps = owned(db).group_by(&db.post.owner_user).select((&db.post.score).and(&db.post.post_type_id)).fold([0i64; 2], |a, (s, t)| [a[0] + s, a[1] + (t == 2) as i64]);
     let mut v = Vec::new();
-    db.user.select(Ident::<User>::new().and(&bu).and((&ps).opt())).drive(|_, ((u, b), p)| v.push((u, b, p.unwrap_or([0; 2]))));
-    let v: Vec<_> = drain(rel(v).filt(|(_, b, p)| b > 0 || p[0] > 0 || p[1] > 0)).into_iter().map(|x| x.1).collect();
+    db.user
+        .select(Ident::<User>::new().and(&bu).and((&ps).opt()))
+        .filt(|((_, b), p): ((Id<User>, i64), Option<[i64; 2]>)| b > 0 || p.map_or(false, |p| p[0] > 0 || p[1] > 0))
+        .drive(|_, ((u, b), p)| v.push((u, b, p.unwrap_or([0; 2]))));
     out(v, |&(_, b, p)| (Reverse(p[0]), Reverse(b), Reverse(p[1])), 10, |&(u, b, p)| vec![user_col(db, u, "uid"), user_col(db, u, "name"), V::I(b), V::I(p[0]), V::I(p[1])])
 }
 
@@ -3618,7 +3620,7 @@ fn q7139(db: &'static So) -> String {
     let ps = owned(db).group_by(&db.post.owner_user).select(post_type_id.and(view_count.opt()).and(score).and(comment_count)).fold([0i64; 7], |a, (((t, w), s), c)| {
         [a[0] + 1, a[1] + (t == 1) as i64, a[2] + (t == 2) as i64, a[3] + s, a[4] + w.is_some() as i64, a[5] + w.unwrap_or(0), a[6] + c]
     });
-    let bm = db.badge.group_by(&db.badge.user).select(&db.badge.class).fold([0i64; 2], |a, c| [a[0] + 1, a[1].max(c)]);
+    let bm = db.badge.group_by(&db.badge.user).select(&db.badge.class).fold([0, i64::MIN], |a: [i64; 2], c| [a[0] + 1, a[1].max(c)]);
     let avgs = |p: [i64; 7]| p[3] as f64 / p[0] as f64;
     let mut v = Vec::new();
     user_base(db, UserWhere::RepGt(1000)).select(Ident::<User>::new().and(&ps).and((&bm).opt())).drive(|_, x| v.push(x));

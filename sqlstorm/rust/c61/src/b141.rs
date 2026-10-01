@@ -228,10 +228,11 @@ fn q10056(db: &'static So) -> String {
         .inv()
         .select((&up).and(&down))
         .dense_fold_outer(db.user.id.n, (0i64, 0i64, 0i64), |(n, a, b), (u, d)| (n + 1, a + u, b + d));
-    let tpt = (&db.post.post_type)
-        .inv()
-        .select(&db.post.score)
-        .dense_fold_outer(db.post_type.id.n, (0i64, 0i64), |(n, s), sc| (n + 1, s + sc));
+    let of_type: HashIdx<Id<PostType>, Id<Post>> = (&db.post.post_type).inv().collect();
+    let tpt = db.post_type.group_by(&db.post_type.name).select((&of_type).select(&db.post.score).opt()).fold((0i64, 0i64), |(n, s), x| match x {
+        Some(sc) => (n + 1, s + sc),
+        None => (n, s),
+    });
     let cp = whole(db.post.with(&db.post.closed_date))
         .select(&db.post.score)
         .fold((0i64, 0i64), |(n, s), sc| (n + 1, s + sc));
@@ -244,7 +245,7 @@ fn q10056(db: &'static So) -> String {
             V::I(n),
             V::I(a),
             V::I(b),
-            V::S(db.post_type.name.get(t).unwrap()),
+            V::S(t),
             V::I(tn),
             nullable(ts, tn),
             V::I(cn),
@@ -328,15 +329,20 @@ fn q10384(db: &'static So) -> String {
     let ps = db
         .post
         .group_by(post_type_id)
-        .select(score.and((&bounty_votes).opt()).and(comments_of(db).opt()))
+        .select(score.and((&bounty_votes).select(bounty_amount.opt()).opt()).and(comments_of(db).opt()))
         .fold((0i64, 0i64, 0i64, 0i64, 0i64), |(n, pos, bn, bs, nc), ((sc, v), c)| {
-            let b = v.and_then(|v| bounty_amount.get(v));
+            let b = v.flatten();
             (n + 1, pos + (sc > 0) as i64, bn + b.is_some() as i64, bs + b.unwrap_or(0), nc + c.is_some() as i64)
         });
-    let (un, rs) = (&db.user.reputation).fold_flat((0i64, 0i64), |(n, s), r| (n + 1, s + r));
+    let us = db.user.group_by(Ident::<User>::new()).select((&db.user.reputation).and(badges_of(db).opt())).fold((0i64, 0i64), |(n, s), (r, _)| (n + 1, s + r));
+    let us: HashIdx<(), (Id<User>, (i64, i64))> = whole(&us).select(Ident::<User>::new().and(&us)).collect();
+    let agg = (&ps).filt(|(n, ..)| n > 0).map(|_| ()).select(&us).fold((0i64, 0i64), |(n, s), (_, (k, r))| (n + 1, s + r / k));
     let mut out = Vec::new();
-    (&ps).drive(|t, (n, pos, bn, bs, nc)| {
-        let (users, rep) = if n > 0 { (V::I(un), avg(rs, un)) } else { (V::I(0), V::Null) };
+    (&ps).and((&agg).opt()).drive(|t, ((n, pos, bn, bs, nc), u)| {
+        let (users, rep) = match u {
+            Some((un, s)) => (V::I(un), avg(s, un)),
+            None => (V::I(0), V::Null),
+        };
         out.push(row(vec![V::I(t), V::I(n), V::I(pos), avg(bs, bn), V::I(nc), users, rep]))
     });
     rows(out)
@@ -375,10 +381,8 @@ fn q10393(db: &'static So) -> String {
     let us = db
         .user
         .group_by(&db.user.display_name)
-        .select(badges_of(db).opt().and(comments_by(db).opt()))
-        .fold((0i64, 0i64), |(nb, a), (b, c)| {
-            (nb + b.is_some() as i64, a + c.is_some_and(|c| cd.get(c).unwrap() > year) as i64)
-        });
+        .select(badges_of(db).opt().and(comments_by(db).select(cd).opt()))
+        .fold((0i64, 0i64), |(nb, a), (b, c)| (nb + b.is_some() as i64, a + c.is_some_and(|c| c > year) as i64));
     let mut out = Vec::new();
     (&ps).cross((&us).filt(|(nb, _)| nb > 0)).drive(|(t, name), ((n, s, r, vn, vs), (nb, a))| {
         out.push(row(vec![V::S(t), V::I(n), avg(s, n), V::I(r), nullable(vs, vn), V::S(name), V::I(nb), V::I(a)]))

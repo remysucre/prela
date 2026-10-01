@@ -1573,14 +1573,14 @@ fn q2885(db: &'static So) -> String {
 fn q28879(db: &'static So) -> String {
     let tc = db.tag.group_by(&db.tag.tag_name).fold(0i64, |a, _| a + 1);
     let titles: MatSet<Str> = db.post.select(&db.post.title).collect();
-    let m: HashIdx<Str, Id<Tag>> = (&titles).select_where((&db.tag.tag_name).inv(), |t: Str, n: Str| t.contains(n)).collect();
+    let m: HashIdx<Str, i64> = (&titles).select_where((&tc).filt(|n: i64| n > 10), |t: Str, n: Str| t.contains(n)).collect();
     let linked = db.post_link.group_by(&db.post_link.post).select(&db.post_link.link_type_id).fold(0i64, |a, t| a + (t == 1) as i64);
     let bu = badges_per_user(db);
     let mut v = Vec::new();
     db.post
         .select(
             Ident::<Post>::new()
-                .and((&db.post.title).select(&m).select(&db.tag.tag_name).select((&tc).filt(|n: i64| n > 10)))
+                .and((&db.post.title).select(&m))
                 .and(comments_per_post(db))
                 .and((&linked).opt())
                 .and((&db.post.owner_user).select(&bu).opt()),
@@ -2317,11 +2317,11 @@ fn q31194(db: &'static So) -> String {
 // ORDER BY
 // F.ViewCount DESC;
 fn q31614(db: &'static So) -> String {
-    let maxv = db.post.select(&db.post.view_count).fold_flat(i64::MIN, |a, w| a.max(w));
+    let maxv = db.post.select(&db.post.view_count).fold_flat(None, |a: Option<i64>, w| Some(a.map_or(w, |a| a.max(w))));
     let bu = badges_per_user(db);
     let mut v = Vec::new();
     owned(db)
-        .with((&db.post.view_count).filt(move |w: i64| w as f64 > maxv as f64 * 0.5))
+        .with((&db.post.view_count).filt(move |w: i64| maxv.map_or(false, |m| w as f64 > m as f64 * 0.5)))
         .select(Ident::<Post>::new().and(comments_per_post(db).filt(|c: i64| c > 10)).and((&db.post.owner_user).select(&bu)))
         .drive(|_, x| v.push(x));
     rows(v.iter().map(|&((p, c), b)| {
@@ -2435,7 +2435,7 @@ fn q33104(db: &'static So) -> String {
         Some(s) => [a[0] + 1, a[1] + s],
         None => a,
     });
-    let ub = db.badge.group_by(&db.badge.user).select(&db.badge.class).fold([0i64; 2], |a, c| [a[0] + 1, a[1].max(c)]);
+    let ub = db.badge.group_by(&db.badge.user).select(&db.badge.class).fold([0, i64::MIN], |a: [i64; 2], c| [a[0] + 1, a[1].max(c)]);
     let base = user_base(db, UserWhere::RepGt(1000));
     let top: MatSet<Id<User>> = whole(&base).select(Ident::<User>::new().and(&db.user.reputation)).window(row_number, |(_, r)| r, desc).filt(|(_, n)| n <= 10).map(|((u, _), _)| u).collect();
     let v8 = votes_of(db).select(Ident::<Vote>::new().with((&db.vote.vote_type_id).eq(8))).select((&db.vote.bounty_amount).opt());
@@ -2443,16 +2443,19 @@ fn q33104(db: &'static So) -> String {
         let b = b.flatten();
         [a[0] + c.is_some() as i64, a[1] + b.is_some() as i64, a[2] + b.unwrap_or(0)]
     });
+    let tb = |p: [i64; 3]| if p[1] > 0 { p[2] } else { 0 };
     let mut v = Vec::new();
-    (&top).select(Ident::<User>::new().and(&upc).and((&ub).opt()).and((&ps).opt())).drive(|_, x| v.push(x));
-    rows(v.iter().filter_map(|&(((u, a), b), p)| {
+    (&top)
+        .select(Ident::<User>::new().and(&upc).and((&ub).opt()).and((&ps).opt()))
+        .filt(move |(_, p): (((Id<User>, [i64; 2]), Option<[i64; 2]>), Option<[i64; 3]>)| {
+            let p = p.unwrap_or([0; 3]);
+            tb(p) > 0 || p[0] > 10
+        })
+        .drive(|_, x| v.push(x));
+    rows(v.iter().map(|&(((u, a), b), p)| {
         let b = b.unwrap_or([0; 2]);
         let p = p.unwrap_or([0; 3]);
-        let tb = if p[1] > 0 { p[2] } else { 0 };
-        if !(tb > 0 || p[0] > 10) {
-            return None;
-        }
-        Some(row(vec![user_col(db, u, "uid"), user_col(db, u, "name"), user_col(db, u, "rep"), V::I(a[0]), V::I(a[1]), V::I(b[0]), V::I(b[1]), V::I(p[0]), V::I(tb)]))
+        row(vec![user_col(db, u, "uid"), user_col(db, u, "name"), user_col(db, u, "rep"), V::I(a[0]), V::I(a[1]), V::I(b[0]), V::I(b[1]), V::I(p[0]), V::I(tb(p))])
     }))
 }
 

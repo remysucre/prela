@@ -503,19 +503,21 @@ fn q9412(db: &'static So) -> String {
 // ORDER BY
 // pp.Score DESC, pp.ViewCount DESC;
 fn q9428(db: &'static So) -> String {
+    type PT = (Id<Post>, Id<Tag>);
     let y = year_ago();
     let tm = tag_mentions(db);
-    let recent = Same::<(Id<Post>, Id<Tag>)>::new().map(|(p, _)| p).select(&db.post.creation_date).ge(y);
-    let tc = (&tm).with(recent).group_by(Same::<(Id<Post>, Id<Tag>)>::new().map(|(_, t)| t)).fold(0i64, |a, _| a + 1);
-    let top: MatSet<Id<Tag>> = whole(&tc).select(Same::new().and(&tc)).window(row_number, |(_, n): (Id<Tag>, i64)| n, desc).filt(|(_, n)| n <= 10).map(|((t, _), _)| t).collect();
-    let tops = (&tm).with(Same::<(Id<Post>, Id<Tag>)>::new().map(|(_, t)| t).select(&top));
-    let rel: HashIdx<Id<Post>, (Id<Post>, Id<Tag>)> = tops.map(|(p, _)| p).inv().collect();
+    let tname = || Same::<PT>::new().map(|(_, t)| t).select(&db.tag.tag_name);
+    let recent = Same::<PT>::new().map(|(p, _)| p).select(&db.post.creation_date).ge(y);
+    let tc = (&tm).with(recent).group_by(tname()).fold(0i64, |a, _| a + 1);
+    let top: MatSet<Str> = whole(&tc).select(Same::<Str>::new().and(&tc)).window(row_number, |(_, n): (Str, i64)| n, desc).filt(|(_, n)| n <= 10).map(|((t, _), _)| t).collect();
+    let pn: MatSet<(Id<Post>, Str)> = (&tm).select(Same::<PT>::new().map(|(p, _)| p).and(tname().select(&top))).collect();
+    let rel: HashIdx<Id<Post>, (Id<Post>, Str)> = (&pn).map(|(p, _)| p).inv().collect();
     let pp = since(db, y).with(&db.post.owner_user).with((&db.post.post_type_id).in_v(vec![1, 2])).with(comments_per_post(db).filt(|c: i64| c > 5));
     let mut v = Vec::new();
     pp.select(Ident::<Post>::new().and(comments_per_post(db)).and(links_of(db).select((&db.post_link.related_post).select(&rel)))).drive(|_, x| v.push(x));
     rows(v.iter().map(|&((p, c), (_, t))| {
         let mut f = post_fields(db, p, &["id", "title", "views", "score", "owner"]);
-        f.extend([V::I(c), V::S(db.tag.tag_name.get(t).unwrap())]);
+        f.extend([V::I(c), V::S(t)]);
         row(f)
     }))
 }
@@ -933,9 +935,7 @@ fn q9745(db: &'static So) -> String {
     let wiki: HashIdx<Id<Post>, Id<Tag>> = (&db.tag.wiki_post).inv().collect();
     let tt = ap().group_by(Ident::<Post>::new()).select((&wiki).select(&db.tag.count)).fold(0i64, |a, c| a + c);
     let top: MatSet<Id<Post>> = whole(&tt).select(Same::new().and(&tt)).window(row_number, |(_, s): (Id<Post>, i64)| s, desc).filt(|(_, n)| n <= 10).map(|((p, _), _)| p).collect();
-    let pc = (&top).select(Ident::<Post>::new().and(comments_per_post(db))).map(|(_, c)| c);
     let pcf: Fold<Id<Post>, i64> = (&top).group_by(Ident::<Post>::new()).select(comments_of(db)).fold(0i64, |a, _| a + 1);
-    let _ = pc;
     let mut v = Vec::new();
     ap().select(Ident::<Post>::new().and((&pcf).opt())).drive(|_, x| v.push(x));
     out(v, |&(p, _)| views_score(db, p), 20, |&(p, c)| {
@@ -2421,8 +2421,7 @@ fn q1468(db: &'static So) -> String {
     let ps = pstat(db, db.post.iq());
     let r = |p: [i64; 13]| if p[2] == 0 { None } else { Some(p[0] as f64 / p[2] as f64) };
     let mut v = Vec::new();
-    (&ub).and((&ps).opt()).drive(|u, (b, p)| v.push((u, b, p.unwrap_or(Z))));
-    let v: Vec<_> = drain(rel(v).filt(|(_, _, p)| p[0] > 5 || p[1] > 5)).into_iter().map(|x| x.1).collect();
+    (&ub).and((&ps).opt()).filt(|(_, p): ([i64; 4], Option<[i64; 13]>)| p.map_or(false, |p| p[0] > 5 || p[1] > 5)).drive(|u, (b, p)| v.push((u, b, p.unwrap_or(Z))));
     out(v, |&(_, _, p)| (Reverse(p[0]), (r(p).is_none(), Reverse(r(p).map(fkey)))), 10, |&(u, b, p)| {
         let mut f = vec![user_col(db, u, "name")];
         f.extend(ints(&p[..3]));
@@ -2588,11 +2587,11 @@ fn q6686(db: &'static So) -> String {
 // ViewCount DESC;
 fn q11675(db: &'static So) -> String {
     let pv = post_votes(db);
-    let bu = badges_per_user(db);
+    let bu: Fold<i64, i64> = db.badge.group_by(&db.badge.user_id).fold(0i64, |a, _| a + 1);
     let mut v = Vec::new();
     since(db, date(2023, 1, 1))
         .with((&db.post.creation_date).lt(date(2023, 10, 1)))
-        .select(Ident::<Post>::new().and(comments_per_post(db)).and(typed_answers_per_post(db)).and((&pv).opt()).and((&db.post.owner_user).select(&bu).opt()))
+        .select(Ident::<Post>::new().and(comments_per_post(db)).and(typed_answers_per_post(db)).and((&pv).opt()).and((&db.post.owner_user_id).select(&bu).opt()))
         .drive(|_, x| v.push(x));
     rows(v.iter().map(|&((((p, c), a), x), b)| {
         let x = x.unwrap_or([0; 3]);
@@ -3442,21 +3441,25 @@ fn q5223(db: &'static So) -> String {
 // TotalPosts DESC, TotalUpVotes DESC, TotalDownVotes ASC
 // LIMIT 10;
 fn q28027(db: &'static So) -> String {
+    type PT = (Id<Post>, Id<Tag>);
+    type PN = (Id<Post>, Str);
     let tm = tag_mentions(db);
+    let tname = || Same::<PT>::new().map(|(_, t)| t).select(&db.tag.tag_name);
     let tc = (&tm)
-        .group_by(Same::<(Id<Post>, Id<Tag>)>::new().map(|(_, t)| t))
-        .select(Same::<(Id<Post>, Id<Tag>)>::new().map(|(p, _)| p).select((&db.post.post_type_id).and(history_of(db).select(&db.post_history.post_history_type_id).opt())))
+        .group_by(tname())
+        .select(Same::<PT>::new().map(|(p, _)| p).select((&db.post.post_type_id).and(history_of(db).select(&db.post_history.post_history_type_id).opt())))
         .fold([0i64; 4], |a, (t, h)| [a[0] + 1, a[1] + (t == 1) as i64, a[2] + (t == 2) as i64, a[3] + (h == Some(10)) as i64]);
     let pc = db.post.with((&db.post.post_type_id).in_v(vec![1, 2])).group_by(Ident::<Post>::new()).fold(0i64, |a, _| a + 1);
     let uv = user_votes(db);
-    let by_post: HashIdx<Id<Post>, (Id<Post>, Id<Tag>)> = (&tm).map(|(p, _)| p).inv().collect();
+    let pn: MatSet<PN> = (&tm).select(Same::<PT>::new().map(|(p, _)| p).and(tname())).collect();
+    let by_post: HashIdx<Id<Post>, PN> = (&pn).map(|(p, _)| p).inv().collect();
     let mut v = Vec::new();
     db.post
         .select(
             Ident::<Post>::new()
                 .and((&pc).filt(|n: i64| n > 1))
                 .and((&db.post.owner_user).select(&uv).opt())
-                .and((&by_post).select(Same::<(Id<Post>, Id<Tag>)>::new().map(|(_, t)| t).select(&tc)).opt()),
+                .and((&by_post).select(Same::<PN>::new().map(|(_, n)| n).select(&tc)).opt()),
         )
         .drive(|_, x| v.push(x));
     out(v, |&(((_, n), x), _)| (Reverse(n), Reverse(x.map_or(0, |x| x[1])), x.map_or(0, |x| x[2])), 10, |&(((p, n), x), c)| {
@@ -3533,8 +3536,8 @@ fn q3073(db: &'static So) -> String {
     let ub = ubc(db);
     let ps = pstat(db, db.post.iq());
     let mut v = Vec::new();
-    (&ub).and((&ps).opt()).drive(|u, (b, p)| v.push((u, b, p)));
-    rows(drain(rel(v).filt(|(_, b, p)| p.map_or(0, |p| p[0]) > 10 || b[1] > 0)).into_iter().map(|(_, (u, b, p))| {
+    (&ub).and((&ps).opt()).filt(|(b, p): ([i64; 4], Option<[i64; 13]>)| p.map_or(0, |p| p[0]) > 10 || b[1] > 0).drive(|u, (b, p)| v.push((u, b, p)));
+    rows(v.into_iter().map(|(u, b, p)| {
         let q = p.unwrap_or(Z);
         let mut f = vec![user_col(db, u, "uid"), user_col(db, u, "name")];
         f.extend(ints(&[q[0], q[1], q[2], q[5]]));
@@ -3964,8 +3967,7 @@ fn q8310(db: &'static So) -> String {
     let ub = ubc(db);
     let ps = pstat(db, db.post.iq());
     let mut v = Vec::new();
-    (&ub).and((&ps).opt()).drive(|u, (b, p)| v.push((u, b, p.unwrap_or(Z))));
-    let v: Vec<_> = drain(rel(v).filt(|(_, b, p)| p[3] > 20 || b[0] >= 5)).into_iter().map(|x| x.1).collect();
+    (&ub).and((&ps).opt()).filt(|(b, p): ([i64; 4], Option<[i64; 13]>)| p.map_or(0, |p| p[3]) > 20 || b[0] >= 5).drive(|u, (b, p)| v.push((u, b, p.unwrap_or(Z))));
     out(v, |&(_, b, p)| (Reverse(p[3]), Reverse(b[0])), 10, |&(u, b, p)| {
         let mut f = vec![user_col(db, u, "uid"), user_col(db, u, "name")];
         f.extend(ints(&b));
@@ -4490,8 +4492,8 @@ fn q28091(db: &'static So) -> String {
     let ub = ubc(db);
     let ps = pstat(db, db.post.iq());
     let mut v = Vec::new();
-    (&ub).and((&ps).opt()).drive(|u, (b, p)| v.push((u, b, p)));
-    rows(drain(rel(v).filt(|(_, b, p)| p.map_or(0, |p| p[0]) > 0 || b[0] > 0)).into_iter().map(|(_, (u, b, p))| {
+    (&ub).and((&ps).opt()).filt(|(b, p): ([i64; 4], Option<[i64; 13]>)| p.map_or(0, |p| p[0]) > 0 || b[0] > 0).drive(|u, (b, p)| v.push((u, b, p)));
+    rows(v.into_iter().map(|(u, b, p)| {
         let q = p.unwrap_or(Z);
         let mut f = vec![user_col(db, u, "uid"), user_col(db, u, "name")];
         f.extend(ints(&[q[0], q[1], q[2], q[5]]));

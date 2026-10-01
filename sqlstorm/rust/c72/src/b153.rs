@@ -1,6 +1,18 @@
 use harness::prelude::*;
 use std::cmp::Reverse;
 
+/// RANK() OVER (ORDER BY Reputation DESC) over every user, indexed by the user: u -> (u, rank).
+fn rep_rank(db: &'static So) -> HashIdx<Id<User>, (Id<User>, i64)> {
+    let w = whole(db.user.iq()).select(Ident::<User>::new().and(&db.user.reputation)).window(rank, |(_, r)| Reverse(r), asc);
+    let rr: MatSet<(Id<User>, i64)> = (&w).map(|((u, _), r)| (u, r)).collect();
+    (&rr).map(|(u, _)| u).inv().collect()
+}
+
+/// A materialised set of pairs indexed by the first component: a -> b.
+fn by_first<A: Copy + Eq + std::hash::Hash, B: Copy + Eq + std::hash::Hash>(m: &MatSet<(A, B)>) -> HashIdx<A, B> {
+    m.map(|(a, _)| a).inv().map(|(_, b): (A, B)| b).collect()
+}
+
 // WITH RankedPosts AS (SELECT p.Id AS PostId, p.Title, p.CreationDate, u.DisplayName AS OwnerDisplayName, COUNT(c.Id) AS CommentCount,
 //        SUM(CASE WHEN v.VoteTypeId = 2 THEN 1 ELSE 0 END) AS UpVotes, SUM(CASE WHEN v.VoteTypeId = 3 THEN 1 ELSE 0 END) AS DownVotes,
 //        ROW_NUMBER() OVER (PARTITION BY p.PostTypeId ORDER BY SUM(CASE WHEN v.VoteTypeId = 2 THEN 1 ELSE 0 END) DESC, COUNT(c.Id) DESC) AS Rank
@@ -18,8 +30,8 @@ fn q8256(db: &'static So) -> String {
         .group_by(Ident::<Post>::new())
         .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()))
         .fold([0i64; 3], |a, (c, t)| [a[0] + c.is_some() as i64, a[1] + (t == Some(2)) as i64, a[2] + (t == Some(3)) as i64]);
-    let v = top_per(drain(&s), |&(p, _)| post_type_id.get(p).unwrap(), |&(p, a)| (Reverse(a[1]), Reverse(a[0]), p), 10, false);
-    rows(v.into_iter().map(|(p, a)| {
+    let w = db.post.with(&s).group_by(post_type_id).select(Ident::<Post>::new().and(&s)).window(row_number, |(p, a)| (Reverse(a[1]), Reverse(a[0]), p), asc);
+    rows(drain((&w).filt(|(_, r)| r <= 10)).into_iter().map(|(_, ((p, a), _))| {
         let mut f = post_fields(db, p, &["id", "title", "owner"]);
         f.extend([V::I(a[0]), V::I(a[1]), V::I(a[2]), V::I(a[1] - a[2])]);
         row(f)
@@ -68,13 +80,16 @@ fn q27973(db: &'static So) -> String {
 // WHERE rp.PostRank <= 5 ORDER BY ur.ReputationRank, rp.CreationDate DESC;
 fn q9561(db: &'static So) -> String {
     let Post { post_type_id, owner_user, creation_date, .. } = &db.post;
-    let v = drain(db.post.with(post_type_id.eq(1).and(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)))).with(owner_user).select(owner_user));
-    let top = top_per(v, |&(_, u)| u, |&(p, _)| (Reverse(creation_date.get(p).unwrap()), p), 5, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db
+        .post
+        .with(post_type_id.eq(1).and(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))))
+        .group_by(owner_user)
+        .select(Ident::<Post>::new().and(creation_date))
+        .window(row_number, |(p, d)| (Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|((p, _), _)| p).collect();
     let cc = (&tp).group_by(Ident::<Post>::new()).select(comments_of(db).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
     let an = (&tp).group_by(Ident::<Post>::new()).select(answers_of(db).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
-    let rr = rel(ranked(drain(&db.user.reputation), |&(_, r)| Reverse(r), false).into_iter().map(|((u, _), r)| (u, r)).collect());
-    let by_user: HashIdx<Id<User>, (Id<User>, i64)> = (&rr).map(|(u, _)| u).inv().select(&rr).collect();
+    let by_user = rep_rank(db);
     let v = drain((&cc).and(&an).and(owner_user.select(&by_user)));
     rows(v.into_iter().map(|(p, ((c, a), (u, r)))| {
         let mut f = ucols(db, u, &["name", "rep"]);
@@ -94,8 +109,7 @@ fn q9561(db: &'static So) -> String {
 fn q5728(db: &'static So) -> String {
     let ups = user_posts(db);
     let bc = db.user.group_by(Ident::<User>::new()).select(badges_of(db).opt()).fold(0i64, |n, b| n + b.is_some() as i64);
-    let rr = rel(ranked(drain(&db.user.reputation), |&(_, r)| Reverse(r), false).into_iter().map(|((u, _), r)| (u, r)).collect());
-    let by_user: HashIdx<Id<User>, (Id<User>, i64)> = (&rr).map(|(u, _)| u).inv().select(&rr).collect();
+    let by_user = rep_rank(db);
     let v = drain((&ups).and((&bc).filt(|b| b > 5)).and((&by_user).map(|(_, r)| r)));
     rows(v.into_iter().map(|(u, ((a, b), r))| {
         let mut f = ucols(db, u, &["name", "rep"]);
@@ -121,12 +135,9 @@ fn q8161(db: &'static So) -> String {
         .group_by(Ident::<Post>::new())
         .select(votes_of(db).select(&db.vote.vote_type_id).opt().and(comments_of(db).opt()))
         .fold([0i64; 3], |a, (t, c)| [a[0] + (t == Some(2)) as i64, a[1] + (t == Some(3)) as i64, a[2] + c.is_some() as i64]);
-    let r = ranked(drain(&s), |&(p, a)| {
-        let w = view_count.get(p);
-        (Reverse(a[0] - a[1]), w.is_none(), Reverse(w))
-    }, false);
-    let rr = rel(r.into_iter().map(|((p, a), k)| (p, (a, k))).collect());
-    let by_post: HashIdx<Id<Post>, ([i64; 3], i64)> = (&rr).map(|(p, _)| p).inv().select((&rr).map(|(_, x)| x)).collect();
+    let w = whole(&s).select(Ident::<Post>::new().and(&s).and(view_count.opt())).window(rank, |((_, a), w)| (Reverse(a[0] - a[1]), w.is_none(), Reverse(w)), asc);
+    let rr: MatSet<(Id<Post>, ([i64; 3], i64))> = (&w).map(|(((p, a), _), k)| (p, (a, k))).collect();
+    let by_post: HashIdx<Id<Post>, ([i64; 3], i64)> = (&rr).map(|(p, _)| p).inv().map(|(_, x): (Id<Post>, ([i64; 3], i64))| x).collect();
     let newest = top_n(drain(db.post.with(post_type_id.eq(1)).with(owner_user).select(creation_date)), |&(p, d)| (Reverse(d), p), 50);
     let np: MatSet<Id<Post>> = rel(newest.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
     let v = drain((&np).select(&by_post));
@@ -149,8 +160,8 @@ fn q8161(db: &'static So) -> String {
 // Rank reads only CreationDate, so the ten newest dates are picked first and the distinct counts are taken for those posts alone.
 fn q9152(db: &'static So) -> String {
     let Post { owner_user, creation_date, .. } = &db.post;
-    let r = ranked(drain(db.post.with(owner_user).select(creation_date)), |&(_, d)| Reverse(d), true);
-    let tp: MatSet<Id<Post>> = rel(r.into_iter().take_while(|x| x.1 <= 10).map(|x| x.0 .0).collect()).map(|p| p).collect();
+    let w = whole(db.post.with(owner_user)).select(Ident::<Post>::new().and(creation_date)).window(dense_rank, |(_, d)| Reverse(d), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 10).map(|((p, _), _)| p).collect();
     let cc = (&tp).group_by(Ident::<Post>::new()).select(comments_of(db).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
     let ud = votes_of(db).select(Ident::<Vote>::new().with((&db.vote.vote_type_id).is_in([2, 3])));
     let vc = (&tp).group_by(Ident::<Post>::new()).select(ud.opt()).fold(0i64, |n, c| n + c.is_some() as i64);
@@ -187,15 +198,14 @@ fn q6573(db: &'static So) -> String {
         .group_by(owner_user)
         .select(view_count.opt().and(score))
         .fold([0i64; 4], |a, (w, s)| [a[0] + 1, a[1] + w.unwrap_or(0), a[2] + w.is_some() as i64, a[3] + s]);
-    let v = drain((&bc).and((&ps).opt()));
-    let v: Vec<_> = v.into_iter().map(|(u, (b, a))| {
+    let cs = Ident::<User>::new().and(&bc).and((&ps).opt()).map(|((u, b), a): ((Id<User>, i64), Option<[i64; 4]>)| {
         let a = a.unwrap_or([0; 4]);
         let s = if a[0] == 0 { 0.0 } else { a[3] as f64 / a[0] as f64 };
         (u, b, a, s)
-    }).collect();
-    let v = ranked(v, |&(_, _, a, _)| Reverse(a[1]), false);
-    let v = ranked(v, |&((_, _, _, s), _)| Reverse(fkey(s)), false);
-    rows(v.into_iter().map(|(((u, b, a, s), vr), sr)| {
+    });
+    let w = whole(&bc).select(cs).window(rank, |(_, _, a, _)| Reverse(a[1]), asc);
+    let w = (&w).window(rank, |((_, _, _, s), _): ((Id<User>, i64, [i64; 4], f64), i64)| Reverse(fkey(s)), asc);
+    rows(drain(&w).into_iter().map(|(_, (((u, b, a, s), vr), sr))| {
         let mut f = ucols(db, u, &["uid", "name", "rep", "ucreated", "last_access"]);
         f.extend([V::I(b), V::I(a[0]), V::I(a[1]), V::F(s), V::I(vr), V::I(sr)]);
         row(f)
@@ -212,9 +222,13 @@ fn q6573(db: &'static So) -> String {
 // FROM RankedPosts rp LEFT JOIN PostVoteSummary pvs ON rp.PostId = pvs.PostId WHERE rp.PostRank <= 5 ORDER BY rp.OwnerUserId, rp.Score DESC;
 fn q8160(db: &'static So) -> String {
     let Post { post_type_id, owner_user, creation_date, score, .. } = &db.post;
-    let v = drain(db.post.with(post_type_id.eq(1).and(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)))).with(owner_user).select(owner_user));
-    let top = top_per(v, |&(_, u)| u, |&(p, _)| (Reverse(score.get(p).unwrap()), creation_date.get(p).unwrap(), p), 5, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db
+        .post
+        .with(post_type_id.eq(1).and(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))))
+        .group_by(owner_user)
+        .select(Ident::<Post>::new().and(score).and(creation_date))
+        .window(row_number, |((p, s), d)| (Reverse(s), d, p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|(((p, _), _), _)| p).collect();
     let pvs = db.vote.group_by(&db.vote.post).select(vtype_name(db)).fold([0i64; 4], |a, n| {
         [a[0] + (n == "UpMod") as i64, a[1] + (n == "DownMod") as i64, a[2] + (n == "Close") as i64, a[3] + (n == "Reopen") as i64]
     });
@@ -239,9 +253,8 @@ fn q8160(db: &'static So) -> String {
 // WHERE up.Reputation >= 100 AND rp.rn = 1 ORDER BY up.Reputation DESC, rp.Score DESC LIMIT 50;
 fn q136(db: &'static So) -> String {
     let Post { owner_user, creation_date, score, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.gt(add_days(ts(2024, 10, 1, 12, 34, 56), -30))).with(owner_user).select(owner_user));
-    let first = top_per(v, |&(_, u)| u, |&(p, _)| (Reverse(creation_date.get(p).unwrap()), p), 1, false);
-    let fp: MatSet<Id<Post>> = rel(first.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db.post.with(creation_date.gt(add_days(ts(2024, 10, 1, 12, 34, 56), -30))).group_by(owner_user).select(Ident::<Post>::new().and(creation_date)).window(row_number, |(p, d)| (Reverse(d), p), asc);
+    let fp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r == 1).map(|((p, _), _)| p).collect();
     let tb = db.user.group_by(Ident::<User>::new()).select(votes_by(db).select((&db.vote.bounty_amount).opt()).opt()).fold(0i64, |n, b| n + b.flatten().unwrap_or(0));
     let reason: HashIdx<i64, Str> = (&db.close_reason_type.origid).inv().select(&db.close_reason_type.name).collect();
     let PostHistory { post_history_type_id, comment, .. } = &db.post_history;
@@ -272,9 +285,9 @@ fn q136(db: &'static So) -> String {
 //
 // ReputationRank reads only Reputation, so the ten users are picked first and the post x vote product is driven for them alone.
 fn q7639(db: &'static So) -> String {
-    let tu = top_n(drain(&db.user.reputation), |&(u, r)| (Reverse(r), u), 10);
-    let tv = rel(tu.iter().enumerate().map(|(i, &(u, _))| (u, i as i64 + 1)).collect());
-    let rank: HashIdx<Id<User>, i64> = (&tv).map(|(u, _)| u).inv().select((&tv).map(|(_, r)| r)).collect();
+    let w = whole(db.user.iq()).select(Ident::<User>::new().and(&db.user.reputation)).window(row_number, |(u, r)| (Reverse(r), u), asc);
+    let tv: MatSet<(Id<User>, i64)> = (&w).filt(|(_, k)| k <= 10).map(|((u, _), k)| (u, k)).collect();
+    let rank: HashIdx<Id<User>, i64> = (&tv).map(|(u, _)| u).inv().map(|(_, k): (Id<User>, i64)| k).collect();
     let Post { post_type_id, body, creation_date, .. } = &db.post;
     let s = db
         .user
@@ -361,10 +374,14 @@ fn q29991(db: &'static So) -> String {
 //        (SELECT COUNT(*) FROM Votes v WHERE v.PostId = trp.PostId AND v.VoteTypeId IN (2, 3)) AS VoteCount
 // FROM TopRankedPosts trp ORDER BY trp.Score DESC, trp.ViewCount DESC;
 fn q8824(db: &'static So) -> String {
-    let Post { post_type_id, owner_user, creation_date, .. } = &db.post;
-    let v = drain(db.post.with(post_type_id.eq(1).and(creation_date.gt(add_years(ts(2024, 10, 1, 12, 34, 56), -1)))).select(owner_user.opt()));
-    let top = top_per(v, |&(_, u)| u, |&(p, _)| (Reverse(creation_date.get(p).unwrap()), p), 1, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let Post { post_type_id, owner_user_id, creation_date, .. } = &db.post;
+    let w = db
+        .post
+        .with(post_type_id.eq(1).and(creation_date.gt(add_years(ts(2024, 10, 1, 12, 34, 56), -1))))
+        .group_by(owner_user_id.opt())
+        .select(Ident::<Post>::new().and(creation_date))
+        .window(row_number, |(p, d)| (Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r == 1).map(|((p, _), _)| p).collect();
     let cc = (&tp).group_by(Ident::<Post>::new()).select(comments_of(db).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
     let an = (&tp).group_by(Ident::<Post>::new()).select(answers_of(db).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
     let ud = votes_of(db).select(Ident::<Vote>::new().with((&db.vote.vote_type_id).is_in([2, 3])));
@@ -388,10 +405,9 @@ fn q8824(db: &'static So) -> String {
 //
 // RP.PostId = UP.UserId compares a post id with a user id, so it goes through origid.
 fn q1041(db: &'static So) -> String {
-    let Post { post_type_id, owner_user, creation_date, score, origid, .. } = &db.post;
-    let v = drain(db.post.with(post_type_id.eq(1).and(score.gt(0))).select(owner_user.opt()));
-    let top = top_per(v, |&(_, u)| u, |&(p, _)| (Reverse(creation_date.get(p).unwrap()), p), 1, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let Post { post_type_id, owner_user_id, creation_date, score, origid, .. } = &db.post;
+    let w = db.post.with(post_type_id.eq(1).and(score.gt(0))).group_by(owner_user_id.opt()).select(Ident::<Post>::new().and(creation_date)).window(row_number, |(p, d)| (Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r == 1).map(|((p, _), _)| p).collect();
     let us = db
         .user
         .group_by(Ident::<User>::new())
@@ -480,9 +496,8 @@ fn q27120(db: &'static So) -> String {
 // SELECT tp.Title, tp.Score, tp.ViewCount, tp.OwnerDisplayName, tp.GoldBadges, tp.SilverBadges, tp.BronzeBadges FROM TopPosts tp ORDER BY tp.Score DESC LIMIT 10 OFFSET 0;
 fn q1379(db: &'static So) -> String {
     let Post { post_type_id, owner_user, creation_date, score, .. } = &db.post;
-    let v = drain(db.post.with(post_type_id.eq(1).and(creation_date.ge(add_years(current_date(), -1)))).with(owner_user).select(owner_user));
-    let top = top_per(v, |&(_, u)| u, |&(p, _)| (Reverse(score.get(p).unwrap()), p), 5, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db.post.with(post_type_id.eq(1).and(creation_date.ge(add_years(current_date(), -1)))).group_by(owner_user).select(Ident::<Post>::new().and(score)).window(row_number, |(p, s)| (Reverse(s), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|((p, _), _)| p).collect();
     let us = db.user.group_by(Ident::<User>::new()).select(badges_of(db).select(&db.badge.class).opt()).fold([0i64; 3], |a, c| [a[0] + (c == Some(1)) as i64, a[1] + (c == Some(2)) as i64, a[2] + (c == Some(3)) as i64]);
     let v = drain((&tp).select(owner_user.select(&us)));
     let v = top_n(v, |&(p, _)| (Reverse(score.get(p).unwrap()), p), 10);
@@ -505,9 +520,9 @@ fn q1379(db: &'static So) -> String {
 // ReputationRank reads only Reputation over the users with a post, so those users are picked first and the post x comment x vote product is driven for them alone.
 fn q6818(db: &'static So) -> String {
     let pc = db.user.group_by(Ident::<User>::new()).select(posts_of(db)).fold(0i64, |n, _| n + 1);
-    let r = ranked(drain((&pc).and(&db.user.reputation)), |&(_, (_, r))| Reverse(r), true);
-    let tv = rel(r.into_iter().take_while(|x| x.1 <= 10).map(|((u, (n, _)), k)| (u, (n, k))).collect());
-    let tops: HashIdx<Id<User>, (i64, i64)> = (&tv).map(|(u, _)| u).inv().select((&tv).map(|(_, x)| x)).collect();
+    let w = whole(&pc).select(Ident::<User>::new().and(&pc).and(&db.user.reputation)).window(dense_rank, |(_, r)| Reverse(r), asc);
+    let tv: MatSet<(Id<User>, (i64, i64))> = (&w).filt(|(_, k)| k <= 10).map(|(((u, n), _), k)| (u, (n, k))).collect();
+    let tops: HashIdx<Id<User>, (i64, i64)> = (&tv).map(|(u, _)| u).inv().map(|(_, x): (Id<User>, (i64, i64))| x).collect();
     let bounty = votes_of(db).select(Ident::<Vote>::new().with((&db.vote.vote_type_id).eq(8))).select((&db.vote.bounty_amount).opt());
     let s = db
         .user
@@ -535,17 +550,18 @@ fn q6818(db: &'static So) -> String {
 // RankedPosts AS (SELECT PostId, Title, CommentCount, Upvotes, Downvotes, GoldBadges, SilverBadges, BronzeBadges, RANK() OVER (ORDER BY Upvotes - Downvotes DESC) AS PostRank FROM PostStats)
 // SELECT rp.PostId, rp.Title, rp.CommentCount, rp.Upvotes, rp.Downvotes, rp.GoldBadges, rp.SilverBadges, rp.BronzeBadges, rp.PostRank FROM RankedPosts rp WHERE rp.PostRank <= 10 ORDER BY rp.PostRank;
 fn q8176(db: &'static So) -> String {
-    let Post { creation_date, owner_user, .. } = &db.post;
+    let Post { creation_date, owner_user_id, .. } = &db.post;
+    let bu: HashIdx<i64, Id<Badge>> = (&db.badge.user_id).inv().collect();
     let s = db
         .post
         .with(creation_date.ge(ts(2022, 1, 1, 0, 0, 0)).and(creation_date.lt(ts(2023, 1, 1, 0, 0, 0))))
         .group_by(Ident::<Post>::new())
-        .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()).and(owner_user.select(badges_of(db).select(&db.badge.class)).opt()))
+        .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()).and(owner_user_id.select((&bu).select(&db.badge.class)).opt()))
         .fold([0i64; 6], |a, ((c, t), b)| {
             [a[0] + c.is_some() as i64, a[1] + (t == Some(2)) as i64, a[2] + (t == Some(3)) as i64, a[3] + (b == Some(1)) as i64, a[4] + (b == Some(2)) as i64, a[5] + (b == Some(3)) as i64]
         });
-    let r = ranked(drain(&s), |&(_, a)| Reverse(a[1] - a[2]), false);
-    rows(r.into_iter().take_while(|x| x.1 <= 10).map(|((p, a), k)| {
+    let w = whole(&s).select(Ident::<Post>::new().and(&s)).window(rank, |(_, a)| Reverse(a[1] - a[2]), asc);
+    rows(drain((&w).filt(|(_, k)| k <= 10)).into_iter().map(|(_, ((p, a), k))| {
         let mut f = post_fields(db, p, &["id", "title"]);
         f.extend(a.map(V::I));
         f.push(V::I(k));
@@ -566,8 +582,8 @@ fn q8176(db: &'static So) -> String {
 // rn reads only base columns, so the five newest posts of each type are picked first and the comment x vote product is driven for those alone.
 fn q6912(db: &'static So) -> String {
     let Post { post_type_id, creation_date, .. } = &db.post;
-    let top = top_per(drain(db.post.select(post_type_id)), |&(_, t)| t, |&(p, _)| (Reverse(creation_date.get(p).unwrap()), p), 5, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db.post.group_by(post_type_id).select(Ident::<Post>::new().and(creation_date)).window(row_number, |(p, d)| (Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|((p, _), _)| p).collect();
     let s = (&tp)
         .group_by(Ident::<Post>::new())
         .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()))
@@ -629,8 +645,8 @@ fn q5498(db: &'static So) -> String {
             None => a,
         });
     let bc = db.user.with((&db.user.reputation).gt(1000)).group_by(Ident::<User>::new()).select(badges_of(db).opt()).fold(0i64, |n, b| n + b.is_some() as i64);
-    let r = ranked(drain((&s).and(&bc)), |&(_, (a, _))| (Reverse(a[3]), Reverse(a[0]), Reverse(a[1])), false);
-    rows(r.into_iter().take_while(|x| x.1 <= 10).map(|((u, (a, b)), k)| {
+    let w = whole(&s).select(Ident::<User>::new().and(&s).and(&bc)).window(rank, |((_, a), _)| (Reverse(a[3]), Reverse(a[0]), Reverse(a[1])), asc);
+    rows(drain((&w).filt(|(_, k)| k <= 10)).into_iter().map(|(_, (((u, a), b), k))| {
         let mut f = ucols(db, u, &["uid", "name"]);
         f.extend([V::I(a[0]), V::I(a[1]), V::I(a[2]), V::I(a[3]), V::I(a[4]), V::I(b), V::I(k)]);
         row(f)
@@ -648,12 +664,11 @@ fn q5498(db: &'static So) -> String {
 fn q4080(db: &'static So) -> String {
     let uv = db.user.group_by(Ident::<User>::new()).select(votes_by(db).select(&db.vote.vote_type_id).opt()).fold([0i64; 2], |a, t| [a[0] + (t == Some(2)) as i64, a[1] + (t == Some(3)) as i64]);
     let pac = db.post.with((&db.post.post_type_id).eq(2)).group_by(&db.post.owner_user).select(Ident::<Post>::new()).fold(0i64, |n, _| n + 1);
-    let v = drain((&uv).and(&db.user.reputation));
-    let top = top_n(v, |&(u, (a, r))| (Reverse(a[0]), Reverse(r), u), 10);
-    let tops: MatSet<Id<User>> = rel(top.into_iter().map(|x| x.0).collect()).map(|u| u).collect();
-    let v = drain(db.user.with((&db.user.reputation).gt(100)).select((&uv).and((&pac).opt()).and(Ident::<User>::new().with(&tops).opt())));
-    rows(v.into_iter().map(|(u, ((a, n), t))| {
-        row(vec![user_col(db, u, "name"), V::I(a[0]), V::I(a[1]), V::I(n.unwrap_or(0)), user_col(db, u, "rep"), V::S(if t.is_some() { "Top Contributor" } else { "Regular Contributor" })])
+    let w = whole(db.user.iq()).select(Ident::<User>::new().and(&uv).and(&db.user.reputation)).window(row_number, |((u, a), r)| (Reverse(a[0]), Reverse(r), u), asc);
+    type T = (((Id<User>, [i64; 2]), i64), i64);
+    let v = drain((&w).filt(|((_, r), _)| r > 100).select(Same::<T>::new().and(Same::<T>::new().map(|(((u, _), _), _): T| u).select((&pac).opt()))));
+    rows(v.into_iter().map(|(_, ((((u, a), r), k), n))| {
+        row(vec![user_col(db, u, "name"), V::I(a[0]), V::I(a[1]), V::I(n.unwrap_or(0)), V::I(r), V::S(if k <= 10 { "Top Contributor" } else { "Regular Contributor" })])
     }))
 }
 
@@ -669,13 +684,10 @@ fn q4080(db: &'static So) -> String {
 // Both ranks read only base columns, so they are taken over every post first and the comment x vote x history product is driven for the posts they keep.
 fn q14722(db: &'static So) -> String {
     let Post { score, view_count, .. } = &db.post;
-    let r = ranked(drain(score), |&(_, s)| Reverse(s), false);
-    let r = ranked(r, |&((p, _), _)| {
-        let w = view_count.get(p);
-        (w.is_none(), Reverse(w))
-    }, false);
-    let tv = rel(r.into_iter().filter(|&((_, s), w)| s <= 10 || w <= 10).map(|(((p, _), s), w)| (p, (s, w))).collect());
-    let tops: HashIdx<Id<Post>, (i64, i64)> = (&tv).map(|(p, _)| p).inv().select((&tv).map(|(_, x)| x)).collect();
+    let w = whole(db.post.iq()).select(Ident::<Post>::new().and(score).and(view_count.opt())).window(rank, |((_, s), _)| Reverse(s), asc);
+    let w = (&w).window(rank, |(((_, _), v), _): (((Id<Post>, i64), Option<i64>), i64)| (v.is_none(), Reverse(v)), asc);
+    let tv: MatSet<(Id<Post>, (i64, i64))> = (&w).filt(|((_, s), r)| s <= 10 || r <= 10).map(|((((p, _), _), s), r)| (p, (s, r))).collect();
+    let tops: HashIdx<Id<Post>, (i64, i64)> = (&tv).map(|(p, _)| p).inv().map(|(_, x): (Id<Post>, (i64, i64))| x).collect();
     let s = db
         .post
         .with(&tops)
@@ -708,9 +720,9 @@ fn q3606(db: &'static So) -> String {
         .group_by(Ident::<Post>::new())
         .select(votes_of(db).opt())
         .fold(0i64, |n, v| n + v.is_some() as i64);
-    let top = top_per(drain(&vc), |&(p, _)| post_type_id.get(p).unwrap(), |&(p, n)| (Reverse(n), Reverse(creation_date.get(p).unwrap()), p), 5, false);
-    let tv = rel(top);
-    let tp: HashIdx<Id<Post>, i64> = (&tv).map(|(p, _)| p).inv().select((&tv).map(|(_, n)| n)).collect();
+    let w = db.post.with(&vc).group_by(post_type_id).select(Ident::<Post>::new().and(&vc).and(creation_date)).window(row_number, |((p, n), d)| (Reverse(n), Reverse(d), p), asc);
+    let tv: MatSet<(Id<Post>, i64)> = (&w).filt(|(_, r)| r <= 5).map(|((x, _), _)| x).collect();
+    let tp = by_first(&tv);
     let fu = db.user.group_by(Ident::<User>::new()).select(badges_of(db).select(&db.badge.class)).fold([0i64; 2], |a, c| [a[0] + c, a[1] + 1]);
     type PU = (Id<Post>, Id<User>);
     let pairs: MatSet<PU> = db.post.with(&tp).select(Ident::<Post>::new().and(comments_of(db).select(&db.comment.user))).collect();
@@ -731,9 +743,9 @@ fn q3606(db: &'static So) -> String {
 // SELECT pm.Title, pm.Score, pm.ViewCount, pm.CommentCount, pm.UpVotes, pm.DownVotes, COALESCE(pm.ContributorLevel, 'New Contributor') AS ContributorLevel
 // FROM TopPosts pm WHERE pm.CommentCount > 0 AND pm.UpVotes - pm.DownVotes >= 5 ORDER BY pm.Score DESC LIMIT 10;
 fn q4650(db: &'static So) -> String {
-    let Post { owner_user, creation_date, view_count, score, .. } = &db.post;
-    let top = top_per(drain(db.post.select(owner_user.opt())), |&(_, u)| u, |&(p, _)| (Reverse(creation_date.get(p).unwrap()), p), 4, false);
-    let tops: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let Post { owner_user_id, creation_date, view_count, score, .. } = &db.post;
+    let w = db.post.group_by(owner_user_id.opt()).select(Ident::<Post>::new().and(creation_date)).window(row_number, |(p, d)| (Reverse(d), p), asc);
+    let tops: MatSet<Id<Post>> = (&w).filt(|(_, r)| r < 5).map(|((p, _), _)| p).collect();
     let s = db
         .post
         .with(view_count.gt(100))
@@ -762,9 +774,8 @@ fn q4650(db: &'static So) -> String {
 // Rank reads only Score, so the posts are ranked first and the comment x vote product is driven for those kept.
 fn q7863(db: &'static So) -> String {
     let Post { creation_date, post_type_id, score, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))).select(post_type_id.and(score)));
-    let r = per_group(ranked(v, |&(_, (t, s))| (t, Reverse(s)), true), |&(_, (t, _))| t);
-    let tp: MatSet<Id<Post>> = rel(r.into_iter().filter(|x| x.1 <= 5).map(|x| x.0 .0).collect()).map(|p| p).collect();
+    let w = db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))).group_by(post_type_id).select(Ident::<Post>::new().and(score)).window(dense_rank, |(_, s)| Reverse(s), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|((p, _), _)| p).collect();
     let s = (&tp)
         .group_by(Ident::<Post>::new())
         .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()))
@@ -787,9 +798,14 @@ fn q7863(db: &'static So) -> String {
 // FROM TopPosts tp LEFT JOIN PostVoteCounts pvc ON tp.PostId = pvc.PostId ORDER BY tp.Score DESC, tp.CreationDate DESC;
 fn q9035(db: &'static So) -> String {
     let Post { creation_date, post_type_id, score, owner_user, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)).and(score.gt(0))).with(owner_user).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| (Reverse(score.get(p).unwrap()), Reverse(creation_date.get(p).unwrap()), p), 5, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db
+        .post
+        .with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)).and(score.gt(0)))
+        .with(owner_user)
+        .group_by(post_type_id)
+        .select(Ident::<Post>::new().and(score).and(creation_date))
+        .window(row_number, |((p, s), d)| (Reverse(s), Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|(((p, _), _), _)| p).collect();
     let pvc = db.vote.group_by(&db.vote.post).select(&db.vote.vote_type_id).fold([0i64; 2], |a, t| [a[0] + (t == 2) as i64, a[1] + (t == 3) as i64]);
     let v = drain((&tp).select(Ident::<Post>::new().and((&pvc).opt())));
     rows(v.into_iter().map(|(_, (p, a))| {
@@ -810,9 +826,9 @@ fn q9035(db: &'static So) -> String {
 //
 // Rank reads only Reputation, so the ten users are picked first and the badge x post product is driven for them alone.
 fn q9322(db: &'static So) -> String {
-    let tu = top_n(drain(db.user.with((&db.user.reputation).gt(1000)).select(&db.user.reputation)), |&(u, r)| (Reverse(r), u), 10);
-    let tv = rel(tu.iter().enumerate().map(|(i, &(u, _))| (u, i as i64 + 1)).collect());
-    let rank: HashIdx<Id<User>, i64> = (&tv).map(|(u, _)| u).inv().select((&tv).map(|(_, r)| r)).collect();
+    let w = whole(db.user.with((&db.user.reputation).gt(1000))).select(Ident::<User>::new().and(&db.user.reputation)).window(row_number, |(u, r)| (Reverse(r), u), asc);
+    let tv: MatSet<(Id<User>, i64)> = (&w).filt(|(_, k)| k <= 10).map(|((u, _), k)| (u, k)).collect();
+    let rank = by_first(&tv);
     let b = db
         .user
         .with(&rank)
@@ -842,9 +858,9 @@ fn q9322(db: &'static So) -> String {
 // UserStats is only read through the join, so it is taken for the owners of the ten top questions alone.
 fn q12990(db: &'static So) -> String {
     let Post { post_type_id, score, owner_user, .. } = &db.post;
-    let top = top_n(drain(db.post.with(post_type_id.eq(1)).select(score)), |&(p, s)| (Reverse(s), p), 10);
-    let tv = rel(top.iter().enumerate().map(|(i, &(p, _))| (p, i as i64 + 1)).collect());
-    let rank: HashIdx<Id<Post>, i64> = (&tv).map(|(p, _)| p).inv().select((&tv).map(|(_, r)| r)).collect();
+    let w = whole(db.post.with(post_type_id.eq(1))).select(Ident::<Post>::new().and(score)).window(row_number, |(p, s)| (Reverse(s), p), asc);
+    let tv: MatSet<(Id<Post>, i64)> = (&w).filt(|(_, k)| k <= 10).map(|((p, _), k)| (p, k)).collect();
+    let rank = by_first(&tv);
     let owners: MatSet<Id<User>> = db.post.with(&rank).select(owner_user).collect();
     let us = (&owners)
         .group_by(Ident::<User>::new())
@@ -880,9 +896,9 @@ fn q42(db: &'static So) -> String {
         .group_by(Ident::<Post>::new())
         .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()))
         .fold([0i64; 3], |a, (c, t)| [a[0] + c.is_some() as i64, a[1] + (t == Some(2)) as i64, a[2] + (t == Some(3)) as i64]);
-    let r = per_group(ranked(drain(&s), |&(p, a)| (score.get(p).unwrap(), Reverse(a[0])), false), |&(p, _)| score.get(p).unwrap());
-    let tv = rel(r.into_iter().filter(|x| x.1 <= 5).map(|x| x.0).collect());
-    let tp: HashIdx<Id<Post>, [i64; 3]> = (&tv).map(|(p, _)| p).inv().select((&tv).map(|(_, a)| a)).collect();
+    let w = db.post.with(&s).group_by(score).select(Ident::<Post>::new().and(&s)).window(rank, |(_, a)| Reverse(a[0]), asc);
+    let tv: MatSet<(Id<Post>, [i64; 3])> = (&w).filt(|(_, r)| r <= 5).map(|(x, _)| x).collect();
+    let tp = by_first(&tv);
     let v = drain(db.post.with(&tp).select((&tp).and(owner_user.select(Ident::<User>::new().with((&db.user.reputation).gt(1000))))));
     rows(v.into_iter().map(|(p, (a, u))| {
         let mut f = vec![user_col(db, u, "name"), V::S("Expert")];
@@ -945,9 +961,8 @@ fn q14054(db: &'static So) -> String {
     let Post { owner_user, score, .. } = &db.post;
     let pc = db.user.group_by(Ident::<User>::new()).select(posts_of(db).opt()).fold(0i64, |n, p| n + p.is_some() as i64);
     let cc = db.user.group_by(Ident::<User>::new()).select(posts_of(db).select(comments_of(db)).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
-    let top = top_per(drain(db.post.with(owner_user).select(owner_user)), |&(_, u)| u, |&(p, _)| Reverse(score.get(p).unwrap()), 1, true);
-    let tv = rel(top.into_iter().map(|(p, u)| (u, p)).collect());
-    let by_user: HashIdx<Id<User>, Id<Post>> = (&tv).map(|(u, _)| u).inv().select((&tv).map(|(_, p)| p)).collect();
+    let w = db.post.group_by(owner_user).select(Ident::<Post>::new().and(score)).window(rank, |(_, s)| Reverse(s), asc);
+    let by_user: HashIdx<Id<User>, Id<Post>> = (&w).filt(|(_, r)| r == 1).map(|((p, _), _)| p).collect();
     let v = drain((&pc).and(&cc).and((&by_user).opt()));
     rows(v.into_iter().map(|(u, ((n, c), p))| {
         let mut f = ucols(db, u, &["uid", "name", "rep", "ucreated", "last_access", "uup", "udown"]);
@@ -974,9 +989,8 @@ fn q8749(db: &'static So) -> String {
     let vs = db.user.group_by(Ident::<User>::new()).select(posts_of(db).select(votes_of(db).select(&db.vote.vote_type_id).opt()).opt()).fold([0i64; 2], |a, v| {
         [a[0] + (v == Some(Some(2))) as i64, a[1] + (v == Some(Some(3))) as i64]
     });
-    let rr = rel(ranked(drain(&db.user.reputation), |&(_, r)| Reverse(r), false).into_iter().map(|((u, _), r)| (u, r)).collect());
-    let rank: HashIdx<Id<User>, i64> = (&rr).map(|(u, _)| u).inv().select((&rr).map(|(_, r)| r)).collect();
-    let v = drain((&pc).filt(|a| a[0] > 5 && a[2] > 10).and(&vs).and(&rank));
+    let rank = rep_rank(db);
+    let v = drain((&pc).filt(|a| a[0] > 5 && a[2] > 10).and(&vs).and((&rank).map(|(_, r)| r)));
     let v = top_n(v, |&(u, ((_, b), _))| (Reverse(db.user.reputation.get(u).unwrap()), Reverse(b[0])), 50);
     rows(v.into_iter().map(|(u, ((a, b), r))| {
         let mut f = ucols(db, u, &["name", "rep"]);
@@ -1034,12 +1048,16 @@ fn q28777(db: &'static So) -> String {
             None => (a, s),
         });
     let tidx: HashIdx<Str, Id<Tag>> = (&db.tag.tag_name).inv().collect();
-    let usage = db.post.with(post_type_id.eq(1)).select(tags_str.flat_map(tag_list).select(&tidx)).group_by(Same::<Id<Tag>>::new()).select(Same::<Id<Tag>>::new()).fold(0i64, |n, _| n + 1);
+    let usage = db
+        .post
+        .with(post_type_id.eq(1))
+        .select(tags_str.flat_map(tag_list).select(&tidx).select(&db.tag.tag_name))
+        .group_by(Same::<Str>::new())
+        .select(Same::<Str>::new())
+        .fold(0i64, |n, _| n + 1);
     let mx = (&usage).fold_flat(0i64, |m, n| m.max(n));
-    let most = rel(drain((&usage).filt(|n| n == mx)));
-    let mut v = Vec::new();
-    (&ups).cross(&most).drive(|(u, _), (a, (t, n))| v.push((u, a, t, n)));
-    rows(v.into_iter().map(|(u, (a, s), t, n)| {
+    let v = drain((&ups).cross((&usage).filt(|n| n == mx)));
+    rows(v.into_iter().map(|((u, t), ((a, s), n))| {
         row(vec![
             user_col(db, u, "name"),
             V::I(a[0]),
@@ -1047,7 +1065,7 @@ fn q28777(db: &'static So) -> String {
             V::I(a[2]),
             nullable(a[3], a[0]),
             if a[0] == 0 { V::Null } else { V::F(s as f64 / a[0] as f64 / 1e6 / 3600.0) },
-            V::S(db.tag.tag_name.get(t).unwrap()),
+            V::S(t),
             V::I(n),
         ])
     }))
@@ -1064,9 +1082,9 @@ fn q28777(db: &'static So) -> String {
 // RankScore reads only COUNT(DISTINCT p.Id), so the users are ranked on their post counts first and the post x badge product is driven for those kept.
 fn q7977(db: &'static So) -> String {
     let pc = db.user.with((&db.user.reputation).gt(1000)).group_by(Ident::<User>::new()).select(posts_of(db).opt()).fold(0i64, |n, p| n + p.is_some() as i64);
-    let r = ranked(drain(&pc), |&(_, n)| Reverse(n), false);
-    let tv = rel(r.into_iter().take_while(|x| x.1 <= 10).map(|x| x.0).collect());
-    let tops: HashIdx<Id<User>, i64> = (&tv).map(|(u, _)| u).inv().select((&tv).map(|(_, n)| n)).collect();
+    let w = whole(&pc).select(Ident::<User>::new().and(&pc)).window(rank, |(_, n)| Reverse(n), asc);
+    let tv: MatSet<(Id<User>, i64)> = (&w).filt(|(_, k)| k <= 10).map(|(x, _)| x).collect();
+    let tops = by_first(&tv);
     let Post { score, answer_count, .. } = &db.post;
     let s = db
         .user
@@ -1095,12 +1113,14 @@ fn q7977(db: &'static So) -> String {
 // SELECT PD.Title, PD.Score, PD.ViewCount, PD.OwnerDisplayName, PD.CommentCount, PD.TotalBounty FROM PostDetails AS PD ORDER BY PD.Score DESC, PD.ViewCount DESC;
 fn q9461(db: &'static So) -> String {
     let Post { creation_date, post_type_id, score, view_count, owner_user, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(add_days(ts(2024, 10, 1, 12, 34, 56), -30)).and(post_type_id.is_in([1, 2]))).with(owner_user).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| {
-        let w = view_count.get(p);
-        (Reverse(score.get(p).unwrap()), w.is_none(), Reverse(w), p)
-    }, 5, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db
+        .post
+        .with(creation_date.ge(add_days(ts(2024, 10, 1, 12, 34, 56), -30)).and(post_type_id.is_in([1, 2])))
+        .with(owner_user)
+        .group_by(post_type_id)
+        .select(Ident::<Post>::new().and(score).and(view_count.opt()))
+        .window(row_number, |((p, s), w)| (Reverse(s), w.is_none(), Reverse(w), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|(((p, _), _), _)| p).collect();
     let cc = db.comment.group_by(&db.comment.post).select(Ident::<Comment>::new()).fold(0i64, |n, _| n + 1);
     let bounty = votes_of(db).select(Ident::<Vote>::new().with((&db.vote.vote_type_id).eq(8))).select((&db.vote.bounty_amount).opt());
     let b = (&tp).group_by(Ident::<Post>::new()).select(bounty.opt()).fold(0i64, |n, x| n + x.flatten().unwrap_or(0));
@@ -1133,8 +1153,8 @@ fn q9736(db: &'static So) -> String {
             };
             [a[0] + n, a[1] + (t == 1) as i64, a[2] + (t == 2) as i64, a[3] + (v == Some(2)) as i64, a[4] + (v == Some(3)) as i64, a[5] + b.is_some() as i64, a[6].max(d)]
         });
-    let r = ranked(drain(&s), |&(_, a)| (Reverse(a[0]), Reverse(a[3]), Reverse(a[5])), false);
-    rows(r.into_iter().take_while(|x| x.1 <= 10).map(|((u, a), k)| {
+    let w = whole(&s).select(Ident::<User>::new().and(&s)).window(rank, |(_, a)| (Reverse(a[0]), Reverse(a[3]), Reverse(a[5])), asc);
+    rows(drain((&w).filt(|(_, k)| k <= 10)).into_iter().map(|(_, ((u, a), k))| {
         let mut f = ucols(db, u, &["uid", "name"]);
         f.extend(a[..6].iter().map(|&x| V::I(x)));
         f.extend([tmax(a[6]), V::I(k)]);
@@ -1151,12 +1171,8 @@ fn q9736(db: &'static So) -> String {
 // FROM RankedPosts rp JOIN UserReputation ur ON rp.OwnerUserId = ur.UserId LEFT JOIN ClosedPosts cp ON rp.PostId = cp.PostId WHERE rp.RankByViews <= 5 ORDER BY rp.RankByViews, ur.TotalBadges DESC;
 fn q932(db: &'static So) -> String {
     let Post { creation_date, owner_user, view_count, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.gt(add_years(date(2024, 10, 1), -1))).with(owner_user).select(owner_user));
-    let top = top_per(v, |&(_, u)| u, |&(p, _)| {
-        let w = view_count.get(p);
-        (w.is_none(), Reverse(w))
-    }, 5, true);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db.post.with(creation_date.gt(add_years(date(2024, 10, 1), -1))).group_by(owner_user).select(Ident::<Post>::new().and(view_count.opt())).window(rank, |(_, w)| (w.is_none(), Reverse(w)), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|((p, _), _)| p).collect();
     let ur = db
         .user
         .group_by(Ident::<User>::new())
@@ -1183,9 +1199,9 @@ fn q932(db: &'static So) -> String {
 // UserRank reads only COUNT(DISTINCT p.Id), so the users are ranked on post counts first and the post x vote product is driven for those kept.
 fn q9581(db: &'static So) -> String {
     let pc = db.user.with((&db.user.reputation).gt(1000)).group_by(Ident::<User>::new()).select(posts_of(db).opt()).fold(0i64, |n, p| n + p.is_some() as i64);
-    let r = ranked(drain(&pc), |&(_, n)| Reverse(n), false);
-    let tv = rel(r.into_iter().take_while(|x| x.1 <= 50).map(|((u, n), k)| (u, (n, k))).collect());
-    let tops: HashIdx<Id<User>, (i64, i64)> = (&tv).map(|(u, _)| u).inv().select((&tv).map(|(_, x)| x)).collect();
+    let w = whole(&pc).select(Ident::<User>::new().and(&pc)).window(rank, |(_, n)| Reverse(n), asc);
+    let tv: MatSet<(Id<User>, (i64, i64))> = (&w).filt(|(_, k)| k <= 50).map(|((u, n), k)| (u, (n, k))).collect();
+    let tops = by_first(&tv);
     let Post { post_type_id, creation_date, .. } = &db.post;
     let s = db
         .user
@@ -1223,13 +1239,12 @@ fn q6266(db: &'static So) -> String {
         });
     let bc = db.user.group_by(Ident::<User>::new()).select(badges_of(db).opt()).fold(0i64, |n, b| n + b.is_some() as i64);
     let cc = db.user.group_by(Ident::<User>::new()).select(posts_of(db).select(comments_of(db)).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
-    let r = ranked(drain((&s).and(&bc).and(&cc)), |&(_, ((a, _), _))| Reverse(a[2]), false);
-    let r = ranked(r, |&((_, ((a, _), _)), _)| Reverse(a[0]), false);
-    let tv = rel(r.into_iter().map(|(((u, x), vr), qr)| (u, (x, vr.min(qr)))).collect());
-    let ranks: HashIdx<Id<User>, ((([i64; 4], i64), i64), i64)> = (&tv).map(|(u, _)| u).inv().select((&tv).map(|(_, x)| x)).collect();
-    let v = drain(db.user.select((&ranks).filt(|x: ((([i64; 4], i64), i64), i64)| x.0 .0 .0[0] > 0 || x.0 .0 .0[1] > 0)));
-    let v = top_n(v, |&(_, (((a, _), _), o))| (o, Reverse(a[2])), 10);
-    rows(v.into_iter().map(|(u, (((a, b), c), o))| {
+    type R = (((Id<User>, [i64; 4]), i64), i64);
+    let w = whole(&s).select(Ident::<User>::new().and(&s).and(&bc).and(&cc)).window(rank, |(((_, a), _), _)| Reverse(a[2]), asc);
+    let w = (&w).window(rank, |((((_, a), _), _), _): (R, i64)| Reverse(a[0]), asc);
+    let v = drain((&w).filt(|(((((_, a), _), _), _), _): ((R, i64), i64)| a[0] > 0 || a[1] > 0).map(|((x, vr), qr)| (x, vr.min(qr))));
+    let v = top_n(v, |&(_, ((((_, a), _), _), o))| (o, Reverse(a[2])), 10);
+    rows(v.into_iter().map(|(_, ((((u, a), b), c), o))| {
         let mut f = vec![user_col(db, u, "name")];
         f.extend(a.map(V::I));
         f.extend([V::I(b), V::I(c), V::I(o)]);
@@ -1245,9 +1260,9 @@ fn q6266(db: &'static So) -> String {
 // SELECT r.PostId, r.Title, r.CreationDate, r.UpVotes, r.DownVotes, r.CommentCount, r.AnswerCount FROM RankedPosts r WHERE r.Rank <= 5 ORDER BY r.CreationDate DESC LIMIT 20;
 fn q7499(db: &'static So) -> String {
     let Post { post_type_id, creation_date, .. } = &db.post;
-    let top = top_per(drain(db.post.select(post_type_id)), |&(_, t)| t, |&(p, _)| (Reverse(creation_date.get(p).unwrap()), p), 5, false);
-    let top = top_n(top, |&(p, _)| (Reverse(creation_date.get(p).unwrap()), p), 20);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db.post.group_by(post_type_id).select(Ident::<Post>::new().and(creation_date)).window(row_number, |(p, d)| (Reverse(d), p), asc);
+    let top = top_n(drain((&w).filt(|(_, r)| r <= 5).map(|(x, _)| x)), |&(_, (p, d))| (Reverse(d), p), 20);
+    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.1 .0).collect()).map(|p| p).collect();
     let v = db.vote.group_by(&db.vote.post).select(&db.vote.vote_type_id).fold([0i64; 2], |a, t| [a[0] + (t == 2) as i64, a[1] + (t == 3) as i64]);
     let c = db.comment.group_by(&db.comment.post).select(Ident::<Comment>::new()).fold(0i64, |n, _| n + 1);
     let a = db.post.with(post_type_id.eq(2)).group_by(&db.post.parent).select(Ident::<Post>::new()).fold(0i64, |n, _| n + 1);
@@ -1272,15 +1287,14 @@ fn q7499(db: &'static So) -> String {
 //
 // OwnerPostRank reads only base columns, so each owner's five newest posts are picked first and the comment x vote product is driven for those alone.
 fn q8409(db: &'static So) -> String {
-    let Post { owner_user, creation_date, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(ts(2022, 1, 1, 0, 0, 0))).select(owner_user.opt()));
-    let top = top_per(v, |&(_, u)| u, |&(p, _)| (Reverse(creation_date.get(p).unwrap()), p), 5, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let Post { owner_user_id, creation_date, .. } = &db.post;
+    let w = db.post.with(creation_date.ge(ts(2022, 1, 1, 0, 0, 0))).group_by(owner_user_id.opt()).select(Ident::<Post>::new().and(creation_date)).window(row_number, |(p, d)| (Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|((p, _), _)| p).collect();
     let cc = (&tp).group_by(Ident::<Post>::new()).select(comments_of(db).opt().and(votes_of(db).opt())).fold(0i64, |n, (c, _)| n + c.is_some() as i64);
     let vc = (&tp).group_by(Ident::<Post>::new()).select(votes_of(db).opt()).fold(0i64, |n, v| n + v.is_some() as i64);
     let excerpt: HashIdx<Id<Post>, Id<Tag>> = (&db.tag.excerpt_post).inv().collect();
-    let bc = db.badge.group_by(&db.badge.user).select(Ident::<Badge>::new()).fold(0i64, |n, _| n + 1);
-    let v = drain((&cc).and(&vc).and((&excerpt).opt()).and(owner_user.select(&bc).opt()));
+    let bc = db.badge.group_by(&db.badge.user_id).select(Ident::<Badge>::new()).fold(0i64, |n, _| n + 1);
+    let v = drain((&cc).and(&vc).and((&excerpt).opt()).and(owner_user_id.select(&bc).opt()));
     rows(v.into_iter().map(|(p, (((c, n), t), b))| {
         let mut f = post_fields(db, p, &["id", "title", "owner", "created"]);
         f.extend([V::I(c), V::I(n), t.map_or(V::Null, |t| V::S(db.tag.tag_name.get(t).unwrap())), post_fields(db, p, &["type"]).remove(0), V::I(b.unwrap_or(0))]);
@@ -1296,16 +1310,17 @@ fn q8409(db: &'static So) -> String {
 // SELECT tp.PostId, tp.Title, tp.CreationDate, tp.UpVotes, tp.DownVotes, tp.CommentCount, tp.BadgeCount, u.DisplayName AS OwnerDisplayName
 // FROM TopPosts tp JOIN Users u ON tp.OwnerUserId = u.Id ORDER BY tp.UpVotes DESC, tp.CreationDate DESC;
 fn q9691(db: &'static So) -> String {
-    let owner_user = &db.post.owner_user;
+    let Post { owner_user, owner_user_id, .. } = &db.post;
+    let bu: HashIdx<i64, Id<Badge>> = (&db.badge.user_id).inv().collect();
     let s = db
         .post
         .group_by(Ident::<Post>::new())
-        .select(votes_of(db).select(&db.vote.vote_type_id).opt().and(comments_of(db).opt()).and(owner_user.select(badges_of(db)).opt()))
+        .select(votes_of(db).select(&db.vote.vote_type_id).opt().and(comments_of(db).opt()).and(owner_user_id.select(&bu).opt()))
         .fold([0i64; 2], |a, ((t, _), _)| [a[0] + (t == Some(2)) as i64, a[1] + (t == Some(3)) as i64]);
-    let r = ranked(drain(&s), |&(_, a)| Reverse(a[0] - a[1]), false);
-    let tp: MatSet<Id<Post>> = rel(r.into_iter().take_while(|x| x.1 <= 10).map(|x| x.0 .0).collect()).map(|p| p).collect();
+    let w = whole(&s).select(Ident::<Post>::new().and(&s)).window(rank, |(_, a)| Reverse(a[0] - a[1]), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 10).map(|((p, _), _)| p).collect();
     let cc = (&tp).group_by(Ident::<Post>::new()).select(comments_of(db).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
-    let bc = (&tp).group_by(Ident::<Post>::new()).select(owner_user.select(badges_of(db)).opt()).fold(0i64, |n, b| n + b.is_some() as i64);
+    let bc = (&tp).group_by(Ident::<Post>::new()).select(owner_user_id.select(&bu).opt()).fold(0i64, |n, b| n + b.is_some() as i64);
     let v = drain((&tp).select((&s).and(&cc).and(&bc).and(owner_user)));
     rows(v.into_iter().map(|(p, (((a, c), b), u))| {
         let mut f = post_fields(db, p, &["id", "title", "created"]);
@@ -1350,9 +1365,8 @@ fn q7322(db: &'static So) -> String {
 // GROUP BY tp.PostId, tp.Title, tp.CreationDate, tp.Score, tp.ViewCount, tp.AnswerCount, tp.CommentCount, tp.OwnerDisplayName ORDER BY tp.Score DESC, tp.ViewCount DESC;
 fn q7884(db: &'static So) -> String {
     let Post { post_type_id, creation_date, score, owner_user, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(add_days(ts(2024, 10, 1, 12, 34, 56), -30))).with(owner_user).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| (Reverse(score.get(p).unwrap()), p), 5, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db.post.with(creation_date.ge(add_days(ts(2024, 10, 1, 12, 34, 56), -30))).with(owner_user).group_by(post_type_id).select(Ident::<Post>::new().and(score)).window(row_number, |(p, s)| (Reverse(s), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|((p, _), _)| p).collect();
     let s = (&tp)
         .group_by(Ident::<Post>::new())
         .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()))
@@ -1377,10 +1391,9 @@ fn q25667(db: &'static So) -> String {
     let bc = db.user.group_by(Ident::<User>::new()).select(badges_of(db).opt()).fold(0i64, |n, b| n + b.is_some() as i64);
     let ps = db.post.group_by(owner_user).select(post_type_id).fold([0i64; 3], |a, t| [a[0] + 1, a[1] + (t == 1) as i64, a[2] + (t == 2) as i64]);
     let ut = db.post.group_by(owner_user).select(tags_str).count_distinct();
-    let v = drain((&bc).and(&ps).and((&ut).opt()));
-    let v = top_n(v, |&(u, ((b, _), _))| (Reverse(db.user.reputation.get(u).unwrap()), Reverse(b), u), 10);
-    rows(v.into_iter().enumerate().map(|(i, (u, ((b, a), t)))| {
-        let mut f = vec![V::I(i as i64 + 1)];
+    let w = whole(&ps).select(Ident::<User>::new().and(&bc).and(&ps).and((&ut).opt()).and(&db.user.reputation)).window(row_number, |((((u, b), _), _), r)| (Reverse(r), Reverse(b), u), asc);
+    rows(drain((&w).filt(|(_, k)| k <= 10)).into_iter().map(|(_, (((((u, b), a), t), _), i))| {
+        let mut f = vec![V::I(i)];
         f.extend(ucols(db, u, &["name", "rep"]));
         f.extend([V::I(b), V::I(a[0]), V::I(a[1]), V::I(a[2]), V::I(t.unwrap_or(0))]);
         row(f)
@@ -1397,9 +1410,8 @@ fn q25667(db: &'static So) -> String {
 fn q5502(db: &'static So) -> String {
     let Post { owner_user, creation_date, .. } = &db.post;
     let rich = Ident::<User>::new().with((&db.user.reputation).gt(1000));
-    let v = drain(db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))).select(owner_user.select(rich)));
-    let top = top_per(v, |&(_, u)| u, |&(p, _)| (Reverse(creation_date.get(p).unwrap()), p), 3, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))).group_by(owner_user.select(rich)).select(Ident::<Post>::new().and(creation_date)).window(row_number, |(p, d)| (Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 3).map(|((p, _), _)| p).collect();
     let pvs = db.vote.group_by(&db.vote.post).select(&db.vote.vote_type_id).fold([0i64; 3], |a, t| [a[0] + (t == 2) as i64, a[1] + (t == 3) as i64, a[2] + 1]);
     let ub = db.badge.group_by(&db.badge.user).select(&db.badge.class).fold((0i64, i64::MIN), |(n, m), c| (n + 1, m.max(c)));
     let v = drain((&tp).select(Ident::<Post>::new().and((&pvs).opt()).and(owner_user.select(&ub).opt())));
@@ -1427,12 +1439,13 @@ fn q5502(db: &'static So) -> String {
 // Rank reads only base columns, so the posts are picked first and the vote x comment x badge product is driven for those alone.
 fn q7693(db: &'static So) -> String {
     let Post { creation_date, post_type_id, score, view_count, owner_user, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.gt(add_years(current_date(), -1))).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| {
-        let w = view_count.get(p);
-        (Reverse(score.get(p).unwrap()), w.is_none(), Reverse(w), p)
-    }, 10, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db
+        .post
+        .with(creation_date.gt(add_years(current_date(), -1)))
+        .group_by(post_type_id)
+        .select(Ident::<Post>::new().and(score).and(view_count.opt()))
+        .window(row_number, |((p, s), w)| (Reverse(s), w.is_none(), Reverse(w), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 10).map(|(((p, _), _), _)| p).collect();
     let s = (&tp)
         .group_by(Ident::<Post>::new())
         .select(votes_of(db).opt().and(comments_of(db).opt()).and(owner_user.select(badges_of(db)).opt()))
@@ -1456,9 +1469,8 @@ fn q7693(db: &'static So) -> String {
 // LEFT JOIN VoteStatistics vs ON tp.Id = vs.PostId ORDER BY tp.Score DESC, tp.ViewCount DESC;
 fn q9708(db: &'static So) -> String {
     let Post { post_type_id, score, owner_user, creation_date, .. } = &db.post;
-    let v = drain(db.post.with(post_type_id.eq(1).and(score.gt(0))).with(owner_user).select(owner_user));
-    let top = top_per(v, |&(_, u)| u, |&(p, _)| (Reverse(score.get(p).unwrap()), Reverse(creation_date.get(p).unwrap()), p), 5, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db.post.with(post_type_id.eq(1).and(score.gt(0))).group_by(owner_user).select(Ident::<Post>::new().and(score).and(creation_date)).window(row_number, |((p, s), d)| (Reverse(s), Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|(((p, _), _), _)| p).collect();
     let vs = (&tp).group_by(Ident::<Post>::new()).select(votes_of(db).select(vtype_name(db)).opt()).fold([0i64; 3], |a, n| {
         [a[0] + n.is_some() as i64, a[1] + (n == Some("UpMod")) as i64, a[2] + (n == Some("DownMod")) as i64]
     });
@@ -1486,9 +1498,8 @@ fn q9708(db: &'static So) -> String {
 // tp.PostId = u.Id compares a post id with a user id, so it goes through origid.
 fn q9058(db: &'static So) -> String {
     let Post { creation_date, post_type_id, score, origid, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(add_days(ts(2024, 10, 1, 12, 34, 56), -30))).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| (Reverse(score.get(p).unwrap()), p), 10, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db.post.with(creation_date.ge(add_days(ts(2024, 10, 1, 12, 34, 56), -30))).group_by(post_type_id).select(Ident::<Post>::new().and(score)).window(row_number, |(p, s)| (Reverse(s), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 10).map(|((p, _), _)| p).collect();
     let cc = (&tp).group_by(Ident::<Post>::new()).select(comments_of(db).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
     let up = votes_of(db).select(Ident::<Vote>::new().with((&db.vote.vote_type_id).eq(2)));
     let uc = (&tp).group_by(Ident::<Post>::new()).select(comments_of(db).opt().and(up.opt())).fold(0i64, |n, (_, v)| n + v.is_some() as i64);
@@ -1515,9 +1526,14 @@ fn q9058(db: &'static So) -> String {
 // SELECT *, (CASE WHEN Score >= 1000 THEN 'High Score' WHEN Score >= 500 THEN 'Medium Score' ELSE 'Low Score' END) AS ScoreCategory FROM FinalResults ORDER BY Score DESC, ViewCount DESC;
 fn q8076(db: &'static So) -> String {
     let Post { creation_date, post_type_id, score, owner_user, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))).with(owner_user).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| (Reverse(score.get(p).unwrap()), Reverse(creation_date.get(p).unwrap()), p), 5, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db
+        .post
+        .with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)))
+        .with(owner_user)
+        .group_by(post_type_id)
+        .select(Ident::<Post>::new().and(score).and(creation_date))
+        .window(row_number, |((p, s), d)| (Reverse(s), Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|(((p, _), _), _)| p).collect();
     let pc = db.comment.group_by(&db.comment.post).select(&db.comment.score).fold([0i64; 2], |a, s| [a[0] + 1, a[1] + s]);
     let v = drain((&tp).select(Ident::<Post>::new().and((&pc).opt())));
     rows(v.into_iter().map(|(_, (p, c))| {
@@ -1547,12 +1563,12 @@ fn q28254(db: &'static So) -> String {
         .group_by(Ident::<Post>::new())
         .select(votes_of(db).select(&db.vote.vote_type_id).opt().and(comments_of(db).opt()).and(history_of(db).opt()))
         .fold([0i64; 4], |a, ((t, c), h)| [a[0] + (t == Some(2)) as i64, a[1] + (t == Some(3)) as i64, a[2] + c.is_some() as i64, a[3] + h.is_some() as i64]);
-    let top = top_n(drain(&s), |&(p, a)| (Reverse(a[0]), Reverse(a[2]), db.post.creation_date.get(p).unwrap(), p), 10);
+    let w = whole(&s).select(Ident::<Post>::new().and(&s).and(&db.post.creation_date)).window(row_number, |((p, a), d)| (Reverse(a[0]), Reverse(a[2]), d, p), asc);
     let min_tag = db.tag.group_by(&db.tag.excerpt_post).select(&db.tag.origid).fold(i64::MAX, |m, o| m.min(o));
     let tidx: HashIdx<i64, Id<Tag>> = (&db.tag.origid).inv().collect();
-    let tv = rel(top.into_iter().enumerate().map(|(i, (p, a))| (p, (i as i64 + 1, a))).collect());
-    let v = drain((&tv).select(Same::<(Id<Post>, (i64, [i64; 4]))>::new().and(Same::<(Id<Post>, (i64, [i64; 4]))>::new().map(|(p, _)| p).select((&min_tag).select(&tidx)).opt())));
-    rows(v.into_iter().map(|(_, ((p, (r, a)), t))| {
+    type T = (((Id<Post>, [i64; 4]), i64), i64);
+    let v = drain((&w).filt(|(_, r)| r <= 10).select(Same::<T>::new().and(Same::<T>::new().map(|(((p, _), _), _): T| p).select((&min_tag).select(&tidx)).opt())));
+    rows(v.into_iter().map(|(_, ((((p, a), _), r), t))| {
         let mut f = vec![V::I(r)];
         f.extend(post_fields(db, p, &["id", "title", "body", "created", "owner"]));
         f.push(t.map_or(V::Null, |t| V::S(db.tag.tag_name.get(t).unwrap())));
@@ -1571,9 +1587,14 @@ fn q28254(db: &'static So) -> String {
 //        CASE WHEN p.Score > 10 THEN 'High' WHEN p.Score BETWEEN 5 AND 10 THEN 'Medium' ELSE 'Low' END AS ScoreCategory FROM TopPosts p ORDER BY p.Score DESC, p.CommentCount DESC;
 fn q5009(db: &'static So) -> String {
     let Post { creation_date, post_type_id, score, owner_user, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))).with(owner_user).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| (Reverse(score.get(p).unwrap()), creation_date.get(p).unwrap(), p), 5, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db
+        .post
+        .with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)))
+        .with(owner_user)
+        .group_by(post_type_id)
+        .select(Ident::<Post>::new().and(score).and(creation_date))
+        .window(row_number, |((p, s), d)| (Reverse(s), d, p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|(((p, _), _), _)| p).collect();
     let s = (&tp)
         .group_by(Ident::<Post>::new())
         .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()))
@@ -1596,9 +1617,8 @@ fn q5009(db: &'static So) -> String {
 // GROUP BY tp.PostId, tp.Title, tp.OwnerDisplayName, tp.CreationDate, tp.Score, tp.ViewCount ORDER BY tp.Score DESC, tp.ViewCount DESC;
 fn q5894(db: &'static So) -> String {
     let Post { creation_date, owner_user, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(add_days(ts(2024, 10, 1, 12, 34, 56), -30))).with(owner_user).select(ptype_name(db)));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| (Reverse(creation_date.get(p).unwrap()), p), 5, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db.post.with(creation_date.ge(add_days(ts(2024, 10, 1, 12, 34, 56), -30))).with(owner_user).group_by(ptype_name(db)).select(Ident::<Post>::new().and(creation_date)).window(row_number, |(p, d)| (Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|((p, _), _)| p).collect();
     let s = (&tp)
         .group_by(Ident::<Post>::new())
         .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()))
@@ -1620,9 +1640,14 @@ fn q5894(db: &'static So) -> String {
 // FROM PostWithVotes pwv ORDER BY pwv.Score DESC, pwv.ViewCount DESC;
 fn q7404(db: &'static So) -> String {
     let Post { creation_date, post_type_id, score, owner_user, .. } = &db.post;
-    let v = drain(db.post.with(post_type_id.is_in([1, 2]).and(score.gt(0))).with(owner_user).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| (Reverse(score.get(p).unwrap()), Reverse(creation_date.get(p).unwrap()), p), 5, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db
+        .post
+        .with(post_type_id.is_in([1, 2]).and(score.gt(0)))
+        .with(owner_user)
+        .group_by(post_type_id)
+        .select(Ident::<Post>::new().and(score).and(creation_date))
+        .window(row_number, |((p, s), d)| (Reverse(s), Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|(((p, _), _), _)| p).collect();
     let s = (&tp).group_by(Ident::<Post>::new()).select(votes_of(db).select(&db.vote.vote_type_id).opt()).fold([0i64; 2], |a, t| [a[0] + (t == Some(2)) as i64, a[1] + (t == Some(3)) as i64]);
     rows(drain(&s).into_iter().map(|(p, a)| {
         let mut f = post_fields(db, p, &["id", "title", "created", "score", "views", "owner"]);
@@ -1668,9 +1693,14 @@ fn q27505(db: &'static So) -> String {
 // GROUP BY t.PostId, t.Title, t.CreationDate, t.ViewCount, t.Score, t.AnswerCount, t.CommentCount, t.FavoriteCount, t.OwnerName ORDER BY t.Score DESC, t.CreationDate DESC;
 fn q5290(db: &'static So) -> String {
     let Post { creation_date, post_type_id, score, owner_user, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))).with(owner_user).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| (Reverse(score.get(p).unwrap()), Reverse(creation_date.get(p).unwrap()), p), 5, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db
+        .post
+        .with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)))
+        .with(owner_user)
+        .group_by(post_type_id)
+        .select(Ident::<Post>::new().and(score).and(creation_date))
+        .window(row_number, |((p, s), d)| (Reverse(s), Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|(((p, _), _), _)| p).collect();
     let bounty = votes_of(db).select(Ident::<Vote>::new().with((&db.vote.vote_type_id).eq(8))).select((&db.vote.bounty_amount).opt());
     let s = (&tp).group_by(Ident::<Post>::new()).select(comments_of(db).opt().and(bounty.opt())).fold([0i64; 2], |a, (c, b)| [a[0] + c.is_some() as i64, a[1] + b.flatten().unwrap_or(0)]);
     rows(drain(&s).into_iter().map(|(p, a)| {
@@ -1688,12 +1718,13 @@ fn q5290(db: &'static So) -> String {
 // SELECT tp.Title, tp.CreationDate, tp.Score, tp.ViewCount, tp.OwnerDisplayName, tp.CommentCount, tp.BadgeCount FROM TopPosts tp WHERE tp.Rank <= 5 ORDER BY tp.Score DESC;
 fn q8961(db: &'static So) -> String {
     let Post { creation_date, post_type_id, score, owner_user, view_count, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)).and(score.gt(0))).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| {
-        let w = view_count.get(p);
-        (Reverse(score.get(p).unwrap()), w.is_none(), Reverse(w), p)
-    }, 5, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db
+        .post
+        .with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)).and(score.gt(0)))
+        .group_by(post_type_id)
+        .select(Ident::<Post>::new().and(score).and(view_count.opt()))
+        .window(row_number, |((p, s), w)| (Reverse(s), w.is_none(), Reverse(w), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|(((p, _), _), _)| p).collect();
     let cc = db.comment.group_by(&db.comment.post).select(Ident::<Comment>::new()).fold(0i64, |n, _| n + 1);
     let bc = db.badge.group_by(&db.badge.user).select(Ident::<Badge>::new()).fold(0i64, |n, _| n + 1);
     let v = drain((&tp).select(Ident::<Post>::new().and(owner_user.select(Ident::<User>::new().and((&bc).opt()))).and((&cc).opt())));
@@ -1744,9 +1775,9 @@ fn q883(db: &'static So) -> String {
     let Post { owner_user, score, view_count, .. } = &db.post;
     let ps = db.post.group_by(owner_user).select(score.and(view_count.opt())).fold([0i64; 4], |a, (s, w)| [a[0] + 1, a[1] + s, a[2] + w.is_some() as i64, a[3] + w.unwrap_or(0)]);
     let (rs, rn) = db.user.select(&db.user.reputation).fold_flat((0i128, 0i128), |(s, n), r| (s + r as i128, n + 1));
-    let r = ranked(drain(&ps), |&(_, a)| Reverse(a[1]), false);
-    let tv = rel(r.into_iter().map(|((u, a), k)| (u, (a, k))).collect());
-    let ranks: HashIdx<Id<User>, ([i64; 4], i64)> = (&tv).map(|(u, _)| u).inv().select((&tv).map(|(_, x)| x)).collect();
+    let w = whole(&ps).select(Ident::<User>::new().and(&ps)).window(rank, |(_, a)| Reverse(a[1]), asc);
+    let tv: MatSet<(Id<User>, ([i64; 4], i64))> = (&w).map(|((u, a), k)| (u, (a, k))).collect();
+    let ranks = by_first(&tv);
     let keep = (&db.user.reputation).and(&ranks).filt(move |(r, (a, _)): (i64, ([i64; 4], i64))| r as i128 * rn > rs || (a[0] > 5 && a[1] > 20));
     let v = top_n(drain(db.user.select(keep)), |&(_, (_, (a, _)))| Reverse(a[1]), 20);
     rows(v.into_iter().map(|(u, (_, (a, k)))| {
@@ -1776,9 +1807,9 @@ fn q5533(db: &'static So) -> String {
             None => a,
         });
     let pc = db.user.group_by(Ident::<User>::new()).select(posts_of(db).opt()).fold(0i64, |n, p| n + p.is_some() as i64);
-    let r = ranked(drain((&pc).and(&s)), |&(_, (n, _))| Reverse(n), false);
-    let r = ranked(r, |&((_, (_, a)), _)| Reverse(a[2]), false);
-    let tv = rel(r.into_iter().map(|(((u, _), pr), ur)| (u, pr, ur)).collect());
+    let w = whole(&pc).select(Ident::<User>::new().and(&pc).and(&s)).window(rank, |((_, n), _)| Reverse(n), asc);
+    let w = (&w).window(rank, |(((_, _), a), _): (((Id<User>, i64), [i64; 4]), i64)| Reverse(a[2]), asc);
+    let tv: MatSet<(Id<User>, i64, i64)> = (&w).map(|((((u, _), _), pr), ur)| (u, pr, ur)).collect();
     let prank: HashIdx<Id<User>, i64> = (&tv).map(|(u, _, _)| u).inv().select((&tv).map(|(_, r, _)| r)).collect();
     let urank: HashIdx<Id<User>, i64> = (&tv).map(|(u, _, _)| u).inv().select((&tv).map(|(_, _, r)| r)).collect();
     let by_pr: HashIdx<i64, Id<User>> = (&tv).map(|(_, r, _)| r).inv().select((&tv).map(|(u, _, _)| u)).collect();
@@ -1838,9 +1869,8 @@ fn q9248(db: &'static So) -> String {
 // Rank reads only base columns, so the posts are picked first and the comment x vote product is driven for those alone.
 fn q9779(db: &'static So) -> String {
     let Post { creation_date, post_type_id, owner_user, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(add_months(ts(2024, 10, 1, 12, 34, 56), -6))).with(owner_user).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| (Reverse(creation_date.get(p).unwrap()), p), 5, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db.post.with(creation_date.ge(add_months(ts(2024, 10, 1, 12, 34, 56), -6))).with(owner_user).group_by(post_type_id).select(Ident::<Post>::new().and(creation_date)).window(row_number, |(p, d)| (Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|((p, _), _)| p).collect();
     let s = (&tp)
         .group_by(Ident::<Post>::new())
         .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()))
@@ -1865,13 +1895,10 @@ fn q9779(db: &'static So) -> String {
 // Both ranks read only base columns, so they are taken first and the comment x answer product is driven for the posts they keep.
 fn q14546(db: &'static So) -> String {
     let Post { score, view_count, post_type_id, .. } = &db.post;
-    let r = ranked(drain(db.post.with(post_type_id.is_in([1, 2])).select(score)), |&(_, s)| Reverse(s), false);
-    let r = ranked(r, |&((p, _), _)| {
-        let w = view_count.get(p);
-        (w.is_none(), Reverse(w))
-    }, false);
-    let tv = rel(r.into_iter().filter(|&((_, s), w)| s <= 10 || w <= 10).map(|(((p, _), s), w)| (p, (s, w))).collect());
-    let tops: HashIdx<Id<Post>, (i64, i64)> = (&tv).map(|(p, _)| p).inv().select((&tv).map(|(_, x)| x)).collect();
+    let w = whole(db.post.with(post_type_id.is_in([1, 2]))).select(Ident::<Post>::new().and(score).and(view_count.opt())).window(rank, |((_, s), _)| Reverse(s), asc);
+    let w = (&w).window(rank, |(((_, _), v), _): (((Id<Post>, i64), Option<i64>), i64)| (v.is_none(), Reverse(v)), asc);
+    let tv: MatSet<(Id<Post>, (i64, i64))> = (&w).filt(|((_, s), r)| s <= 10 || r <= 10).map(|((((p, _), _), s), r)| (p, (s, r))).collect();
+    let tops = by_first(&tv);
     let s = db
         .post
         .with(&tops)
@@ -1896,9 +1923,8 @@ fn q14546(db: &'static So) -> String {
 // tp.PostId = u.Id compares a post id with a user id, so it goes through origid.
 fn q9826(db: &'static So) -> String {
     let Post { creation_date, post_type_id, score, origid, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| (Reverse(creation_date.get(p).unwrap()), Reverse(score.get(p).unwrap())), 10, true);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))).group_by(post_type_id).select(Ident::<Post>::new().and(creation_date).and(score)).window(rank, |((_, d), s)| (Reverse(d), Reverse(s)), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 10).map(|(((p, _), _), _)| p).collect();
     let a = db.post.with(post_type_id.eq(2)).group_by(&db.post.parent).select(Ident::<Post>::new()).fold(0i64, |n, _| n + 1);
     let c = db.comment.group_by(&db.comment.post).select(Ident::<Comment>::new()).fold(0i64, |n, _| n + 1);
     let uidx: HashIdx<i64, Id<User>> = (&db.user.origid).inv().collect();
@@ -1925,13 +1951,11 @@ fn q3666(db: &'static So) -> String {
     let ps = db.post.group_by(owner_user).select(post_type_id.and(score).and(view_count.opt())).fold([0i64; 5], |a, ((t, s), w)| {
         [a[0] + (t == 1) as i64, a[1] + (t == 2) as i64, a[2] + s, a[3] + w.is_some() as i64, a[4] + w.unwrap_or(0)]
     });
-    let up = drain(db.user.select((&ps).opt()));
-    let perf = |a: &Option<[i64; 5]>| a.map_or(0, |a| a[0] * 3 + a[1] * 2 + a[2]);
-    let r = ranked(up, |(_, a)| Reverse(perf(a)), false);
-    let tv = rel(r.into_iter().map(|((u, a), k)| (u, (a, k))).collect());
-    let ranks: HashIdx<Id<User>, (Option<[i64; 5]>, i64)> = (&tv).map(|(u, _)| u).inv().select((&tv).map(|(_, x)| x)).collect();
-    let v = drain(db.user.with((&db.user.reputation).gt(5000)).select((&ranks).filt(|(a, _): (Option<[i64; 5]>, i64)| a.map_or(false, |a| a[0] > 5))));
-    rows(v.into_iter().map(|(u, (a, k))| {
+    let w = whole(db.user.iq())
+        .select(Ident::<User>::new().and(&db.user.reputation).and((&ps).opt()))
+        .window(rank, |(_, a)| Reverse(a.map_or(0, |a| a[0] * 3 + a[1] * 2 + a[2])), asc);
+    let v = drain((&w).filt(|((_, a), _)| a.map_or(false, |a| a[0] > 5)).filt(|(((_, r), _), _)| r > 5000));
+    rows(v.into_iter().map(|(_, (((u, _), a), k))| {
         let a = a.unwrap();
         let mut f = ucols(db, u, &["name", "rep"]);
         f.extend([V::I(a[0]), V::I(a[1]), V::I(a[2]), nullable(a[4], a[3]), V::I(a[0] * 3 + a[1] * 2 + a[2]), V::S(if k <= 10 { "Top Performer" } else { "Regular User" })]);
@@ -1949,9 +1973,13 @@ fn q3666(db: &'static So) -> String {
 // FROM AggregateData ad LEFT JOIN ClosedPosts cp ON ad.OwnerDisplayName = (SELECT DisplayName FROM Users WHERE Id = cp.OwnerUserId) ORDER BY ad.TotalScore DESC, ad.TotalPosts DESC;
 fn q6066(db: &'static So) -> String {
     let Post { post_type_id, creation_date, owner_user, score, view_count, .. } = &db.post;
-    let v = drain(db.post.with(post_type_id.eq(1).and(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)))).with(owner_user).select(owner_user));
-    let top = top_per(v, |&(_, u)| u, |&(p, _)| (Reverse(score.get(p).unwrap()), Reverse(creation_date.get(p).unwrap()), p), 5, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db
+        .post
+        .with(post_type_id.eq(1).and(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))))
+        .group_by(owner_user)
+        .select(Ident::<Post>::new().and(score).and(creation_date))
+        .window(row_number, |((p, s), d)| (Reverse(s), Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|(((p, _), _), _)| p).collect();
     let ad = (&tp).group_by(owner_user.select(&db.user.display_name)).select(score.and(view_count.opt())).fold([0i64; 4], |a, (s, w)| {
         [a[0] + 1, a[1] + s, a[2] + w.is_some() as i64, a[3] + w.unwrap_or(0)]
     });
@@ -1971,9 +1999,8 @@ fn q6066(db: &'static So) -> String {
 // WHERE rp.Rank = 1 AND (ub.GoldBadges > 0 OR ub.SilverBadges > 1 OR ub.BronzeBadges > 2) ORDER BY rp.Score DESC NULLS LAST FETCH FIRST 10 ROWS ONLY;
 fn q191(db: &'static So) -> String {
     let Post { post_type_id, owner_user, score, .. } = &db.post;
-    let v = drain(db.post.with(post_type_id.eq(1)).with(owner_user).select(owner_user));
-    let top = top_per(v, |&(_, u)| u, |&(p, _)| (Reverse(score.get(p).unwrap()), p), 1, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db.post.with(post_type_id.eq(1)).group_by(owner_user).select(Ident::<Post>::new().and(score)).window(row_number, |(p, s)| (Reverse(s), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r == 1).map(|((p, _), _)| p).collect();
     let cpc = db.post_history.group_by(&db.post_history.post).select(&db.post_history.post_history_type_id).fold(0i64, |n, t| n + (t == 10 || t == 11) as i64);
     let ub = db.user.group_by(Ident::<User>::new()).select(badges_of(db).select(&db.badge.class).opt()).fold([0i64; 3], |a, c| [a[0] + (c == Some(1)) as i64, a[1] + (c == Some(2)) as i64, a[2] + (c == Some(3)) as i64]);
     let v = drain((&tp).select(owner_user.select(Ident::<User>::new().and((&ub).filt(|a| a[0] > 0 || a[1] > 1 || a[2] > 2))).and((&cpc).opt())));
@@ -1997,9 +2024,14 @@ fn q191(db: &'static So) -> String {
 // FROM TopPosts tp JOIN PostVoteSummary pvs ON tp.PostId = pvs.PostId ORDER BY tp.Score DESC, tp.ViewCount DESC;
 fn q7401(db: &'static So) -> String {
     let Post { creation_date, post_type_id, score, owner_user, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(add_days(date(2024, 10, 1), -30))).with(owner_user).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| (Reverse(score.get(p).unwrap()), Reverse(creation_date.get(p).unwrap()), p), 10, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db
+        .post
+        .with(creation_date.ge(add_days(date(2024, 10, 1), -30)))
+        .with(owner_user)
+        .group_by(post_type_id)
+        .select(Ident::<Post>::new().and(score).and(creation_date))
+        .window(row_number, |((p, s), d)| (Reverse(s), Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 10).map(|(((p, _), _), _)| p).collect();
     let pvs = (&tp).group_by(Ident::<Post>::new()).select(votes_of(db).select(&db.vote.vote_type_id).opt()).fold([0i64; 2], |a, t| [a[0] + (t == Some(2)) as i64, a[1] + (t == Some(3)) as i64]);
     rows(drain(&pvs).into_iter().map(|(p, a)| {
         let mut f = post_fields(db, p, &["id", "title", "score", "views", "created", "activity", "owner_id", "owner"]);
@@ -2053,9 +2085,8 @@ fn q21(db: &'static So) -> String {
 fn q6054(db: &'static So) -> String {
     let Post { post_type_id, creation_date, owner_user, score, .. } = &db.post;
     let t0 = ts(2024, 10, 1, 12, 34, 56);
-    let v = drain(db.post.with(post_type_id.eq(1).and(creation_date.ge(add_years(t0, -1)))).with(owner_user).select(owner_user));
-    let top = top_per(v, |&(_, u)| u, |&(p, _)| (Reverse(score.get(p).unwrap()), Reverse(creation_date.get(p).unwrap()), p), 5, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db.post.with(post_type_id.eq(1).and(creation_date.ge(add_years(t0, -1)))).group_by(owner_user).select(Ident::<Post>::new().and(score).and(creation_date)).window(row_number, |((p, s), d)| (Reverse(s), Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|(((p, _), _), _)| p).collect();
     let ub = db.badge.with((&db.badge.date).ge(add_years(t0, -1))).group_by(&db.badge.user).select(Ident::<Badge>::new()).fold(0i64, |n, _| n + 1);
     let pvs = db.vote.group_by(&db.vote.post).select(&db.vote.vote_type_id).fold([0i64; 2], |a, t| [a[0] + (t == 2) as i64, a[1] + (t == 3) as i64]);
     let v = drain((&tp).select(Ident::<Post>::new().and(owner_user.select(&ub).opt()).and((&pvs).opt())));
@@ -2081,8 +2112,8 @@ fn q6054(db: &'static So) -> String {
 // Rank reads only base columns, so the ten questions are picked first; UserActivity is taken for their owners alone.
 fn q6390(db: &'static So) -> String {
     let Post { post_type_id, score, creation_date, owner_user, .. } = &db.post;
-    let r = ranked(drain(db.post.with(post_type_id.eq(1)).select(score)), |&(p, s)| (Reverse(s), Reverse(creation_date.get(p).unwrap())), false);
-    let tp: MatSet<Id<Post>> = rel(r.into_iter().take_while(|x| x.1 <= 10).map(|x| x.0 .0).collect()).map(|p| p).collect();
+    let w = whole(db.post.with(post_type_id.eq(1))).select(Ident::<Post>::new().and(score).and(creation_date)).window(rank, |((_, s), d)| (Reverse(s), Reverse(d)), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 10).map(|(((p, _), _), _)| p).collect();
     let s = (&tp).group_by(Ident::<Post>::new()).select(children_of(db).opt().and(comments_of(db).opt())).fold([0i64; 2], |a, (x, c)| [a[0] + x.is_some() as i64, a[1] + c.is_some() as i64]);
     let owners: MatSet<Id<User>> = (&tp).select(owner_user).collect();
     let ua = (&owners)
@@ -2114,9 +2145,9 @@ fn q9565(db: &'static So) -> String {
             [a[0] + (t == 1) as i64, a[1] + (t == 2) as i64, a[2] + if t == 1 || t == 2 { s } else { 0 }, a[3] + (c == Some(1)) as i64, a[4] + (c == Some(2)) as i64, a[5] + (c == Some(3)) as i64]
         });
     let pc = users().group_by(Ident::<User>::new()).select(posts_of(db).opt()).fold(0i64, |n, p| n + p.is_some() as i64);
-    let top = top_n(drain((&s).and(&pc)), |&(u, (a, _))| (Reverse(a[2]), u), 10);
-    rows(top.into_iter().enumerate().map(|(i, (u, (a, n)))| {
-        let mut f = vec![V::I(i as i64 + 1)];
+    let w = whole(&s).select(Ident::<User>::new().and(&s).and(&pc)).window(row_number, |((u, a), _)| (Reverse(a[2]), u), asc);
+    rows(drain((&w).filt(|(_, k)| k <= 10)).into_iter().map(|(_, (((u, a), n), i))| {
+        let mut f = vec![V::I(i)];
         f.extend(ucols(db, u, &["name", "rep"]));
         f.push(V::I(n));
         f.extend(a.map(V::I));
@@ -2146,8 +2177,8 @@ fn q26905(db: &'static So) -> String {
                 a
             }
         });
-    let r = ranked(drain((&s).filt(|a| a[0] > 0)), |&(_, a)| Reverse(a[0]), false);
-    rows(r.into_iter().take_while(|x| x.1 <= 10).map(|((u, a), _)| {
+    let w = whole((&s).filt(|a| a[0] > 0)).select(Ident::<User>::new().and(&s)).window(rank, |(_, a)| Reverse(a[0]), asc);
+    rows(drain((&w).filt(|(_, k)| k <= 10)).into_iter().map(|(_, ((u, a), _))| {
         let mut f = ucols(db, u, &["uid", "name", "rep", "ucreated"]);
         f.extend([V::I(a[0]), V::I(a[1]), V::I(a[2]), V::I(a[3]), avg(a[4], a[6]), avg(a[5], a[6])]);
         row(f)
@@ -2163,8 +2194,8 @@ fn q26905(db: &'static So) -> String {
 //
 // ReputationRank reads only Reputation, so the users are ranked first and the post x vote product is driven for those kept.
 fn q5630(db: &'static So) -> String {
-    let r = ranked(drain(db.user.with((&db.user.creation_date).ge(ts(2020, 1, 1, 0, 0, 0))).select(&db.user.reputation)), |&(_, r)| Reverse(r), false);
-    let tu: MatSet<Id<User>> = rel(r.into_iter().take_while(|x| x.1 <= 10).map(|x| x.0 .0).collect()).map(|u| u).collect();
+    let w = whole(db.user.with((&db.user.creation_date).ge(ts(2020, 1, 1, 0, 0, 0)))).select(Ident::<User>::new().and(&db.user.reputation)).window(rank, |(_, r)| Reverse(r), asc);
+    let tu: MatSet<Id<User>> = (&w).filt(|(_, k)| k <= 10).map(|((u, _), _)| u).collect();
     let s = (&tu)
         .group_by(Ident::<User>::new())
         .select(posts_of(db).select((&db.post.post_type_id).and(votes_of(db).select(&db.vote.vote_type_id).opt())).opt())
@@ -2193,9 +2224,8 @@ fn q5630(db: &'static So) -> String {
 // Rank reads only base columns, so the posts are picked first and the comment x vote product is driven for those alone.
 fn q6294(db: &'static So) -> String {
     let Post { creation_date, post_type_id, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| (Reverse(creation_date.get(p).unwrap()), p), 10, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))).group_by(post_type_id).select(Ident::<Post>::new().and(creation_date)).window(row_number, |(p, d)| (Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 10).map(|((p, _), _)| p).collect();
     let s = (&tp)
         .group_by(Ident::<Post>::new())
         .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()))
@@ -2223,12 +2253,8 @@ fn q6111(db: &'static So) -> String {
         .group_by(Ident::<Post>::new())
         .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()))
         .fold([0i64; 3], |a, (c, t)| [a[0] + c.is_some() as i64, a[1] + (t == Some(2)) as i64, a[2] + (t == Some(3)) as i64]);
-    let v = drain((&s).and(ptype_name(db)));
-    let top = top_per(v, |&(_, (_, t))| t, |&(p, (a, _))| {
-        let w = view_count.get(p);
-        (Reverse(a[1]), w.is_none(), Reverse(w), p)
-    }, 10, false);
-    rows(top.into_iter().map(|(p, (a, _))| {
+    let w = db.post.with(&s).group_by(ptype_name(db)).select(Ident::<Post>::new().and(&s).and(view_count.opt())).window(row_number, |((p, a), w)| (Reverse(a[1]), w.is_none(), Reverse(w), p), asc);
+    rows(drain((&w).filt(|(_, r)| r <= 10)).into_iter().map(|(_, (((p, a), _), _))| {
         let mut f = post_fields(db, p, &["id", "title", "created", "views"]);
         f.extend(a.map(V::I));
         f.push(V::S(if a[1] > a[2] { "Positive" } else if a[1] < a[2] { "Negative" } else { "Neutral" }));
@@ -2254,9 +2280,14 @@ fn q6289(db: &'static So) -> String {
         });
     let pc = rich().group_by(Ident::<User>::new()).select(posts_of(db).opt()).fold(0i64, |n, p| n + p.is_some() as i64);
     let tb = db.badge.group_by((&db.badge.user).and(&db.badge.name)).select(Ident::<Badge>::new()).fold(0i64, |n, _| n + 1);
-    let top = top_per(drain(&tb), |&((u, _), _)| u, |&(_, n)| Reverse(n), 1, true);
-    let tv = rel(top.into_iter().map(|((u, name), n)| (u, (name, n))).collect());
-    let rb: HashIdx<Id<User>, (Str, i64)> = (&tv).map(|(u, _)| u).inv().select((&tv).map(|(_, x)| x)).collect();
+    type UB = (Id<User>, Str);
+    let rb: HashIdx<Id<User>, (Str, i64)> = whole(&tb)
+        .group_by(Same::<UB>::new().map(|(u, _): UB| u))
+        .select(Same::<UB>::new().and(&tb))
+        .window(rank, |(_, n)| Reverse(n), asc)
+        .filt(|(_, r)| r == 1)
+        .map(|(((_, name), n), _)| (name, n))
+        .collect();
     rows(drain((&pc).and(&s).and((&rb).opt())).into_iter().map(|(u, ((n, a), b))| {
         let mut f = ucols(db, u, &["name", "rep"]);
         f.push(V::I(n));
@@ -2280,16 +2311,21 @@ fn q6289(db: &'static So) -> String {
 //
 // t.PostId = pt.Id and b.Class = bh.Id join across tables' ids, so both go through origid.
 fn q7302(db: &'static So) -> String {
-    let Post { creation_date, post_type_id, score, owner_user, origid, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| (Reverse(score.get(p).unwrap()), Reverse(creation_date.get(p).unwrap()), p), 10, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let Post { creation_date, post_type_id, score, owner_user_id, origid, .. } = &db.post;
+    let w = db
+        .post
+        .with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)))
+        .group_by(post_type_id)
+        .select(Ident::<Post>::new().and(score).and(creation_date))
+        .window(row_number, |((p, s), d)| (Reverse(s), Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 10).map(|(((p, _), _), _)| p).collect();
     let cc = (&tp).group_by(Ident::<Post>::new()).select(comments_of(db).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
     let vc = (&tp).group_by(Ident::<Post>::new()).select(votes_of(db).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
     let hc = (&tp).group_by(Ident::<Post>::new()).select(history_of(db).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
     let ptidx: HashIdx<i64, Id<PostType>> = (&db.post_type.origid).inv().collect();
     let htidx: HashIdx<i64, Id<PostHistoryType>> = (&db.post_history_type.origid).inv().collect();
-    let badge = owner_user.select(badges_of(db).select((&db.badge.class).select(&htidx).opt())).opt();
+    let bu: HashIdx<i64, Id<Badge>> = (&db.badge.user_id).inv().collect();
+    let badge = owner_user_id.select((&bu).select((&db.badge.class).select(&htidx).opt())).opt();
     let v = drain((&cc).and(&vc).and(&hc).and(origid.select(&ptidx).opt()).and(badge));
     rows(v.into_iter().map(|(p, ((((c, n), h), t), b))| {
         let mut f = post_fields(db, p, &["id", "title", "created", "views", "score", "owner"]);
@@ -2315,9 +2351,9 @@ fn q7302(db: &'static So) -> String {
 fn q25164(db: &'static So) -> String {
     let pc = db.user.group_by(Ident::<User>::new()).select(posts_of(db).opt()).fold(0i64, |n, p| n + p.is_some() as i64);
     let cc = db.user.group_by(Ident::<User>::new()).select(posts_of(db).select(comments_of(db)).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
-    let r = ranked(drain((&pc).and(&cc)), |&(u, (p, c))| (Reverse(db.user.reputation.get(u).unwrap()), Reverse(p), Reverse(c)), false);
-    let tv = rel(r.into_iter().take_while(|x| x.1 <= 10).map(|x| x.0).collect());
-    let tops: HashIdx<Id<User>, (i64, i64)> = (&tv).map(|(u, _)| u).inv().select((&tv).map(|(_, x)| x)).collect();
+    let w = whole(&pc).select(Ident::<User>::new().and(&pc).and(&cc).and(&db.user.reputation)).window(rank, |(((_, p), c), r)| (Reverse(r), Reverse(p), Reverse(c)), asc);
+    let tv: MatSet<(Id<User>, (i64, i64))> = (&w).filt(|(_, k)| k <= 10).map(|((((u, p), c), _), _)| (u, (p, c))).collect();
+    let tops = by_first(&tv);
     let s = db
         .user
         .with(&tops)
@@ -2347,9 +2383,8 @@ fn q25164(db: &'static So) -> String {
 // WHERE rp.rn = 1 AND ur.BadgePoints > 0 ORDER BY ur.UserReputation DESC, rp.ViewCount DESC;
 fn q3720(db: &'static So) -> String {
     let Post { post_type_id, score, owner_user, creation_date, .. } = &db.post;
-    let v = drain(db.post.with(post_type_id.eq(1).and(score.gt(0))).with(owner_user).select(owner_user));
-    let top = top_per(v, |&(_, u)| u, |&(p, _)| (Reverse(creation_date.get(p).unwrap()), p), 1, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db.post.with(post_type_id.eq(1).and(score.gt(0))).group_by(owner_user).select(Ident::<Post>::new().and(creation_date)).window(row_number, |(p, d)| (Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r == 1).map(|((p, _), _)| p).collect();
     let ur = db.user.group_by(Ident::<User>::new()).select((&db.user.reputation).and(badges_of(db).select(&db.badge.class).opt())).fold((0i64, i64::MIN), |(s, m), (r, c)| (s + c.unwrap_or(0), m.max(r)));
     let cp = db.post_history.with((&db.post_history.post_history_type_id).eq(10)).group_by(&db.post_history.post).select(Ident::<PostHistory>::new()).fold(0i64, |n, _| n + 1);
     let v = drain((&tp).select(owner_user.select(Ident::<User>::new().and((&ur).filt(|(s, _): (i64, i64)| s > 0))).and((&cp).opt())));
@@ -2370,9 +2405,8 @@ fn q3720(db: &'static So) -> String {
 fn q4503(db: &'static So) -> String {
     let Post { creation_date, post_type_id, score, owner_user, view_count, .. } = &db.post;
     let t0 = ts(2024, 10, 1, 12, 34, 56);
-    let v = drain(db.post.with(creation_date.ge(add_years(t0, -1))).with(owner_user).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| Reverse(score.get(p).unwrap()), 5, true);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db.post.with(creation_date.ge(add_years(t0, -1))).with(owner_user).group_by(post_type_id).select(Ident::<Post>::new().and(score)).window(rank, |(_, s)| Reverse(s), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|((p, _), _)| p).collect();
     let pvc = db.vote.group_by(&db.vote.post).select(&db.vote.vote_type_id).fold([0i64; 2], |a, t| [a[0] + (t == 2) as i64, a[1] + (t == 3) as i64]);
     let PostHistory { post, post_history_type_id, creation_date: hd, .. } = &db.post_history;
     let cp = db.post_history.with(post_history_type_id.is_in([10, 11]).and(hd.ge(add_months(t0, -6)))).group_by(post).select(Ident::<PostHistory>::new()).fold(0i64, |n, _| n + 1);
@@ -2404,7 +2438,7 @@ fn q8962(db: &'static So) -> String {
         Some((t, _)) => [a[0] + (t == 2) as i64, a[1] + (t == 3) as i64],
         None => a,
     });
-    let pv = rich().group_by(Ident::<User>::new()).select(votes_by(db).select((&db.vote.post).opt()).opt()).buf_fold(|v| distinct_some(v.into_iter().map(|x| x.flatten())));
+    let pv = rich().group_by(Ident::<User>::new()).select(votes_by(db).select(&db.vote.post)).count_distinct();
     let top = top_n(drain((&uv).and((&pv).filt(|n| n > 10))), |&(u, (a, _))| (Reverse(a[0]), u), 10);
     let tu: MatSet<Id<User>> = rel(top.into_iter().map(|x| x.0).collect()).map(|u| u).collect();
     let ph = db.post_history.group_by(&db.post_history.user).select(&db.post_history.creation_date).fold((0i64, i64::MIN), |(n, m), d| (n + 1, m.max(d)));
@@ -2426,9 +2460,9 @@ fn q8962(db: &'static So) -> String {
 fn q102(db: &'static So) -> String {
     let bc = db.user.group_by(Ident::<User>::new()).select(badges_of(db).opt()).fold(0i64, |n, b| n + b.is_some() as i64);
     let ps = db.post.group_by(&db.post.owner_user).select(&db.post.score).fold([0i64; 2], |a, s| [a[0] + 1, a[1] + s]);
-    let r = ranked(drain((&bc).and(&ps)), |&(_, (b, a))| (Reverse(a[0]), Reverse(b), Reverse(fkey(a[1] as f64 / a[0] as f64))), false);
-    let r = top_n(r, |x| x.1, 10);
-    rows(r.into_iter().map(|((u, (b, a)), k)| row(vec![user_col(db, u, "name"), V::I(a[0]), V::I(b), avg(a[1], a[0]), V::I(k)])))
+    let w = whole(&ps).select(Ident::<User>::new().and(&bc).and(&ps)).window(rank, |((_, b), a)| (Reverse(a[0]), Reverse(b), Reverse(fkey(a[1] as f64 / a[0] as f64))), asc);
+    let r = top_n(drain(&w), |x| x.1 .1, 10);
+    rows(r.into_iter().map(|(_, (((u, b), a), k))| row(vec![user_col(db, u, "name"), V::I(a[0]), V::I(b), avg(a[1], a[0]), V::I(k)])))
 }
 
 // WITH UserBadges AS (SELECT U.Id AS UserId, COUNT(B.Id) FILTER (WHERE B.Class = 1) AS GoldBadges, COUNT(B.Id) FILTER (WHERE B.Class = 2) AS SilverBadges, COUNT(B.Id) FILTER (WHERE B.Class = 3) AS BronzeBadges
@@ -2467,9 +2501,14 @@ fn q1665(db: &'static So) -> String {
 // SELECT * FROM FinalReport ORDER BY Score DESC, ViewCount DESC;
 fn q7335(db: &'static So) -> String {
     let Post { creation_date, post_type_id, score, owner_user, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))).with(owner_user).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| (Reverse(score.get(p).unwrap()), Reverse(creation_date.get(p).unwrap()), p), 5, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db
+        .post
+        .with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)))
+        .with(owner_user)
+        .group_by(post_type_id)
+        .select(Ident::<Post>::new().and(score).and(creation_date))
+        .window(row_number, |((p, s), d)| (Reverse(s), Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 5).map(|(((p, _), _), _)| p).collect();
     let vs = (&tp).group_by(Ident::<Post>::new()).select(votes_of(db).select(&db.vote.vote_type_id).opt()).fold([0i64; 3], |a, t| [a[0] + t.is_some() as i64, a[1] + (t == Some(2)) as i64, a[2] + (t == Some(3)) as i64]);
     rows(drain(&vs).into_iter().map(|(p, a)| {
         let mut f = post_fields(db, p, &["title", "created", "score", "views", "owner"]);
@@ -2487,9 +2526,14 @@ fn q7335(db: &'static So) -> String {
 // FROM TopPosts tp JOIN PostVotes pv ON tp.PostId = pv.PostId ORDER BY tp.Score DESC, tp.CreationDate DESC;
 fn q9809(db: &'static So) -> String {
     let Post { creation_date, post_type_id, score, owner_user, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))).with(owner_user).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| (Reverse(score.get(p).unwrap()), Reverse(creation_date.get(p).unwrap()), p), 10, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db
+        .post
+        .with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)))
+        .with(owner_user)
+        .group_by(post_type_id)
+        .select(Ident::<Post>::new().and(score).and(creation_date))
+        .window(row_number, |((p, s), d)| (Reverse(s), Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 10).map(|(((p, _), _), _)| p).collect();
     let pv = (&tp).group_by(Ident::<Post>::new()).select(votes_of(db).select(&db.vote.vote_type_id).opt()).fold([0i64; 2], |a, t| [a[0] + (t == Some(2)) as i64, a[1] + (t == Some(3)) as i64]);
     rows(drain(&pv).into_iter().map(|(p, a)| {
         let mut f = post_fields(db, p, &["id", "title", "created", "score", "views", "answers", "comments", "owner"]);
@@ -2514,9 +2558,10 @@ fn q6084(db: &'static So) -> String {
     });
     let rep = |u: Id<User>| db.user.reputation.get(u).unwrap();
     let top = top_n(drain(&s), |&(u, a)| (Reverse(rep(u)), Reverse(a[0]), u), 10);
-    let r = ranked(top, |&(u, _)| Reverse(rep(u)), false);
-    let r = ranked(r, |&((_, a), _)| Reverse(a[0]), false);
-    rows(r.into_iter().map(|(((u, a), rr), pr)| {
+    let tu: MatSet<Id<User>> = rel(top.into_iter().map(|x| x.0).collect()).map(|u| u).collect();
+    let w = whole(&tu).select(Ident::<User>::new().and(&s).and(&db.user.reputation)).window(rank, |(_, r)| Reverse(r), asc);
+    let w = (&w).window(rank, |(((_, a), _), _): (((Id<User>, [i64; 4]), i64), i64)| Reverse(a[0]), asc);
+    rows(drain(&w).into_iter().map(|(_, ((((u, a), _), rr), pr))| {
         let mut f = ucols(db, u, &["uid", "name", "rep", "uviews", "uup", "udown"]);
         f.extend(a.map(V::I));
         f.extend([V::I(rr), V::I(pr)]);
@@ -2536,9 +2581,14 @@ fn q6084(db: &'static So) -> String {
 // PostStats is only read through the join, so the comment x vote product is driven for the top posts alone.
 fn q8123(db: &'static So) -> String {
     let Post { creation_date, post_type_id, score, owner_user, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))).with(owner_user).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| (Reverse(score.get(p).unwrap()), Reverse(creation_date.get(p).unwrap()), p), 10, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db
+        .post
+        .with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)))
+        .with(owner_user)
+        .group_by(post_type_id)
+        .select(Ident::<Post>::new().and(score).and(creation_date))
+        .window(row_number, |((p, s), d)| (Reverse(s), Reverse(d), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 10).map(|(((p, _), _), _)| p).collect();
     let s = (&tp)
         .group_by(Ident::<Post>::new())
         .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()))
@@ -2560,12 +2610,14 @@ fn q8123(db: &'static So) -> String {
 // FROM TopPosts tp JOIN PostVoteStats pvs ON tp.PostId = pvs.PostId ORDER BY tp.Score DESC
 fn q8475(db: &'static So) -> String {
     let Post { creation_date, post_type_id, score, owner_user, view_count, .. } = &db.post;
-    let v = drain(db.post.with(creation_date.ge(add_days(date(2024, 10, 1), -30))).with(owner_user).select(post_type_id));
-    let top = top_per(v, |&(_, t)| t, |&(p, _)| {
-        let w = view_count.get(p);
-        (Reverse(score.get(p).unwrap()), w.is_none(), Reverse(w), p)
-    }, 10, false);
-    let tp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db
+        .post
+        .with(creation_date.ge(add_days(date(2024, 10, 1), -30)))
+        .with(owner_user)
+        .group_by(post_type_id)
+        .select(Ident::<Post>::new().and(score).and(view_count.opt()))
+        .window(row_number, |((p, s), w)| (Reverse(s), w.is_none(), Reverse(w), p), asc);
+    let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 10).map(|(((p, _), _), _)| p).collect();
     let pvs = (&tp).group_by(Ident::<Post>::new()).select(votes_of(db).select(&db.vote.vote_type_id).opt()).fold([0i64; 3], |a, t| [a[0] + (t == Some(2)) as i64, a[1] + (t == Some(3)) as i64, a[2] + t.is_some() as i64]);
     rows(drain(&pvs).into_iter().map(|(p, a)| {
         let mut f = post_fields(db, p, &["id", "title", "score", "views", "answers", "comments", "owner"]);
@@ -2586,8 +2638,8 @@ fn q33056(db: &'static So) -> String {
     let rich = || db.user.with((&db.user.reputation).gt(1000));
     let ac = rich().group_by(Ident::<User>::new()).select(posts_of(db).select(Ident::<Post>::new().with((&db.post.post_type_id).eq(2))).opt()).fold(0i64, |n, p| n + p.is_some() as i64);
     let ub = db.badge.group_by(&db.badge.user).select(&db.badge.class).fold((0i64, i64::MIN), |(n, m), c| (n + 1, m.max(c)));
-    let r = ranked(drain((&ac).and((&ub).opt())), |&(u, (a, _))| (Reverse(db.user.reputation.get(u).unwrap()), Reverse(a)), false);
-    rows(r.into_iter().take_while(|x| x.1 <= 10).map(|((u, (a, b)), k)| {
+    let w = whole(&ac).select(Ident::<User>::new().and(&ac).and((&ub).opt()).and(&db.user.reputation)).window(rank, |(((_, a), _), r)| (Reverse(r), Reverse(a)), asc);
+    rows(drain((&w).filt(|(_, k)| k <= 10)).into_iter().map(|(_, ((((u, a), b), _), k))| {
         let (n, m) = b.unwrap_or((0, 0));
         let mut f = ucols(db, u, &["uid", "rep"]);
         f.extend([V::I(a), V::I(n), V::S(match m {
@@ -2609,17 +2661,15 @@ fn q33056(db: &'static So) -> String {
 // ORDER BY QuestionRank, ContributorRank LIMIT 10 OFFSET 0;
 fn q29(db: &'static So) -> String {
     let Post { post_type_id, creation_date, owner_user, score, .. } = &db.post;
-    let v = drain(db.post.with(post_type_id.eq(1).and(creation_date.ge(add_months(current_date(), -1)))).with(owner_user).select(owner_user));
-    let first = top_per(v, |&(_, u)| u, |&(p, _)| (Reverse(creation_date.get(p).unwrap()), p), 1, false);
-    let fq: MatSet<Id<Post>> = rel(first.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let w = db.post.with(post_type_id.eq(1).and(creation_date.ge(add_months(current_date(), -1)))).group_by(owner_user).select(Ident::<Post>::new().and(creation_date)).window(row_number, |(p, d)| (Reverse(d), p), asc);
+    let fq: MatSet<Id<Post>> = (&w).filt(|(_, r)| r == 1).map(|((p, _), _)| p).collect();
     let tb = db.user.group_by(Ident::<User>::new()).select(votes_by(db).select((&db.vote.bounty_amount).opt()).opt()).fold(0i64, |n, b| n + b.flatten().unwrap_or(0));
-    let cr = ranked(drain(&tb), |&(u, b)| Reverse(db.user.reputation.get(u).unwrap() + b), false);
-    let cv = rel(cr.into_iter().map(|((u, _), k)| (u, k)).collect());
-    let crank: HashIdx<Id<User>, i64> = (&cv).map(|(u, _)| u).inv().select((&cv).map(|(_, k)| k)).collect();
-    let v = drain((&fq).select(owner_user.select(Ident::<User>::new().and((&crank).opt()))));
-    let v = ranked(v, |&(p, _)| Reverse(score.get(p).unwrap()), false);
-    let v = top_n(v, |&((_, (_, c)), q)| (q, c.unwrap_or(0)), 10);
-    rows(v.into_iter().map(|((p, (u, c)), q)| {
+    let cw = whole(&tb).select(Ident::<User>::new().and(&tb).and(&db.user.reputation)).window(rank, |((_, b), r)| Reverse(r + b), asc);
+    let cv: MatSet<(Id<User>, i64)> = (&cw).map(|(((u, _), _), k)| (u, k)).collect();
+    let crank = by_first(&cv);
+    let qw = whole(&fq).select(Ident::<Post>::new().and(score).and(owner_user.select(Ident::<User>::new().and((&crank).opt())))).window(rank, |((_, s), _)| Reverse(s), asc);
+    let v = top_n(drain(&qw), |&(_, ((_, (_, c)), q))| (q, c.unwrap_or(0)), 10);
+    rows(v.into_iter().map(|(_, (((p, _), (u, c)), q))| {
         let mut f = post_fields(db, p, &["id", "title"]);
         f.push(user_col(db, u, "name"));
         f.extend(post_fields(db, p, &["created", "score"]));
