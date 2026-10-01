@@ -13,6 +13,10 @@ invalid=$(awk '/^\| query \| error/,/^$/'   notes/blocked.md | grep -c '^| [0-9]
 rewrites=$(ls rewrites/*.sql 2>/dev/null | wc -l | tr -d ' ')
 
 echo "ported   $ported      blocked $blocked   invalid $invalid   rewrites $rewrites"
+if [ -f "$DATA/pg_worklist.txt" ]; then
+    pgdone=$(grep -rhoE '\("[0-9]+",' rust/c[0-9]*/src/*.rs | grep -oE '[0-9]+' | sort -u | comm -12 - <(sort -u "$DATA/pg_worklist.txt") | wc -l | tr -d ' ')
+    echo "postgres-oracle list: $pgdone/$(wc -l < "$DATA/pg_worklist.txt" | tr -d ' ') ported (notes/pg-oracle.md)"
+fi
 echo
 echo "crates (100 queries each; add the next batch to the last one until it fills):"
 for c in rust/c[0-9]*/; do
