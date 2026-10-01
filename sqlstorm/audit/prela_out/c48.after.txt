@@ -1,0 +1,151 @@
+warning: function `year_ago` is never used
+  --> c48/src/b127.rs:16:4
+   |
+16 | fn year_ago() -> i64 {
+   |    ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `pids` is never used
+   --> c48/src/b127.rs:112:4
+    |
+112 | fn pids(db: &'static So) -> HashIdx<i64, Id<Post>> {
+    |    ^^^^
+
+warning: function `or0` is never used
+   --> c48/src/b127.rs:116:4
+    |
+116 | fn or0(s: i64, n: i64) -> V {
+    |    ^^^
+
+warning: function `by_voter` is never used
+   --> c48/src/b127.rs:124:4
+    |
+124 | fn by_voter(db: &'static So) -> HashIdx<Id<User>, Id<Vote>> {
+    |    ^^^^^^^^
+
+warning: function `by_name` is never used
+   --> c48/src/b127.rs:128:4
+    |
+128 | fn by_name(db: &'static So) -> HashIdx<Str, Id<User>> {
+    |    ^^^^^^^
+
+warning: function `history_types` is never used
+   --> c48/src/b127.rs:132:4
+    |
+132 | fn history_types(db: &'static So) -> Fold<Id<Post>, [i64; 4]> {
+    |    ^^^^^^^^^^^^^
+
+warning: function `vote_named` is never used
+   --> c48/src/b127.rs:139:4
+    |
+139 | fn vote_named(db: &'static So) -> Fold<Id<User>, [i64; 3]> {
+    |    ^^^^^^^^^^
+
+warning: function `user_votes` is never used
+   --> c48/src/b127.rs:154:4
+    |
+154 | fn user_votes(db: &'static So) -> Fold<Id<User>, [i64; 3]> {
+    |    ^^^^^^^^^^
+
+warning: function `owner_posts` is never used
+   --> c48/src/b127.rs:170:4
+    |
+170 | fn owner_posts(db: &'static So) -> Fold<Id<User>, [i64; 6]> {
+    |    ^^^^^^^^^^^
+
+warning: function `post_totals` is never used
+   --> c48/src/b127.rs:178:4
+    |
+178 | fn post_totals(db: &'static So) -> [i64; 4] {
+    |    ^^^^^^^^^^^
+
+warning: function `uqacx` is never used
+   --> c48/src/b127.rs:184:4
+    |
+184 | fn uqacx(db: &'static So) -> Fold<Id<User>, [i64; 5]> {
+    |    ^^^^^
+
+warning: function `ratio` is never used
+   --> c48/src/b127.rs:195:4
+    |
+195 | fn ratio(n: i64, d: i64) -> V {
+    |    ^^^^^
+
+warning: function `ratio32` is never used
+   --> c48/src/b127.rs:199:4
+    |
+199 | fn ratio32(n: i64, d: i64) -> V {
+    |    ^^^^^^^
+
+warning: function `leak_join` is never used
+   --> c48/src/b127.rs:203:4
+    |
+203 | fn leak_join(parts: impl IntoIterator<Item = Str>, sep: &str) -> Str {
+    |    ^^^^^^^^^
+
+warning: function `named_owner` is never used
+   --> c48/src/b127.rs:215:4
+    |
+215 | fn named_owner(db: &'static So, p: Id<Post>, dflt: Str) -> V {
+    |    ^^^^^^^^^^^
+
+warning: function `edit_names` is never used
+   --> c48/src/b127.rs:230:4
+    |
+230 | fn edit_names(db: &'static So) -> Fold<Id<Post>, [i64; 5]> {
+    |    ^^^^^^^^^^
+
+warning: function `history_n_max` is never used
+   --> c48/src/b127.rs:242:4
+    |
+242 | fn history_n_max(db: &'static So) -> Fold<Id<Post>, (i64, i64)> {
+    |    ^^^^^^^^^^^^^
+
+load: 0.03s  (posts n=246673, users n=267193, votes n=926084)
+14814    ok      0.432s  267193 rows
+14816    ok      0.630s  100 rows
+14819    ok      0.315s  65653 rows
+14835    ok      0.226s  100 rows
+14850    ok      0.041s  10 rows
+14856    ok      0.432s  267193 rows
+14860    ok      0.008s  4 rows
+14864    ok      0.034s  100 rows
+14867    ok      0.259s  240022 rows
+14876    ok      0.025s  10 rows
+14885    ok      0.001s  537 rows
+14890    ok      0.011s  6 rows
+14903    ok      0.005s  1 rows
+14913    ok      0.246s  6 rows
+14920    ok      0.005s  6 rows
+14928    ok      0.019s  16313 rows
+14932    ok      0.544s  267193 rows
+14940    ok      0.013s  100 rows
+14944    ok      0.010s  100 rows
+14953    ok      0.180s  190502 rows
+14964    ok      0.224s  100 rows
+14969    ok      0.600s  240022 rows
+14990    ok      0.013s  10 rows
+14992    ok      0.044s  100 rows
+15276    ok      0.007s  10 rows
+15591    ok      0.005s  10 rows
+15896    ok      0.010s  10 rows
+17737    ok      0.028s  10 rows
+17913    ok      0.032s  109952 rows
+18301    ok      0.007s  10 rows
+18638    ok      0.047s  10 rows
+18654    ok      0.024s  10 rows
+19611    ok      0.006s  10 rows
+2249     ok      0.033s  10 rows
+25231    ok      0.003s  10 rows
+25335    ok      0.033s  50 rows
+25396    ok      0.401s  267193 rows
+25433    ok      0.052s  1 rows
+25554    ok      0.021s  160 rows
+25679    ok      0.026s  10 rows
+25812    ok      0.074s  65122 rows
+25918    ok      0.102s  100 rows
+26182    ok      0.013s  50 rows
+26327    ok      0.032s  10 rows
+26388    ok      0.024s  10 rows
+45 ok, 0 diff, 0 skipped

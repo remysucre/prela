@@ -1,0 +1,263 @@
+warning: unused variable: `cp`
+    --> c57/src/b136.rs:2692:9
+     |
+2692 |     let cp = comments_per_post(db);
+     |         ^^ help: if this is intentional, prefix it with an underscore: `_cp`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `count` is never used
+  --> c57/src/b136.rs:24:4
+   |
+24 | fn count<Q: Drive>(q: Q) -> i64 {
+   |    ^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `one` is never used
+  --> c57/src/b136.rs:28:4
+   |
+28 | fn one(f: Fold<(), i64>) -> i64 {
+   |    ^^^
+
+warning: function `by_key` is never used
+  --> c57/src/b136.rs:45:4
+   |
+45 | fn by_key<Q, K, R, S, F>(base: Q, key: K, joined: R, init: S, f: F) -> Fold<ROf<K>, S>
+   |    ^^^^^^
+
+warning: function `views_score` is never used
+   --> c57/src/b136.rs:130:4
+    |
+130 | fn views_score(db: &'static So, p: Id<Post>) -> ((bool, Reverse<Option<i64>>), Reverse<i64>) {
+    |    ^^^^^^^^^^^
+
+warning: function `by_voter` is never used
+   --> c57/src/b136.rs:164:4
+    |
+164 | fn by_voter(db: &'static So) -> HashIdx<Id<User>, Id<Vote>> {
+    |    ^^^^^^^^
+
+warning: function `by_name` is never used
+   --> c57/src/b136.rs:168:4
+    |
+168 | fn by_name(db: &'static So) -> HashIdx<Str, Id<User>> {
+    |    ^^^^^^^
+
+warning: function `history_types` is never used
+   --> c57/src/b136.rs:172:4
+    |
+172 | fn history_types(db: &'static So) -> Fold<Id<Post>, [i64; 4]> {
+    |    ^^^^^^^^^^^^^
+
+warning: function `upqa` is never used
+   --> c57/src/b136.rs:186:4
+    |
+186 | fn upqa(db: &'static So) -> Fold<Id<User>, [i64; 6]> {
+    |    ^^^^
+
+warning: function `user_votes` is never used
+   --> c57/src/b136.rs:194:4
+    |
+194 | fn user_votes(db: &'static So) -> Fold<Id<User>, [i64; 3]> {
+    |    ^^^^^^^^^^
+
+warning: function `fkey` is never used
+   --> c57/src/b136.rs:201:4
+    |
+201 | fn fkey(x: f64) -> i64 {
+    |    ^^^^
+
+warning: function `owner_posts` is never used
+   --> c57/src/b136.rs:210:4
+    |
+210 | fn owner_posts(db: &'static So) -> Fold<Id<User>, [i64; 6]> {
+    |    ^^^^^^^^^^^
+
+warning: function `post_totals` is never used
+   --> c57/src/b136.rs:218:4
+    |
+218 | fn post_totals(db: &'static So) -> [i64; 4] {
+    |    ^^^^^^^^^^^
+
+warning: function `uqacx` is never used
+   --> c57/src/b136.rs:224:4
+    |
+224 | fn uqacx(db: &'static So) -> Fold<Id<User>, [i64; 5]> {
+    |    ^^^^^
+
+warning: function `ratio` is never used
+   --> c57/src/b136.rs:235:4
+    |
+235 | fn ratio(n: i64, d: i64) -> V {
+    |    ^^^^^
+
+warning: function `ratio32` is never used
+   --> c57/src/b136.rs:239:4
+    |
+239 | fn ratio32(n: i64, d: i64) -> V {
+    |    ^^^^^^^
+
+warning: function `leak_join` is never used
+   --> c57/src/b136.rs:243:4
+    |
+243 | fn leak_join(parts: impl IntoIterator<Item = Str>, sep: &str) -> Str {
+    |    ^^^^^^^^^
+
+warning: function `history_of_types` is never used
+   --> c57/src/b136.rs:247:4
+    |
+247 | fn history_of_types(db: &'static So, types: &'static [i64]) -> DenseFold<Id<Post>, i64> {
+    |    ^^^^^^^^^^^^^^^^
+
+warning: function `hours_to` is never used
+   --> c57/src/b136.rs:259:4
+    |
+259 | fn hours_to(t0: i64, t: i64) -> f64 {
+    |    ^^^^^^^^
+
+warning: function `user_posts_q` is never used
+   --> c57/src/b136.rs:263:4
+    |
+263 | fn user_posts_q(db: &'static So) -> Fold<Id<User>, [i64; 4]> {
+    |    ^^^^^^^^^^^^
+
+warning: function `edit_names` is never used
+   --> c57/src/b136.rs:270:4
+    |
+270 | fn edit_names(db: &'static So) -> Fold<Id<Post>, [i64; 5]> {
+    |    ^^^^^^^^^^
+
+warning: function `split_n` is never used
+   --> c57/src/b136.rs:286:4
+    |
+286 | fn split_n(s: Str, sep: &str) -> i64 {
+    |    ^^^^^^^
+
+warning: function `leak` is never used
+   --> c57/src/b136.rs:299:4
+    |
+299 | fn leak(s: String) -> Str {
+    |    ^^^^
+
+warning: function `pscore_avg` is never used
+   --> c57/src/b136.rs:333:4
+    |
+333 | fn pscore_avg(p: [i64; 13]) -> V {
+    |    ^^^^^^^^^^
+
+warning: function `pviews_avg` is never used
+   --> c57/src/b136.rs:337:4
+    |
+337 | fn pviews_avg(p: [i64; 13]) -> V {
+    |    ^^^^^^^^^^
+
+warning: function `onull` is never used
+   --> c57/src/b136.rs:341:4
+    |
+341 | fn onull(p: Option<[i64; 13]>, f: impl Fn([i64; 13]) -> V) -> V {
+    |    ^^^^^
+
+warning: function `phu` is never used
+   --> c57/src/b136.rs:349:4
+    |
+349 | fn phu(db: &'static So) -> Fold<Id<User>, [i64; 8]> {
+    |    ^^^
+
+warning: function `cut` is never used
+   --> c57/src/b136.rs:380:4
+    |
+380 | fn cut<X, T: Ord>(v: &mut Vec<X>, key: impl Fn(&X) -> T, n: usize) {
+    |    ^^^
+
+warning: function `chars` is never used
+   --> c57/src/b136.rs:388:4
+    |
+388 | fn chars(s: Str) -> i64 {
+    |    ^^^^^
+
+warning: function `tag_n` is never used
+   --> c57/src/b136.rs:392:4
+    |
+392 | fn tag_n(s: Str) -> i64 {
+    |    ^^^^^
+
+warning: function `pcc` is never used
+   --> c57/src/b136.rs:400:4
+    |
+400 | fn pcc(db: &'static So) -> Fold<Id<User>, [i64; 3]> {
+    |    ^^^
+
+warning: function `vid_sum` is never used
+   --> c57/src/b136.rs:405:4
+    |
+405 | fn vid_sum(db: &'static So) -> Fold<Id<Post>, (i64, i64)> {
+    |    ^^^^^^^
+
+load: 0.03s  (posts n=246673, users n=267193, votes n=926084)
+9851     ok      0.192s  100 rows
+7894     ok      0.270s  10 rows
+14638    ok      0.022s  8380 rows
+13194    ok      0.225s  267193 rows
+14648    ok      0.041s  77551 rows
+8220     ok      0.041s  10 rows
+10006    ok      0.231s  240022 rows
+10025    ok     18.827s  100 rows
+10564    ok      0.345s  100 rows
+13030    ok     19.112s  100 rows
+14719    ok      0.007s  0 rows
+7928     ok      1.348s  10 rows
+10728    ok      0.453s  100 rows
+14018    ok      0.135s  8249 rows
+10762    ok      0.017s  100 rows
+8088     ok      0.009s  10 rows
+14017    ok      0.444s  267193 rows
+5998     ok      0.333s  267193 rows
+13168    ok      0.131s  267193 rows
+13361    ok      0.038s  22555 rows
+12712    ok      0.353s  100 rows
+8764     ok      0.024s  8380 rows
+8050     ok      0.337s  100 rows
+9584     ok      0.026s  4073 rows
+6704     ok      0.352s  100 rows
+5267     ok      0.030s  100 rows
+12167    ok     13.163s  24 rows
+9074     ok      0.060s  65122 rows
+12518    ok      0.030s  0 rows
+1921     ok      0.052s  10 rows
+7998     ok      0.182s  100 rows
+10043    ok      0.539s  442093 rows
+6364     ok      0.034s  50 rows
+9958     ok      0.034s  100 rows
+14009    ok      0.649s  240022 rows
+4760     ok      0.035s  10 rows
+7725     ok      0.028s  100 rows
+6543     ok      0.033s  853 rows
+9402     ok      0.009s  10 rows
+14038    ok      0.759s  442093 rows
+5985     ok      0.149s  267193 rows
+9632     ok      0.010s  10 rows
+13250    ok      0.096s  0 rows
+14827    ok      0.189s  267193 rows
+9491     ok      0.036s  10 rows
+12311    ok      0.045s  10 rows
+6563     ok      0.073s  6 rows
+5178     ok      0.144s  853 rows
+11632    ok      0.265s  240022 rows
+14531    ok      0.270s  100 rows
+10360    ok      0.018s  0 rows
+13948    ok      0.031s  100 rows
+4531     ok      0.014s  50 rows
+14483    ok      0.322s  23887 rows
+14834    ok      0.351s  100 rows
+1703     ok      0.014s  10 rows
+7747     ok      0.123s  44 rows
+9744     ok      0.044s  50 rows
+9526     ok      0.026s  100 rows
+12737    ok      0.733s  190502 rows
+7609     ok      0.034s  50 rows
+6780     ok      0.006s  0 rows
+7130     ok      0.015s  10 rows
+9151     ok     43.213s  10 rows
+33531    ok      0.004s  10 rows
+65 ok, 0 diff, 0 skipped

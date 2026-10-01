@@ -1,0 +1,225 @@
+warning: function `views_desc` is never used
+  --> c54/src/b133.rs:77:4
+   |
+77 | fn views_desc(db: &'static So, p: Id<Post>) -> (bool, Reverse<Option<i64>>) {
+   |    ^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `score_desc` is never used
+  --> c54/src/b133.rs:82:4
+   |
+82 | fn score_desc(db: &'static So, p: Id<Post>) -> Reverse<i64> {
+   |    ^^^^^^^^^^
+
+warning: function `score_views` is never used
+  --> c54/src/b133.rs:86:4
+   |
+86 | fn score_views(db: &'static So, p: Id<Post>) -> (Reverse<i64>, (bool, Reverse<Option<i64>>)) {
+   |    ^^^^^^^^^^^
+
+warning: function `views_score` is never used
+  --> c54/src/b133.rs:90:4
+   |
+90 | fn views_score(db: &'static So, p: Id<Post>) -> ((bool, Reverse<Option<i64>>), Reverse<i64>) {
+   |    ^^^^^^^^^^^
+
+warning: function `nulls` is never used
+   --> c54/src/b133.rs:108:4
+    |
+108 | fn nulls(n: usize) -> Vec<V> {
+    |    ^^^^^
+
+warning: function `or0` is never used
+   --> c54/src/b133.rs:116:4
+    |
+116 | fn or0(s: i64, n: i64) -> V {
+    |    ^^^
+
+warning: function `round2` is never used
+   --> c54/src/b133.rs:120:4
+    |
+120 | fn round2(x: f64) -> f64 {
+    |    ^^^^^^
+
+warning: function `by_voter` is never used
+   --> c54/src/b133.rs:124:4
+    |
+124 | fn by_voter(db: &'static So) -> HashIdx<Id<User>, Id<Vote>> {
+    |    ^^^^^^^^
+
+warning: function `by_name` is never used
+   --> c54/src/b133.rs:128:4
+    |
+128 | fn by_name(db: &'static So) -> HashIdx<Str, Id<User>> {
+    |    ^^^^^^^
+
+warning: function `history_types` is never used
+   --> c54/src/b133.rs:132:4
+    |
+132 | fn history_types(db: &'static So) -> Fold<Id<Post>, [i64; 4]> {
+    |    ^^^^^^^^^^^^^
+
+warning: function `vote_named` is never used
+   --> c54/src/b133.rs:139:4
+    |
+139 | fn vote_named(db: &'static So) -> Fold<Id<User>, [i64; 3]> {
+    |    ^^^^^^^^^^
+
+warning: function `upqa` is never used
+   --> c54/src/b133.rs:146:4
+    |
+146 | fn upqa(db: &'static So) -> Fold<Id<User>, [i64; 6]> {
+    |    ^^^^
+
+warning: function `user_votes` is never used
+   --> c54/src/b133.rs:154:4
+    |
+154 | fn user_votes(db: &'static So) -> Fold<Id<User>, [i64; 3]> {
+    |    ^^^^^^^^^^
+
+warning: function `fkey` is never used
+   --> c54/src/b133.rs:161:4
+    |
+161 | fn fkey(x: f64) -> i64 {
+    |    ^^^^
+
+warning: function `owner_posts` is never used
+   --> c54/src/b133.rs:170:4
+    |
+170 | fn owner_posts(db: &'static So) -> Fold<Id<User>, [i64; 6]> {
+    |    ^^^^^^^^^^^
+
+warning: function `uqacx` is never used
+   --> c54/src/b133.rs:184:4
+    |
+184 | fn uqacx(db: &'static So) -> Fold<Id<User>, [i64; 5]> {
+    |    ^^^^^
+
+warning: function `ratio` is never used
+   --> c54/src/b133.rs:195:4
+    |
+195 | fn ratio(n: i64, d: i64) -> V {
+    |    ^^^^^
+
+warning: function `ratio32` is never used
+   --> c54/src/b133.rs:199:4
+    |
+199 | fn ratio32(n: i64, d: i64) -> V {
+    |    ^^^^^^^
+
+warning: function `leak_join` is never used
+   --> c54/src/b133.rs:203:4
+    |
+203 | fn leak_join(parts: impl IntoIterator<Item = Str>, sep: &str) -> Str {
+    |    ^^^^^^^^^
+
+warning: function `history_of_types` is never used
+   --> c54/src/b133.rs:207:4
+    |
+207 | fn history_of_types(db: &'static So, types: &'static [i64]) -> DenseFold<Id<Post>, i64> {
+    |    ^^^^^^^^^^^^^^^^
+
+warning: function `named_owner` is never used
+   --> c54/src/b133.rs:215:4
+    |
+215 | fn named_owner(db: &'static So, p: Id<Post>, dflt: Str) -> V {
+    |    ^^^^^^^^^^^
+
+warning: function `hours_to` is never used
+   --> c54/src/b133.rs:219:4
+    |
+219 | fn hours_to(t0: i64, t: i64) -> f64 {
+    |    ^^^^^^^^
+
+warning: function `user_posts_q` is never used
+   --> c54/src/b133.rs:223:4
+    |
+223 | fn user_posts_q(db: &'static So) -> Fold<Id<User>, [i64; 4]> {
+    |    ^^^^^^^^^^^^
+
+warning: function `edit_names` is never used
+   --> c54/src/b133.rs:230:4
+    |
+230 | fn edit_names(db: &'static So) -> Fold<Id<Post>, [i64; 5]> {
+    |    ^^^^^^^^^^
+
+warning: function `split_n` is never used
+   --> c54/src/b133.rs:246:4
+    |
+246 | fn split_n(s: Str, sep: &str) -> i64 {
+    |    ^^^^^^^
+
+warning: function `ubc` is never used
+   --> c54/src/b133.rs:252:4
+    |
+252 | fn ubc(db: &'static So) -> Fold<Id<User>, [i64; 4]> {
+    |    ^^^
+
+warning: function `leak` is never used
+   --> c54/src/b133.rs:259:4
+    |
+259 | fn leak(s: String) -> Str {
+    |    ^^^^
+
+warning: function `uvotes` is never used
+   --> c54/src/b133.rs:305:4
+    |
+305 | fn uvotes(db: &'static So) -> Fold<Id<User>, [i64; 3]> {
+    |    ^^^^^^
+
+load: 0.04s  (posts n=246673, users n=267193, votes n=926084)
+13934    ok      0.219s  10 rows
+12588    ok      0.006s  1 rows
+14302    ok      0.017s  10 rows
+11695    ok      0.173s  100 rows
+12733    ok      0.117s  267193 rows
+13845    ok      0.013s  100 rows
+11657    ok      0.020s  16313 rows
+13355    ok      0.041s  10 rows
+6458     ok      0.143s  10 rows
+11259    ok      0.053s  2105 rows
+14741    ok      0.394s  853 rows
+13873    ok      0.021s  17326 rows
+4255     ok      0.014s  1207 rows
+13245    ok      0.410s  267193 rows
+10537    ok      0.007s  1 rows
+11396    ok      0.164s  75270 rows
+10766    ok      0.047s  10 rows
+28744    ok      0.174s  110663 rows
+10137    ok      0.053s  65122 rows
+8901     ok      0.003s  10 rows
+14628    ok      0.163s  267193 rows
+11848    ok      0.389s  267193 rows
+10893    ok      0.043s  8380 rows
+7653     ok      0.551s  10 rows
+13428    ok      0.553s  246673 rows
+13865    ok      0.002s  537 rows
+14090    ok      0.250s  142236 rows
+13247    ok      0.104s  267193 rows
+10349    ok      0.036s  100 rows
+10266    ok      0.530s  190502 rows
+11993    ok      0.445s  100 rows
+13191    ok      0.146s  267193 rows
+10981    ok      0.039s  10 rows
+12306    ok      0.024s  4 rows
+10644    ok      0.290s  47276 rows
+26918    ok      0.024s  5 rows
+11808    ok      2.989s  267193 rows
+13095    ok      0.100s  100 rows
+8785     ok      0.127s  10 rows
+13200    ok      0.012s  0 rows
+11991    ok      0.019s  50 rows
+10030    ok      0.296s  16313 rows
+10992    ok      0.207s  442093 rows
+10788    ok      0.083s  267193 rows
+6597     ok      0.007s  20 rows
+11318    ok      0.178s  267193 rows
+11335    ok      0.048s  100 rows
+12567    ok      0.038s  16313 rows
+11477    ok      0.330s  142236 rows
+14011    ok      0.392s  267193 rows
+13926    ok      0.435s  190502 rows
+11736    ok      0.185s  267193 rows
+8930     ok      0.007s  10 rows
+53 ok, 0 diff, 0 skipped

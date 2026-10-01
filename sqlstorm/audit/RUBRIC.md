@@ -173,3 +173,12 @@ single constant gives rows, say so.
 * `views::stats_fold` join "b" goes through the owner edge (raw-id issue).
 * For DuckDB runs involving CURRENT_DATE/CURRENT_TIMESTAMP, first
   `SET TimeZone='America/New_York'` (what the oracles assumed).
+* A port that matches only because its tie-break at a LIMIT cut happens to
+  agree with DuckDB's pick (tied rows differ in a projected column): record
+  "tie" in issues; don't write the rewrite file.
+* `kit::tag_stats` groups by tag id: wrong for `GROUP BY t.TagName`.
+* An aggregate with no GROUP BY yields exactly ONE row even over empty input.
+  A `whole(..).fold(..)` (or any `()`-keyed fold) crossed into the result
+  yields NO row when its input is empty — wrong. Drive a one-row relation
+  and join the fold with `.and(fold.opt())` (NULL aggregates, COUNT 0), as
+  in c31/c33.

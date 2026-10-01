@@ -1,0 +1,215 @@
+warning: function `count` is never used
+  --> c50/src/b129.rs:24:4
+   |
+24 | fn count<Q: Drive>(q: Q) -> i64 {
+   |    ^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `one` is never used
+  --> c50/src/b129.rs:28:4
+   |
+28 | fn one(f: Fold<(), i64>) -> i64 {
+   |    ^^^
+
+warning: function `ud` is never used
+  --> c50/src/b129.rs:32:4
+   |
+32 | fn ud<R>(db: &'static So, w: UserWhere, r: R) -> Fold<Id<User>, i64>
+   |    ^^
+
+warning: function `views_score` is never used
+  --> c50/src/b129.rs:90:4
+   |
+90 | fn views_score(db: &'static So, p: Id<Post>) -> ((bool, Reverse<Option<i64>>), Reverse<i64>) {
+   |    ^^^^^^^^^^^
+
+warning: function `pids` is never used
+   --> c50/src/b129.rs:112:4
+    |
+112 | fn pids(db: &'static So) -> HashIdx<i64, Id<Post>> {
+    |    ^^^^
+
+warning: function `or0` is never used
+   --> c50/src/b129.rs:116:4
+    |
+116 | fn or0(s: i64, n: i64) -> V {
+    |    ^^^
+
+warning: function `round2` is never used
+   --> c50/src/b129.rs:120:4
+    |
+120 | fn round2(x: f64) -> f64 {
+    |    ^^^^^^
+
+warning: function `by_voter` is never used
+   --> c50/src/b129.rs:124:4
+    |
+124 | fn by_voter(db: &'static So) -> HashIdx<Id<User>, Id<Vote>> {
+    |    ^^^^^^^^
+
+warning: function `by_name` is never used
+   --> c50/src/b129.rs:128:4
+    |
+128 | fn by_name(db: &'static So) -> HashIdx<Str, Id<User>> {
+    |    ^^^^^^^
+
+warning: function `history_types` is never used
+   --> c50/src/b129.rs:132:4
+    |
+132 | fn history_types(db: &'static So) -> Fold<Id<Post>, [i64; 4]> {
+    |    ^^^^^^^^^^^^^
+
+warning: function `upqa` is never used
+   --> c50/src/b129.rs:146:4
+    |
+146 | fn upqa(db: &'static So) -> Fold<Id<User>, [i64; 6]> {
+    |    ^^^^
+
+warning: function `user_votes` is never used
+   --> c50/src/b129.rs:154:4
+    |
+154 | fn user_votes(db: &'static So) -> Fold<Id<User>, [i64; 3]> {
+    |    ^^^^^^^^^^
+
+warning: function `owner_posts` is never used
+   --> c50/src/b129.rs:170:4
+    |
+170 | fn owner_posts(db: &'static So) -> Fold<Id<User>, [i64; 6]> {
+    |    ^^^^^^^^^^^
+
+warning: function `post_totals` is never used
+   --> c50/src/b129.rs:178:4
+    |
+178 | fn post_totals(db: &'static So) -> [i64; 4] {
+    |    ^^^^^^^^^^^
+
+warning: function `uqacx` is never used
+   --> c50/src/b129.rs:184:4
+    |
+184 | fn uqacx(db: &'static So) -> Fold<Id<User>, [i64; 5]> {
+    |    ^^^^^
+
+warning: function `ratio` is never used
+   --> c50/src/b129.rs:195:4
+    |
+195 | fn ratio(n: i64, d: i64) -> V {
+    |    ^^^^^
+
+warning: function `ratio32` is never used
+   --> c50/src/b129.rs:199:4
+    |
+199 | fn ratio32(n: i64, d: i64) -> V {
+    |    ^^^^^^^
+
+warning: function `leak_join` is never used
+   --> c50/src/b129.rs:203:4
+    |
+203 | fn leak_join(parts: impl IntoIterator<Item = Str>, sep: &str) -> Str {
+    |    ^^^^^^^^^
+
+warning: function `history_of_types` is never used
+   --> c50/src/b129.rs:207:4
+    |
+207 | fn history_of_types(db: &'static So, types: &'static [i64]) -> DenseFold<Id<Post>, i64> {
+    |    ^^^^^^^^^^^^^^^^
+
+warning: function `named_owner` is never used
+   --> c50/src/b129.rs:215:4
+    |
+215 | fn named_owner(db: &'static So, p: Id<Post>, dflt: Str) -> V {
+    |    ^^^^^^^^^^^
+
+warning: function `hours_to` is never used
+   --> c50/src/b129.rs:219:4
+    |
+219 | fn hours_to(t0: i64, t: i64) -> f64 {
+    |    ^^^^^^^^
+
+warning: function `user_posts_q` is never used
+   --> c50/src/b129.rs:223:4
+    |
+223 | fn user_posts_q(db: &'static So) -> Fold<Id<User>, [i64; 4]> {
+    |    ^^^^^^^^^^^^
+
+warning: function `edit_names` is never used
+   --> c50/src/b129.rs:230:4
+    |
+230 | fn edit_names(db: &'static So) -> Fold<Id<Post>, [i64; 5]> {
+    |    ^^^^^^^^^^
+
+warning: function `self_votes` is never used
+   --> c50/src/b129.rs:237:4
+    |
+237 | fn self_votes(db: &'static So) -> HashIdx<Id<Post>, Id<Vote>> {
+    |    ^^^^^^^^^^
+
+warning: function `split_n` is never used
+   --> c50/src/b129.rs:246:4
+    |
+246 | fn split_n(s: Str, sep: &str) -> i64 {
+    |    ^^^^^^^
+
+warning: function `leak` is never used
+   --> c50/src/b129.rs:259:4
+    |
+259 | fn leak(s: String) -> Str {
+    |    ^^^^
+
+load: 0.03s  (posts n=246673, users n=267193, votes n=926084)
+5421     ok      0.022s  100 rows
+5569     ok      0.001s  10 rows
+5572     ok      0.010s  10 rows
+5620     ok      0.033s  100 rows
+5686     ok      0.024s  50 rows
+5698     ok      0.040s  10 rows
+5719     ok      0.083s  0 rows
+5766     ok      0.021s  50 rows
+5817     ok      0.013s  10 rows
+5840     ok      0.029s  100 rows
+5843     ok      0.042s  100 rows
+5876     ok      0.161s  267193 rows
+5931     ok      0.113s  267193 rows
+6002     ok      0.321s  267193 rows
+6055     ok      0.028s  100 rows
+6123     ok      0.011s  10 rows
+6125     ok      0.004s  4580 rows
+6131     ok      0.415s  50 rows
+6154     ok      0.006s  100 rows
+6165     ok      0.015s  50 rows
+6166     ok      0.010s  10 rows
+6203     ok      0.028s  10 rows
+6259     ok      0.009s  10 rows
+6270     ok      0.009s  10 rows
+6349     ok      0.010s  820 rows
+6388     ok      0.077s  100 rows
+6394     ok      0.019s  163 rows
+6397     ok      0.015s  50 rows
+6425     ok      0.030s  10 rows
+6469     ok      0.006s  10 rows
+6470     ok      0.005s  10 rows
+6537     ok      0.023s  10 rows
+6655     ok      0.129s  5 rows
+6696     ok      0.036s  100 rows
+6698     ok      0.034s  100 rows
+6759     ok      0.007s  10 rows
+6787     ok      0.147s  267193 rows
+6788     ok      0.005s  0 rows
+6804     ok      0.006s  10 rows
+6878     ok      0.001s  20 rows
+6889     ok      0.045s  50 rows
+6892     ok      0.382s  100 rows
+6930     ok      0.107s  10 rows
+6952     ok      0.007s  17 rows
+7000     ok      0.018s  10 rows
+7061     ok      0.023s  50 rows
+7074     ok      0.025s  100 rows
+7139     ok      0.013s  10 rows
+7141     ok      0.028s  62139 rows
+7145     ok      0.019s  10 rows
+7169     ok      0.005s  0 rows
+7174     ok      0.020s  10 rows
+7184     ok      0.006s  10533 rows
+7320     ok      0.034s  50 rows
+7365     ok      0.002s  10 rows
+55 ok, 0 diff, 0 skipped

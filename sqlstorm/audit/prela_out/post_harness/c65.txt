@@ -1,0 +1,103 @@
+load: 0.03s  (posts n=246673, users n=267193, votes n=926084)
+8526     ok      0.146s  83142 rows
+9562     ok      0.035s  0 rows
+10144    ok      0.017s  100 rows
+7007     ok      0.015s  10 rows
+6180     ok      0.038s  76 rows
+12444    ok      0.051s  13 rows
+11552    ok      0.020s  10 rows
+13348    ok      0.000s  10 rows
+11265    ok      0.047s  10 rows
+12658    ok      0.054s  13 rows
+13171    ok      0.035s  10 rows
+11147    ok      0.042s  19 rows
+27293    ok      0.070s  50 rows
+2739     ok      0.037s  10 rows
+6360     ok      0.073s  48964 rows
+9398     ok      0.042s  10 rows
+26429    ok      0.042s  44250 rows
+12787    ok      0.189s  267193 rows
+6957     ok      0.027s  0 rows
+13503    ok      0.010s  20 rows
+6885     ok      0.002s  10 rows
+7109     DIFF    0.032s  got 667 rows, oracle 0 rows
+           extra in got: 0xCAFEBABE	6	3	What free database software support sequences	3	2012-07-16 02:44:02.423000	\N	\N
+           extra in got: 1231233333	9	11	Does DBMS (e.g. of SQL SERVER 2008) use virtual memory?	2	2013-05-31 13:04:08.083000	\N	\N
+           extra in got: 8kb	23	221	How do I list all databases and tables using psql?	1572	2011-02-17 08:45:49.610000	minor grammar/flow edits	2013-03-28 11:51:01.847000
+12806    ok      0.051s  20 rows
+6219     ok      0.016s  10 rows
+6241     ok      0.035s  4425 rows
+13044    ok      0.000s  12 rows
+11734    ok      0.046s  10 rows
+5203     ok      0.023s  17 rows
+26487    ok      0.027s  375 rows
+11749    ok      0.029s  13 rows
+9593     ok      0.002s  399 rows
+9004     ok      0.085s  65122 rows
+14576    ok      0.256s  319413 rows
+9738     ok      0.021s  659 rows
+13452    ok      0.003s  114 rows
+30944    ok      0.102s  10 rows
+5834     ok      0.050s  10 rows
+2254     ok      0.002s  100 rows
+9904     ok      0.014s  54 rows
+9400     ok      0.061s  100 rows
+13474    ok      0.048s  19 rows
+4372     ok      0.003s  10 rows
+5345     ok      0.032s  10 rows
+6752     ok      0.008s  50 rows
+13238    ok      0.064s  10 rows
+8541     ok      0.033s  10 rows
+5589     ok      0.013s  15 rows
+28896    ok      0.062s  46107 rows
+11936    ok      0.064s  29 rows
+14139    ok      0.001s  18 rows
+33451    ok      0.065s  135524 rows
+6279     ok      0.019s  8 rows
+9512     ok      1.218s  10 rows
+5666     ok      0.009s  20 rows
+6743     ok      0.001s  10 rows
+5028     ok      0.067s  45981 rows
+7372     DIFF    0.267s  got 85261 rows, oracle 0 rows
+           extra in got:   ErDmKo	13	Maintain Up-To-Date Copy of Very Large Table if Clustering/Partitioning/Moving Operation Needs to be Killed/Rollback	1	153	2	2
+           extra in got:   LexaR	1	\N	0	\N	1	0
+           extra in got:   casper134rus	1	\N	0	\N	0	0
+9753     ok      0.011s  10 rows
+28326    ok      0.008s  10 rows
+1495     ok      0.040s  10 rows
+7259     ok      0.031s  10 rows
+6330     ok      0.083s  27421 rows
+14213    ok      0.000s  10 rows
+9876     ok      0.286s  77654 rows
+7180     ok      0.033s  2 rows
+5808     ok      0.131s  53597 rows
+2001     ok      0.015s  14 rows
+6531     ok      0.000s  16 rows
+9814     ok      0.006s  10 rows
+6248     ok      0.090s  10 rows
+28562    ok      0.275s  162355 rows
+5738     ok      0.083s  10 rows
+7367     ok      0.057s  6221 rows
+5958     ok      0.127s  1673 rows
+7823     ok      0.049s  10 rows
+7192     ok      0.028s  2274 rows
+7258     ok      0.039s  3765 rows
+25766    ok      0.038s  10 rows
+8800     ok      0.000s  0 rows
+7623     ok      0.001s  0 rows
+27796    ok      0.393s  1232 rows
+29610    ok      0.196s  10 rows
+798      ok      0.544s  111645 rows
+9923     ok      0.024s  6 rows
+5145     ok      0.033s  1896 rows
+7970     ok      0.085s  2105 rows
+7498     ok      0.038s  32 rows
+4986     ok      0.023s  120 rows
+8743     ok      0.020s  20 rows
+9529     ok      0.002s  12 rows
+9473     ok      0.133s  80325 rows
+29442    ok      0.020s  10 rows
+9452     ok      0.001s  40 rows
+9845     ok      0.000s  20 rows
+3667     ok      0.015s  10 rows
+93 ok, 2 diff, 0 skipped

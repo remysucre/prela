@@ -7,3 +7,11 @@ harness group_posts: "#b" (COUNT DISTINCT b.Id) double-counts when posts in a gr
 c27 11450, c28 13988: raw-id joins done through edges, kept ok on data grounds — should be fixed (data-specific)
 harness stats_fold join 'b' goes through owner_user edge (raw-id issue); DuckDB default TZ here is America/Los_Angeles vs harness NY assumption (CURRENT_DATE oracles)
 c40 12331: STRING_AGG w/o ORDER BY — order arbitrary; port matches by luck (consider rewrites/ entry)
+c48 14653,14776,25231: tie at LIMIT cut matched by luck (p.Id asc) — need rewrites/ per project rules
+harness kit::tag_stats groups by tag id (wrong for GROUP BY t.TagName)
+CURRENT_DATE oracles drift with the clock: c100 21857, c112 21670 DIFF as of 2026-10-01 (data ends 2024-10-01; cutoff now - 2y passed it). Not port bugs. List all CURRENT_DATE/NOW queries in the doc.
+harness fixed (2026-10-01, user-approved): views::questions ViewCount opt + by_views nulls last; group_posts #b via count_distinct; users_where inner via .filt. Post-fix full run: 9021 ok / 4 diff, all explained.
+SWEEP: ungrouped aggregate as ()-keyed fold + .cross gives 0 rows on empty input (c61 10056,11485,13476,14747,14231,14922,11785; likely also other rewrites in c04,c06,c31-c43,c62,c113...). grep whole(..).fold ... .cross
+ties (match only via our tie-break; need rewrites/): c75 1946, 7191, 9543, 9340; c74 2023 (STRING_AGG no ORDER BY)
+LIKE '%'||TagName||'%' ported as substring test everywhere (tag_mentions + locals): exact only because no TagName contains _ or % — data assumption; note in doc (fix = LIKE matcher UDF)
+ties: c78 20337, 55, 29615, 34974; c79 20777, 2736, 31177, 32058 (match via our tie-break)
