@@ -93,35 +93,21 @@ fn q13706(db: &'static So) -> String {
 // ---- Posts JOIN PostTypes, GROUP BY pt.Name -----------------------------
 
 fn q12825(db: &'static So) -> String {
-    let Post { post_type, score, owner_user, .. } = &db.post;
+    let Post { post_type, score, owner_user_id, .. } = &db.post;
     let PostType { name, .. } = &db.post_type;
 
-    let mut sc: Vec<(Str, i64, i64)> = Vec::new();
-    db.post
-        .group_by(post_type.select(name))
-        .select(score)
-        .fold((0i64, 0i64), |(n, s), x| (n + 1, s + x))
-        .drive(|k, (n, s)| sc.push((k, n, s)));
+    let sc = db.post.group_by(post_type.select(name)).select(score).fold((0i64, 0i64), |(n, s), x| (n + 1, s + x));
+    let uu = db.post.group_by(post_type.select(name)).select(owner_user_id).count_distinct();
 
-    let uu = db
-        .post
-        .group_by(post_type.select(name))
-        .select(owner_user)
-        .count_distinct();
-
-    rows(sc.iter().map(|(k, n, s)| {
-        row(vec![
-            V::S(k),
-            V::I(*n),
-            avg(*s, *n),
-            V::I(uu.get(k).unwrap_or(0)),
-        ])
-    }))
+    let mut out = Vec::new();
+    (&sc).and((&uu).opt()).drive(|k, ((n, s), u)| {
+        out.push(row(vec![V::S(k), V::I(n), avg(s, n), V::I(u.unwrap_or(0))]))
+    });
+    rows(out)
 }
 
-/// `SUM(CASE WHEN p.Score IS NOT NULL THEN 1 ELSE 0)` — Score has no nulls
-/// in this data, so it is COUNT(p.Id) spelled twice. AVG(p.ViewCount) does
-/// skip nulls, so it gets its own pass.
+/// `SUM(CASE WHEN p.Score IS NOT NULL THEN 1 ELSE 0)` — Score is a dense
+/// column, so it is COUNT(p.Id) spelled twice.
 fn q12397(db: &'static So) -> String {
     let Post { post_type, view_count, .. } = &db.post;
     let PostType { name, .. } = &db.post_type;
@@ -140,21 +126,15 @@ fn q12397(db: &'static So) -> String {
     }))
 }
 
-/// `SUM(CASE WHEN p.AcceptedAnswerId IS NOT NULL THEN 1 ELSE 0)` — a fold
-/// over the nullable column turned into a 0/1 indicator over every post.
 fn q13374(db: &'static So) -> String {
     let Post { post_type, score, accepted_answer_id, .. } = &db.post;
     let PostType { name, .. } = &db.post_type;
 
-    let has_accepted = accepted_answer_id
-        .map(|_| 1i64)
-        .dense_fold_outer(db.post.id.n, 0i64, |_, x| x);
-
     let mut v: Vec<(Str, i64, i64, i64)> = Vec::new();
     db.post
         .group_by(post_type.select(name))
-        .select(score.and(has_accepted))
-        .fold((0i64, 0i64, 0i64), |(n, s, a), (x, acc)| (n + 1, s + x, a + acc))
+        .select(score.and(accepted_answer_id.opt()))
+        .fold((0i64, 0i64, 0i64), |(n, s, a), (x, acc)| (n + 1, s + x, a + acc.is_some() as i64))
         .drive(|k, (n, s, a)| v.push((k, n, s, a)));
 
     rows(v.iter().map(|(k, n, s, a)| {
@@ -182,38 +162,28 @@ fn q13860(db: &'static So) -> String {
     }))
 }
 
-/// No GROUP BY at all. `count_distinct` only exists per group, so the whole
-/// table has to be given one — the constant key. See `notes/limitations.md`.
+/// No GROUP BY: the posts are grouped under the one row of `unit`, and the
+/// `.opt()` keeps that row when no post qualifies.
 fn q12036(db: &'static So) -> String {
     let Post { creation_date, score, view_count, owner_user, .. } = &db.post;
     let since = add_years(date(2024, 10, 1), -1);
 
-    let (n, score_sum) = db
-        .post
-        .with(creation_date.ge(since))
-        .with(owner_user)
-        .select(score)
-        .fold_flat((0i64, 0i64), |(c, s), x| (c + 1, s + x));
-    let (vn, vs) = db
-        .post
-        .with(creation_date.ge(since))
-        .with(owner_user)
-        .select(view_count)
-        .fold_flat((0i64, 0i64), |(c, s), x| (c + 1, s + x));
+    let base = db.post.with(creation_date.ge(since)).with(owner_user);
+    let all: HashIdx<(), Id<Post>> = whole(&base).collect();
+    let unit = rel(vec![()]);
+    let agg = (&unit)
+        .select((&all).select(score.and(view_count.opt())).opt())
+        .fold((0i64, 0i64, 0i64, 0i64), |(n, s, vn, vs), p| match p {
+            Some((sc, v)) => (n + 1, s + sc, vn + v.is_some() as i64, vs + v.unwrap_or(0)),
+            None => (n, s, vn, vs),
+        });
+    let users = (&unit).select((&all).select(owner_user)).count_distinct();
 
-    let users = db
-        .post
-        .with(creation_date.ge(since))
-        .group_by(creation_date.map(|_| 0i64))
-        .select(owner_user)
-        .count_distinct();
-
-    row(vec![
-        V::I(n),
-        avg(score_sum, n),
-        avg(vs, vn),
-        V::I(users.get(0i64).unwrap_or(0)),
-    ])
+    let mut out = Vec::new();
+    (&agg).and((&users).opt()).drive(|_, ((n, s, vn, vs), u)| {
+        out.push(row(vec![V::I(n), avg(s, n), avg(vs, vn), V::I(u.unwrap_or(0))]))
+    });
+    rows(out)
 }
 
 // ---- Questions LEFT JOIN Comments ---------------------------------------
@@ -258,11 +228,11 @@ fn q16864(db: &'static So) -> String {
     let User { display_name, .. } = &db.user;
 
     let cc = comments_per_post(db);
-    let mut v: Vec<((Str, Str, i64, i64), i64)> = Vec::new();
+    let mut v: Vec<((Option<Str>, Str, i64, i64), i64)> = Vec::new();
     db.post
         .with(post_type_id.eq(1))
         .group_by(
-            pt.and(owner_user.select(display_name)).and(creation_date).and(score),
+            pt.opt().and(owner_user.select(display_name)).and(creation_date).and(score),
         )
         .select(cc)
         .fold(0i64, |a, x| a + x)
@@ -270,7 +240,7 @@ fn q16864(db: &'static So) -> String {
 
     v.sort_by(|a, b| b.0.3.cmp(&a.0.3).then(b.0.2.cmp(&a.0.2)));
     rows(v.iter().take(10).map(|((ti, dn, cd, sc), n)| {
-        row(vec![V::S(ti), V::S(dn), V::T(*cd), V::I(*sc), V::I(*n)])
+        row(vec![ostr(*ti), V::S(dn), V::T(*cd), V::I(*sc), V::I(*n)])
     }))
 }
 
@@ -279,16 +249,16 @@ fn q19482(db: &'static So) -> String {
     let User { display_name, .. } = &db.user;
 
     let cc = comments_per_post(db);
-    let mut v: Vec<((Str, Str, i64), i64)> = Vec::new();
+    let mut v: Vec<((Str, Option<Str>, i64), i64)> = Vec::new();
     db.post
         .with(post_type_id.eq(1))
-        .group_by(owner_user.select(display_name).and(pt).and(creation_date))
+        .group_by(owner_user.select(display_name).and(pt.opt()).and(creation_date))
         .select(cc)
         .fold(0i64, |a, x| a + x)
         .drive(|((dn, ti), cd), n| v.push(((dn, ti, cd), n)));
 
     rows(v.iter().map(|((dn, ti, cd), n)| {
-        row(vec![V::S(dn), V::S(ti), V::T(*cd), V::I(*n)])
+        row(vec![V::S(dn), ostr(*ti), V::T(*cd), V::I(*n)])
     }))
 }
 

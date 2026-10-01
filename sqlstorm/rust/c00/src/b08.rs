@@ -1,12 +1,11 @@
 use harness::prelude::*;
-use std::collections::BTreeMap;
 
 struct QRow {
     pid: Id<Post>,
     uid: Id<User>,
     id: i64,
     score: i64,
-    views: i64,
+    views: Option<i64>,
     created: i64,
     display_name: Str,
     reputation: i64,
@@ -23,7 +22,7 @@ fn questions(db: &'static So) -> Vec<QRow> {
         .select(
             origid
                 .and(score)
-                .and(view_count)
+                .and(view_count.opt())
                 .and(creation_date)
                 .and(owner_user)
                 .and(owner_user.select(display_name.and(reputation))),
@@ -76,7 +75,7 @@ fn q15021(db: &'static So) -> String {
             V::S(r.display_name),
             V::T(r.created),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
         ])
     }))
 }
@@ -102,7 +101,7 @@ fn q19470(db: &'static So) -> String {
             V::I(r.id),
             ostr(title.get(r.pid)),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
             V::S(r.display_name),
         ])
     }))
@@ -136,7 +135,7 @@ fn q15517(db: &'static So) -> String {
             ostr(title.get(r.pid)),
             V::T(r.created),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
         ])
     }))
 }
@@ -144,7 +143,7 @@ fn q15517(db: &'static So) -> String {
 fn q15787(db: &'static So) -> String {
     let title = &db.post.title;
     let mut v = questions(db);
-    v.sort_by(|a, b| b.views.cmp(&a.views));
+    v.sort_by_key(|r| (r.views.is_none(), std::cmp::Reverse(r.views)));
     v.truncate(10);
     rows(v.iter().map(|r| {
         row(vec![ostr(title.get(r.pid)), V::T(r.created), V::S(r.display_name)])
@@ -185,24 +184,18 @@ fn q18524(db: &'static So) -> String {
 fn q13108(db: &'static So) -> String {
     let Post { post_type_id, score, view_count, .. } = &db.post;
 
-    let mut agg: BTreeMap<i64, (i64, i64, i64, i64)> = BTreeMap::new();
-
-    db.post
+    let g = db
+        .post
         .group_by(post_type_id)
         .select(score.and(view_count.opt()))
         .fold((0i64, 0i64, 0i64, 0i64), |(n, s, vn, vs), (sc, vc)| {
             (n + 1, s + sc, vn + vc.is_some() as i64, vs + vc.unwrap_or(0))
-        })
-        .drive(|k, v| {
-            agg.insert(k, v);
         });
 
-    rows(agg.iter().map(|(k, (n, s, vn, vs))| {
-        let avg = |c: i64, sum: i64| {
-            if c == 0 { V::Null } else { V::F(sum as f64 / c as f64) }
-        };
-        row(vec![V::I(*k), V::I(*n), avg(*n, *s), avg(*vn, *vs)])
-    }))
+    let avg = |c: i64, sum: i64| if c == 0 { V::Null } else { V::F(sum as f64 / c as f64) };
+    let mut out = Vec::new();
+    g.drive(|k, (n, s, vn, vs)| out.push(row(vec![V::I(k), V::I(n), avg(n, s), avg(vn, vs)])));
+    rows(out)
 }
 
 pub const ENTRIES: &[harness::Entry] = &[

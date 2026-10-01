@@ -207,17 +207,19 @@ fn q14622(db: &'static So) -> String {
     let Post { score, post_type_id, view_count, owner_user, .. } = &db.post;
     let PostHistory { post, post_history_type_id, .. } = &db.post_history;
     let edits = db.post_history.with(post_history_type_id.is_in([4, 5, 6])).select(post).inv().fold(0i64, |a, _| a + 1);
-    let (n, vn, vs, rs) = owned(db)
+    let ats = owned(db)
         .with(post_type_id.eq(1))
+        .group_by(post_type_id)
         .select(view_count.opt().and(owner_user.select(&db.user.reputation)))
-        .fold_flat((0i64, 0i64, 0i64, 0i64), |(n, vn, vs, rs), (v, r)| (n + 1, vn + v.is_some() as i64, vs + v.unwrap_or(0), rs + r));
+        .fold((0i64, 0i64, 0i64, 0i64), |(n, vn, vs, rs), (v, r)| (n + 1, vn + v.is_some() as i64, vs + v.unwrap_or(0), rs + r));
     let rn = whole(owned(db)).select(Ident::<Post>::new().and(score)).window(row_number, |(_, s)| s, desc);
     let mut out = Vec::new();
     (&rn)
         .filt(|(_, n)| n <= 10)
         .map(|((p, _), _)| p)
         .select(Ident::<Post>::new().and(edits.opt()))
-        .drive(|_, (p, e)| {
+        .cross(&ats)
+        .drive(|_, ((p, e), (n, vn, vs, rs))| {
         let mut f = post_fields(db, p, &["id", "title", "created", "score", "views", "answers", "comments", "rep", "owner"]);
         f.extend([oint(e), V::I(n), nullable(vs, vn), avg(rs, n)]);
         out.push(row(f))

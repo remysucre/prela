@@ -746,7 +746,7 @@ fn q13338(db: &'static So) -> String {
 // WHERE
 // B.UserId = U.Id
 // ORDER BY
-// B.Date DESC
+// B.Date DESC, B.Id
 // LIMIT 1) AS RecentBadge
 // FROM
 // Posts P
@@ -1504,8 +1504,8 @@ fn q12915(db: &'static So) -> String {
         V::I(count(db.user.iq())),
         mean(&db.post.score),
         mean(&db.comment.score),
-        V::I((&db.user.up_votes).fold_flat(0i64, |a, x| a + x)),
-        V::I((&db.user.down_votes).fold_flat(0i64, |a, x| a + x)),
+        nullable((&db.user.up_votes).fold_flat(0i64, |a, x| a + x), count(db.user.iq())),
+        nullable((&db.user.down_votes).fold_flat(0i64, |a, x| a + x), count(db.user.iq())),
         V::I(count(db.badge.iq())),
     ])
 }

@@ -1602,8 +1602,9 @@ fn q11312(db: &'static So) -> String {
 // p.Id, p.Title, p.CreationDate, p.ViewCount, p.Score, p.AnswerCount,
 // u.DisplayName, u.Reputation, vt.Name
 // ORDER BY
-// p.CreationDate DESC
+// p.CreationDate DESC, p.Id, vt.Name
 // LIMIT 100;
+// rewrites/12928.sql: the ORDER BY gains p.Id, vt.Name as a tiebreak.
 fn q12928(db: &'static So) -> String {
     let base = owned(db).with((&db.post.creation_date).ge(date(2023, 1, 1)));
     let j: MatSet<(Id<Post>, Option<Id<Vote>>)> = base.select(Ident::<Post>::new().and(votes_of(db).opt())).collect();
@@ -1736,22 +1737,24 @@ fn q11543(db: &'static So) -> String {
 // GROUP BY
 // p.Id, p.Title, p.CreationDate, p.ViewCount, p.Score, u.DisplayName, u.Reputation, t.TagName
 // ORDER BY
-// p.CreationDate DESC
+// p.CreationDate DESC, p.Id, t.TagName
 // LIMIT 100;
+// rewrites/10486.sql: the ORDER BY gains p.Id, t.TagName as a tiebreak.
 fn q10486(db: &'static So) -> String {
     let mentions = tag_mentions(db);
     let post_of = (&mentions).map(|(p, _)| p);
+    let tag_of = (&mentions).map(|(_, t)| t);
     let rows_ = (&mentions)
         .with((&post_of).select(owned(db).with((&db.post.creation_date).ge(date(2020, 1, 1)))))
-        .group_by(Same::new())
+        .group_by((&post_of).and((&tag_of).select(&db.tag.tag_name)))
         .select((&post_of).select(comments_of(db).opt().and(votes_of(db).opt())))
         .fold((0i64, 0i64), |(c, x), (ci, vi)| (c + ci.is_some() as i64, x + vi.is_some() as i64));
     let mut v = Vec::new();
     (&rows_).drive(|(p, t), (c, x)| v.push((cd(db, p), p, t, c, x)));
-    v.sort_by_key(|&(k, p, t, _, _)| (k, db.post.origid.get(p).unwrap(), db.tag.tag_name.get(t).unwrap()));
+    v.sort_by_key(|&(k, p, t, _, _)| (k, db.post.origid.get(p).unwrap(), t));
     rows(v.iter().take(100).map(|&(_, p, t, c, x)| {
         let mut f = post_fields(db, p, &["id", "title", "created", "views", "score", "owner", "rep"]);
-        f.extend([V::S(db.tag.tag_name.get(t).unwrap()), V::I(c), V::I(x)]);
+        f.extend([V::S(t), V::I(c), V::I(x)]);
         row(f)
     }))
 }

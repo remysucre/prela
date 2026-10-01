@@ -1,4 +1,5 @@
 use harness::prelude::*;
+use crate::q::by_created;
 
 fn q15108(db: &'static So) -> String {
     let Post { answer_count, comment_count, tags_str, .. } = &db.post;
@@ -9,7 +10,7 @@ fn q15108(db: &'static So) -> String {
             V::S(r.display_name),
             V::T(r.created),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
             oint(answer_count.get(r.pid)),
             V::I(comment_count.get(r.pid).unwrap()),
             ostr(tags_str.get(r.pid)),
@@ -27,7 +28,7 @@ fn q16421(db: &'static So) -> String {
             V::I(r.reputation),
             title(db, r.pid),
             V::T(r.created),
-            V::I(r.views),
+            oint(r.views),
             oint(answer_count.get(r.pid)),
             V::I(r.score),
         ])

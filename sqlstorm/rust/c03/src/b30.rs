@@ -95,106 +95,73 @@ fn q10131(db: &'static So) -> String {
     }))
 }
 
-fn name_groups(db: &'static So) -> Vec<(Str, i64, i64)> {
-    let Post { owner_user, score, .. } = &db.post;
-    let User { display_name, .. } = &db.user;
-    let mut v: Vec<(Str, i64, i64)> = Vec::new();
-    db.post
-        .with(owner_user)
-        .group_by(owner_user.select(display_name))
-        .select(score)
-        .fold((0i64, 0i64), |(n, s), x| (n + 1, s + x))
-        .drive(|k, (n, s)| v.push((k, n, s)));
-    v
-}
-
-fn q18645(db: &'static So) -> String {
-    let mut v = name_groups(db);
-    v.sort_by(|a, b| b.1.cmp(&a.1));
-    rows(v.iter().take(10).map(|(dn, n, s)| {
-        row(vec![V::S(dn), V::I(*n), V::I(*s)])
-    }))
-}
-
-fn q11283(db: &'static So) -> String {
-    let mut v = name_groups(db);
-    v.sort_by(|a, b| {
-        let f = |t: &(Str, i64, i64)| t.2 as f64 / t.1 as f64;
-        b.1.cmp(&a.1).then(f(b).partial_cmp(&f(a)).unwrap())
+/// `Users LEFT JOIN Posts GROUP BY u.DisplayName`: [posts, score sum].
+fn name_groups(db: &'static So) -> Vec<(Str, [i64; 2])> {
+    let g = db.user.group_by(&db.user.display_name).select(posts_of(db).select(&db.post.score).opt()).fold([0i64; 2], |a, s| match s {
+        Some(s) => [a[0] + 1, a[1] + s],
+        None => a,
     });
-    rows(v.iter().take(100).map(|(dn, n, s)| {
-        row(vec![V::S(dn), V::I(*n), avg(*s, *n)])
-    }))
+    drain(&g)
+}
+
+// SELECT Users.DisplayName, COUNT(Posts.Id) AS PostCount, SUM(Posts.Score) AS TotalScore FROM Users LEFT JOIN Posts ON Users.Id = Posts.OwnerUserId
+// GROUP BY Users.DisplayName ORDER BY PostCount DESC LIMIT 10;
+fn q18645(db: &'static So) -> String {
+    let v = top_n(name_groups(db), |&(_, a)| std::cmp::Reverse(a[0]), 10);
+    rows(v.into_iter().map(|(dn, a)| row(vec![V::S(dn), V::I(a[0]), nullable(a[1], a[0])])))
+}
+
+// SELECT u.DisplayName, COUNT(p.Id) AS PostCount, AVG(p.Score) AS AveragePostScore FROM Users u LEFT JOIN Posts p ON u.Id = p.OwnerUserId
+// GROUP BY u.DisplayName ORDER BY PostCount DESC, AveragePostScore DESC LIMIT 100;
+fn q11283(db: &'static So) -> String {
+    let avg_key = |a: [i64; 2]| if a[0] == 0 { None } else { Some(fkey(a[1] as f64 / a[0] as f64)) };
+    let v = top_n(name_groups(db), |&(_, a)| (std::cmp::Reverse(a[0]), avg_key(a).is_none(), std::cmp::Reverse(avg_key(a))), 100);
+    rows(v.into_iter().map(|(dn, a)| row(vec![V::S(dn), V::I(a[0]), avg(a[1], a[0])])))
 }
 
 fn comments_per_post(db: &'static So) -> DenseFold<Id<Post>, i64> {
     (&db.comment.post).inv().dense_fold_outer(db.post.id.n, 0i64, |a, _| a + 1)
 }
 
+// SELECT p.Title, u.DisplayName, COUNT(c.Id) AS CommentCount FROM Posts p JOIN Users u ON p.OwnerUserId = u.Id LEFT JOIN Comments c ON p.Id = c.PostId
+// WHERE p.PostTypeId = 1 GROUP BY p.Title, u.DisplayName ORDER BY CommentCount DESC, p.Title, u.DisplayName LIMIT 10;
+// (rewrites/16616.sql: the tiebreak on Title, DisplayName is added)
 fn q16616(db: &'static So) -> String {
     let Post { post_type_id, title: pt, owner_user, .. } = &db.post;
-    let User { display_name, .. } = &db.user;
-
-    let cc = comments_per_post(db);
-    let mut v: Vec<((Str, Str), i64)> = Vec::new();
-    db.post
+    let g = db
+        .post
         .with(post_type_id.eq(1))
-        .group_by(pt.and(owner_user.select(display_name)))
-        .select(cc)
-        .fold(0i64, |a, x| a + x)
-        .drive(|k, n| v.push((k, n)));
-    v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.0.cmp(b.0.0)).then(a.0.1.cmp(b.0.1)));
-    rows(v.iter().take(10).map(|((ti, dn), n)| {
-        row(vec![V::S(ti), V::S(dn), V::I(*n)])
-    }))
+        .group_by(pt.opt().and(owner_user.select(&db.user.display_name)))
+        .select(comments_per_post(db))
+        .fold(0i64, |a, x| a + x);
+    let v = top_n(drain(&g), |&((ti, dn), n)| (std::cmp::Reverse(n), ti.is_none(), ti, dn), 10);
+    rows(v.into_iter().map(|((ti, dn), n)| row(vec![ostr(ti), V::S(dn), V::I(n)])))
 }
 
-type PostKey = (Str, Option<Str>, i64);
-
-/// Grouped by (DisplayName, Title, CreationDate) where Title is nullable, so
-/// the NULL-titled posts need their own fold over the complement.
-fn post_comment_groups(db: &'static So) -> Vec<(PostKey, i64)> {
+/// `Users JOIN Posts LEFT JOIN Comments GROUP BY u.DisplayName, p.Title, p.CreationDate`.
+fn post_comment_groups(db: &'static So) -> Vec<((Str, Option<Str>, i64), i64)> {
     let Post { title: pt, creation_date, owner_user, .. } = &db.post;
-    let User { display_name, .. } = &db.user;
-
-    let cc = comments_per_post(db);
-    let mut v: Vec<(PostKey, i64)> = Vec::new();
-    db.post
-        .with(owner_user)
-        .group_by(owner_user.select(display_name).and(pt).and(creation_date))
-        .select(&cc)
-        .fold(0i64, |a, x| a + x)
-        .drive(|((dn, ti), cd), n| v.push(((dn, Some(ti), cd), n)));
-
-    db.post
-        .with(owner_user)
-        .minus(pt)
-        .group_by(owner_user.select(display_name).and(creation_date))
-        .select(&cc)
-        .fold(0i64, |a, x| a + x)
-        .drive(|(dn, cd), n| v.push(((dn, None, cd), n)));
-    v
+    let g = db
+        .post
+        .group_by(owner_user.select(&db.user.display_name).and(pt.opt()).and(creation_date))
+        .select(comments_per_post(db))
+        .fold(0i64, |a, x| a + x);
+    drain(&g).into_iter().map(|(((dn, ti), cd), n)| ((dn, ti, cd), n)).collect()
 }
 
+// SELECT u.DisplayName, p.Title, p.CreationDate, COUNT(c.Id) AS CommentCount FROM Users u JOIN Posts p ON u.Id = p.OwnerUserId LEFT JOIN Comments c ON p.Id = c.PostId
+// GROUP BY u.DisplayName, p.Title, p.CreationDate ORDER BY COUNT(c.Id) DESC, u.DisplayName, p.Title, p.CreationDate LIMIT 10;
+// (rewrites/18612.sql: the tiebreak after COUNT(c.Id) is added)
 fn q18612(db: &'static So) -> String {
-    let mut v = post_comment_groups(db);
-    v.sort_by(|a, b| {
-        b.1.cmp(&a.1)
-            .then(a.0.0.cmp(b.0.0))
-            .then(a.0.1.cmp(&b.0.1))
-            .then(a.0.2.cmp(&b.0.2))
-    });
-    rows(v.iter().take(10).map(|((dn, ti, cd), n)| {
-        row(vec![V::S(dn), ti.map(V::S).unwrap_or(V::Null), V::T(*cd), V::I(*n)])
-    }))
+    let v = top_n(post_comment_groups(db), |&((dn, ti, cd), n)| (std::cmp::Reverse(n), dn, ti.is_none(), ti, cd), 10);
+    rows(v.into_iter().map(|((dn, ti, cd), n)| row(vec![V::S(dn), ostr(ti), V::T(cd), V::I(n)])))
 }
 
+// SELECT p.Title, p.CreationDate, u.DisplayName, COUNT(c.Id) AS CommentCount FROM Posts p JOIN Users u ON p.OwnerUserId = u.Id LEFT JOIN Comments c ON p.Id = c.PostId
+// GROUP BY p.Title, p.CreationDate, u.DisplayName ORDER BY p.CreationDate DESC LIMIT 10;
 fn q15616(db: &'static So) -> String {
-    let mut v = post_comment_groups(db);
-    v.sort_by(|a, b| b.0.2.cmp(&a.0.2));
-    rows(v.iter().take(10).map(|((dn, ti, cd), n)| {
-        row(vec![ti.map(V::S).unwrap_or(V::Null), V::T(*cd), V::S(dn), V::I(*n)])
-    }))
+    let v = top_n(post_comment_groups(db), |&((_, _, cd), _)| std::cmp::Reverse(cd), 10);
+    rows(v.into_iter().map(|((dn, ti, cd), n)| row(vec![ostr(ti), V::T(cd), V::S(dn), V::I(n)])))
 }
 
 pub const ENTRIES: &[harness::Entry] = &[

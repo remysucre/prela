@@ -10,15 +10,20 @@ use harness::prelude::*;
 //   LIMIT 10
 //
 // and differs from its neighbours only in the order of the select list and in
-// column aliases, which the oracle does not print. `by_score` and `by_views`
-// are `harness::views`; both cuts are clean (rows 10 and 11 differ in the sort
-// column), so no rewrite is needed.
+// column aliases, which the oracle does not print. Both cuts are clean (rows
+// 10 and 11 differ in the sort column).
+fn top_questions<T: Ord>(db: &'static So, key: impl Fn(i64, Option<i64>) -> T, cols: &[&str]) -> String {
+    let Post { post_type_id, score, view_count, owner_user, .. } = &db.post;
+    let v = drain(db.post.with(post_type_id.eq(1)).with(owner_user).select(score.and(view_count.opt())));
+    rows(top_n(v, |&(_, (s, w))| key(s, w), 10).iter().map(|&(p, _)| row(post_fields(db, p, cols))))
+}
+
 fn best(db: &'static So, cols: &[&str]) -> String {
-    rows(by_score(db).iter().map(|q| row(post_fields(db, q.pid, cols))))
+    top_questions(db, |s, _| std::cmp::Reverse(s), cols)
 }
 
 fn most_viewed(db: &'static So, cols: &[&str]) -> String {
-    rows(by_views(db).iter().map(|q| row(post_fields(db, q.pid, cols))))
+    top_questions(db, |_, w| (w.is_none(), std::cmp::Reverse(w)), cols)
 }
 
 // ORDER BY p.Score DESC: u.DisplayName, p.Title, p.CreationDate, p.Score

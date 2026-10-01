@@ -620,9 +620,9 @@ fn q14771(db: &'static So) -> String {
 // ORDER BY
 // p.ViewCount DESC;
 fn q13211(db: &'static So) -> String {
-    let PostHistory { user, user_display_name, creation_date, .. } = &db.post_history;
-    let by_editor = (&db.post.last_editor_user)
-        .and(history_of(db).select(Ident::<PostHistory>::new().and(user)))
+    let PostHistory { user_id, user_display_name, creation_date, .. } = &db.post_history;
+    let by_editor = (&db.post.last_editor_user_id)
+        .and(history_of(db).select(Ident::<PostHistory>::new().and(user_id)))
         .filt(|(e, (_, u))| e == u)
         .map(|(_, (h, _))| h);
     let j: PostHist = db.post.with((&db.post.creation_date).ge(date(2023, 1, 1))).select(Ident::<Post>::new().and(by_editor.opt())).collect();
@@ -722,15 +722,16 @@ fn q14214(db: &'static So) -> String {
     let tagged = (&db.post.tags_str).select_where((&db.tag.tag_name).inv(), |s: Str, n: Str| s.contains(&format!(",{n},")));
     let groups: MatSet<(Id<Post>, Id<Tag>)> = owned_since(db, date(2023, 1, 1)).select(Ident::<Post>::new().and(tagged)).collect();
     let post_of = (&groups).map(|(p, _)| p);
+    let tag_of = (&groups).map(|(_, t)| t);
     let mut out = Vec::new();
-    (&groups).group_by(Same::new())
+    (&groups).group_by((&post_of).and((&tag_of).select(&db.tag.tag_name)))
         .select((&post_of).select(comments_of(db).opt()))
         .fold(0i64, |a, c| a + c.is_some() as i64)
         .drive(|(p, t), n| out.push((cd(db, p), p, t, n)));
     out.sort_by_key(|x| x.0);
     rows(out.iter().take(100).map(|&(_, p, t, n)| {
         let mut f = post_fields(db, p, &["id", "title", "body", "created", "views", "score", "answers", "comments", "favorites", "uid", "owner", "rep"]);
-        f.extend([V::S(db.tag.tag_name.get(t).unwrap()), V::I(n)]);
+        f.extend([V::S(t), V::I(n)]);
         row(f)
     }))
 }

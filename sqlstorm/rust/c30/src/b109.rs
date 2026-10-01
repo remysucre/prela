@@ -1900,7 +1900,7 @@ fn q13758(db: &'static So) -> String {
 fn q13741(db: &'static So) -> String {
     let [p, u, _, c] = scalar_row(db);
     let last = (&db.comment.creation_date).fold_flat(i64::MIN, |a, d| a.max(d));
-    row(vec![V::I(u), V::I(p), mean(db.post.select(&db.post.view_count)), V::I(c), V::T(last)])
+    row(vec![V::I(u), V::I(p), mean(db.post.select(&db.post.view_count)), V::I(c), if c == 0 { V::Null } else { V::T(last) }])
 }
 
 // SELECT
@@ -1971,9 +1971,9 @@ fn q14821(db: &'static So) -> String {
     let per_voter = db.vote.group_by((&db.vote.user_id).opt()).fold(0i64, |a, _| a + 1);
     let per_badger = db.badge.group_by(&db.badge.user_id).fold(0i64, |a, _| a + 1);
     let (n, s) = (&per_post).fold_flat((0i64, 0i64), |(n, s), c| (n + 1, s + c));
-    let votes = (&per_voter).fold_flat(0i64, |a, c| a + c);
-    let badges = (&per_badger).fold_flat(0i64, |a, c| a + c);
-    row(vec![avg(s, n), V::I(votes), V::I(badges)])
+    let (vn, votes) = (&per_voter).fold_flat((0i64, 0i64), |(n, a), c| (n + 1, a + c));
+    let (bn, badges) = (&per_badger).fold_flat((0i64, 0i64), |(n, a), c| (n + 1, a + c));
+    row(vec![avg(s, n), nullable(votes, vn), nullable(badges, bn)])
 }
 
 // WITH PostStats AS (

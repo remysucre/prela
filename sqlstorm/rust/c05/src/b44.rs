@@ -2,16 +2,16 @@ use harness::prelude::*;
 
 fn q29270(db: &'static So) -> String {
     let Post { post_type_id, score, tags_str, creation_date, accepted_answer, .. } = &db.post;
-    let accepted_by = accepted_answer.inv().dense_fold_outer(db.post.id.n, 0i64, |a, _| a + 1);
+    let accepted_by: HashIdx<Id<Post>, Id<Post>> = accepted_answer.inv().collect();
     let base = db.post.with(post_type_id.eq(1)).with(score.gt(0));
     let rn = (&base)
         .group_by(tags_str.opt())
-        .select(Ident::<Post>::new().and(creation_date).and(&accepted_by))
+        .select(Ident::<Post>::new().and(creation_date).and((&accepted_by).opt()))
         .window(row_number, |((_, cd), _)| cd, desc);
     let mut out = Vec::new();
     (&rn).filt(|(_, n)| n <= 5).drive(|_, (((p, _), a), r)| {
         let mut f = post_fields(db, p, &["id", "title", "tags", "score", "created", "views", "owner"]);
-        f.extend([V::S(if a > 0 { "Yes" } else { "No" }), V::Owned(format!("Tag Rank: {r}"))]);
+        f.extend([V::S(if a.is_some() { "Yes" } else { "No" }), V::Owned(format!("Tag Rank: {r}"))]);
         out.push(row(f))
     });
     rows(out)
@@ -151,12 +151,12 @@ fn q8853(db: &'static So) -> String {
 }
 
 fn q5781(db: &'static So) -> String {
-    let Post { owner_user, creation_date, score, view_count, origid, .. } = &db.post;
+    let Post { owner_user_id, creation_date, score, view_count, origid, .. } = &db.post;
     let cc = comments_per_post(db);
     let up = votes_of_type(db, 2);
     let base = db.post.with(creation_date.ge(add_years(current_date(), -1)));
     let rn = (&base)
-        .group_by(owner_user.opt())
+        .group_by(owner_user_id.opt())
         .select(Ident::<Post>::new().and(score).and(view_count.opt()))
         .window(row_number, |((_, s), v)| (s, v), desc);
     let users: HashIdx<i64, Id<User>> = db.user.with((&db.user.reputation).gt(1000)).select(&db.user.origid).inv().collect();

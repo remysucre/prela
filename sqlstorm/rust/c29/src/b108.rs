@@ -1942,7 +1942,7 @@ fn q11308(db: &'static So) -> String {
                 a[12].max(cd),
             ]
         });
-    row(vec![avg(a[1], a[0]), avg(a[3], a[2]), avg(a[5], a[4]), avg(a[6], a[0]), avg(a[8], a[7]), avg(a[10], a[9]), if a[9] == 0 { V::Null } else { V::T(a[11]) }, V::T(a[12]), V::I(a[0])])
+    row(vec![avg(a[1], a[0]), avg(a[3], a[2]), avg(a[5], a[4]), avg(a[6], a[0]), avg(a[8], a[7]), avg(a[10], a[9]), if a[9] == 0 { V::Null } else { V::T(a[11]) }, if a[0] == 0 { V::Null } else { V::T(a[12]) }, V::I(a[0])])
 }
 
 // WITH Benchmark AS (

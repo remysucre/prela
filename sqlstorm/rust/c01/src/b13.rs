@@ -1,4 +1,5 @@
 use harness::prelude::*;
+use crate::q::{type_id_aggs, by_created, by_views};
 
 fn q11492(db: &'static So) -> String {
     rows(by_count(db).iter().map(|a| {
@@ -33,9 +34,13 @@ fn count_avgscore_sumviews(db: &'static So) -> String {
     }))
 }
 
+fn q10296(db: &'static So) -> String {
+    rows(type_id_aggs(db).into_iter().map(|(t, a)| row(vec![tname(db, t), V::I(a[0]), avg(a[1], a[0]), nullable(a[3], a[2])])))
+}
+
 fn q10054(db: &'static So) -> String {
     let mut a = type_aggs(db);
-    a.sort_by(|x, y| y.views_sum.cmp(&x.views_sum));
+    a.sort_by_key(|x| (x.views_n == 0, std::cmp::Reverse(x.views_sum)));
     rows(a.iter().map(|a| {
         row(vec![
             V::S(a.name),
@@ -101,7 +106,7 @@ fn q19877(db: &'static So) -> String {
             V::I(r.reputation),
             title(db, r.pid),
             V::T(r.created),
-            V::I(r.views),
+            oint(r.views),
         ])
     }))
 }
@@ -148,7 +153,7 @@ pub const ENTRIES: &[harness::Entry] = &[
     ("16812", q16812),
     ("19877", q19877),
     ("10186", count_avgscore_sumviews),
-    ("10296", count_avgscore_sumviews),
+    ("10296", q10296),
     ("17002", q17002),
     ("17351", q17351),
     ("18422", q18422),

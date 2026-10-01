@@ -209,8 +209,7 @@ fn q15877(db: &'static So) -> String {
 // WHERE p.PostTypeId = 1
 // ORDER BY p.CreationDate DESC LIMIT 10
 //
-// No aggregate: a post with five votes is five rows. VoteTypeId is NOT NULL
-// and never dangles, so the second LEFT JOIN only ever adds a name.
+// No aggregate: a post with five votes is five rows.
 fn q15729(db: &'static So) -> String {
     let Post { post_type_id, creation_date, owner_user, .. } = &db.post;
     let name = (&db.vote.vote_type).select(&db.vote_type.name);
@@ -218,8 +217,8 @@ fn q15729(db: &'static So) -> String {
     db.post
         .with(post_type_id.eq(1))
         .with(owner_user)
-        .select(creation_date.and(votes_of(db).select(name).opt()))
-        .drive(|p, (cd, vt)| v.push((cd, p, vt)));
+        .select(creation_date.and(votes_of(db).select(name.opt()).opt()))
+        .drive(|p, (cd, vt)| v.push((cd, p, vt.flatten())));
     v.sort_by(|a, b| b.0.cmp(&a.0));
     rows(v.iter().take(10).map(|&(_, p, vt)| {
         let mut f = post_fields(db, p, &["id", "title", "created", "owner"]);

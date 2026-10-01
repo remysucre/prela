@@ -4,7 +4,7 @@ struct QRow {
     pid: Id<Post>,
     id: i64,
     score: i64,
-    views: i64,
+    views: Option<i64>,
     created: i64,
     display_name: Str,
     reputation: i64,
@@ -21,7 +21,7 @@ fn questions(db: &'static So) -> Vec<QRow> {
         .select(
             origid
                 .and(score)
-                .and(view_count)
+                .and(view_count.opt())
                 .and(creation_date)
                 .and(owner_user.select(display_name.and(reputation))),
         )
@@ -33,7 +33,7 @@ fn questions(db: &'static So) -> Vec<QRow> {
 
 fn by_views(db: &'static So) -> Vec<QRow> {
     let mut v = questions(db);
-    v.sort_by(|a, b| b.views.cmp(&a.views));
+    v.sort_by_key(|r| (r.views.is_none(), std::cmp::Reverse(r.views)));
     v.truncate(10);
     v
 }
@@ -59,7 +59,7 @@ fn name_title_created_views(db: &'static So) -> String {
             V::S(r.display_name),
             ostr(title.get(r.pid)),
             V::T(r.created),
-            V::I(r.views),
+            oint(r.views),
         ])
     }))
 }
@@ -85,7 +85,7 @@ fn q15050(db: &'static So) -> String {
         row(vec![
             ostr(title.get(r.pid)),
             V::S(r.display_name),
-            V::I(r.views),
+            oint(r.views),
             V::T(r.created),
         ])
     }))
@@ -97,7 +97,7 @@ fn q19475(db: &'static So) -> String {
         row(vec![
             V::I(r.id),
             ostr(title.get(r.pid)),
-            V::I(r.views),
+            oint(r.views),
             V::S(r.display_name),
             V::I(r.reputation),
         ])
@@ -125,7 +125,7 @@ fn q15018(db: &'static So) -> String {
             ostr(title.get(r.pid)),
             V::T(r.created),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
         ])
     }))
 }
@@ -137,7 +137,7 @@ fn q15439(db: &'static So) -> String {
             V::I(r.id),
             ostr(title.get(r.pid)),
             V::S(r.display_name),
-            V::I(r.views),
+            oint(r.views),
             V::T(r.created),
         ])
     }))

@@ -19,10 +19,21 @@ fn close_reasons(db: &'static So, types: &[i64]) -> Fold<Id<Post>, Str> {
 fn q14626(db: &'static So) -> String {
     let Post { accepted_answer, tags_str, .. } = &db.post;
     let accepted = accepted_answer.inv().dense_fold_outer(db.post.id.n, 0i64, |a, _| a + 1);
+    let elems = tags_str.flat_map(|t: Str| t.split("<>"));
+    let counts = db
+        .post
+        .group_by(Ident::<Post>::new())
+        .select(comments_of(db).opt().and(votes_of(db).opt()).and((&elems).opt()))
+        .fold((0i64, 0i64), |(c, v), ((ci, vi), _)| (c + ci.is_some() as i64, v + vi.is_some() as i64));
+    let tags = db.post.group_by(Ident::<Post>::new()).select((&elems).opt()).buf_fold(|mut ts| {
+        ts.sort_unstable();
+        ts.dedup();
+        &*Box::leak(ts.into_vec().into_boxed_slice())
+    });
     let mut out = Vec::new();
-    engagement(db, db.post.iq()).and(&accepted).drive(|p, ((c, v, _, _), a)| {
+    (&counts).and(&tags).and(&accepted).drive(|p, (((c, v), ts), a)| {
         let mut f = post_fields(db, p, &["id", "title", "created", "score", "views"]);
-        f.extend([V::I(c), V::I(v), V::L(vec![ostr(tags_str.get(p))]), V::I(a)]);
+        f.extend([V::I(c), V::I(v), V::L(ts.iter().map(|&t| ostr(t)).collect()), V::I(a)]);
         out.push(row(f))
     });
     rows(out)
@@ -121,7 +132,11 @@ fn q33753(db: &'static So) -> String {
         .dense_fold_outer(db.user.id.n, (0i64, 0i64, 0i64, 0i64), |(w, q, a, b), ((v, t), bounty)| {
             (w + v.unwrap_or(0), q + (t == 1) as i64, a + (t == 2) as i64, b + bounty.flatten().unwrap_or(0))
         });
-    let rn = db.badge.group_by(user).select(bdate.and(name)).window(row_number, |(d, _)| d, desc);
+    let rn = db
+        .badge
+        .group_by(user)
+        .select(bdate.and(Ident::<Badge>::new()).and(name))
+        .window(row_number, |((d, b), _)| (d, std::cmp::Reverse(b)), desc);
     let recent = (&rn).filt(|(_, r)| r <= 3).map(|((_, nm), r)| (r, nm)).buf_fold(|mut xs| {
         xs.sort_unstable();
         leak_join(xs.into_iter().map(|x| x.1), ", ")

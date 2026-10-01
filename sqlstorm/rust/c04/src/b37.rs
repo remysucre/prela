@@ -1,156 +1,99 @@
 use harness::prelude::*;
 
 // Every query here is the same shape: a CTE of per-user aggregates, then
-// `ROW_NUMBER()`/`RANK() OVER (ORDER BY ...)` with `WHERE Rank <= 10`. The
-// window has no PARTITION BY, so it ranks a row against the whole result —
-// which is host Rust after the plan, exactly like ORDER BY and LIMIT.
-// See `notes/limitations.md`.
+// `ROW_NUMBER()`/`RANK() OVER (ORDER BY ...)` with `WHERE Rank <= 10`, a
+// window over all users with `whole` as the single partition.
 
-struct UStats {
-    uid: Id<User>,
-    id: i64,
-    display_name: Str,
-    reputation: i64,
-    posts: i64,
-    questions: i64,
-    answers: i64,
-    score_sum: i64,
-    views_sum: i64,
-}
-
-fn user_stats(db: &'static So) -> Vec<UStats> {
+/// Per user over `Users LEFT JOIN Posts`: [posts, score sum, questions,
+/// answers, view sum with NULLs as 0].
+fn user_stats(db: &'static So) -> DenseFold<Id<User>, [i64; 5]> {
     let Post { owner_user, score, post_type_id, view_count, .. } = &db.post;
-    let User { origid, display_name, reputation, .. } = &db.user;
-    let nu = db.user.id.n;
-
-    let base = owner_user.inv().select(score.and(post_type_id)).dense_fold_outer(
-        nu,
-        (0i64, 0i64, 0i64, 0i64),
-        |(n, s, q, a), (sc, t)| (n + 1, s + sc, q + (t == 1) as i64, a + (t == 2) as i64),
-    );
-    let vw = owner_user
-        .inv()
-        .select(view_count)
-        .dense_fold_outer(nu, 0i64, |s, x| s + x);
-
-    let mut v = Vec::new();
-    db.user
-        .select(origid.and(display_name).and(reputation).and(base).and(vw))
-        .drive(
-            |uid, ((((id, dn), rep), (posts, score_sum, questions, answers)), views_sum)| {
-                v.push(UStats {
-                    uid,
-                    id,
-                    display_name: dn,
-                    reputation: rep,
-                    posts,
-                    questions,
-                    answers,
-                    score_sum,
-                    views_sum,
-                })
-            },
-        );
-    v
-}
-
-/// Top 10 by `SUM(COALESCE(P.Score, 0))`, which is 0 rather than NULL for a
-/// user with no posts — the LEFT JOIN still gives them a row.
-fn by_score(db: &'static So) -> Vec<UStats> {
-    let mut v = user_stats(db);
-    v.sort_by(|a, b| b.score_sum.cmp(&a.score_sum));
-    v.truncate(10);
-    v
-}
-
-fn by_reputation(db: &'static So) -> Vec<UStats> {
-    let mut v = user_stats(db);
-    v.sort_by(|a, b| b.reputation.cmp(&a.reputation));
-    v.truncate(10);
-    v
+    owner_user.inv().select(score.and(post_type_id).and(view_count.opt())).dense_fold_outer(
+        db.user.id.n,
+        [0i64; 5],
+        |a, ((sc, t), v)| [a[0] + 1, a[1] + sc, a[2] + (t == 1) as i64, a[3] + (t == 2) as i64, a[4] + v.unwrap_or(0)],
+    )
 }
 
 fn q13692(db: &'static So) -> String {
-    rows(by_score(db).iter().enumerate().map(|(i, r)| {
-        row(vec![
-            V::I(r.id),
-            V::S(r.display_name),
-            V::I(r.posts),
-            V::I(r.questions),
-            V::I(r.answers),
-            V::I(r.views_sum),
-            V::I(r.score_sum),
-            V::I(i as i64 + 1),
-        ])
-    }))
+    let us = user_stats(db);
+    let rn = whole(&db.user.id)
+        .select(Ident::<User>::new().and(&us))
+        .window(row_number, |(_, a): (Id<User>, [i64; 5])| a[1], desc);
+    let mut out = Vec::new();
+    (&rn).filt(|(_, n)| n <= 10).drive(|_, ((u, a), n)| {
+        let mut f = ucols(db, u, &["uid", "name"]);
+        f.extend([V::I(a[0]), V::I(a[2]), V::I(a[3]), V::I(a[4]), V::I(a[1]), V::I(n)]);
+        out.push(row(f))
+    });
+    rows(out)
 }
 
 fn q12949(db: &'static So) -> String {
-    rows(by_score(db).iter().map(|r| {
-        row(vec![
-            V::I(r.id),
-            V::S(r.display_name),
-            V::I(r.posts),
-            V::I(r.questions),
-            V::I(r.answers),
-            V::I(r.score_sum),
-            V::I(r.views_sum),
-        ])
-    }))
+    let us = user_stats(db);
+    let rn = whole(&db.user.id)
+        .select(Ident::<User>::new().and(&us))
+        .window(row_number, |(_, a): (Id<User>, [i64; 5])| a[1], desc);
+    let mut out = Vec::new();
+    (&rn).filt(|(_, n)| n <= 10).drive(|_, ((u, a), _)| {
+        let mut f = ucols(db, u, &["uid", "name"]);
+        f.extend([V::I(a[0]), V::I(a[2]), V::I(a[3]), V::I(a[1]), V::I(a[4])]);
+        out.push(row(f))
+    });
+    rows(out)
 }
 
 fn q13846(db: &'static So) -> String {
-    rows(by_score(db).iter().enumerate().map(|(i, r)| {
-        row(vec![
-            V::I(i as i64 + 1),
-            V::S(r.display_name),
-            V::I(r.posts),
-            V::I(r.score_sum),
-            V::I(r.views_sum),
-            V::I(r.questions),
-            V::I(r.answers),
-        ])
-    }))
+    let us = user_stats(db);
+    let rn = whole(&db.user.id)
+        .select(Ident::<User>::new().and(&us))
+        .window(row_number, |(_, a): (Id<User>, [i64; 5])| a[1], desc);
+    let mut out = Vec::new();
+    (&rn).filt(|(_, n)| n <= 10).drive(|_, ((u, a), n)| {
+        let mut f = vec![V::I(n)];
+        f.extend(ucols(db, u, &["name"]));
+        f.extend([V::I(a[0]), V::I(a[1]), V::I(a[4]), V::I(a[2]), V::I(a[3])]);
+        out.push(row(f))
+    });
+    rows(out)
 }
 
-/// `RANK()`, not `ROW_NUMBER()` — but no two of the top ten tie on
-/// TotalScore, so the two agree here.
 fn q12563(db: &'static So) -> String {
-    let v = by_score(db);
-    rows(v.iter().enumerate().map(|(i, r)| {
-        row(vec![
-            V::I(r.id),
-            V::S(r.display_name),
-            V::I(r.posts),
-            V::I(r.questions),
-            V::I(r.answers),
-            V::I(r.views_sum),
-            V::I(r.score_sum),
-            V::I(i as i64 + 1),
-        ])
-    }))
+    let us = user_stats(db);
+    let rk = whole(&db.user.id)
+        .select(Ident::<User>::new().and(&us))
+        .window(rank, |(_, a): (Id<User>, [i64; 5])| a[1], desc);
+    let mut out = Vec::new();
+    (&rk).filt(|(_, r)| r <= 10).drive(|_, ((u, a), r)| {
+        let mut f = ucols(db, u, &["uid", "name"]);
+        f.extend([V::I(a[0]), V::I(a[2]), V::I(a[3]), V::I(a[4]), V::I(a[1]), V::I(r)]);
+        out.push(row(f))
+    });
+    rows(out)
 }
 
-/// `SUM(CASE WHEN p.PostTypeId = 2 AND p.AcceptedAnswerId IS NOT NULL ...)`
-/// — no answer in this data carries an AcceptedAnswerId, so it is 0.
 fn q11199(db: &'static So) -> String {
     let Post { owner_user, post_type_id, accepted_answer_id, .. } = &db.post;
+    let us = user_stats(db);
     let accepted = owner_user
         .inv()
         .with(post_type_id.eq(2))
         .with(accepted_answer_id)
         .dense_fold_outer(db.user.id.n, 0i64, |a, _| a + 1);
-
-    rows(by_reputation(db).iter().map(|r| {
-        row(vec![
-            V::I(r.id),
-            V::I(r.reputation),
-            V::I(r.posts),
-            V::I(r.questions),
-            V::I(r.answers),
-            V::I(accepted.get(r.uid).unwrap_or(0)),
-        ])
-    }))
+    let rn = whole(&db.user.id)
+        .select(Ident::<User>::new().and(&db.user.reputation))
+        .window(row_number, |(_, r): (Id<User>, i64)| r, desc);
+    let mut out = Vec::new();
+    (&rn)
+        .filt(|(_, n)| n <= 10)
+        .map(|((u, _), _)| u)
+        .select(Ident::<User>::new().and(&us).and(&accepted))
+        .drive(|_, ((u, a), acc)| {
+            let mut f = ucols(db, u, &["uid", "rep"]);
+            f.extend([V::I(a[0]), V::I(a[2]), V::I(a[3]), V::I(acc)]);
+            out.push(row(f))
+        });
+    rows(out)
 }
 
 // ---- ... plus a second LEFT JOIN, which multiplies the rows -------------
@@ -174,37 +117,50 @@ fn badge_rows(db: &'static So) -> DenseFold<Id<User>, (i64, i64, i64, i64, i64, 
 }
 
 fn q12517(db: &'static So) -> String {
-    let rows_ = badge_rows(db);
-    let mut v = user_stats(db);
-    v.sort_by(|a, b| b.reputation.cmp(&a.reputation));
-    rows(v.iter().take(10).map(|r| {
-        let (q, a, _, _, _, b) = rows_.get(r.uid).unwrap();
-        row(vec![V::I(r.id), V::I(r.reputation), V::I(r.posts), V::I(a), V::I(q), V::I(b)])
-    }))
+    let us = user_stats(db);
+    let br = badge_rows(db);
+    let rn = whole(&db.user.id)
+        .select(Ident::<User>::new().and(&db.user.reputation))
+        .window(row_number, |(_, r): (Id<User>, i64)| r, desc);
+    let mut out = Vec::new();
+    (&rn)
+        .filt(|(_, n)| n <= 10)
+        .map(|((u, _), _)| u)
+        .select(Ident::<User>::new().and(&us).and(&br))
+        .drive(|_, ((u, a), (q, an, _, _, _, b))| {
+            let mut f = ucols(db, u, &["uid", "rep"]);
+            f.extend([V::I(a[0]), V::I(an), V::I(q), V::I(b)]);
+            out.push(row(f))
+        });
+    rows(out)
 }
 
+/// `ORDER BY TotalPosts DESC, TotalScore DESC`: TotalScore is the SUM over
+/// the joined rows, NULL (last) for a user with no posts.
 fn q9585(db: &'static So) -> String {
-    let rows_ = badge_rows(db);
-    let mut v: Vec<_> = user_stats(db).into_iter().map(|r| (rows_.get(r.uid).unwrap(), r)).collect();
-    v.sort_by(|a, b| b.1.posts.cmp(&a.1.posts).then(b.0.2.cmp(&a.0.2)));
-    rows(v.iter().take(10).map(|((q, a, s, vn, vs, b), r)| {
-        row(vec![
-            V::I(r.id),
-            V::S(r.display_name),
-            V::I(r.posts),
-            V::I(*q),
-            V::I(*a),
-            nullable(*s, r.posts),
-            nullable(*vs, *vn),
-            V::I(*b),
-        ])
-    }))
+    let us = user_stats(db);
+    let br = badge_rows(db);
+    let rn = whole(&db.user.id)
+        .select(Ident::<User>::new().and(&us).and(&br))
+        .window(
+            row_number,
+            |((_, a), b): ((Id<User>, [i64; 5]), (i64, i64, i64, i64, i64, i64))| (a[0], (a[0] > 0).then_some(b.2)),
+            desc,
+        );
+    let mut out = Vec::new();
+    (&rn).filt(|(_, n)| n <= 10).drive(|_, (((u, a), (q, an, s, vn, vs, b)), _)| {
+        let mut f = ucols(db, u, &["uid", "name"]);
+        f.extend([V::I(a[0]), V::I(q), V::I(an), nullable(s, a[0]), nullable(vs, vn), V::I(b)]);
+        out.push(row(f))
+    });
+    rows(out)
 }
 
 fn q12087(db: &'static So) -> String {
     let Post { owner_user, post_type_id, view_count, .. } = &db.post;
     let nu = db.user.id.n;
 
+    let posts = owner_user.inv().dense_fold_outer(nu, 0i64, |a, _| a + 1);
     let w = owner_user
         .inv()
         .select(post_type_id.and(view_count.opt()).and(votes_of(db).select(&db.vote.vote_type_id).opt()))
@@ -217,33 +173,17 @@ fn q12087(db: &'static So) -> String {
                 d + (vt == Some(3)) as i64,
             )
         });
+    let rn = whole(&db.user.id)
+        .select(Ident::<User>::new().and(&db.user.reputation).and(&posts).and(&w))
+        .window(row_number, |(((_, r), _), _): (((Id<User>, i64), i64), (i64, i64, i64, i64, i64))| r, desc);
 
-    let mut v: Vec<(i64, i64, i64, i64, i64, i64, i64, i64)> = Vec::new();
-    db.user
-        .select(
-            (&db.user.origid)
-                .and(&db.user.reputation)
-                .and(owner_user.inv().dense_fold_outer(nu, 0i64, |a, _| a + 1))
-                .and(w),
-        )
-        .drive(|_, (((id, rep), posts), (q, a, views, u, d))| {
-            v.push((id, rep, posts, q, a, views, u, d))
-        });
-
-    v.sort_by(|a, b| b.1.cmp(&a.1));
-    rows(v.iter().take(10).enumerate().map(|(i, (id, rep, p, q, a, vi, u, d))| {
-        row(vec![
-            V::I(*id),
-            V::I(*rep),
-            V::I(*p),
-            V::I(*q),
-            V::I(*a),
-            V::I(*vi),
-            V::I(*u),
-            V::I(*d),
-            V::I(i as i64 + 1),
-        ])
-    }))
+    let mut out = Vec::new();
+    (&rn).filt(|(_, n)| n <= 10).drive(|_, ((((u, _), p), (q, a, vi, up, d)), n)| {
+        let mut f = ucols(db, u, &["uid", "rep"]);
+        f.extend([V::I(p), V::I(q), V::I(a), V::I(vi), V::I(up), V::I(d), V::I(n)]);
+        out.push(row(f))
+    });
+    rows(out)
 }
 
 pub const ENTRIES: &[harness::Entry] = &[

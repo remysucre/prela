@@ -1,4 +1,5 @@
 use harness::prelude::*;
+use std::cmp::Reverse;
 
 // Posts per user, counting every post (LEFT JOIN, so 0 for a user with none).
 fn posts_per_user(db: &'static So) -> DenseFold<Id<User>, i64> {
@@ -39,11 +40,8 @@ fn desc_nulls_last(a: &Option<i64>, b: &Option<i64>) -> std::cmp::Ordering {
 //
 // Four LEFT JOINs off two keys, so the FROM is a 314-million-row cross
 // product: comments and votes multiply per post, badges multiply the lot.
-// Every COUNT(DISTINCT) undoes one of those fan-outs and is just the plain
-// count, and every SUM is the un-crossed sum times the other fan-outs' sizes.
-// Folding the product directly is the literal translation and costs the
-// product; this is the same arithmetic over four cheap grouped passes.
-// See notes/limitations.md.
+// `user_rows` folds that product; each COUNT(DISTINCT) is the per-user sum of
+// per-post (or per-user) child counts.
 fn q10079(db: &'static So) -> String {
     user_rows(db, "cvb", false, "score_sum", 0,
         &["uid", "name", "#n", "#c", "#up", "#down", "#b", "views_sum", "score_sum"])
@@ -95,13 +93,13 @@ fn q10082(db: &'static So) -> String {
 // posts that have a vote (comment), so AVG divides by that count, not by the
 // number of posts.
 fn q10066(db: &'static So) -> String {
-    let vc = votes_per_post(db);
-    let cc = comments_per_post(db);
-    let agg = db.post.select(&db.post.post_type).inv().select((&vc).and(&cc)).dense_fold_outer(
+    let vc = (&db.vote.post).inv().fold(0i64, |a, _| a + 1);
+    let cc = (&db.comment.post).inv().fold(0i64, |a, _| a + 1);
+    let agg = db.post.select(&db.post.post_type).inv().select((&vc).opt().and((&cc).opt())).dense_fold_outer(
         db.post_type.id.n,
         (0i64, 0i64, 0i64, 0i64, 0i64),
         |(n, vs, vn, cs, cn), (v, c)| {
-            (n + 1, vs + v, vn + (v > 0) as i64, cs + c, cn + (c > 0) as i64)
+            (n + 1, vs + v.unwrap_or(0), vn + v.is_some() as i64, cs + c.unwrap_or(0), cn + c.is_some() as i64)
         },
     );
     let mean = |s: i64, n: i64| V::F(if n == 0 { 0.0 } else { s as f64 / n as f64 });
@@ -172,18 +170,17 @@ fn q10011(db: &'static So) -> String {
     let cc = comments_per_post(db);
     let mut out = Vec::new();
     db.user
-        .with(origid.select(&pidx))
         .select(
             origid
                 .and(display_name)
                 .and(&pu)
                 .and(&joined)
-                .and(origid.select(&pidx)),
+                .and(origid.select(&pidx).select(Ident::<Post>::new().and(&cc))),
         )
-        .drive(|_, ((((id, dn), p), (bs, us, ds)), post)| {
+        .drive(|_, ((((id, dn), p), (bs, us, ds)), (post, nc))| {
             let mut f = vec![V::I(id), V::S(dn), V::I(p), V::I(bs), V::I(us), V::I(ds)];
             f.extend(post_fields(db, post, &["id", "title", "created", "views", "score"]));
-            f.push(V::I(cc.get(post).unwrap()));
+            f.push(V::I(nc));
             out.push(row(f))
         });
     rows(out)
@@ -373,36 +370,71 @@ fn q10089(db: &'static So) -> String {
 // SELECT UserId, DisplayName, PostCount, CommentCount, TotalBounties,
 //        TotalUpVotes, TotalDownVotes FROM TopUsers WHERE Rank <= 10
 //
-// Three independent fan-outs off u.Id: a 1.08-billion-row FROM, and DuckDB
-// needs 50 s of eight threads for it. prela drives it too; see
-// notes/limitations.md, "No optimiser".
+// Three independent fan-outs off u.Id: a 1.08-billion-row FROM. The rank
+// reads only COUNT(DISTINCT p.Id), the user's own post count, so the ten users
+// are picked first and the product is driven only for them.
 fn q10002(db: &'static So) -> String {
-    user_rows(db, "CV", false, "#n", 10,
-        &["uid", "name", "#n", "#cu", "ubounty_sum", "uup_sum", "udown_sum"])
-}
-
-fn q10046(db: &'static So) -> String {
-    // The last join is the cross product of two independently grouped sides,
-    // the top users and the per-type post counts: `.cross` over the ten users
-    // that survive the cut (by position in the sorted list) and the types.
-    //
-    // `ROW_NUMBER() OVER (ORDER BY TotalPosts DESC)` filtered to `<= 10`
-    // is read as top-10, which is a sort and a cut. That is exact rather than
-    // lucky: the thirteen largest post counts among the users with reputation
-    // over 100 are all distinct, so nothing ties across the cut and every
-    // ROW_NUMBER the window could have assigned picks the same ten rows.
-    let mut v = users_where(db, "Cv", false, UserWhere::RepGt(100));
-    sort_users(&mut v, "Cv", "#n");
-    let types = rel(by_count(db));
-    let top = rel((0..v.len().min(10)).collect::<Vec<usize>>());
+    let User { up_votes, down_votes, .. } = &db.user;
+    let pc = posts_per_user(db);
+    let cu = comments_per_user(db);
+    let rn = whole(&db.user.id)
+        .select(Ident::<User>::new().and(&pc))
+        .window(row_number, |(u, n): (Id<User>, i64)| (n, Reverse(u)), desc);
+    let agg = (&rn)
+        .filt(|(_, r)| r <= 10)
+        .map(|((u, _), _)| u)
+        .group_by(Ident::<User>::new())
+        .select(
+            up_votes
+                .and(down_votes)
+                .and(posts_of(db).opt())
+                .and(comments_by(db).opt())
+                .and(votes_by(db).select((&db.vote.bounty_amount).opt()).opt()),
+        )
+        .fold((0i64, 0i64, 0i64, 0i64), |(bs, bn, us, ds), ((((uv, dv), _), _), b)| {
+            let b = b.flatten();
+            (bs + b.unwrap_or(0), bn + b.is_some() as i64, us + uv, ds + dv)
+        });
     let mut out = Vec::new();
-    (&top).cross(&types).drive(|_, (i, t)| {
-        let mut f = user_fields(&v[i], "Cv", &["name", "#n", "#cu", "#up", "#down", "#fav"]);
-        f.push(V::S(t.name));
-        f.push(V::I(t.n));
+    (&agg).and(&pc).and(&cu).drive(|u, (((bs, bn, us, ds), n), c)| {
+        let mut f = ucols(db, u, &["uid", "name"]);
+        f.extend([V::I(n), V::I(c), nullable(bs, bn), V::I(us), V::I(ds)]);
         out.push(row(f))
     });
     rows(out)
+}
+
+// The rank reads only TotalPosts, the user's own post count, so the ten users
+// are picked first. `JOIN PostTypesCount ON M.TotalPosts > 0` is a cross join
+// with a condition on M alone: a filter on the ranked users, then `.cross`.
+fn q10046(db: &'static So) -> String {
+    let User { reputation, .. } = &db.user;
+    let pc = posts_per_user(db);
+    let cu = comments_per_user(db);
+    let base = db.user.with(reputation.gt(100));
+    let rn = whole(&base)
+        .select(Ident::<User>::new().and(&pc))
+        .window(row_number, |(u, n): (Id<User>, i64)| (n, Reverse(u)), desc);
+    let agg = (&rn)
+        .filt(|((_, n), r)| r <= 10 && n > 0)
+        .map(|((u, _), _)| u)
+        .group_by(Ident::<User>::new())
+        .select(posts_of(db).select(votes_of(db).select(&db.vote.vote_type_id).opt()).opt().and(comments_by(db).opt()))
+        .fold((0i64, 0i64, 0i64), |(up, down, fav), (v, _)| {
+            let t = v.flatten();
+            (up + (t == Some(2)) as i64, down + (t == Some(3)) as i64, fav + (t == Some(5)) as i64)
+        });
+    let types = db.post.group_by((&db.post.post_type).select(&db.post_type.name)).fold(0i64, |a, _| a + 1);
+    let mut v = Vec::new();
+    (&agg).and(&pc).and(&cu).cross(&types).drive(|(u, t), ((((up, down, fav), n), c), tn)| {
+        v.push((n, t, u, c, up, down, fav, tn))
+    });
+    v.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(b.1)));
+    rows(v.into_iter().map(|(n, t, u, c, up, down, fav, tn)| {
+        let mut f = ucols(db, u, &["name"]);
+        f.extend([V::I(n), V::I(c), V::I(up), V::I(down), V::I(fav), V::S(t), V::I(tn)]);
+        row(f)
+    }))
 }
 
 pub static ENTRIES: &[harness::Entry] = &[

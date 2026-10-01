@@ -17,18 +17,6 @@ fn year_ago() -> i64 {
     ts(2023, 10, 1, 12, 34, 56)
 }
 
-fn month_ago() -> i64 {
-    ts(2024, 9, 1, 12, 34, 56)
-}
-
-fn count<Q: Drive>(q: Q) -> i64 {
-    q.fold_flat(0i64, |a, _| a + 1)
-}
-
-fn one(f: Fold<(), i64>) -> i64 {
-    (&f).fold_flat(0i64, |a, x| a + x)
-}
-
 fn ud<R>(db: &'static So, w: UserWhere, r: R) -> Fold<Id<User>, i64>
 where
     R: IntoQuery,
@@ -104,43 +92,12 @@ fn out<X, T: Ord>(mut v: Vec<X>, key: impl Fn(&X) -> T, n: usize, f: impl Fn(&X)
     rows(v.iter().take(n).map(|x| row(f(x))))
 }
 
-
-fn nulls(n: usize) -> Vec<V> {
-    (0..n).map(|_| V::Null).collect()
-}
-
 fn pids(db: &'static So) -> HashIdx<i64, Id<Post>> {
     (&db.post.origid).inv().collect()
 }
 
-fn or0(s: i64, n: i64) -> V {
-    if n == 0 { V::F(0.0) } else { avg(s, n) }
-}
-
 fn round2(x: f64) -> f64 {
     (x * 100.0).round() / 100.0
-}
-
-fn by_voter(db: &'static So) -> HashIdx<Id<User>, Id<Vote>> {
-    (&db.vote.user).inv().collect()
-}
-
-fn by_name(db: &'static So) -> HashIdx<Str, Id<User>> {
-    (&db.user.display_name).inv().collect()
-}
-
-fn history_types(db: &'static So) -> Fold<Id<Post>, [i64; 4]> {
-    db.post_history
-        .group_by(&db.post_history.post)
-        .select(&db.post_history.post_history_type_id)
-        .fold([0i64; 4], |a, t| [a[0] + 1, a[1] + (t == 10) as i64, a[2] + (t == 11) as i64, a[3] + (t == 12) as i64])
-}
-
-fn vote_named(db: &'static So) -> Fold<Id<User>, [i64; 3]> {
-    db.vote
-        .group_by(&db.vote.user)
-        .select((&db.vote.vote_type).select(&db.vote_type.name))
-        .fold([0i64; 3], |a, n| [a[0] + 1, a[1] + (n == "UpMod") as i64, a[2] + (n == "DownMod") as i64])
 }
 
 fn upqa(db: &'static So) -> Fold<Id<User>, [i64; 6]> {
@@ -151,53 +108,12 @@ fn upqa(db: &'static So) -> Fold<Id<User>, [i64; 6]> {
     })
 }
 
-fn user_votes(db: &'static So) -> Fold<Id<User>, [i64; 3]> {
-    g(db).select(votes_by(db).select(&db.vote.vote_type_id).opt()).fold([0i64; 3], |a, t| match t {
-        Some(t) => [a[0] + 1, a[1] + (t == 2) as i64, a[2] + (t == 3) as i64],
-        None => a,
-    })
-}
-
-fn fkey(x: f64) -> i64 {
-    let b = x.to_bits() as i64;
-    b ^ (((b >> 63) as u64) >> 1) as i64
-}
-
 fn ints(a: &[i64]) -> Vec<V> {
     a.iter().map(|&x| V::I(x)).collect()
 }
 
-fn owner_posts(db: &'static So) -> Fold<Id<User>, [i64; 6]> {
-    let Post { post_type_id, view_count, score, .. } = &db.post;
-    owned(db)
-        .group_by(&db.post.owner_user)
-        .select(post_type_id.and(view_count.opt()).and(score))
-        .fold([0i64; 6], |a, ((t, w), s)| [a[0] + 1, a[1] + (t == 1) as i64, a[2] + (t == 2) as i64, a[3] + w.is_some() as i64, a[4] + w.unwrap_or(0), a[5] + s])
-}
-
-fn post_totals(db: &'static So) -> [i64; 4] {
-    let Post { score, view_count, .. } = &db.post;
-    db.post.select(score.and(view_count.opt())).fold_flat([0i64; 4], |a, (s, w)| [a[0] + 1, a[1] + s, a[2] + w.is_some() as i64, a[3] + w.unwrap_or(0)])
-}
-
-
-fn uqacx(db: &'static So) -> Fold<Id<User>, [i64; 5]> {
-    g(db).select(posts_of(db).select((&db.post.post_type_id).and(comments_per_post(db)).and(votes_per_post(db))).opt()).fold([0i64; 5], |a, p| match p {
-        Some(((t, c), x)) => [a[0] + 1, a[1] + (t == 1) as i64, a[2] + (t == 2) as i64, a[3] + c, a[4] + x],
-        None => a,
-    })
-}
-
 fn post_votes(db: &'static So) -> Fold<Id<Post>, [i64; 3]> {
     db.vote.group_by(&db.vote.post).select(&db.vote.vote_type_id).fold([0i64; 3], |a, t| [a[0] + 1, a[1] + (t == 2) as i64, a[2] + (t == 3) as i64])
-}
-
-fn ratio(n: i64, d: i64) -> V {
-    if d == 0 { V::Null } else { V::F(n as f64 / d as f64) }
-}
-
-fn ratio32(n: i64, d: i64) -> V {
-    if d == 0 { V::Null } else { V::F((n as f32 / d as f32) as f64) }
 }
 
 fn leak_join(parts: impl IntoIterator<Item = Str>, sep: &str) -> Str {
@@ -1666,12 +1582,12 @@ fn q11566(db: &'static So) -> String {
         .group_by(Ident::<Post>::new())
         .select(kids.opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()).and(comments_of(db).opt()))
         .fold([0i64; 4], |a, ((k, t), c)| [a[0] + k.is_some() as i64, a[1] + (t == Some(2)) as i64, a[2] + (t == Some(3)) as i64, a[3] + c.is_some() as i64]);
-    let t = base().select(view_count.opt().and(score).and(&pf)).fold_flat([0i64; 8], |t, ((w, s), a)| {
+    let am = whole(base()).select(view_count.opt().and(score).and(&pf)).fold([0i64; 8], |t, ((w, s), a)| {
         [t[0] + 1, t[1] + w.is_some() as i64, t[2] + w.unwrap_or(0), t[3] + s, t[4] + a[0], t[5] + a[3], t[6] + a[1], t[7] + a[2]]
     });
     let mut v = Vec::new();
-    (&pf).drive(|p, a| v.push((p, a)));
-    rows(v.iter().map(|&(p, a)| {
+    (&pf).cross(&am).drive(|(p, _), (a, t)| v.push((p, a, t)));
+    rows(v.iter().map(|&(p, a, t)| {
         let mut f = post_fields(db, p, &["id", "title", "created", "score", "views"]);
         f.extend([V::I(a[0]), V::I(a[1]), V::I(a[2]), avg(t[2], t[1]), avg(t[3], t[0]), avg(t[4], t[0]), avg(t[5], t[0]), nullable(t[6], t[0]), nullable(t[7], t[0])]);
         row(f)
@@ -1721,12 +1637,18 @@ fn q11566(db: &'static So) -> String {
 // UserStats u,
 // VoteStats v;
 fn q11567(db: &'static So) -> String {
-    let p = db.post.select(&db.post.post_type_id).fold_flat([0i64; 4], |a, t| [a[0] + 1, a[1] + (t == 1) as i64, a[2] + (t == 2) as i64, a[3] + matches!(t, 4 | 5) as i64]);
-    let owners = one(whole(db.post.iq()).select(&db.post.owner_user_id).count_distinct());
-    let (un, rs, mc) = db.user.select((&db.user.reputation).and(&db.user.creation_date)).fold_flat((0i64, 0i64, i64::MIN), |(n, s, m), (r, c)| (n + 1, s + r, m.max(c)));
-    let voters = one(whole(db.vote.iq()).select(&db.vote.user_id).count_distinct());
-    let voted = one(whole(db.vote.iq()).select(&db.vote.post_id).count_distinct());
-    row(vec![V::I(p[0]), V::I(owners), V::I(p[1]), V::I(p[2]), V::I(p[3]), V::I(un), avg(rs, un), V::T(mc), V::I(count(db.vote.iq())), V::I(voters), V::I(voted)])
+    let ps = whole(db.post.iq()).select(&db.post.post_type_id).fold([0i64; 4], |a, t| [a[0] + 1, a[1] + (t == 1) as i64, a[2] + (t == 2) as i64, a[3] + matches!(t, 4 | 5) as i64]);
+    let owners = whole(db.post.iq()).select(&db.post.owner_user_id).count_distinct();
+    let us = whole(db.user.iq()).select((&db.user.reputation).and(&db.user.creation_date)).fold([0, 0, i64::MIN], |a: [i64; 3], (r, c)| [a[0] + 1, a[1] + r, a[2].max(c)]);
+    let vs = whole(db.vote.iq()).fold(0i64, |n, _| n + 1);
+    let voters = whole(db.vote.iq()).select(&db.vote.user_id).count_distinct();
+    let voted = whole(db.vote.iq()).select(&db.vote.post_id).count_distinct();
+    let mut out = Vec::new();
+    rel(vec![()]).select((&ps).opt().and((&owners).opt()).and((&us).opt()).and((&vs).opt()).and((&voters).opt()).and((&voted).opt())).drive(|_, (((((p, o), u), x), vr), vd)| {
+        let (p, u, z) = (p.unwrap_or([0; 4]), u.unwrap_or([0, 0, i64::MIN]), |x: Option<i64>| V::I(x.unwrap_or(0)));
+        out.push(row(vec![V::I(p[0]), z(o), V::I(p[1]), V::I(p[2]), V::I(p[3]), V::I(u[0]), avg(u[1], u[0]), if u[0] == 0 { V::Null } else { V::T(u[2]) }, z(x), z(vr), z(vd)]))
+    });
+    rows(out)
 }
 
 // SELECT
@@ -2204,7 +2126,20 @@ fn q11640(db: &'static So) -> String {
 fn q11647(db: &'static So) -> String {
     let c = per_post_distinct(db, comments_of(db));
     let x = per_post_distinct(db, votes_of(db));
-    stats_rows(db, stats_with(db, db.post.iq(), "cvb", &[], &[&c, &x]), |p, _| score_views(db, p), 100, &["id", "title", "created", "views", "score", "#d0", "#d1", "#up", "#down", "#bx"])
+    let bidx: HashIdx<i64, Id<Badge>> = (&db.badge.user_id).inv().collect();
+    let pf = db
+        .post
+        .group_by(Ident::<Post>::new())
+        .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()).and((&db.post.owner_user_id).select(&bidx).opt()))
+        .fold([0i64; 3], |a, ((_, t), b)| [a[0] + (t == Some(2)) as i64, a[1] + (t == Some(3)) as i64, a[2] + b.is_some() as i64]);
+    let mut v = Vec::new();
+    (&pf).and((&c).opt()).and((&x).opt()).drive(|p, ((a, c), x)| v.push((p, a, c.unwrap_or(0), x.unwrap_or(0))));
+    out(v, |&(p, _, _, _)| score_views(db, p), 100, |&(p, a, c, x)| {
+        let mut f = post_fields(db, p, &["id", "title", "created", "views", "score"]);
+        f.extend([V::I(c), V::I(x)]);
+        f.extend(ints(&a));
+        f
+    })
 }
 
 // WITH UserStats AS (
@@ -2662,24 +2597,24 @@ fn q11701(db: &'static So) -> String {
     let f = by_key(db.post.iq(), &db.post.post_type_id, view_count.opt().and(score).and(answer_count.opt()), [0i64; 6], |a, ((w, s), an)| {
         [a[0] + 1, a[1] + w.is_some() as i64, a[2] + w.unwrap_or(0), a[3] + s, a[4] + an.is_some() as i64, a[5] + an.unwrap_or(0)]
     });
-    let umin = db.user.select(&db.user.origid).fold_flat(i64::MAX, |m, x| m.min(x));
-    let pmin = db.post.select(&db.post.origid).fold_flat(i64::MAX, |m, x| m.min(x));
+    let umin = whole(db.user.iq()).select(&db.user.origid).fold(i64::MAX, |m, x| m.min(x));
+    let pmin = whole(db.post.iq()).select(&db.post.origid).fold(i64::MAX, |m, x| m.min(x));
     let us = g(db).select((&db.user.reputation).and(&db.user.views).and(badges_of(db).opt())).fold([0i64; 3], |a, ((r, w), b)| [a[0] + b.is_some() as i64, a[1] + r, w]);
     let vs = db.post.group_by(Ident::<Post>::new()).select(votes_of(db).select(&db.vote.vote_type_id).opt()).fold([0i64; 3], |a, t| {
         [a[0] + t.is_some() as i64, a[1] + (t == Some(2)) as i64, a[2] + (t == Some(3)) as i64]
     });
-    let one_u = rel(drain(db.user.with((&db.user.origid).eq(umin)).select(&us)));
-    let one_p = rel(drain(db.post.with((&db.post.origid).eq(pmin)).select(&vs)));
+    let one_u: HashIdx<(), (i64, [i64; 3])> = (&umin).select(uids(db).select((&db.user.origid).and(&us))).collect();
+    let one_p: HashIdx<(), [i64; 3]> = (&pmin).select(pids(db).select(&vs)).collect();
     let mut v = Vec::new();
-    (&f).cross(&one_u).cross(&one_p).drive(|((k, _), _), ((a, (_, ua)), (_, pa))| v.push((k, a, ua, pa)));
-    rows(v.iter().map(|&(k, a, ua, pa)| {
+    (&f).cross(&one_u).cross(&one_p).drive(|((k, _), _), ((a, (um, ua)), pa)| v.push((k, a, um, ua, pa)));
+    rows(v.iter().map(|&(k, a, um, ua, pa)| {
         row(vec![
             V::I(k),
             V::I(a[0]),
             nullable(a[2], a[1]),
             avg(a[3], a[0]),
             nullable(a[5], a[4]),
-            V::I(umin),
+            V::I(um),
             V::I(ua[0]),
             V::I(ua[1]),
             V::F(ua[2] as f64),

@@ -36,7 +36,7 @@ fn q10790(db: &'static So) -> String {
     db.post
         .with(post_type_id.eq(1))
         .with(owner_user)
-        .select(view_count.and(&cc))
+        .select(view_count.opt().and(&cc))
         .drive(|p, (vc, c)| v.push((vc, p, c)));
     v.sort_by(|a, b| b.0.cmp(&a.0));
     rows(v.iter().take(100).map(|&(_, p, c)| {

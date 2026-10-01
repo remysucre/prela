@@ -60,6 +60,10 @@ fn name(db: &'static So) -> Compose<&'static Col<Post, Id<PostType>>, &'static C
     (&db.post.post_type).select(&db.post_type.name)
 }
 
+fn badges_by_uid(db: &'static So) -> HashIdx<i64, Id<Badge>> {
+    (&db.badge.user_id).inv().collect()
+}
+
 fn uids(db: &'static So) -> HashIdx<i64, Id<User>> {
     (&db.user.origid).inv().collect()
 }
@@ -420,17 +424,16 @@ fn q13504(db: &'static So) -> String {
     let pf = stats_fold(db, db.post.iq(), Ident::<Post>::new(), "cv", &[]);
     let User { views, up_votes, down_votes, .. } = &db.user;
     let us = g(db).select(views.and(up_votes).and(down_votes).and(badges_of(db).opt())).fold([0i64; 4], |a, (((w, u), d), b)| [a[0] + b.is_some() as i64, a[1] + w, a[2] + u, a[3] + d]);
-    let pt = db.post_type.group_by(Ident::<PostType>::new()).select((&of_type).select((&pf).and((&x).opt())).opt()).fold([0i64; 3], |a, p| match p {
+    let pt = db.post_type.group_by(&db.post_type.name).select((&of_type).select((&pf).and((&x).opt())).opt()).fold([0i64; 3], |a, p| match p {
         Some((s, x)) => [a[0] + 1, a[1] + s.cx, a[2] + x.unwrap_or(0)],
         None => a,
     });
-    let total = Same::<Id<PostType>>::new().select(&pt).map(|a: [i64; 3]| a[0]);
     let mut v = Vec::new();
-    (&pt).and(total.select(&uid).select(Ident::<User>::new().and(&us))).drive(|t, (a, (u, s))| v.push((t, a, u, s)));
+    (&pt).and((&pt).map(|a: [i64; 3]| a[0]).select(&uid).select(Ident::<User>::new().and(&us))).drive(|t, (a, (u, s))| v.push((t, a, u, s)));
     rows(v.iter().map(|&(t, a, u, s)| {
         let mut f = vec![user_col(db, u, "uid")];
         f.extend(ints(&s));
-        f.extend([V::S(db.post_type.name.get(t).unwrap()), V::I(a[0]), nullable(a[1], a[0]), nullable(a[2], a[0])]);
+        f.extend([V::S(t), V::I(a[0]), nullable(a[1], a[0]), nullable(a[2], a[0])]);
         row(f)
     }))
 }
@@ -3190,9 +3193,17 @@ fn q13778(db: &'static So) -> String {
 fn q13780(db: &'static So) -> String {
     let c = per_post_distinct(db, comments_of(db));
     let x = per_post_distinct(db, votes_of(db));
-    out(stats_with(db, db.post.iq(), "cvb", &[], &[&c, &x]), |&(p, _, _)| newest(db, p), 100, |&(p, s, d)| {
+    let by_uid = badges_by_uid(db);
+    let pf = db
+        .post
+        .group_by(Ident::<Post>::new())
+        .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()).and((&db.post.owner_user_id).select(&by_uid).opt()))
+        .fold([0i64; 3], |a, ((_, t), b)| [a[0] + (t == Some(2)) as i64, a[1] + (t == Some(3)) as i64, a[2] + b.is_some() as i64]);
+    let mut v = Vec::new();
+    (&pf).and((&c).opt()).and((&x).opt()).drive(|p, ((s, c), x)| v.push((p, s, c.unwrap_or(0), x.unwrap_or(0))));
+    out(v, |&(p, ..)| newest(db, p), 100, |&(p, s, c, x)| {
         let mut f = post_fields(db, p, &["id", "title", "created"]);
-        f.extend([V::I(d[0]), V::I(d[1]), V::I(s.up), V::I(s.down), V::I(s.bx)]);
+        f.extend([V::I(c), V::I(x), V::I(s[0]), V::I(s[1]), V::I(s[2])]);
         f
     })
 }

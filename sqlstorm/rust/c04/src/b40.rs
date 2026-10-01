@@ -41,12 +41,18 @@ fn q13085(db: &'static So) -> String {
             (c + ci.is_some() as i64, v + vi.is_some() as i64, b + bi.is_some() as i64)
         });
 
-    let mut v = Vec::new();
-    agg.drive(|k, s| v.push((k, s)));
-    v.sort_by(|a, b| (b.0.0.1, b.0.0.0.1).cmp(&(a.0.0.1, a.0.0.0.1)));
-    rows(v.iter().take(10).enumerate().map(|(i, &((((t, vw), s), r), (c, vo, b)))| {
-        row(vec![ostr(t), oint(vw), V::I(s), oint(r), V::I(c), V::I(vo), V::I(b), V::I(i as i64 + 1)])
-    }))
+    let rn = whole(&agg)
+        .select(Same::new().and(&agg))
+        .window(
+            row_number,
+            |((((_, vw), s), _), _): ((((Option<Str>, Option<i64>), i64), Option<i64>), (i64, i64, i64))| (s, vw),
+            desc,
+        );
+    let mut out = Vec::new();
+    (&rn).filt(|(_, n)| n <= 10).drive(|_, (((((t, vw), s), r), (c, vo, b)), n)| {
+        out.push(row(vec![ostr(t), oint(vw), V::I(s), oint(r), V::I(c), V::I(vo), V::I(b), V::I(n)]))
+    });
+    rows(out)
 }
 
 fn q14980(db: &'static So) -> String {
@@ -214,8 +220,8 @@ fn q12645(db: &'static So) -> String {
         .window(dense_rank, |((_, s), _)| s, desc);
     let mut v = Vec::new();
     sr.drive(|_, (((p, _), e), r)| v.push((p, (e, r))));
-    v.sort_by(|a, b| a.1.1.cmp(&b.1.1));
-    rows(v.iter().take(100).map(|&(p, ((c, vo, _, _), r))| {
+    let v = top_n(v, |&(_, (_, r))| r, 100);
+    rows(v.iter().map(|&(p, ((c, vo, _, _), r))| {
         let mut f = post_fields(db, p, &["id", "title"]);
         f.extend([V::I(c), V::I(vo)]);
         f.extend(post_fields(db, p, &["created", "score", "views", "answers", "type"]));

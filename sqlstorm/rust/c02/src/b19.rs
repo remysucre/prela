@@ -1,4 +1,5 @@
 use harness::prelude::*;
+use crate::q::by_created;
 
 fn q10397(db: &'static So) -> String {
     rows(by_count(db).iter().map(|a| {
@@ -38,15 +39,13 @@ fn q10534(db: &'static So) -> String {
 }
 
 fn q12884(db: &'static So) -> String {
-    rows(by_count(db).iter().map(|a| {
-        row(vec![
-            V::S(a.name),
-            V::I(a.n),
-            avg(a.score_sum, a.n),
-            nullable(a.views_sum, a.views_n),
-            V::T(a.last_activity_max),
-        ])
-    }))
+    let Post { post_type, score, view_count, last_activity_date, .. } = &db.post;
+    let g = db
+        .post
+        .group_by(post_type)
+        .select(score.and(view_count.opt()).and(last_activity_date))
+        .fold([0, 0, 0, 0, i64::MIN], |a, ((s, w), la)| [a[0] + 1, a[1] + s, a[2] + w.is_some() as i64, a[3] + w.unwrap_or(0), a[4].max(la)]);
+    rows(drain(&g).into_iter().map(|(t, a)| row(vec![tname(db, t), V::I(a[0]), avg(a[1], a[0]), nullable(a[3], a[2]), V::T(a[4])])))
 }
 
 fn q12908(db: &'static So) -> String {
@@ -84,13 +83,13 @@ fn q11634(db: &'static So) -> String {
     }))
 }
 
-fn excerpt_tags(db: &'static So, by_score_order: bool) -> String {
+fn q15343(db: &'static So) -> String {
     let Post { post_type_id, origid, creation_date, score, view_count, owner_user, .. } =
         &db.post;
     let Tag { excerpt_post, tag_name, .. } = &db.tag;
     let User { display_name, .. } = &db.user;
 
-    let mut v: Vec<(Id<Post>, i64, i64, i64, i64, Str, Str)> = Vec::new();
+    let mut v: Vec<(Id<Post>, i64, i64, i64, Option<i64>, Str, Str)> = Vec::new();
     db.tag
         .with(excerpt_post.select(post_type_id).eq(1))
         .select(
@@ -99,7 +98,7 @@ fn excerpt_tags(db: &'static So, by_score_order: bool) -> String {
                     origid
                         .and(creation_date)
                         .and(score)
-                        .and(view_count)
+                        .and(view_count.opt())
                         .and(owner_user.select(display_name)),
                 ))
                 .and(tag_name),
@@ -107,11 +106,7 @@ fn excerpt_tags(db: &'static So, by_score_order: bool) -> String {
         .drive(|_, ((p, ((((id, created), sc), views), dn)), tn)| {
             v.push((p, id, created, sc, views, dn, tn))
         });
-    if by_score_order {
-        v.sort_by(|a, b| b.3.cmp(&a.3));
-    } else {
-        v.sort_by(|a, b| b.2.cmp(&a.2));
-    }
+    v.sort_by(|a, b| b.2.cmp(&a.2));
     rows(v.iter().take(10).map(|(p, id, created, sc, views, dn, tn)| {
         row(vec![
             V::I(*id),
@@ -119,14 +114,10 @@ fn excerpt_tags(db: &'static So, by_score_order: bool) -> String {
             V::T(*created),
             V::S(dn),
             V::I(*sc),
-            V::I(*views),
+            oint(*views),
             V::S(tn),
         ])
     }))
-}
-
-fn q15343(db: &'static So) -> String {
-    excerpt_tags(db, false)
 }
 
 fn q17195(db: &'static So) -> String {
@@ -135,7 +126,7 @@ fn q17195(db: &'static So) -> String {
     let Tag { excerpt_post, tag_name, .. } = &db.tag;
     let User { display_name, .. } = &db.user;
 
-    let mut v: Vec<(Id<Post>, i64, i64, i64, i64, Str, Str)> = Vec::new();
+    let mut v: Vec<(Id<Post>, i64, i64, i64, Option<i64>, Str, Str)> = Vec::new();
     db.tag
         .with(excerpt_post.select(post_type_id).eq(1))
         .select(
@@ -144,7 +135,7 @@ fn q17195(db: &'static So) -> String {
                     origid
                         .and(creation_date)
                         .and(score)
-                        .and(view_count)
+                        .and(view_count.opt())
                         .and(owner_user.select(display_name)),
                 ))
                 .and(tag_name),
@@ -160,7 +151,7 @@ fn q17195(db: &'static So) -> String {
             V::S(dn),
             V::T(*created),
             V::I(*sc),
-            V::I(*views),
+            oint(*views),
             V::S(tn),
         ])
     }))
@@ -175,7 +166,7 @@ fn q15089(db: &'static So) -> String {
             V::S(r.display_name),
             V::T(r.created),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
             oint(answer_count.get(r.pid)),
             V::I(comment_count.get(r.pid).unwrap()),
             oint(favorite_count.get(r.pid)),
@@ -217,38 +208,14 @@ fn q18479(db: &'static So) -> String {
 const EDIT_TYPES: [i64; 6] = [4, 5, 6, 10, 11, 12];
 
 fn q12446(db: &'static So) -> String {
-    let PostHistory { post_history_type_id, user, creation_date, .. } = &db.post_history;
-    let User { origid: uid, .. } = &db.user;
-
-    let edits = db.post_history.with(post_history_type_id.in_v(EDIT_TYPES.to_vec()));
-
-    let mut all: Vec<(Option<i64>, i64, i64, i64)> = Vec::new();
-    edits
-        .group_by(user)
-        .select(creation_date)
-        .fold((0i64, i64::MIN, i64::MAX), |(n, hi, lo), x| {
-            (n + 1, hi.max(x), lo.min(x))
-        })
-        .drive(|u, (n, hi, lo)| {
-            all.push((Some(uid.get(u).unwrap()), n, hi, lo))
-        });
-
-    let (n, hi, lo) = db
+    let PostHistory { post_history_type_id, user_id, creation_date, .. } = &db.post_history;
+    let g = db
         .post_history
         .with(post_history_type_id.in_v(EDIT_TYPES.to_vec()))
-        .minus(user)
+        .group_by(user_id.opt())
         .select(creation_date)
-        .fold_flat((0i64, i64::MIN, i64::MAX), |(n, hi, lo), x| {
-            (n + 1, hi.max(x), lo.min(x))
-        });
-    if n > 0 {
-        all.push((None, n, hi, lo));
-    }
-
-    all.sort_by(|a, b| b.1.cmp(&a.1));
-    rows(all.iter().map(|(u, n, hi, lo)| {
-        row(vec![oint(*u), V::I(*n), V::T(*hi), V::T(*lo)])
-    }))
+        .fold((0i64, i64::MIN, i64::MAX), |(n, hi, lo), x| (n + 1, hi.max(x), lo.min(x)));
+    rows(drain(&g).into_iter().map(|(u, (n, hi, lo))| row(vec![oint(u), V::I(n), V::T(hi), V::T(lo)])))
 }
 
 fn q19882(db: &'static So) -> String {

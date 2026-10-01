@@ -1,4 +1,5 @@
 use harness::prelude::*;
+use crate::q::{by_created, by_score};
 
 fn q13246(db: &'static So) -> String {
     rows(by_count(db).iter().map(|a| {
@@ -118,7 +119,7 @@ fn q17640(db: &'static So) -> String {
             V::T(r.created),
             V::S(r.display_name),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
             oint(answer_count.get(r.pid)),
             ostr(tags_str.get(r.pid)),
         ])
@@ -134,7 +135,7 @@ fn q18300(db: &'static So) -> String {
             V::S(r.display_name),
             V::T(r.created),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
             oint(answer_count.get(r.pid)),
             V::I(comment_count.get(r.pid).unwrap()),
         ])
@@ -149,7 +150,7 @@ fn q18330(db: &'static So) -> String {
             title(db, r.pid),
             V::T(r.created),
             V::S(r.display_name),
-            V::I(r.views),
+            oint(r.views),
             oint(answer_count.get(r.pid)),
             V::I(comment_count.get(r.pid).unwrap()),
         ])

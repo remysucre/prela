@@ -181,60 +181,41 @@ fn comments_per_post(db: &'static So) -> DenseFold<Id<Post>, i64> {
 }
 
 /// `GROUP BY p.Title, p.CreationDate, u.DisplayName` over the questions.
-fn title_date_owner_groups(db: &'static So) -> Vec<((Str, i64, Str), i64)> {
+fn title_date_owner_groups(db: &'static So) -> Vec<((Option<Str>, i64, Str), i64)> {
     let Post { post_type_id, title, creation_date, owner_user, .. } = &db.post;
-    let User { display_name, .. } = &db.user;
-
-    let cc = comments_per_post(db);
-    let mut v = Vec::new();
-    db.post
+    let g = db
+        .post
         .with(post_type_id.eq(1))
-        .group_by(title.and(creation_date).and(owner_user.select(display_name)))
-        .select(cc)
-        .fold(0i64, |a, x| a + x)
-        .drive(|((ti, cd), dn), n| v.push(((ti, cd, dn), n)));
-    v
+        .group_by(title.opt().and(creation_date).and(owner_user.select(&db.user.display_name)))
+        .select(comments_per_post(db))
+        .fold(0i64, |a, x| a + x);
+    drain(&g).into_iter().map(|(((ti, cd), dn), n)| ((ti, cd, dn), n)).collect()
 }
 
+fn newest_groups(db: &'static So, n: usize) -> String {
+    let v = top_n(title_date_owner_groups(db), |&((_, cd, _), _)| std::cmp::Reverse(cd), n);
+    rows(v.into_iter().map(|((ti, cd, dn), n)| row(vec![ostr(ti), V::T(cd), V::S(dn), V::I(n)])))
+}
+
+// SELECT p.Title, p.CreationDate, u.DisplayName AS OwnerName, COUNT(c.Id) AS CommentCount FROM Posts p JOIN Users u ON p.OwnerUserId = u.Id LEFT JOIN Comments c ON p.Id = c.PostId
+// WHERE p.PostTypeId = 1 GROUP BY p.Title, p.CreationDate, u.DisplayName ORDER BY p.CreationDate DESC LIMIT 10;
 fn q15008(db: &'static So) -> String {
-    let mut v = title_date_owner_groups(db);
-    v.sort_by(|a, b| b.0.1.cmp(&a.0.1));
-    rows(v.iter().take(10).map(|((ti, cd, dn), n)| {
-        row(vec![V::S(ti), V::T(*cd), V::S(dn), V::I(*n)])
-    }))
+    newest_groups(db, 10)
 }
 
+// SELECT p.Title, p.CreationDate, u.DisplayName, COUNT(c.Id) AS CommentCount FROM Posts p JOIN Users u ON p.OwnerUserId = u.Id LEFT JOIN Comments c ON p.Id = c.PostId
+// WHERE p.PostTypeId = 1 GROUP BY p.Title, p.CreationDate, u.DisplayName ORDER BY p.CreationDate DESC LIMIT 100;
 fn q17809(db: &'static So) -> String {
-    let mut v = title_date_owner_groups(db);
-    v.sort_by(|a, b| b.0.1.cmp(&a.0.1));
-    rows(v.iter().take(100).map(|((ti, cd, dn), n)| {
-        row(vec![V::S(ti), V::T(*cd), V::S(dn), V::I(*n)])
-    }))
+    newest_groups(db, 100)
 }
 
+// SELECT p.Id, p.Title, p.ViewCount, u.DisplayName, COUNT(c.Id) AS CommentCount FROM Posts p JOIN Users u ON p.OwnerUserId = u.Id LEFT JOIN Comments c ON p.Id = c.PostId
+// WHERE p.PostTypeId = 1 GROUP BY p.Id, p.Title, p.ViewCount, u.DisplayName ORDER BY p.ViewCount DESC LIMIT 10;
 fn q15073(db: &'static So) -> String {
     let Post { post_type_id, origid, title, view_count, owner_user, .. } = &db.post;
-    let User { display_name, .. } = &db.user;
-
-    let cc = comments_per_post(db);
-    let mut v: Vec<(Id<Post>, i64, Str, i64)> = Vec::new();
-    db.post
-        .with(post_type_id.eq(1))
-        .select(origid.and(owner_user.select(display_name)).and(cc))
-        .drive(|pid, ((id, dn), n)| v.push((pid, id, dn, n)));
-
-    // DuckDB sorts NULLs first on DESC; ViewCount is never null on a question.
-    let vcof = |p: Id<Post>| view_count.get(p).unwrap_or(i64::MAX);
-    v.sort_by(|a, b| vcof(b.0).cmp(&vcof(a.0)));
-    rows(v.iter().take(10).map(|(pid, id, dn, n)| {
-        row(vec![
-            V::I(*id),
-            ostr(title.get(*pid)),
-            oint(view_count.get(*pid)),
-            V::S(dn),
-            V::I(*n),
-        ])
-    }))
+    let v = drain(db.post.with(post_type_id.eq(1)).select(origid.and(view_count.opt()).and(owner_user.select(&db.user.display_name)).and(comments_per_post(db))));
+    let v = top_n(v, |&(_, (((_, vc), _), _))| (vc.is_none(), std::cmp::Reverse(vc)), 10);
+    rows(v.into_iter().map(|(p, (((id, vc), dn), n))| row(vec![V::I(id), ostr(title.get(p)), oint(vc), V::S(dn), V::I(n)])))
 }
 
 // ---- LEFT JOIN with no GROUP BY: the joined rows themselves --------------

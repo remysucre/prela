@@ -9,19 +9,16 @@ fn q9737(db: &'static So) -> String {
     let User { display_name, reputation, .. } = &db.user;
     let bc = badges_per_user(db);
     let questions = db.post.with(post_type_id.eq(1));
-    let mut best = Vec::new();
-    whole(&questions)
+    let popular = whole(&questions)
         .select(Ident::<Post>::new().and(score).and(view_count.opt()))
-        .window(row_number, |((_, s), v)| (s, v), desc)
-        .filt(|(_, n)| n == 1)
-        .drive(|_, (((p, _), _), _)| best.push(p));
+        .window(row_number, |((_, s), v)| (s, v), desc);
+    let best = (&popular).filt(|(_, n)| n == 1).map(|(((p, _), _), _)| p);
     let posts = owner_user.inv().fold(0i64, |a, _| a + 1);
     let rk = whole(&db.user.id)
         .select(display_name.and(reputation).and(&bc).and(posts.opt()))
         .window(rank, |(((_, rep), _), _)| rep, desc);
     let mut out = Vec::new();
-    let pp = left_all(best);
-    (&rk).filt(|((((_, rep), _), _), _)| rep > 1000).cross(&pp).drive(|_, (((((dn, rep), b), n), r), p)| {
+    (&rk).filt(|((((_, rep), _), _), _)| rep > 1000).and(best.opt()).drive(|_, (((((dn, rep), b), n), r), p)| {
         let mut f = vec![V::S(dn), V::I(rep), V::I(b), V::I(r)];
         f.extend(match p {
             Some(p) => post_fields(db, p, &["title", "score"]),
@@ -159,14 +156,14 @@ fn q6033(db: &'static So) -> String {
 }
 
 fn q6432(db: &'static So) -> String {
-    let Post { post_type, creation_date, score, .. } = &db.post;
+    let Post { post_type, creation_date, score, origid, .. } = &db.post;
     let base = owned(db).with(creation_date.ge(year_ago()));
     let top: MatSet<Id<Post>> = (&base)
         .group_by(post_type.select(&db.post_type.name))
-        .select(Ident::<Post>::new().and(score))
-        .window(row_number, |(_, s)| s, desc)
+        .select(Ident::<Post>::new().and(score).and(origid))
+        .window(row_number, |((_, s), id)| (s, id), |a: &(i64, i64), b: &(i64, i64)| b.0.cmp(&a.0).then(a.1.cmp(&b.1)))
         .filt(|(_, n)| n <= 10)
-        .map(|((p, _), _)| p)
+        .map(|(((p, _), _), _)| p)
         .collect();
     let rk = whole(&top).select(Ident::<Post>::new().and(score)).window(rank, |(_, s)| s, desc);
     let mut out = Vec::new();

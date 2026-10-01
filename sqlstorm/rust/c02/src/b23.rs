@@ -1,38 +1,25 @@
 use harness::prelude::*;
 
-// Posts JOIN PostTypes JOIN Users grouped by (pt.Name, u.Reputation): (key, posts, score sum, views present, views sum, PostTypeId).
-fn type_rep_avg(db: &'static So) -> Vec<((Str, i64), i64, i64, i64, i64, i64)> {
-    let Post { post_type_id, score, view_count, owner_user, .. } = &db.post;
+fn q14342(db: &'static So) -> String {
+    let Post { score, view_count, owner_user, .. } = &db.post;
     let g = db
         .post
         .with(owner_user)
         .group_by(ptype_name(db).and(owner_user.select(&db.user.reputation)))
-        .select(score.and(view_count.opt()).and(post_type_id))
-        .fold([0i64; 5], |a, ((s, w), t)| [a[0] + 1, a[1] + s, a[2] + w.is_some() as i64, a[3] + w.unwrap_or(0), t]);
-    drain(&g).into_iter().map(|(k, a)| (k, a[0], a[1], a[2], a[3], a[4])).collect()
-}
-
-fn q14342(db: &'static So) -> String {
-    let mut a = type_rep_avg(db);
-    a.sort_by(|x, y| x.0.0.cmp(y.0.0).then(x.0.1.cmp(&y.0.1)));
-    rows(a.iter().map(|((nm, rep), n, s, vn, vs, _)| {
-        row(vec![V::S(nm), V::I(*rep), V::I(*n), avg(*s, *n), avg(*vs, *vn)])
-    }))
+        .select(score.and(view_count.opt()))
+        .fold([0i64; 4], |a, (s, w)| [a[0] + 1, a[1] + s, a[2] + w.is_some() as i64, a[3] + w.unwrap_or(0)]);
+    rows(drain(&g).into_iter().map(|((nm, rep), a)| row(vec![V::S(nm), V::I(rep), V::I(a[0]), avg(a[1], a[0]), avg(a[3], a[2])])))
 }
 
 fn q13713(db: &'static So) -> String {
-    let mut a = type_rep_avg(db);
-    a.sort_by(|x, y| x.5.cmp(&y.5).then(y.0.1.cmp(&x.0.1)));
-    rows(a.iter().map(|((nm, rep), n, s, vn, vs, t)| {
-        row(vec![
-            V::I(*t),
-            V::S(nm),
-            V::I(*rep),
-            V::I(*n),
-            avg(*s, *n),
-            avg(*vs, *vn),
-        ])
-    }))
+    let Post { post_type_id, score, view_count, owner_user, .. } = &db.post;
+    let g = db
+        .post
+        .with(owner_user)
+        .group_by(post_type_id.and(ptype_name(db)).and(owner_user.select(&db.user.reputation)))
+        .select(score.and(view_count.opt()))
+        .fold([0i64; 4], |a, (s, w)| [a[0] + 1, a[1] + s, a[2] + w.is_some() as i64, a[3] + w.unwrap_or(0)]);
+    rows(drain(&g).into_iter().map(|(((t, nm), rep), a)| row(vec![V::I(t), V::S(nm), V::I(rep), V::I(a[0]), avg(a[1], a[0]), avg(a[3], a[2])])))
 }
 
 // SELECT pt.Name AS PostType, COUNT(p.Id) AS TotalPosts, AVG(p.Score) AS AverageScore, AVG(p.ViewCount) AS AverageViewCount, u.Reputation AS UserReputation,
@@ -224,42 +211,13 @@ fn q19045(db: &'static So) -> String {
 
 fn q13323(db: &'static So) -> String {
     let PostHistory { post_history_type_id, post, creation_date, .. } = &db.post_history;
-    let Post { title: ptitle, .. } = &db.post;
-
-    let win = db
+    let g = db
         .post_history
-        .with(creation_date.ge(date(2023, 1, 1)))
-        .with(creation_date.le(date(2023, 10, 31)));
-
-    let mut all: Vec<(i64, Option<Str>, i64, i64, i64)> = Vec::new();
-    win.group_by(post_history_type_id.and(post.select(ptitle)))
+        .with(creation_date.between(date(2023, 1, 1), date(2023, 10, 31)))
+        .group_by(post_history_type_id.and(post.select(&db.post.title).opt()))
         .select(creation_date)
-        .fold((0i64, i64::MAX, i64::MIN), |(n, lo, hi), x| {
-            (n + 1, lo.min(x), hi.max(x))
-        })
-        .drive(|(t, ti), (n, lo, hi)| all.push((t, Some(ti), n, lo, hi)));
-
-    db.post_history
-        .with(creation_date.ge(date(2023, 1, 1)))
-        .with(creation_date.le(date(2023, 10, 31)))
-        .minus(post.select(ptitle))
-        .group_by(post_history_type_id)
-        .select(creation_date)
-        .fold((0i64, i64::MAX, i64::MIN), |(n, lo, hi), x| {
-            (n + 1, lo.min(x), hi.max(x))
-        })
-        .drive(|t, (n, lo, hi)| all.push((t, None, n, lo, hi)));
-
-    all.sort_by(|a, b| b.2.cmp(&a.2).then(b.3.cmp(&a.3)));
-    rows(all.iter().map(|(t, ti, n, lo, hi)| {
-        row(vec![
-            V::I(*t),
-            ti.map(V::S).unwrap_or(V::Null),
-            V::I(*n),
-            V::T(*lo),
-            V::T(*hi),
-        ])
-    }))
+        .fold((0i64, i64::MAX, i64::MIN), |(n, lo, hi), x| (n + 1, lo.min(x), hi.max(x)));
+    rows(drain(&g).into_iter().map(|((t, ti), (n, lo, hi))| row(vec![V::I(t), ostr(ti), V::I(n), V::T(lo), V::T(hi)])))
 }
 
 fn q18297(db: &'static So) -> String {

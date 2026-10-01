@@ -91,9 +91,9 @@ fn q12308(db: &'static So) -> String { u(db, "v", "#rows", 100, &["name", "#rows
 fn q19973(db: &'static So) -> String { u(db, "v", "#rows", 10, &["name", "#rows", "#up", "#down"]) }
 fn q11005(db: &'static So) -> String { u(db, "v", "#n", 100, &["uid", "name", "#n", "#q", "#a", "rep_avg", "created_max"]) }
 fn q11843(db: &'static So) -> String { u(db, "v", "+uid", 0, &["uid", "name", "#n", "#vx", "score_avg"]) }
-fn q10544(db: &'static So) -> String { u(db, "v", "#rows", 100, &["uid", "name", "#rows", "#q", "#a", "#up", "#down", "score_avg", "created_max"]) }
-fn q13855(db: &'static So) -> String { u(db, "v", "#rows", 100, &["uid", "name", "#rows", "#q", "#a", "#up", "#down", "score_avg", "created_max"]) }
-fn q16671(db: &'static So) -> String { u(db, "v", "#rows", 10, &["uid", "name", "#rows", "#q", "#a", "bounty_sum"]) }
+fn q10544(db: &'static So) -> String { rep_over(db, "v", 0, "#rows", 100, &["uid", "name", "#rows", "#q", "#a", "#up", "#down", "score_avg", "created_max"]) }
+fn q13855(db: &'static So) -> String { rep_over(db, "v", 1000, "#rows", 100, &["uid", "name", "#rows", "#q", "#a", "#up", "#down", "score_avg", "created_max"]) }
+fn q16671(db: &'static So) -> String { rep_over(db, "v", 1000, "#rows", 10, &["uid", "name", "#rows", "#q", "#a", "bounty_sum"]) }
 fn q16024(db: &'static So) -> String { u(db, "v", "#rows", 10, &["uid", "name", "#rows", "#up", "#down"]) }
 fn q13556(db: &'static So) -> String { u(db, "v", "#rows", 0, &["uid", "name", "#rows", "score_avg", "#up", "#down"]) }
 fn q10908(db: &'static So) -> String { u(db, "v", "#rows,score_avg", 0, &["uid", "name", "#rows", "score_avg0", "rep"]) }
@@ -101,16 +101,16 @@ fn q11083(db: &'static So) -> String { u(db, "v", "rep,#rows", 0, &["uid", "name
 fn q10332(db: &'static So) -> String { u(db, "v", "rep,#rows", 100, &["uid", "name", "rep", "#rows", "#up", "#down"]) }
 fn q12538(db: &'static So) -> String { u(db, "v", "rep", 0, &["uid", "name", "rep", "#rows", "score_avg", "#up", "#down"]) }
 fn q14492(db: &'static So) -> String { u(db, "v", "#rows,score_sum", 100, &["uid", "name", "rep", "#rows", "score_sum", "#up", "#down", "activity_max"]) }
-fn q17063(db: &'static So) -> String { user_rows(db, "v", true, "#rows", 10, &["name", "#rows", "#up", "#down"]) }
+fn q17063(db: &'static So) -> String { u(db, "v", "#rows", 10, &["name", "#rows", "#up", "#down"]) }
 
 fn q12262(db: &'static So) -> String { u(db, "vb", "#rows,#up", 0, &["uid", "name", "#rows", "#up", "#down", "#bx"]) }
 fn q13957(db: &'static So) -> String { u(db, "vb", "#rows", 0, &["uid", "name", "#rows", "#vx", "#bx", "score_avg", "bounty_avg"]) }
 fn q14295(db: &'static So) -> String { rep_over(db, "vb", 1000, "#n,rep", 100, &["uid", "name", "rep", "#n", "#v", "#b", "bounty_avg"]) }
-fn q13198(db: &'static So) -> String { u(db, "vb", "rep", 100, &["uid", "rep", "ucreated", "#n", "#q", "#a", "score_sum", "#v", "#b"]) }
+fn q13198(db: &'static So) -> String { rep_over(db, "vb", 0, "rep", 100, &["uid", "rep", "ucreated", "#n", "#q", "#a", "score_sum", "#v", "#b"]) }
 
 // --- Comments and Votes both -----------------------------------------------
 
-fn q13463(db: &'static So) -> String { u(db, "cv", "#n", 100, &["name", "#n", "#q", "#a", "#c", "#up", "#down", "created_max"]) }
+fn q13463(db: &'static So) -> String { rep_over(db, "cv", 0, "#n", 100, &["name", "#n", "#q", "#a", "#c", "#up", "#down", "created_max"]) }
 fn q10007(db: &'static So) -> String { u(db, "cv", "#n", 0, &["uid", "name", "#n", "#c", "#up", "#down", "score_avg", "created_max", "created_min"]) }
 fn q11009(db: &'static So) -> String { u(db, "cv", "#n,#c", 0, &["uid", "name", "#n", "#c", "#v", "score_avg_all"]) }
 fn q10760(db: &'static So) -> String { u(db, "cV", "#n,score_sum", 100, &["uid", "name", "#n", "#c", "#vu", "views_sum0", "score_sum0"]) }
@@ -119,11 +119,11 @@ fn q12159(db: &'static So) -> String { u(db, "cv", "#rows", 100, &["uid", "name"
 fn q11767(db: &'static So) -> String { u(db, "cv", "#rows", 0, &["uid", "name", "#rows", "#q", "#a", "#up", "#down", "#cx", "views_sum", "score_avg"]) }
 fn q12618(db: &'static So) -> String { u(db, "cv", "#rows,#vx,#cx", 0, &["uid", "name", "#rows", "#vx", "#cx", "rep_avg"]) }
 fn q11198(db: &'static So) -> String { u(db, "cv", "#rows", 0, &["uid", "name", "#rows", "score_avg0", "#cx", "#vx"]) }
-fn q11201(db: &'static So) -> String { u(db, "cv", "#n", 0, &["uid", "name", "rep", "#n", "#c", "#q", "#a", "#up", "#down", "score_avg", "views_avg", "created_max"]) }
+fn q11201(db: &'static So) -> String { rep_over(db, "cv", 0, "#n", 0, &["uid", "name", "rep", "#n", "#c", "#q", "#a", "#up", "#down", "score_avg", "views_avg", "created_max"]) }
 fn q12756(db: &'static So) -> String { joined_since(db, "cv", date(2020, 1, 1), "#n,#up", 100, &["uid", "name", "rep", "#n", "#c", "#up", "#down", "#q", "#a"]) }
-fn q10312(db: &'static So) -> String { u(db, "cv", "#n,rep", 0, &["uid", "name", "rep", "#n", "#c", "#up", "#down", "score_avg", "created_max"]) }
+fn q10312(db: &'static So) -> String { rep_over(db, "cv", 0, "#n,rep", 0, &["uid", "name", "rep", "#n", "#c", "#up", "#down", "score_avg", "created_max"]) }
 fn q12251(db: &'static So) -> String { u(db, "cv", "#n,#up", 0, &["uid", "name", "rep", "#n", "#c", "#up", "#down", "score_avg", "created_max"]) }
-fn q14670(db: &'static So) -> String { u(db, "cv", "#n,#up", 100, &["uid", "name", "rep", "#n", "#c", "#up", "#down"]) }
+fn q14670(db: &'static So) -> String { rep_over(db, "cv", 0, "#n,#up", 100, &["uid", "name", "rep", "#n", "#c", "#up", "#down"]) }
 fn q14291(db: &'static So) -> String { rep_over(db, "cv", 100, "#n,#up", 0, &["uid", "name", "rep", "#n", "#c", "#v", "#up", "#down", "created_max"]) }
 fn q10387(db: &'static So) -> String { u(db, "cv", "rep", 0, &["uid", "name", "rep", "#n", "#c", "bounty_sum", "#up", "#down", "score_avg", "views_avg"]) }
 fn q10546(db: &'static So) -> String { u(db, "cv", "#n", 0, &["uid", "name", "rep", "#n", "#q", "#a", "#up", "#down", "score_avg", "#c"]) }
@@ -132,7 +132,7 @@ fn q10951(db: &'static So) -> String { u(db, "cv", "rep", 100, &["uid", "name", 
 fn q11277(db: &'static So) -> String { u(db, "cv", "rep", 0, &["uid", "name", "rep", "ucreated", "last_access", "#n", "#c", "#up", "#down", "score_sum", "created_max"]) }
 fn q12474(db: &'static So) -> String { u(db, "cv", "rep", 100, &["uid", "name", "rep", "ucreated", "last_access", "#n", "#c", "bounty_avg"]) }
 fn q11111(db: &'static So) -> String { u(db, "cv", "rep", 100, &["uid", "name", "rep", "ucreated", "last_access", "#n", "#c", "bounty_sum", "score_max", "views_avg"]) }
-fn q10639(db: &'static So) -> String { u(db, "cv", "rep", 0, &["uid", "name", "rep", "ucreated", "uviews", "uup", "udown", "#n", "#c", "#q", "#a", "bounty_sum"]) }
+fn q10639(db: &'static So) -> String { rep_over(db, "cv", 0, "rep", 0, &["uid", "name", "rep", "ucreated", "uviews", "uup", "udown", "#n", "#c", "#q", "#a", "bounty_sum"]) }
 fn q14845(db: &'static So) -> String { u(db, "cv", "rep", 0, &["uid", "rep", "#n", "#v", "#c"]) }
 fn q14013(db: &'static So) -> String { u(db, "cvb", "views_sum,#n", 100, &["name", "rep", "#n", "views_sum0", "#up", "#down", "#c", "#b", "score_avg", "activity_max"]) }
 fn q10894(db: &'static So) -> String { u(db, "cvb", "#n", 100, &["uid", "name", "#n", "#q", "#a", "score_avg", "#up", "#down", "#c", "#b"]) }

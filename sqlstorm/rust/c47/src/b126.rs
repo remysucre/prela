@@ -420,11 +420,16 @@ fn q14469(db: &'static So) -> String {
 // VoteCount DESC,
 // CommentCount DESC;
 fn q14476(db: &'static So) -> String {
+    let by_uid: HashIdx<i64, Id<Badge>> = (&db.badge.user_id).inv().collect();
     let mut v = Vec::new();
-    stats_fold(db, since(db, month_ago()), Ident::<Post>::new(), "cvb", &[]).drive(|p, s| v.push((p, s)));
-    rows(v.iter().map(|&(p, s)| {
+    since(db, month_ago())
+        .group_by(Ident::<Post>::new())
+        .select(votes_of(db).select(&db.vote.vote_type_id).opt().and(comments_of(db).opt()).and((&db.post.owner_user_id).select(&by_uid).opt()))
+        .fold([0i64; 5], |a, ((t, c), b)| [a[0] + t.is_some() as i64, a[1] + c.is_some() as i64, a[2] + (t == Some(2)) as i64, a[3] + (t == Some(3)) as i64, a[4] + b.is_some() as i64])
+        .drive(|p, a| v.push((p, a)));
+    rows(v.iter().map(|&(p, a)| {
         let mut f = post_fields(db, p, &["id", "type"]);
-        f.extend([V::I(s.vx), V::I(s.cx), V::I(s.up), V::I(s.down), V::I(s.bx)]);
+        f.extend(ints(&a));
         row(f)
     }))
 }
@@ -1053,9 +1058,17 @@ fn q14555(db: &'static So) -> String {
     let t = base().select((&db.post.owner_user).select(&db.user.reputation)).fold_flat([0i64; 2], |a, r| [a[0] + 1, a[1] + r]);
     let du = one(whole(base()).select(&db.post.owner_user_id).count_distinct());
     let f = by_key(base(), name(db), Ident::<Post>::new(), 0i64, |a, _| a + 1);
+    let ptc: HashIdx<(), (Str, i64)> = whole(&f).select(Same::<Str>::new().and(&f)).collect();
     let mut v = Vec::new();
-    (&f).drive(|k, n| v.push((k, n)));
-    rows(v.iter().map(|&(k, n)| row(vec![V::I(t[0]), V::I(du), avg(t[1], t[0]), V::S(k), V::I(n)])))
+    rel(vec![()]).select((&ptc).opt()).drive(|_, x| v.push(x));
+    rows(v.iter().map(|&x| {
+        let mut r = vec![V::I(t[0]), V::I(du), avg(t[1], t[0])];
+        r.extend(match x {
+            Some((k, n)) => [V::S(k), V::I(n)],
+            None => [V::Null, V::Null],
+        });
+        row(r)
+    }))
 }
 
 // SELECT

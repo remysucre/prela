@@ -171,7 +171,7 @@ fn q19329(db: &'static So) -> String {
     let Tag { excerpt_post, tag_name, .. } = &db.tag;
     let User { display_name, .. } = &db.user;
 
-    let mut v: Vec<(Id<Post>, i64, i64, i64, i64, Str, Str)> = Vec::new();
+    let mut v: Vec<(Id<Post>, i64, i64, i64, Option<i64>, Str, Str)> = Vec::new();
     db.tag
         .with(excerpt_post.select(post_type_id).eq(1))
         .select(
@@ -180,7 +180,7 @@ fn q19329(db: &'static So) -> String {
                     origid
                         .and(creation_date)
                         .and(score)
-                        .and(view_count)
+                        .and(view_count.opt())
                         .and(owner_user.select(display_name)),
                 ))
                 .and(tag_name),
@@ -196,7 +196,7 @@ fn q19329(db: &'static So) -> String {
             V::S(dn),
             V::T(*created),
             V::I(*sc),
-            V::I(*views),
+            oint(*views),
             oint(answer_count.get(*p)),
             V::S(tn),
         ])

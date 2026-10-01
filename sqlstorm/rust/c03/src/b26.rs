@@ -1,4 +1,5 @@
 use harness::prelude::*;
+use crate::q::by_created;
 
 struct Owned {
     name: Str,
@@ -193,8 +194,10 @@ fn q11932(db: &'static So) -> String {
     }))
 }
 
+// SELECT p.Id AS PostId, p.Title, u.DisplayName AS Owner, p.CreationDate, p.Score, p.ViewCount, COALESCE(p.AnswerCount, 0) AS AnswerCount, COALESCE(p.CommentCount, 0) AS CommentCount
+// FROM Posts p JOIN Users u ON p.OwnerUserId = u.Id WHERE p.PostTypeId = 1 ORDER BY p.CreationDate DESC LIMIT 10;
 fn q15541(db: &'static So) -> String {
-    let Post { view_count, answer_count, comment_count, .. } = &db.post;
+    let Post { answer_count, comment_count, .. } = &db.post;
     rows(by_created(db).iter().map(|r| {
         row(vec![
             V::I(r.id),
@@ -202,7 +205,7 @@ fn q15541(db: &'static So) -> String {
             V::S(r.display_name),
             V::T(r.created),
             V::I(r.score),
-            oint(view_count.get(r.pid)),
+            oint(r.views),
             V::I(answer_count.get(r.pid).unwrap_or(0)),
             V::I(comment_count.get(r.pid).unwrap_or(0)),
         ])

@@ -62,7 +62,7 @@ fn count_avgscore_avgviews(db: &'static So) -> String {
 
 fn q10028(db: &'static So) -> String {
     let mut a = type_aggs(db);
-    a.sort_by(|x, y| y.views_sum.cmp(&x.views_sum));
+    a.sort_by_key(|x| (x.views_n == 0, std::cmp::Reverse(x.views_sum)));
     rows(a.iter().map(|a| {
         row(vec![
             V::S(a.name),
@@ -149,7 +149,7 @@ struct QRow {
     pid: Id<Post>,
     id: i64,
     score: i64,
-    views: i64,
+    views: Option<i64>,
     created: i64,
     display_name: Str,
     reputation: i64,
@@ -166,7 +166,7 @@ fn questions(db: &'static So) -> Vec<QRow> {
         .select(
             origid
                 .and(score)
-                .and(view_count)
+                .and(view_count.opt())
                 .and(creation_date)
                 .and(owner_user.select(display_name.and(reputation))),
         )
@@ -220,7 +220,7 @@ fn q19756(db: &'static So) -> String {
             V::S(r.display_name),
             V::T(r.created),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
             ostr(tags_str.get(r.pid)),
         ])
     }))

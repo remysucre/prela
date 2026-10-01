@@ -1,9 +1,8 @@
 use harness::prelude::*;
 
 fn q27229(db: &'static So) -> String {
-    let Post { post_type_id, creation_date, owner_user, tags_str, score, body, .. } = &db.post;
+    let Post { post_type_id, creation_date, owner_user, tags_str, body, .. } = &db.post;
     let base = owned(db).with(post_type_id.eq(1)).with(creation_date.ge(add_years(current_date(), -1)));
-    let _rank = (&base).group_by(tags_str.opt()).select(Ident::<Post>::new().and(score)).window(row_number, |(_, s)| s, desc);
     let tag_users = owned(db)
         .with(post_type_id.eq(1))
         .with(tags_str)
@@ -59,13 +58,12 @@ fn q8309(db: &'static So) -> String {
         .map(|(((p, _), _), _)| p)
         .with(&children)
         .select(Ident::<Post>::new().and(&pha))
-        .drive(|_, (p, (ec, last))| {
-        db.user.select((&db.user.display_name).and((&answerers).filt(|a| a.0 > 5))).drive(|_, (dn, (n, s))| {
+        .cross(db.user.select((&db.user.display_name).and((&answerers).filt(|a| a.0 > 5))))
+        .drive(|_, ((p, (ec, last)), (dn, (n, s)))| {
             let mut f = post_fields(db, p, &["title", "views", "score", "answers"]);
             f.extend([V::I(ec), V::T(last), V::S(dn), V::I(n), V::I(s)]);
             out.push(row(f))
-        })
-    });
+        });
     rows(out)
 }
 
@@ -89,12 +87,12 @@ fn q27348(db: &'static So) -> String {
     let views = (&activity).map(|a| (a.1 > 0).then_some(a.2));
     let max_views = (&views).fold_flat(None, |m: Option<i64>, v| m.max(v));
     let user_rank = whole(&activity).select(Same::new().and(&activity)).window(rank, |(_, a)| a.0, desc);
-    let users = rel(drain((&user_rank).filt(|((_, a), r)| {
+    let users = (&user_rank).filt(|((_, a), r)| {
         let v = (a.1 > 0).then_some(a.2);
         r <= 5 && v.is_some() && v == max_views
-    })));
+    });
     let mut out = Vec::new();
-    (&tag_rank).filt(|(_, r)| r <= 5).cross(&users).drive(|_, (((t, (n, vn, vs, s)), _), (_, ((dn, (un, _, uvs, uan, uasum)), _)))| {
+    (&tag_rank).filt(|(_, r)| r <= 5).cross(users).drive(|_, (((t, (n, vn, vs, s)), _), ((dn, (un, _, uvs, uan, uasum)), _))| {
         out.push(row(vec![V::S(t), V::I(n), nullable(vs, vn), avg(s, n), V::S(dn), V::I(un), V::I(uvs), nullable(uasum, uan)]))
     });
     rows(out)
@@ -207,12 +205,10 @@ fn q10804(db: &'static So) -> String {
         .window(rank, |(_, e)| e.1, desc)
         .window(rank, |((_, e), _)| e.0, desc);
     let mut out = Vec::new();
-    ranked.drive(|_, (((p, (c, v, _, _)), a), b)| {
-        if a <= 10 || b <= 10 {
-            let mut f = post_fields(db, p, &["id", "title"]);
-            f.extend([V::I(v), V::I(c), V::I(a), V::I(b)]);
-            out.push(row(f))
-        }
+    ranked.filt(|((_, a), b)| a <= 10 || b <= 10).drive(|_, (((p, (c, v, _, _)), a), b)| {
+        let mut f = post_fields(db, p, &["id", "title"]);
+        f.extend([V::I(v), V::I(c), V::I(a), V::I(b)]);
+        out.push(row(f))
     });
     rows(out)
 }

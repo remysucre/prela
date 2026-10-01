@@ -1,4 +1,5 @@
 use harness::prelude::*;
+use crate::q::by_created;
 
 fn q13875(db: &'static So) -> String {
     let PostHistory { post_id, creation_date, .. } = &db.post_history;
@@ -27,7 +28,7 @@ fn q16102(db: &'static So) -> String {
             V::S(r.display_name),
             V::T(r.created),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
             oint(answer_count.get(r.pid)),
         ])
     }))
@@ -159,7 +160,7 @@ fn q15586(db: &'static So) -> String {
             V::I(r.reputation),
             V::T(r.created),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
         ])
     }))
 }

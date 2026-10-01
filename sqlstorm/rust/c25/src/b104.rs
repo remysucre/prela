@@ -867,9 +867,9 @@ fn q12264(db: &'static So) -> String {
 // p.CreationDate DESC
 // LIMIT 100;
 fn q12478(db: &'static So) -> String {
-    let PostHistory { user, creation_date, user_display_name, .. } = &db.post_history;
-    let by_user_time: HashIdx<(Id<User>, i64), Id<PostHistory>> = db.post_history.select(user.and(creation_date)).inv().collect();
-    let edits = (&db.post.last_editor_user).and(&db.post.last_edit_date).select(&by_user_time);
+    let PostHistory { user_id, creation_date, user_display_name, .. } = &db.post_history;
+    let by_user_time: HashIdx<(i64, i64), Id<PostHistory>> = db.post_history.select(user_id.and(creation_date)).inv().collect();
+    let edits = (&db.post.last_editor_user_id).and(&db.post.last_edit_date).select(&by_user_time);
     let mut v = post_history_groups(db, owned_since(db, date(2023, 1, 1)), edits, user_display_name.opt().and(creation_date));
     v.sort_by_key(|&((p, h), _)| (newest(db, p), db.post.origid.get(p).unwrap(), h.is_none(), h.map(|h| (h.0.is_none(), h.0, h.1))));
     rows(v.iter().take(100).map(|&((p, h), a)| {

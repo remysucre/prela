@@ -14,26 +14,44 @@ use harness::prelude::*;
 // Every cut was checked: rows n and n+1 differ in the sort column, so none of
 // these needs a rewrite. T3 has no LIMIT and the harness compares rows as a
 // sorted multiset, so its ORDER BY does not matter either.
-fn take_n(db: &'static So, mut v: Vec<Question>, n: usize, cols: &[&str]) -> String {
+struct Q {
+    pid: Id<Post>,
+    created: i64,
+    score: i64,
+    views: Option<i64>,
+}
+
+fn owned_questions(db: &'static So) -> Vec<Q> {
+    let Post { post_type_id, owner_user, creation_date, score, view_count, .. } = &db.post;
+    let mut v = Vec::new();
+    db.post
+        .with(post_type_id.eq(1))
+        .with(owner_user)
+        .select(creation_date.and(score).and(view_count.opt()))
+        .drive(|pid, ((created, score), views)| v.push(Q { pid, created, score, views }));
+    v
+}
+
+fn take_n(db: &'static So, mut v: Vec<Q>, n: usize, cols: &[&str]) -> String {
     v.truncate(n);
     rows(v.iter().map(|q| row(post_fields(db, q.pid, cols))))
 }
 
 fn newest(db: &'static So, n: usize, cols: &[&str]) -> String {
-    let mut v = questions(db);
+    let mut v = owned_questions(db);
     v.sort_by(|a, b| b.created.cmp(&a.created));
     take_n(db, v, n, cols)
 }
 
 fn best(db: &'static So, n: usize, cols: &[&str]) -> String {
-    let mut v = questions(db);
+    let mut v = owned_questions(db);
     v.sort_by(|a, b| b.score.cmp(&a.score));
     take_n(db, v, n, cols)
 }
 
 fn most_viewed(db: &'static So, n: usize, cols: &[&str]) -> String {
-    let mut v = questions(db);
-    v.sort_by(|a, b| b.views.cmp(&a.views));
+    let mut v = owned_questions(db);
+    v.sort_by(|a, b| desc_nulls_last(a.views, b.views));
     take_n(db, v, n, cols)
 }
 
@@ -62,10 +80,6 @@ fn scored(db: &'static So, n: usize, cols: &[&str]) -> String {
 
 fn viewed(db: &'static So, n: usize, cols: &[&str]) -> String {
     newest_posts(db, (&db.post.view_count).gt(100), n, cols)
-}
-
-fn question(db: &'static So, n: usize, cols: &[&str]) -> String {
-    newest_posts(db, (&db.post.post_type_id).eq(1), n, cols)
 }
 
 fn types(db: &'static So, cols: &[&str]) -> String {
@@ -172,8 +186,22 @@ fn q12156(db: &'static So) -> String { types(db, &["name", "n", "score_avg", "vi
 fn q12998(db: &'static So) -> String { types(db, &["name", "n", "views_avg", "score_sum"]) }
 // name, n, score_avg, views_sum | GROUP BY PostTypes.Name ORDER BY count DESC
 fn q11164(db: &'static So) -> String { types(db, &["name", "n", "score_avg", "views_sum"]) }
-// name, n, score_avg, views_sum | GROUP BY PostTypes.Name ORDER BY count DESC
-fn q11754(db: &'static So) -> String { types(db, &["name", "n", "score_avg", "views_sum"]) }
+// name, n, score_avg, views_sum | GROUP BY pt.Id, pt.Name ORDER BY count DESC
+fn q11754(db: &'static So) -> String {
+    let Post { post_type, score, view_count, .. } = &db.post;
+    let mut v = Vec::new();
+    db.post
+        .group_by(post_type)
+        .select(score.and(view_count.opt()))
+        .fold((0i64, 0i64, 0i64, 0i64), |(n, s, vn, vs), (sc, vc)| {
+            (n + 1, s + sc, vn + vc.is_some() as i64, vs + vc.unwrap_or(0))
+        })
+        .drive(|t, a| v.push((t, a)));
+    v.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+    rows(v.iter().map(|&(t, (n, s, vn, vs))| {
+        row(vec![V::S(db.post_type.name.get(t).unwrap()), V::I(n), avg(s, n), nullable(vs, vn)])
+    }))
+}
 // id, title, body, owner, created, score, views | questions ORDER BY created DESC LIMIT 10
 fn q18026(db: &'static So) -> String { newest(db, 10, &["id", "title", "body", "owner", "created", "score", "views"]) }
 // id, title, body, owner, created, score, views | questions ORDER BY created DESC LIMIT 10

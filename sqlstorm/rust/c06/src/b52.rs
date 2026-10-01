@@ -195,7 +195,7 @@ fn q9211(db: &'static So) -> String {
 fn q5936(db: &'static So) -> String {
     let Post { post_type, creation_date, score, .. } = &db.post;
     let Vote { post, .. } = &db.vote;
-    let base = db.post.with(creation_date.ge(add_years(current_date(), -1)));
+    let base = db.post.with(creation_date.ge(add_years(utc_to_ny(now_utc()), -1)));
     let votes_of: HashIdx<Id<Post>, Id<Vote>> = post.inv().collect();
     let joined: MatSet<(Id<Post>, Option<Id<Vote>>)> = (&base).select(Ident::<Post>::new().and(votes_of.opt())).collect();
     let post_of = (&joined).map(|(p, _)| p);

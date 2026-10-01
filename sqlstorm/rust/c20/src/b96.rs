@@ -330,14 +330,14 @@ fn q16279(db: &'static So) -> String {
 }
 
 // PostTypes grouped: COUNT, AVG(Score), AVG(ViewCount) in one fold, and
-// COUNT(DISTINCT OwnerUserId) in a second.
+// COUNT(DISTINCT OwnerUserId) in a second, over the raw id (dangling ones count).
 fn type_counts(db: &'static So, views: bool) -> String {
-    let Post { post_type, score, view_count, owner_user, .. } = &db.post;
+    let Post { post_type, score, view_count, owner_user_id, .. } = &db.post;
     let name = post_type.select(&db.post_type.name);
     let main = db.post.group_by(&name).select(score.and(view_count.opt())).fold((0i64, 0i64, 0i64, 0i64), |(n, s, vn, vs), (x, w)| {
         (n + 1, s + x, vn + w.is_some() as i64, vs + w.unwrap_or(0))
     });
-    let uniq = db.post.group_by(&name).select(owner_user).count_distinct();
+    let uniq = db.post.group_by(&name).select(owner_user_id).count_distinct();
     let mut v = Vec::new();
     main.and((&uniq).opt()).drive(|k, ((n, s, vn, vs), u)| v.push((n, k, s, vn, vs, u.unwrap_or(0))));
     v.sort_by(|a, b| b.0.cmp(&a.0));
@@ -417,12 +417,12 @@ fn q11186(db: &'static So) -> String {
 // ORDER BY
 // TotalPosts DESC;
 fn q12399(db: &'static So) -> String {
-    let Post { post_type, score, view_count, owner_user, .. } = &db.post;
+    let Post { post_type, score, view_count, owner_user_id, .. } = &db.post;
     let name = post_type.select(&db.post_type.name);
     let main = db.post.group_by(&name).select(score.and(view_count.opt())).fold((0i64, 0i64, 0i64, 0i64), |(n, s, vn, vs), (x, w)| {
         (n + 1, s + x, vn + w.is_some() as i64, vs + w.unwrap_or(0))
     });
-    let uniq = db.post.group_by(&name).select(owner_user).count_distinct();
+    let uniq = db.post.group_by(&name).select(owner_user_id).count_distinct();
     let mut v = Vec::new();
     main.and((&uniq).opt()).drive(|k, ((n, s, vn, vs), u)| v.push((n, k, s, vn, vs, u.unwrap_or(0))));
     v.sort_by(|a, b| b.0.cmp(&a.0));

@@ -239,16 +239,14 @@ fn q6969(db: &'static So) -> String {
     let active: HashIdx<Str, i64> = db.user.with(&top).select(&db.user.display_name).inv().select(&posts).collect();
     let rn = (&base)
         .group_by(tags_str.opt())
-        .select(
-            Ident::<Post>::new()
-                .and(score)
-                .and(creation_date)
-                .and(owner_user.select(&db.user.display_name).select(&active).opt()),
-        )
-        .window(row_number, |(((_, s), cd), _)| (s, cd), desc);
+        .select(Ident::<Post>::new().and(score).and(creation_date))
+        .window(row_number, |((_, s), cd)| (s, cd), desc);
     let mut out = Vec::new();
-    (&rn).filt(|((_, a), r)| r <= 5 && a.is_some()).drive(|_, ((((p, _), _), n), r)| {
-        let n = n.unwrap();
+    (&rn)
+        .filt(|(_, r)| r <= 5)
+        .map(|(((p, _), _), r)| (p, r))
+        .select(Same::<(Id<Post>, i64)>::new().and(Same::<(Id<Post>, i64)>::new().map(|(p, _)| p).select(owner_user).select(&db.user.display_name).select(&active)))
+        .drive(|_, ((p, r), n)| {
         let mut f = post_fields(db, p, &["id", "title", "created", "score", "views", "owner"]);
         f.extend([V::I(n), V::I(r)]);
         out.push(row(f))
@@ -269,7 +267,9 @@ fn q27132(db: &'static So) -> String {
     (&rk)
         .filt(|((((((_, _), v), _), u), d), r)| r <= 100 && v.is_some_and(|v| v >= 1000) && u - d > 0)
         .drive(|_, ((((((p, _), _), c), u), d), r)| {
-            let mut f = post_fields(db, p, &["id", "title", "body", "tags", "views", "owner"]);
+            let mut f = post_fields(db, p, &["id", "title", "body"]);
+            f.push(db.post.tags_str.get(p).map_or(V::Null, |t| V::Owned(t.split("<>").collect::<Vec<_>>().join(", "))));
+            f.extend(post_fields(db, p, &["views", "owner"]));
             f.extend([V::I(c), V::I(u), V::I(d), V::I(r)]);
             out.push(row(f))
         });

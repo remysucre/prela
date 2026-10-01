@@ -160,48 +160,16 @@ fn q10922(db: &'static So) -> String {
 }
 
 fn q11216(db: &'static So) -> String {
-    let PostHistory { post_history_type_id, post, user, creation_date, .. } =
-        &db.post_history;
-    let Post { title: ptitle, .. } = &db.post;
-    let User { display_name, .. } = &db.user;
-
-    let mut all: Vec<(i64, Option<Str>, Str, i64, i64, i64)> = Vec::new();
-    db.post_history
-        .with(creation_date.ge(date(2023, 1, 1)))
-        .with(creation_date.le(date(2023, 12, 31)))
-        .group_by(
-            post_history_type_id
-                .and(post.select(ptitle))
-                .and(user.select(display_name)),
-        )
+    let PostHistory { post_history_type_id, post, user, creation_date, .. } = &db.post_history;
+    let g = db
+        .post_history
+        .with(creation_date.between(date(2023, 1, 1), date(2023, 12, 31)))
+        .with(user)
+        .group_by(post_history_type_id.and(post.select(&db.post.title).opt()).and(user.select(&db.user.display_name)))
         .select(creation_date)
-        .fold((0i64, i64::MAX, i64::MIN), |(n, lo, hi), x| {
-            (n + 1, lo.min(x), hi.max(x))
-        })
-        .drive(|((t, ti), dn), (n, lo, hi)| all.push((t, Some(ti), dn, n, lo, hi)));
-
-    db.post_history
-        .with(creation_date.ge(date(2023, 1, 1)))
-        .with(creation_date.le(date(2023, 12, 31)))
-        .minus(post.select(ptitle))
-        .group_by(post_history_type_id.and(user.select(display_name)))
-        .select(creation_date)
-        .fold((0i64, i64::MAX, i64::MIN), |(n, lo, hi), x| {
-            (n + 1, lo.min(x), hi.max(x))
-        })
-        .drive(|(t, dn), (n, lo, hi)| all.push((t, None, dn, n, lo, hi)));
-
-    all.sort_by(|a, b| b.3.cmp(&a.3));
-    rows(all.iter().take(10).map(|(t, ti, dn, n, lo, hi)| {
-        row(vec![
-            V::I(*t),
-            V::I(*n),
-            V::T(*lo),
-            V::T(*hi),
-            ti.map(V::S).unwrap_or(V::Null),
-            V::S(dn),
-        ])
-    }))
+        .fold((0i64, i64::MAX, i64::MIN), |(n, lo, hi), x| (n + 1, lo.min(x), hi.max(x)));
+    let v = top_n(drain(&g), |&(_, (n, _, _))| std::cmp::Reverse(n), 10);
+    rows(v.into_iter().map(|(((t, ti), dn), (n, lo, hi))| row(vec![V::I(t), V::I(n), V::T(lo), V::T(hi), ostr(ti), V::S(dn)])))
 }
 
 fn q14482(db: &'static So) -> String {

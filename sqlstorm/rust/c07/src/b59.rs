@@ -110,7 +110,8 @@ fn q8948(db: &'static So) -> String {
     let (n, s, vn, vs) = (&base)
         .select(score.and(view_count.opt()))
         .fold_flat((0i64, 0i64, 0i64, 0i64), |(n, s, vn, vs), (sc, v)| (n + 1, s + sc, vn + v.is_some() as i64, vs + v.unwrap_or(0)));
-    let (avg_s, avg_v) = (s as f64 / n as f64, vs as f64 / vn as f64);
+    let avg_s = s as f64 / n as f64;
+    let avg_v = (vn > 0).then(|| vs as f64 / vn as f64);
     let by_type = post_type.select(&db.post_type.name);
     let ranked = (&base)
         .group_by(&by_type)
@@ -122,10 +123,10 @@ fn q8948(db: &'static So) -> String {
         |_, ((((p, sc), v), _), _)| {
             let mut f = post_fields(db, p, &["id", "title", "created", "score", "views", "answers", "comments", "owner"]);
             f.extend([
-                V::F(avg_s),
-                V::F(avg_v),
+                avg(s, n),
+                avg(vs, vn),
                 V::S(if sc as f64 > avg_s { "Above Average" } else { "Below Average" }),
-                V::S(if v.is_some_and(|v| v as f64 > avg_v) { "Above Average" } else { "Below Average" }),
+                V::S(if v.zip(avg_v).is_some_and(|(v, a)| v as f64 > a) { "Above Average" } else { "Below Average" }),
             ]);
             out.push(row(f))
         },
@@ -167,6 +168,8 @@ fn q5792(db: &'static So) -> String {
     rows(out)
 }
 
+type Tu = (Id<User>, Str, (i64, i64, i64, i64, i64), i64);
+
 fn q28619(db: &'static So) -> String {
     let Post { post_type_id, owner_user, view_count, score, accepted_answer_id, creation_date, .. } = &db.post;
     let us = owner_user.inv().select(accepted_answer_id.opt().and(view_count.opt()).and(score)).fold(
@@ -174,19 +177,22 @@ fn q28619(db: &'static So) -> String {
         |(n, acc, vn, vs, s), ((a, v), sc)| (n + 1, acc + a.is_some() as i64, vn + v.is_some() as i64, vs + v.unwrap_or(0), s + sc),
     );
     let users = db.user.with((&db.user.reputation).gt(0)).with(&us);
-    let recent = db.post.with(post_type_id.eq(1)).select(owner_user).inv().select(view_count.opt().and(creation_date)).fold(
-        (0i64, 0i64, 0i64, i64::MIN),
-        |(n, vn, vs, last), (v, cd)| (n + 1, vn + v.is_some() as i64, vs + v.unwrap_or(0), last.max(cd)),
-    );
-    let ur = whole(&users)
-        .select((&db.user.display_name).and(recent.opt()).and(&us))
-        .window(dense_rank, |(_, a)| a.4, desc);
+    let tu: MatSet<Tu> = whole(&users)
+        .select(Ident::<User>::new().and(&db.user.display_name).and(&us))
+        .window(dense_rank, |(_, a)| a.4, desc)
+        .map(|(((u, dn), a), r)| (u, dn, a, r))
+        .collect();
+    let questions: HashIdx<Id<User>, Id<Post>> = db.post.with(post_type_id.eq(1)).select(owner_user).inv().collect();
+    let g = (&tu)
+        .group_by(Same::<Tu>::new().map(|(_, dn, a, r): Tu| (dn, a, r)))
+        .select(Same::<Tu>::new().map(|x: Tu| x.0).select(&questions).select(view_count.opt().and(creation_date)))
+        .fold((0i64, 0i64, 0i64, i64::MIN), |(n, vn, vs, last), (v, cd)| {
+            (n + 1, vn + v.is_some() as i64, vs + v.unwrap_or(0), last.max(cd))
+        });
     let mut v = Vec::new();
-    (&ur)
-        .filt(|(((_, r), _), _)| r.is_some())
-        .drive(|_, (((dn, r), a), k)| v.push((((dn, r.unwrap()), a), k)));
-    v.sort_by(|a, b| a.1.cmp(&b.1).then(b.0.0.1.0.cmp(&a.0.0.1.0)));
-    rows(v.iter().take(10).map(|&(((dn, (rn, rvn, rvs, last)), (n, acc, vn, vs, s)), r)| {
+    (&g).drive(|k, a| v.push((k, a)));
+    v.sort_by(|a, b| a.0.2.cmp(&b.0.2).then(b.1.0.cmp(&a.1.0)));
+    rows(v.iter().take(10).map(|&((dn, (n, acc, vn, vs, s), r), (rn, rvn, rvs, last))| {
         row(vec![
             V::S(dn),
             V::I(rn),
@@ -307,7 +313,7 @@ fn q27857(db: &'static So) -> String {
     let down = votes_of_type(db, 3);
     let cc = comments_per_post(db);
     let ac = parent.inv().dense_fold_outer(db.post.id.n, 0i64, |a, _| a + 1);
-    let base = owned(db).with(creation_date.ge(year_ago())).with(title).with(body.filt(|b: Str| !b.trim().is_empty()));
+    let base = owned(db).with(creation_date.ge(year_ago())).with(title).with(body.filt(|b: Str| !b.trim_matches(' ').is_empty()));
     let rn = (&base)
         .group_by(post_type.select(&db.post_type.name))
         .select(Ident::<Post>::new().and(&up).and(&ac).and(&down).and(&cc))
@@ -315,7 +321,8 @@ fn q27857(db: &'static So) -> String {
     let mut out = Vec::new();
     (&rn).filt(|(_, n)| n <= 10).drive(|_, (((((p, u), a), d), c), r)| {
         let mut f = post_fields(db, p, &["id", "title", "body", "tags", "owner"]);
-        f.extend([V::Owned(format!("{u:05}")), V::Owned(format!("{d:05}")), V::I(c), V::I(a)]);
+        let lpad = |x: i64| V::Owned(format!("{x:05}").chars().take(5).collect());
+        f.extend([lpad(u), lpad(d), V::I(c), V::I(a)]);
         f.extend(post_fields(db, p, &["type"]));
         f.push(V::I(r));
         out.push(row(f))

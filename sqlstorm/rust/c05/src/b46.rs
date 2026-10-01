@@ -74,11 +74,15 @@ fn q5006(db: &'static So) -> String {
     rows(out)
 }
 
+fn votes_named(db: &'static So, name: Str) -> DenseFold<Id<Post>, i64> {
+    db.vote.with(vtype_name(db).eq(name)).select(&db.vote.post).inv().dense_fold_outer(db.post.id.n, 0i64, |a, _| a + 1)
+}
+
 fn q5891(db: &'static So) -> String {
     let Post { owner_user, creation_date, score, .. } = &db.post;
     let cc = comments_per_post(db);
-    let up = votes_of_type(db, 2);
-    let down = votes_of_type(db, 3);
+    let up = votes_named(db, "UpMod");
+    let down = votes_named(db, "DownMod");
     let base = owned(db).with(creation_date.ge(year_ago()));
     let rn = (&base)
         .group_by(owner_user)
@@ -110,21 +114,18 @@ fn q7358(db: &'static So) -> String {
         .select(score.and(view_count.opt()))
         .fold((0i64, 0i64, 0i64, 0i64), |(n, s, vn, vs), (sc, v)| (n + 1, s + sc, vn + v.is_some() as i64, vs + v.unwrap_or(0)));
     let mut out = Vec::new();
-    (&rn).filt(|(_, n)| n == 1).drive(|_, ((p, _), _)| {
-        (&cats).drive(|name, (n, s, vn, vs)| {
-            let mut f = post_fields(db, p, &["id", "title", "owner", "created", "views", "score", "answers", "comments"]);
-            f.extend([V::S(name), avg(s, n), nullable(vs, vn)]);
-            out.push(row(f))
-        })
+    (&rn).filt(|(_, n)| n == 1).cross(&cats).drive(|(_, name), (((p, _), _), (n, s, vn, vs))| {
+        let mut f = post_fields(db, p, &["id", "title", "owner", "created", "views", "score", "answers", "comments"]);
+        f.extend([V::S(name), avg(s, n), nullable(vs, vn)]);
+        out.push(row(f))
     });
     rows(out)
 }
 
 fn q7647(db: &'static So) -> String {
     let Post { post_type_id, tags_str, score, creation_date, .. } = &db.post;
-    let Vote { post, vote_type_id, .. } = &db.vote;
-    let pv = post.inv().select(vote_type_id).fold((0i64, 0i64, 0i64), |(u, d, a), t| {
-        (u + (t == 2) as i64, d + (t == 3) as i64, a + (t == 1) as i64)
+    let pv = (&db.vote.post).inv().select(vtype_name(db)).fold((0i64, 0i64, 0i64), |(u, d, a), t| {
+        (u + (t == "UpMod") as i64, d + (t == "DownMod") as i64, a + (t == "AcceptedByOriginator") as i64)
     });
     let base = owned(db).with(post_type_id.eq(1));
     let score_then_oldest = |a: &(i64, i64), b: &(i64, i64)| b.0.cmp(&a.0).then(a.1.cmp(&b.1));
@@ -236,7 +237,7 @@ fn q6109(db: &'static So) -> String {
 
 fn q9466(db: &'static So) -> String {
     let Post { post_type, creation_date, score, view_count, .. } = &db.post;
-    let mentions = tag_mentions(db);
+    let mentions = tag_mentions_ci(db);
     let stats = (&mentions)
         .group_by((&mentions).map(|(_, t)| t))
         .select((&mentions).map(|(p, _)| p).select(view_count.opt()))
@@ -253,6 +254,13 @@ fn q9466(db: &'static So) -> String {
         out.push(row(f))
     });
     rows(out)
+}
+
+fn tag_mentions_ci(db: &'static So) -> MatSet<(Id<Post>, Id<Tag>)> {
+    let elems: MatSet<Str> = (&db.post.tags_str).flat_map(tag_list).collect();
+    let contains: HashIdx<Str, Id<Tag>> =
+        (&elems).select_where((&db.tag.tag_name).inv(), |e: Str, n: Str| e.to_lowercase().contains(&n.to_lowercase())).collect();
+    db.post.select(Ident::<Post>::new().and((&db.post.tags_str).flat_map(tag_list).select(&contains))).collect()
 }
 
 pub const ENTRIES: &[harness::Entry] = &[

@@ -2534,6 +2534,687 @@ fn q1843(db: &'static So) -> String {
     }))
 }
 
+// WITH UserEngagement AS (SELECT u.Id AS UserId, u.DisplayName, COUNT(DISTINCT p.Id) AS TotalPosts, SUM(CASE WHEN p.PostTypeId = 1 THEN 1 ELSE 0 END) AS QuestionCount,
+//        SUM(CASE WHEN p.PostTypeId = 2 THEN 1 ELSE 0 END) AS AnswerCount, SUM(CASE WHEN v.VoteTypeId = 2 THEN 1 ELSE 0 END) AS UpVotes, SUM(CASE WHEN v.VoteTypeId = 3 THEN 1 ELSE 0 END) AS DownVotes,
+//        AVG(p.Score) AS AverageScore FROM Users u LEFT JOIN Posts p ON u.Id = p.OwnerUserId LEFT JOIN Votes v ON p.Id = v.PostId WHERE u.Reputation > 1000 GROUP BY u.Id, u.DisplayName),
+// PostStatistics AS (SELECT p.Id AS PostId, p.Title, p.CreationDate, p.ViewCount, p.Score, COALESCE(c.CommentCount, 0) AS CommentCount,
+//        ROW_NUMBER() OVER (PARTITION BY p.OwnerUserId ORDER BY p.CreationDate DESC) AS RecentPostRank
+//     FROM Posts p LEFT JOIN (SELECT PostId, COUNT(*) AS CommentCount FROM Comments GROUP BY PostId) c ON p.Id = c.PostId WHERE p.CreationDate >= cast('2024-10-01 12:34:56' as timestamp) - INTERVAL '1 year')
+// SELECT ue.DisplayName, ue.TotalPosts, ue.QuestionCount, ue.AnswerCount, ue.UpVotes, ue.DownVotes, ue.AverageScore, ps.PostId, ps.Title, ps.ViewCount, ps.Score, ps.CommentCount
+// FROM UserEngagement ue FULL OUTER JOIN PostStatistics ps ON ue.UserId = ps.PostId
+// WHERE (ue.QuestionCount > 5 OR ue.AnswerCount > 5) AND (ps.Score IS NOT NULL OR ps.Title IS NOT NULL) ORDER BY ue.AverageScore DESC NULLS LAST LIMIT 50;
+//
+// `ue.UserId = ps.PostId` joins a user id to a post id, so it goes through the raw ids. The WHERE needs both sides (Score is never NULL), so the
+// FULL OUTER JOIN keeps only matched rows, and only users whose id is a recent post's id can reach it; the posts x votes product is driven for them.
+fn q3855(db: &'static So) -> String {
+    let Post { creation_date, post_type_id, score, .. } = &db.post;
+    let pidx: HashIdx<i64, Id<Post>> = (&db.post.origid).inv().collect();
+    let recent = || Ident::<Post>::new().with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)));
+    let cand: MatSet<Id<User>> = db.user.with((&db.user.reputation).gt(1000)).with((&db.user.origid).select(&pidx).select(recent())).collect();
+    let ue = (&cand)
+        .group_by(Ident::<User>::new())
+        .select(posts_of(db).select(post_type_id.and(score).and(votes_of(db).select(&db.vote.vote_type_id).opt())).opt())
+        .fold([0i64; 6], |a, x| match x {
+            Some(((t, s), v)) => [a[0] + (t == 1) as i64, a[1] + (t == 2) as i64, a[2] + (v == Some(2)) as i64, a[3] + (v == Some(3)) as i64, a[4] + 1, a[5] + s],
+            None => a,
+        });
+    let tp = (&cand).group_by(Ident::<User>::new()).select(posts_of(db).opt()).fold(0i64, |n, p| n + p.is_some() as i64);
+    let cc = db.post.group_by(Ident::<Post>::new()).select(comments_of(db).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
+    let v = drain((&ue).filt(|a| a[0] > 5 || a[1] > 5).and(&tp).and((&db.user.origid).select(&pidx).select(recent().and(&cc))));
+    let v = top_k(v, |&(_, ((a, _), _))| (a[4] == 0, Reverse(fkey(a[5] as f64 / a[4] as f64))), |&(u, _)| u, 50);
+    rows(v.into_iter().map(|(u, ((a, n), (p, c)))| {
+        let mut f = vec![user_col(db, u, "name"), V::I(n), V::I(a[0]), V::I(a[1]), V::I(a[2]), V::I(a[3]), avg(a[5], a[4])];
+        f.extend(post_fields(db, p, &["id", "title", "views", "score"]));
+        f.push(V::I(c));
+        row(f)
+    }))
+}
+
+// WITH RankedPosts AS (SELECT p.Id AS PostId, p.Title, p.CreationDate, p.ViewCount, p.Score, ROW_NUMBER() OVER (PARTITION BY p.PostTypeId ORDER BY p.CreationDate DESC) AS Rank,
+//        COALESCE((SELECT COUNT(*) FROM Votes v WHERE v.PostId = p.Id AND v.VoteTypeId = 2), 0) AS UpVotesCount FROM Posts p WHERE p.CreationDate >= CURRENT_DATE - INTERVAL '2 years'),
+// PopularPosts AS (SELECT rp.PostId, rp.Title, rp.CreationDate, rp.ViewCount, rp.Score, rp.UpVotesCount,
+//        CASE WHEN rp.Score > 100 THEN 'Hot Topic' WHEN rp.Score BETWEEN 50 AND 100 THEN 'Popular' ELSE 'Normal' END AS Popularity FROM RankedPosts rp WHERE rp.Rank <= 10),
+// PostMetrics AS (SELECT pp.PostId, pp.Title, pp.ViewCount, pp.UpVotesCount, pp.Popularity, COUNT(c.Id) AS CommentCount, COUNT(DISTINCT h.Id) AS HistoryEditCount, MAX(h.CreationDate) AS LastEditDate
+//     FROM PopularPosts pp LEFT JOIN Comments c ON pp.PostId = c.PostId LEFT JOIN PostHistory h ON pp.PostId = h.PostId AND h.PostHistoryTypeId IN (4, 5, 6)
+//     GROUP BY pp.PostId, pp.Title, pp.ViewCount, pp.UpVotesCount, pp.Popularity)
+// SELECT pm.Title, pm.ViewCount, pm.UpVotesCount, pm.Popularity, pm.CommentCount, pm.LastEditDate,
+//        CASE WHEN pm.Popularity = 'Hot Topic' AND pm.CommentCount > 50 THEN 'Featured Post' ELSE 'Regular Post' END AS PostCategory
+// FROM PostMetrics pm WHERE pm.UpVotesCount > 10 AND (pm.CommentCount IS NULL OR pm.CommentCount < 20) ORDER BY pm.ViewCount DESC;
+//
+// A CreationDate tie at a type's tenth place goes to the smaller id.
+fn q22789(db: &'static So) -> String {
+    let Post { creation_date, post_type_id, score, .. } = &db.post;
+    let v = drain(db.post.with(creation_date.ge(add_years(current_date(), -2))).select(post_type_id));
+    let top = top_per(v, |&(_, t)| t, |&(p, _)| (Reverse(creation_date.get(p).unwrap()), p), 10, false);
+    let pp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let up = (&pp).group_by(Ident::<Post>::new()).select(votes_of(db).select(Ident::<Vote>::new().with((&db.vote.vote_type_id).eq(2))).opt()).fold(0i64, |n, v| n + v.is_some() as i64);
+    let edits = history_of(db).select(Ident::<PostHistory>::new().with((&db.post_history.post_history_type_id).in_v(vec![4, 5, 6]))).select(&db.post_history.creation_date);
+    let pm = (&pp).group_by(Ident::<Post>::new()).select(comments_of(db).opt().and(edits.opt())).fold((0i64, i64::MIN), |(n, m), (c, d)| (n + c.is_some() as i64, m.max(d.unwrap_or(i64::MIN))));
+    let mut v = drain((&up).filt(|n| n > 10).and((&pm).filt(|(c, _)| c < 20)));
+    v.sort_by_key(|&(p, _)| Reverse(db.post.view_count.get(p)));
+    rows(v.into_iter().map(|(p, (u, (c, m)))| {
+        let s = score.get(p).unwrap();
+        let pop = if s > 100 { "Hot Topic" } else if s >= 50 { "Popular" } else { "Normal" };
+        let mut f = post_fields(db, p, &["title", "views"]);
+        f.extend([V::I(u), V::S(pop), V::I(c), tmax(m), V::S(if pop == "Hot Topic" && c > 50 { "Featured Post" } else { "Regular Post" })]);
+        row(f)
+    }))
+}
+
+// WITH PostStats AS (SELECT p.Id AS PostId, p.Title, p.CreationDate, p.ViewCount, p.Score, COALESCE(ans.AnswerCount, 0) AS AnswerCount, COALESCE(com.CommentCount, 0) AS CommentCount,
+//        COUNT(DISTINCT v.UserId) AS VoteCount, (SELECT COUNT(*) FROM Comments c WHERE c.PostId = p.Id) AS TotalComments
+//     FROM Posts p LEFT JOIN (SELECT ParentId, COUNT(*) AS AnswerCount FROM Posts WHERE PostTypeId = 2 GROUP BY ParentId) ans ON p.Id = ans.ParentId
+//     LEFT JOIN (SELECT PostId, COUNT(*) AS CommentCount FROM Comments GROUP BY PostId) com ON p.Id = com.PostId LEFT JOIN Votes v ON p.Id = v.PostId
+//     WHERE p.CreationDate >= TIMESTAMP '2024-10-01 12:34:56' - INTERVAL '1 year' GROUP BY p.Id, p.Title, p.CreationDate, p.ViewCount, p.Score, ans.AnswerCount, com.CommentCount),
+// RankedPosts AS (SELECT ps.PostId, ps.Title, ps.ViewCount, ps.Score, ps.AnswerCount, ps.CommentCount, RANK() OVER (ORDER BY ps.Score DESC, ps.ViewCount DESC) AS PostRank FROM PostStats ps)
+// SELECT r.PostId, r.Title, r.ViewCount, r.Score, r.AnswerCount, r.CommentCount, CASE WHEN r.PostRank <= 5 THEN 'Top 5' WHEN r.PostRank BETWEEN 6 AND 20 THEN 'Popular' ELSE 'Other' END AS PostCategory
+// FROM RankedPosts r WHERE r.AnswerCount > 0 AND r.ViewCount IS NOT NULL ORDER BY r.PostRank;
+//
+// VoteCount and TotalComments are never read. PostRank is taken over every recent post, before the WHERE.
+fn q2997(db: &'static So) -> String {
+    let Post { creation_date, score, view_count, .. } = &db.post;
+    let recent = || db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)));
+    let v = ranked(drain(recent().select(score)), |&(p, s)| {
+        let w = view_count.get(p);
+        (Reverse(s), w.is_none(), Reverse(w))
+    }, false);
+    let rk = rel(v.into_iter().map(|((p, _), r)| (p, r)).collect());
+    let rank: HashIdx<Id<Post>, i64> = (&rk).map(|(p, _)| p).inv().select((&rk).map(|(_, r)| r)).collect();
+    let ac = recent().group_by(Ident::<Post>::new()).select(answers_of(db)).fold(0i64, |n, _| n + 1);
+    let cc = recent().group_by(Ident::<Post>::new()).select(comments_of(db).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
+    let mut v = drain(recent().with(view_count).select((&ac).and(&cc).and(&rank)));
+    v.sort_by_key(|&(p, (_, r))| (r, p));
+    rows(v.into_iter().map(|(p, ((a, c), r))| {
+        let mut f = post_fields(db, p, &["id", "title", "views", "score"]);
+        f.extend([V::I(a), V::I(c), V::S(if r <= 5 { "Top 5" } else if r <= 20 { "Popular" } else { "Other" })]);
+        row(f)
+    }))
+}
+
+// WITH UserStats AS (SELECT u.Id AS UserId, u.DisplayName, COALESCE(SUM(CASE WHEN b.Class = 1 THEN 1 ELSE 0 END), 0) AS GoldBadges,
+//        COALESCE(SUM(CASE WHEN b.Class = 2 THEN 1 ELSE 0 END), 0) AS SilverBadges, COALESCE(SUM(CASE WHEN b.Class = 3 THEN 1 ELSE 0 END), 0) AS BronzeBadges,
+//        COUNT(DISTINCT p.Id) AS TotalPosts, COUNT(DISTINCT c.Id) AS TotalComments
+//     FROM Users u LEFT JOIN Badges b ON u.Id = b.UserId LEFT JOIN Posts p ON u.Id = p.OwnerUserId AND p.CreationDate >= TIMESTAMP '2024-10-01 12:34:56' - INTERVAL '1 YEAR'
+//     LEFT JOIN Comments c ON u.Id = c.UserId AND c.CreationDate >= TIMESTAMP '2024-10-01 12:34:56' - INTERVAL '1 YEAR' GROUP BY u.Id, u.DisplayName),
+// PostEngagement AS (SELECT p.Id AS PostId, p.Title, p.Score, p.ViewCount, CASE WHEN p.AcceptedAnswerId IS NOT NULL THEN 1 ELSE 0 END AS HasAcceptedAnswer,
+//        DENSE_RANK() OVER (PARTITION BY p.OwnerUserId ORDER BY p.Score DESC) AS ScoreRank FROM Posts p WHERE p.CreationDate >= TIMESTAMP '2024-10-01 12:34:56' - INTERVAL '6 MONTH')
+// SELECT us.UserId, us.DisplayName, us.GoldBadges, us.SilverBadges, us.BronzeBadges, us.TotalPosts, us.TotalComments, COALESCE(pe.PostId, -1) AS MostEngagedPost,
+//        COALESCE(pe.Title, 'No Posts') AS PostTitle, COALESCE(pe.Score, 0) AS PostScore, COALESCE(pe.ViewCount, 0) AS PostViewCount, pe.HasAcceptedAnswer, pe.ScoreRank
+// FROM UserStats us LEFT JOIN PostEngagement pe ON us.UserId = pe.PostId WHERE us.TotalComments > 0 ORDER BY us.TotalPosts DESC, us.DisplayName ASC;
+//
+// `us.UserId = pe.PostId` joins a user id to a post id, so it goes through the raw ids. TotalComments > 0 exactly when the user wrote a recent
+// comment, so the badges x posts x comments product is driven for those users alone.
+fn q4451(db: &'static So) -> String {
+    let t0 = ts(2024, 10, 1, 12, 34, 56);
+    let Post { creation_date, owner_user, score, accepted_answer, .. } = &db.post;
+    let rc = || comments_by(db).select(Ident::<Comment>::new().with((&db.comment.creation_date).ge(add_years(t0, -1))));
+    let rp = || posts_of(db).select(Ident::<Post>::new().with(creation_date.ge(add_years(t0, -1))));
+    let us: MatSet<Id<User>> = db.user.with(rc()).collect();
+    let bc = (&us).group_by(Ident::<User>::new()).select(badges_of(db).select(&db.badge.class).opt().and(rp().opt()).and(rc().opt())).fold([0i64; 3], |a, ((c, _), _)| {
+        [a[0] + (c == Some(1)) as i64, a[1] + (c == Some(2)) as i64, a[2] + (c == Some(3)) as i64]
+    });
+    let tp = (&us).group_by(Ident::<User>::new()).select(rp().opt()).fold(0i64, |n, p| n + p.is_some() as i64);
+    let tc = (&us).group_by(Ident::<User>::new()).select(rc()).fold(0i64, |n, _| n + 1);
+    let pe = drain(db.post.with(creation_date.ge(add_months(t0, -6))).select(owner_user.opt()));
+    let pe = ranked(pe, |&(p, u)| (u, Reverse(score.get(p).unwrap())), true);
+    let pe = per_group(pe, |&(_, u)| u);
+    let pe = rel(pe.into_iter().map(|((p, _), r)| (p, r)).collect());
+    let srank: HashIdx<Id<Post>, i64> = (&pe).map(|(p, _)| p).inv().select((&pe).map(|(_, r)| r)).collect();
+    let pidx: HashIdx<i64, Id<Post>> = (&db.post.origid).inv().collect();
+    let mut v = drain((&bc).and(&tp).and(&tc).and((&db.user.origid).select(&pidx).select(Ident::<Post>::new().and(&srank)).opt()));
+    v.sort_by_key(|&(u, (((_, n), _), _))| (Reverse(n), db.user.display_name.get(u).unwrap()));
+    rows(v.into_iter().map(|(u, (((b, n), c), e))| {
+        let mut f = ucols(db, u, &["uid", "name"]);
+        f.extend(b.map(V::I));
+        f.extend([V::I(n), V::I(c)]);
+        f.extend(match e {
+            Some((p, r)) => vec![
+                V::I(db.post.origid.get(p).unwrap()),
+                V::S(db.post.title.get(p).unwrap_or("No Posts")),
+                V::I(score.get(p).unwrap()),
+                V::I(db.post.view_count.get(p).unwrap_or(0)),
+                V::I(accepted_answer.get(p).is_some() as i64),
+                V::I(r),
+            ],
+            None => vec![V::I(-1), V::S("No Posts"), V::I(0), V::I(0), V::Null, V::Null],
+        });
+        row(f)
+    }))
+}
+
+// WITH RankedPosts AS (SELECT p.Id AS PostId, p.Title, p.OwnerUserId, COUNT(c.Id) AS CommentCount, ROW_NUMBER() OVER (PARTITION BY p.OwnerUserId ORDER BY p.CreationDate DESC) AS PostRank
+//     FROM Posts p LEFT JOIN Comments c ON p.Id = c.PostId WHERE p.CreationDate >= CAST('2024-10-01 12:34:56' AS TIMESTAMP) - INTERVAL '1 year' GROUP BY p.Id, p.Title, p.OwnerUserId, p.CreationDate),
+// UserReputation AS (SELECT u.Id AS UserId, u.Reputation, CASE WHEN u.Reputation IS NOT NULL THEN 'Known User' ELSE 'Unknown User' END AS UserType FROM Users u),
+// PostBadges AS (SELECT b.UserId, COUNT(DISTINCT b.Id) AS BadgeCount, MAX(b.Class) AS HighestBadgeClass FROM Badges b GROUP BY b.UserId),
+// PostDetails AS (SELECT r.PostId, r.Title, r.OwnerUserId, r.CommentCount, COALESCE(pb.BadgeCount, 0) AS BadgeCount, COALESCE(pb.HighestBadgeClass, 0) AS HighestBadgeClass
+//     FROM RankedPosts r LEFT JOIN PostBadges pb ON r.OwnerUserId = pb.UserId)
+// SELECT pd.PostId, pd.Title, ur.Reputation, ur.UserType, pd.CommentCount, pd.BadgeCount, pd.HighestBadgeClass,
+//        CASE WHEN pd.CommentCount > 5 AND ur.Reputation > 100 THEN 'Popular Post by a Reputable User' ELSE 'Needs Improvement' END AS PostQuality
+// FROM PostDetails pd JOIN UserReputation ur ON pd.OwnerUserId = ur.UserId WHERE pd.PostId IN (SELECT PostId FROM Posts WHERE Tags LIKE '%sql%') ORDER BY pd.CommentCount DESC, ur.Reputation DESC;
+//
+// The IN subquery names `PostId`, which Posts does not have, so DuckDB binds it to the outer pd.PostId: the condition holds exactly when some
+// post's Tags contains 'sql'. PostRank is never read.
+fn q23826(db: &'static So) -> String {
+    let Post { creation_date, owner_user, tags_str, .. } = &db.post;
+    let any_sql = db.post.with(tags_str.filt(|t: Str| t.contains("sql"))).select(Ident::<Post>::new()).fold_flat(false, |_, _| true);
+    let pb = db.badge.group_by(&db.badge.user).select(&db.badge.class).fold((0i64, 0i64), |(n, m), c| (n + 1, m.max(c)));
+    let recent = db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))).with(owner_user).filt(move |_| any_sql);
+    let rp = recent.group_by(Ident::<Post>::new()).select(comments_of(db).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
+    let mut v = drain((&rp).and(owner_user.select(Ident::<User>::new().and((&pb).opt()))));
+    v.sort_by_key(|&(_, (c, (u, _)))| (Reverse(c), Reverse(db.user.reputation.get(u).unwrap())));
+    rows(v.into_iter().map(|(p, (c, (u, b)))| {
+        let r = db.user.reputation.get(u).unwrap();
+        let (n, m) = b.unwrap_or((0, 0));
+        let mut f = post_fields(db, p, &["id", "title"]);
+        f.extend([V::I(r), V::S("Known User"), V::I(c), V::I(n), V::I(m)]);
+        f.push(V::S(if c > 5 && r > 100 { "Popular Post by a Reputable User" } else { "Needs Improvement" }));
+        row(f)
+    }))
+}
+
+// WITH UserStatistics AS (SELECT U.Id AS UserId, U.DisplayName, U.Reputation, COALESCE(SUM(CASE WHEN V.VoteTypeId = 2 THEN 1 ELSE 0 END), 0) AS Upvotes,
+//        COALESCE(SUM(CASE WHEN V.VoteTypeId = 3 THEN 1 ELSE 0 END), 0) AS Downvotes, COUNT(DISTINCT P.Id) AS PostCount, COUNT(DISTINCT CASE WHEN P.PostTypeId = 1 THEN P.Id END) AS QuestionCount,
+//        COUNT(DISTINCT CASE WHEN P.PostTypeId = 2 THEN P.Id END) AS AnswerCount FROM Users U LEFT JOIN Posts P ON U.Id = P.OwnerUserId LEFT JOIN Votes V ON P.Id = V.PostId GROUP BY U.Id, U.DisplayName, U.Reputation),
+// TopUsers AS (SELECT UserId, DisplayName, Reputation, Upvotes - Downvotes AS NetVotes, RANK() OVER (ORDER BY Upvotes - Downvotes DESC) AS UserRank FROM UserStatistics),
+// RecentActivities AS (SELECT PH.UserId, PH.PostId, PH.CreationDate, PH.Comment, P.Title, ROW_NUMBER() OVER (PARTITION BY PH.UserId ORDER BY PH.CreationDate DESC) AS ActivityRank
+//     FROM PostHistory PH JOIN Posts P ON PH.PostId = P.Id WHERE PH.CreationDate >= (CAST('2024-10-01 12:34:56' AS TIMESTAMP) - INTERVAL '30 DAY')),
+// FilteredActivities AS (SELECT RA.UserId, RA.PostId, RA.CreationDate, RA.Comment, RA.Title, U.DisplayName FROM RecentActivities RA JOIN Users U ON RA.UserId = U.Id WHERE ActivityRank <= 5)
+// SELECT TU.DisplayName, TU.Reputation, TU.NetVotes, FA.Title, FA.Comment, FA.CreationDate
+// FROM TopUsers TU LEFT JOIN FilteredActivities FA ON TU.UserId = FA.UserId WHERE TU.Reputation > 100 OR FA.Comment IS NOT NULL ORDER BY TU.UserRank, FA.CreationDate DESC LIMIT 50;
+//
+// A CreationDate tie in ActivityRank goes to the larger history id.
+fn q2592(db: &'static So) -> String {
+    let us = db.user.group_by(Ident::<User>::new()).select(posts_of(db).select(votes_of(db).select(&db.vote.vote_type_id).opt()).opt()).fold(0i64, |n, t| {
+        let t = t.flatten();
+        n + (t == Some(2)) as i64 - (t == Some(3)) as i64
+    });
+    let v = ranked(drain(&us), |&(_, n)| Reverse(n), false);
+    let tu = rel(v.into_iter().map(|((u, n), r)| (u, (n, r))).collect());
+    let PostHistory { user, creation_date: hd, comment, .. } = &db.post_history;
+    let ra = drain(db.post_history.with(hd.ge(add_days(ts(2024, 10, 1, 12, 34, 56), -30))).with(user).select(user));
+    let fa = top_per(ra, |&(_, u)| u, |&(h, _)| (Reverse(hd.get(h).unwrap()), Reverse(h)), 5, false);
+    let fa = rel(fa.into_iter().map(|(h, u)| (u, h)).collect());
+    let by_user: HashIdx<Id<User>, Id<PostHistory>> = (&fa).map(|(u, _)| u).inv().select((&fa).map(|(_, h)| h)).collect();
+    let tu_by: HashIdx<Id<User>, (i64, i64)> = (&tu).map(|(u, _)| u).inv().select((&tu).map(|(_, x)| x)).collect();
+    type X = ((Id<User>, (i64, i64)), Option<Id<PostHistory>>);
+    let v = drain(db.user.select(Ident::<User>::new().and(&tu_by).and((&by_user).opt())).filt(|((u, _), h): X| {
+        db.user.reputation.get(u).unwrap() > 100 || h.map_or(false, |h| comment.get(h).is_some())
+    }));
+    let v: Vec<(Id<User>, ((i64, i64), Option<Id<PostHistory>>))> = v.into_iter().map(|(_, ((u, x), h))| (u, (x, h))).collect();
+    let v = top_k(v, |&(_, ((_, r), h))| (r, Reverse(h.map(|h| hd.get(h).unwrap()))), |&(u, (_, h))| (u, h.map(Reverse)), 50);
+    rows(v.into_iter().map(|(u, ((n, _), h))| {
+        let mut f = ucols(db, u, &["name", "rep"]);
+        f.push(V::I(n));
+        f.extend(match h {
+            Some(h) => [ostr(db.post.title.get(db.post_history.post.get(h).unwrap())), ostr(comment.get(h)), V::T(hd.get(h).unwrap())],
+            None => [V::Null, V::Null, V::Null],
+        });
+        row(f)
+    }))
+}
+
+// WITH RankedPosts AS (SELECT p.Id AS PostId, p.Title, p.Body, p.Tags, p.CreationDate, p.ViewCount, u.DisplayName AS Owner, p.AnswerCount, p.Score,
+//        RANK() OVER (PARTITION BY p.Tags ORDER BY p.ViewCount DESC) AS TagRank
+//     FROM Posts p JOIN Users u ON p.OwnerUserId = u.Id WHERE p.PostTypeId = 1 AND p.CreationDate >= cast('2024-10-01 12:34:56' as timestamp) - INTERVAL '1 year'),
+// DetailedPostHistory AS (SELECT ph.PostId, ph.UserDisplayName, ph.CreationDate AS EditDate, ph.Comment, p.Title AS PostTitle, p.Body AS PostBody, pt.Name AS PostHistoryType
+//     FROM PostHistory ph JOIN Posts p ON ph.PostId = p.Id JOIN PostHistoryTypes pt ON ph.PostHistoryTypeId = pt.Id WHERE ph.CreationDate >= cast('2024-10-01 12:34:56' as timestamp) - INTERVAL '6 months'),
+// CommentDetails AS (SELECT c.PostId, COUNT(c.Id) AS CommentCount, STRING_AGG(c.Text, '; ') AS CommentsSummary FROM Comments c GROUP BY c.PostId)
+// SELECT rp.PostId, rp.Title, rp.Body, rp.Tags, rp.CreationDate, rp.ViewCount, rp.Owner, rp.AnswerCount, rp.Score, rp.TagRank, dph.UserDisplayName AS LastEditedBy, dph.EditDate,
+//        dph.Comment AS EditComment, dph.PostTitle, dph.PostBody, cd.CommentCount, cd.CommentsSummary
+// FROM RankedPosts rp LEFT JOIN DetailedPostHistory dph ON rp.PostId = dph.PostId LEFT JOIN CommentDetails cd ON rp.PostId = cd.PostId
+// WHERE rp.TagRank = 1 ORDER BY rp.ViewCount DESC, rp.CreationDate DESC LIMIT 50;
+//
+// STRING_AGG has no ORDER BY; the port joins the texts in comment id order, which is the order DuckDB produced here. The untagged questions are
+// one NULL Tags partition.
+fn q27864(db: &'static So) -> String {
+    let Post { post_type_id, creation_date, owner_user, tags_str, view_count, title, body, .. } = &db.post;
+    let v = drain(db.post.with(post_type_id.eq(1).and(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)))).with(owner_user).select(tags_str.opt()));
+    let top = top_per(v, |&(_, t)| t, |&(p, _)| {
+        let w = view_count.get(p);
+        (w.is_none(), Reverse(w))
+    }, 1, true);
+    let rp: MatSet<Id<Post>> = rel(top.into_iter().map(|x| x.0).collect()).map(|p| p).collect();
+    let dph = history_of(db).select(Ident::<PostHistory>::new().with((&db.post_history.creation_date).ge(add_months(ts(2024, 10, 1, 12, 34, 56), -6))));
+    let cd = (&rp).group_by(Ident::<Post>::new()).select(comments_of(db).select(Ident::<Comment>::new().and(&db.comment.text))).buf_fold(|it| {
+        let mut x: Vec<(Id<Comment>, Str)> = it.into_iter().collect();
+        x.sort_unstable_by_key(|x| x.0);
+        (x.len() as i64, &*Box::leak(x.iter().map(|x| x.1).collect::<Vec<Str>>().join("; ").into_boxed_str()))
+    });
+    let v = drain((&rp).select(dph.opt().and((&cd).opt())));
+    let v = top_k(v, |&(p, _)| (Reverse(view_count.get(p)), Reverse(creation_date.get(p).unwrap())), |&(p, (h, _))| (p, h), 50);
+    let PostHistory { user_display_name, creation_date: hd, comment, .. } = &db.post_history;
+    rows(v.into_iter().map(|(p, (h, c))| {
+        let mut f = post_fields(db, p, &["id", "title", "body", "tags", "created", "views", "owner", "answers", "score"]);
+        f.push(V::I(1));
+        f.extend(match h {
+            Some(h) => [ostr(user_display_name.get(h)), V::T(hd.get(h).unwrap()), ostr(comment.get(h)), ostr(title.get(p)), V::S(body.get(p).unwrap())],
+            None => [V::Null, V::Null, V::Null, V::Null, V::Null],
+        });
+        f.extend(match c {
+            Some((n, t)) => [V::I(n), V::S(t)],
+            None => [V::Null, V::Null],
+        });
+        row(f)
+    }))
+}
+
+// WITH UserStats AS (SELECT U.Id AS UserId, U.DisplayName, U.Reputation, COUNT(DISTINCT P.Id) AS PostCount, SUM(COALESCE(V.BountyAmount, 0)) AS TotalBounties, MAX(P.CreationDate) AS LastPostDate,
+//        ROW_NUMBER() OVER (ORDER BY U.Reputation DESC) AS UserRank
+//     FROM Users U LEFT JOIN Posts P ON U.Id = P.OwnerUserId LEFT JOIN Votes V ON P.Id = V.PostId AND V.VoteTypeId IN (8, 9) WHERE U.Reputation > 0 GROUP BY U.Id, U.DisplayName, U.Reputation),
+// TopUsers AS (SELECT UserId, DisplayName, Reputation, PostCount, TotalBounties, LastPostDate, UserRank FROM UserStats WHERE UserRank <= 10),
+// PostDetails AS (SELECT P.Id AS PostId, P.Title, P.Score, P.ViewCount, U.DisplayName AS OwnerDisplayName, COALESCE(C.Count, 0) AS CommentCount,
+//        CASE WHEN P.AcceptedAnswerId IS NOT NULL THEN (SELECT COUNT(*) FROM Posts PA WHERE PA.ParentId = P.Id) ELSE 0 END AS AnswerCount
+//     FROM Posts P LEFT JOIN Users U ON P.OwnerUserId = U.Id LEFT JOIN (SELECT PostId, COUNT(*) AS Count FROM Comments GROUP BY PostId) C ON P.Id = C.PostId
+//     WHERE P.CreationDate >= cast('2024-10-01 12:34:56' as timestamp) - INTERVAL '1 year')
+// SELECT TU.DisplayName, TU.Reputation, PD.PostId, PD.Title, PD.Score, PD.ViewCount, PD.CommentCount, PD.AnswerCount, TU.TotalBounties, TU.LastPostDate
+// FROM TopUsers TU JOIN PostDetails PD ON PD.OwnerDisplayName = TU.DisplayName ORDER BY TU.UserRank, PD.Score DESC;
+//
+// UserRank reads only Reputation, so the ten users are picked first (a tie goes to the smaller user id) and the posts x votes product is driven
+// for them alone. The join is on the display name, so it reaches every recent post whose owner has that name.
+fn q2272(db: &'static So) -> String {
+    let Post { creation_date, owner_user, accepted_answer, score, .. } = &db.post;
+    let v = ranked(drain(db.user.with((&db.user.reputation).gt(0)).select(&db.user.reputation)), |&(u, r)| (Reverse(r), u), false);
+    let tr = rel(v.into_iter().take_while(|x| x.1 <= 10).map(|((u, _), r)| (u, r)).collect());
+    let tu: MatSet<Id<User>> = (&tr).map(|(u, _)| u).collect();
+    let rank: HashIdx<Id<User>, i64> = (&tr).map(|(u, _)| u).inv().select((&tr).map(|(_, r)| r)).collect();
+    let bounty = votes_of(db).select(Ident::<Vote>::new().with((&db.vote.vote_type_id).is_in([8, 9]))).select((&db.vote.bounty_amount).opt());
+    let us = (&tu).group_by(Ident::<User>::new()).select(posts_of(db).select(creation_date.and(bounty.opt())).opt()).fold((0i64, i64::MIN), |(s, m), x| match x {
+        Some((d, b)) => (s + b.flatten().unwrap_or(0), m.max(d)),
+        None => (s, m),
+    });
+    let recent: MatSet<Id<Post>> = db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))).collect();
+    let cc = (&recent).group_by(Ident::<Post>::new()).select(comments_of(db).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
+    let ac = (&recent).group_by(Ident::<Post>::new()).select(children_of(db).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
+    let by_name: HashIdx<Str, Id<Post>> = (&recent).select(owner_user.select(&db.user.display_name)).inv().collect();
+    let mut v = drain((&rank).and(&us).and((&db.user.display_name).select(&by_name).select(Ident::<Post>::new().and(&cc).and(&ac))));
+    v.sort_by_key(|&(_, ((r, _), ((p, _), _)))| (r, Reverse(score.get(p).unwrap())));
+    rows(v.into_iter().map(|(u, ((_, (b, m)), ((p, c), a)))| {
+        let mut f = ucols(db, u, &["name", "rep"]);
+        f.extend(post_fields(db, p, &["id", "title", "score", "views"]));
+        f.extend([V::I(c), V::I(if accepted_answer.get(p).is_some() { a } else { 0 }), V::I(b), tmax(m)]);
+        row(f)
+    }))
+}
+
+// WITH UserReputation AS (SELECT U.Id AS UserId, U.DisplayName, U.Reputation, COUNT(DISTINCT P.Id) AS PostCount, SUM(COALESCE(V.BountyAmount, 0)) AS TotalBounty,
+//        COALESCE(SUM(CASE WHEN V.VoteTypeId IN (2, 1) THEN 1 ELSE 0 END), 0) AS UpVotes, COALESCE(SUM(CASE WHEN V.VoteTypeId = 3 THEN 1 ELSE 0 END), 0) AS DownVotes, AVG(P.Score) AS AvgScore
+//     FROM Users U LEFT JOIN Posts P ON U.Id = P.OwnerUserId LEFT JOIN Votes V ON P.Id = V.PostId WHERE U.Reputation > 100 GROUP BY U.Id, U.DisplayName, U.Reputation),
+// RankedUsers AS (SELECT UserId, DisplayName, Reputation, PostCount, TotalBounty, UpVotes, DownVotes, AvgScore, RANK() OVER (ORDER BY Reputation DESC) AS ReputationRank FROM UserReputation),
+// RecentPosts AS (SELECT P.Id AS PostId, P.Title, P.CreationDate, P.Score, P.AnswerCount, P.ViewCount, P.OwnerUserId, ROW_NUMBER() OVER (PARTITION BY P.OwnerUserId ORDER BY P.CreationDate DESC) AS RecentPostRank
+//     FROM Posts P WHERE P.CreationDate >= DATE '2024-10-01' - INTERVAL '30 days' AND P.ViewCount > 0)
+// SELECT RU.DisplayName, RU.Reputation, RU.PostCount, RU.TotalBounty, RU.UpVotes, RU.DownVotes, RU.AvgScore, RP.PostId, RP.Title AS RecentPostTitle, RP.CreationDate AS RecentPostDate,
+//        RP.ViewCount AS RecentPostViewCount
+// FROM RankedUsers RU LEFT JOIN RecentPosts RP ON RU.UserId = RP.OwnerUserId WHERE RP.RecentPostRank = 1 OR RP.RecentPostRank IS NULL ORDER BY RU.ReputationRank;
+//
+// AvgScore averages over the joined rows, so a post counts once per vote. A CreationDate tie for an owner's newest post goes to the smaller id.
+fn q3351(db: &'static So) -> String {
+    let Post { creation_date, view_count, owner_user, score, .. } = &db.post;
+    let ur = db
+        .user
+        .with((&db.user.reputation).gt(100))
+        .group_by(Ident::<User>::new())
+        .select(posts_of(db).select(score.and(votes_of(db).select((&db.vote.vote_type_id).and((&db.vote.bounty_amount).opt())).opt())).opt())
+        .fold([0i64; 5], |a, x| match x {
+            Some((s, v)) => [a[0] + v.and_then(|v| v.1).unwrap_or(0), a[1] + matches!(v, Some((1 | 2, _))) as i64, a[2] + matches!(v, Some((3, _))) as i64, a[3] + 1, a[4] + s],
+            None => a,
+        });
+    let pc = db.user.with((&db.user.reputation).gt(100)).group_by(Ident::<User>::new()).select(posts_of(db).opt()).fold(0i64, |n, p| n + p.is_some() as i64);
+    let v = drain(db.post.with(creation_date.ge(add_days(date(2024, 10, 1), -30))).with(view_count.gt(0)).with(owner_user).select(owner_user));
+    let first = top_per(v, |&(_, u)| u, |&(p, _)| (Reverse(creation_date.get(p).unwrap()), p), 1, false);
+    let rp = rel(first.into_iter().map(|(p, u)| (u, p)).collect());
+    let by_user: HashIdx<Id<User>, Id<Post>> = (&rp).map(|(u, _)| u).inv().select((&rp).map(|(_, p)| p)).collect();
+    let v = drain((&ur).and(&pc).and((&by_user).opt()));
+    rows(v.into_iter().map(|(u, ((a, n), p))| {
+        let mut f = ucols(db, u, &["name", "rep"]);
+        f.extend([V::I(n), V::I(a[0]), V::I(a[1]), V::I(a[2]), avg(a[4], a[3])]);
+        f.extend(match p {
+            Some(p) => post_fields(db, p, &["id", "title", "created", "views"]),
+            None => vec![V::Null, V::Null, V::Null, V::Null],
+        });
+        row(f)
+    }))
+}
+
+// WITH RankedPosts AS (SELECT p.Id AS PostId, p.Title, p.Score, p.ViewCount, p.OwnerUserId, p.PostTypeId, p.CreationDate,
+//        RANK() OVER (PARTITION BY p.PostTypeId ORDER BY p.Score DESC, p.ViewCount DESC) AS RankScore
+//     FROM Posts p WHERE p.CreationDate > TIMESTAMP '2024-10-01 12:34:56' - INTERVAL '1 year' AND p.Score IS NOT NULL),
+// UserActivity AS (SELECT u.Id AS UserId, u.Reputation, COUNT(DISTINCT p.Id) AS PostCount, SUM(CASE WHEN v.VoteTypeId = 2 THEN 1 ELSE 0 END) AS UpVotes,
+//        SUM(CASE WHEN v.VoteTypeId = 3 THEN 1 ELSE 0 END) AS DownVotes FROM Users u LEFT JOIN Posts p ON u.Id = p.OwnerUserId LEFT JOIN Votes v ON p.Id = v.PostId GROUP BY u.Id, u.Reputation),
+// ClosePostCounts AS (SELECT ph.UserId, COUNT(DISTINCT ph.PostId) AS ClosePostCount FROM PostHistory ph WHERE ph.PostHistoryTypeId = 10 GROUP BY ph.UserId)
+// SELECT u.DisplayName, ua.Reputation, COALESCE(rp.RankScore, 0) AS TopPostRankScore, ua.PostCount, ua.UpVotes, ua.DownVotes, COALESCE(cpc.ClosePostCount, 0) AS ClosePostsHandled,
+//        CASE WHEN ua.Reputation >= 5000 THEN 'Expert' WHEN ua.Reputation BETWEEN 1000 AND 4999 THEN 'Experienced' ELSE 'Novice' END AS UserStatus
+// FROM Users u JOIN UserActivity ua ON u.Id = ua.UserId LEFT JOIN RankedPosts rp ON u.Id = rp.OwnerUserId AND rp.RankScore <= 5 LEFT JOIN ClosePostCounts cpc ON u.Id = cpc.UserId
+// WHERE (ua.UpVotes - ua.DownVotes) > 0 AND ua.PostCount >= 1 ORDER BY ua.Reputation DESC, TopPostRankScore DESC NULLS LAST;
+fn q24878(db: &'static So) -> String {
+    let Post { creation_date, post_type_id, score, view_count, .. } = &db.post;
+    let ua = db.user.group_by(Ident::<User>::new()).select(posts_of(db).select(votes_of(db).select(&db.vote.vote_type_id).opt()).opt()).fold([0i64; 2], |a, t| {
+        let t = t.flatten();
+        [a[0] + (t == Some(2)) as i64, a[1] + (t == Some(3)) as i64]
+    });
+    let pc = db.user.group_by(Ident::<User>::new()).select(posts_of(db).opt()).fold(0i64, |n, p| n + p.is_some() as i64);
+    let v = drain(db.post.with(creation_date.gt(add_years(ts(2024, 10, 1, 12, 34, 56), -1))).select(post_type_id));
+    let v = ranked(v, |&(p, t)| {
+        let w = view_count.get(p);
+        (t, Reverse(score.get(p).unwrap()), w.is_none(), Reverse(w))
+    }, false);
+    let v = per_group(v, |&(_, t)| t);
+    let rp = rel(v.into_iter().map(|((p, _), r)| (p, r)).collect());
+    let rsc: HashIdx<Id<Post>, i64> = (&rp).map(|(p, _)| p).inv().select((&rp).map(|(_, r)| r)).collect();
+    let top = posts_of(db).select((&rsc).filt(|r| r <= 5));
+    let PostHistory { user, post_history_type_id, post, .. } = &db.post_history;
+    let cpc = db.post_history.with(post_history_type_id.eq(10)).group_by(user).select(post).buf_fold(|it| {
+        let mut x: Vec<Id<Post>> = it.into_iter().collect();
+        x.sort_unstable();
+        x.dedup();
+        x.len() as i64
+    });
+    let mut v = drain((&ua).filt(|a| a[0] - a[1] > 0).and((&pc).filt(|n| n >= 1)).and(top.opt()).and((&cpc).opt()));
+    v.sort_by_key(|&(u, (((_, _), r), _))| (Reverse(db.user.reputation.get(u).unwrap()), Reverse(r.unwrap_or(0))));
+    rows(v.into_iter().map(|(u, (((a, n), r), c))| {
+        let rep = db.user.reputation.get(u).unwrap();
+        let mut f = ucols(db, u, &["name", "rep"]);
+        f.extend([V::I(r.unwrap_or(0)), V::I(n), V::I(a[0]), V::I(a[1]), V::I(c.unwrap_or(0))]);
+        f.push(V::S(if rep >= 5000 { "Expert" } else if rep >= 1000 { "Experienced" } else { "Novice" }));
+        row(f)
+    }))
+}
+
+// WITH UserActivity AS (SELECT u.Id AS UserId, u.DisplayName, COUNT(DISTINCT p.Id) AS PostCount, SUM(v.BountyAmount) AS TotalBounties, MAX(u.CreationDate) AS AccountCreationDate,
+//        MAX(v.CreationDate) AS LastVoteDate FROM Users u LEFT JOIN Posts p ON u.Id = p.OwnerUserId LEFT JOIN Votes v ON p.Id = v.PostId AND v.VoteTypeId IN (8, 9) GROUP BY u.Id, u.DisplayName),
+// RecentPosts AS (SELECT p.Id AS PostId, p.OwnerUserId, p.Title, p.CreationDate, COALESCE(pv.VoteCount, 0) AS VoteCount, ROW_NUMBER() OVER (PARTITION BY p.OwnerUserId ORDER BY p.CreationDate DESC) AS RecentRank
+//     FROM Posts p LEFT JOIN (SELECT PostId, COUNT(*) AS VoteCount FROM Votes GROUP BY PostId) pv ON p.Id = pv.PostId WHERE p.CreationDate > cast('2024-10-01 12:34:56' as timestamp) - INTERVAL '30 days')
+// SELECT ua.DisplayName, ua.PostCount, ua.TotalBounties, rp.Title, rp.CreationDate, rp.VoteCount, (SELECT COUNT(*) FROM Comments c WHERE c.PostId = rp.PostId) AS CommentCount,
+//        CASE WHEN rp.RecentRank = 1 THEN 'Recent Post' WHEN rp.RecentRank <= 5 THEN 'Recently Active' ELSE 'Older Activity' END AS ActivityType,
+//        COALESCE(ph.Comment, 'No Comments') AS LastEditComment
+// FROM UserActivity ua JOIN RecentPosts rp ON ua.UserId = rp.OwnerUserId LEFT OUTER JOIN PostHistory ph ON rp.PostId = ph.PostId AND ph.PostHistoryTypeId IN (4, 5)
+// WHERE ua.PostCount > 0 AND (ua.TotalBounties IS NULL OR ua.TotalBounties > 0) ORDER BY ua.TotalBounties DESC, rp.CreationDate DESC;
+//
+// A CreationDate tie in RecentRank goes to the smaller post id. VoteCount counts votes by the raw Votes.PostId.
+fn q20633(db: &'static So) -> String {
+    let Post { creation_date, owner_user, .. } = &db.post;
+    let bounty = votes_of(db).select(Ident::<Vote>::new().with((&db.vote.vote_type_id).is_in([8, 9]))).select((&db.vote.bounty_amount).opt());
+    let owners: MatSet<Id<User>> = db.post.with(creation_date.gt(add_days(ts(2024, 10, 1, 12, 34, 56), -30))).select(owner_user).collect();
+    let ua = (&owners).group_by(Ident::<User>::new()).select(posts_of(db).select(bounty.opt())).fold([0i64; 2], |a, b| {
+        let b = b.flatten();
+        [a[0] + b.is_some() as i64, a[1] + b.unwrap_or(0)]
+    });
+    let pv = db.vote.group_by(&db.vote.post_id).select(Ident::<Vote>::new()).fold(0i64, |n, _| n + 1);
+    let pc = (&owners).group_by(Ident::<User>::new()).select(posts_of(db)).fold(0i64, |n, _| n + 1);
+    let v = drain(db.post.with(creation_date.gt(add_days(ts(2024, 10, 1, 12, 34, 56), -30))).select(owner_user.opt()));
+    let v = ranked(v, |&(p, u)| (u, Reverse(creation_date.get(p).unwrap()), p), false);
+    let v = per_group(v, |&(_, u)| u);
+    let rr = rel(v.into_iter().map(|((p, _), r)| (p, r)).collect());
+    let rrank: HashIdx<Id<Post>, i64> = (&rr).map(|(p, _)| p).inv().select((&rr).map(|(_, r)| r)).collect();
+    let cc = db.post.with(&rrank).collect::<MatSet<Id<Post>>>();
+    let cc = (&cc).group_by(Ident::<Post>::new()).select(comments_of(db).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
+    let edits = history_of(db).select(Ident::<PostHistory>::new().with((&db.post_history.post_history_type_id).in_v(vec![4, 5])));
+    let rp = Ident::<Post>::new().and(&rrank).and((&db.post.origid).select((&pv).opt())).and(&cc).and(edits.select((&db.post_history.comment).opt()).opt());
+    type A = ([i64; 2], i64);
+    let v = drain((&ua).and(&pc).filt(|(a, _): A| a[0] == 0 || a[1] > 0).and(posts_of(db).select(rp)));
+    let mut v = v;
+    v.sort_by_key(|&(_, ((a, _), ((((p, _), _), _), _)))| (a[0] == 0, Reverse(a[1]), Reverse(creation_date.get(p).unwrap())));
+    rows(v.into_iter().map(|(u, ((a, n), ((((p, r), w), c), e)))| {
+        let mut f = vec![user_col(db, u, "name"), V::I(n), nullable(a[1], a[0])];
+        f.extend(post_fields(db, p, &["title", "created"]));
+        f.extend([V::I(w.unwrap_or(0)), V::I(c)]);
+        f.push(V::S(if r == 1 { "Recent Post" } else if r <= 5 { "Recently Active" } else { "Older Activity" }));
+        f.push(V::S(e.flatten().unwrap_or("No Comments")));
+        row(f)
+    }))
+}
+
+// WITH PostTags AS (SELECT p.Id AS PostId, UNNEST(string_to_array(SUBSTRING(p.Tags, 2, LENGTH(p.Tags) - 2), '><')) AS Tag FROM Posts p WHERE p.PostTypeId = 1),
+// TagsWithCount AS (SELECT Tag, COUNT(*) AS TagCount FROM PostTags GROUP BY Tag HAVING COUNT(*) > 10),
+// PostViewStats AS (SELECT p.Id AS PostId, p.Title, p.ViewCount, p.Score, p.AnswerCount, p.CreationDate, pt.Tag AS MostCommonTag, p.OwnerUserId
+//     FROM Posts p JOIN PostTags pt ON p.Id = pt.PostId JOIN TagsWithCount t ON pt.Tag = t.Tag WHERE p.PostTypeId = 1),
+// UserEngagement AS (SELECT u.Id AS UserId, u.DisplayName, SUM(p.ViewCount) AS TotalViews, SUM(p.AnswerCount) AS TotalAnswers, SUM(p.Score) AS TotalScore, COUNT(b.Id) AS BadgeCount
+//     FROM Users u LEFT JOIN Posts p ON u.Id = p.OwnerUserId AND p.PostTypeId = 1 LEFT JOIN Badges b ON u.Id = b.UserId WHERE u.Reputation > 10 GROUP BY u.Id, u.DisplayName),
+// TopUsers AS (SELECT ue.UserId, ue.DisplayName, ue.TotalViews, ue.TotalAnswers, ue.TotalScore, ue.BadgeCount, RANK() OVER (ORDER BY ue.TotalScore DESC) AS Rank FROM UserEngagement ue)
+// SELECT t.DisplayName AS Username, t.TotalViews, t.TotalAnswers, t.TotalScore, p.Title AS MostViewedPostTitle, p.ViewCount AS MostViewedPostCount, t.BadgeCount
+// FROM TopUsers t LEFT JOIN PostViewStats p ON t.UserId = p.OwnerUserId WHERE t.Rank <= 10 ORDER BY t.Rank;
+fn q26268(db: &'static So) -> String {
+    let Post { post_type_id, tags_str, view_count, answer_count, score, .. } = &db.post;
+    let qs = || Ident::<Post>::new().with(post_type_id.eq(1));
+    let tc = db.post.with(post_type_id.eq(1)).select(tags_str.flat_map(tag_list)).group_by(Same::<Str>::new()).select(Same::<Str>::new()).fold(0i64, |n, _| n + 1);
+    let ue = db
+        .user
+        .with((&db.user.reputation).gt(10))
+        .group_by(Ident::<User>::new())
+        .select(posts_of(db).select(qs()).select(view_count.opt().and(answer_count.opt()).and(score)).opt().and(badges_of(db).opt()))
+        .fold([0i64; 7], |a, (p, b)| {
+            let (w, n, s) = p.map_or((None, None, None), |((w, n), s)| (w, n, Some(s)));
+            [a[0] + w.is_some() as i64, a[1] + w.unwrap_or(0), a[2] + n.is_some() as i64, a[3] + n.unwrap_or(0), a[4] + s.is_some() as i64, a[5] + s.unwrap_or(0), a[6] + b.is_some() as i64]
+        });
+    let v = ranked(drain(&ue), |&(_, a)| (a[4] == 0, Reverse(a[5])), false);
+    let tu = rel(v.into_iter().take_while(|x| x.1 <= 10).map(|((u, a), r)| (u, (a, r))).collect());
+    let tu: HashIdx<Id<User>, ([i64; 7], i64)> = (&tu).map(|(u, _)| u).inv().select((&tu).map(|(_, x)| x)).collect();
+    let pvs = posts_of(db).select(qs()).select(Ident::<Post>::new().and(tags_str.flat_map(tag_list).select((&tc).filt(|n| n > 10))));
+    let mut v = drain((&tu).and(pvs.opt()));
+    v.sort_by_key(|&(_, ((_, r), _))| r);
+    rows(v.into_iter().map(|(u, ((a, _), p))| {
+        let mut f = vec![user_col(db, u, "name"), nullable(a[1], a[0]), nullable(a[3], a[2]), nullable(a[5], a[4])];
+        f.extend(match p {
+            Some((p, _)) => post_fields(db, p, &["title", "views"]),
+            None => vec![V::Null, V::Null],
+        });
+        f.push(V::I(a[6]));
+        row(f)
+    }))
+}
+
+// WITH PostStats AS (SELECT p.Id AS PostId, p.Title, p.ViewCount, p.Score, COALESCE(SUM(CASE WHEN v.VoteTypeId = 2 THEN 1 ELSE 0 END), 0) AS UpVotes,
+//        COALESCE(SUM(CASE WHEN v.VoteTypeId = 3 THEN 1 ELSE 0 END), 0) AS DownVotes, COUNT(DISTINCT c.Id) AS CommentCount, COUNT(DISTINCT ph.Id) AS EditCount
+//     FROM Posts p LEFT JOIN Votes v ON p.Id = v.PostId LEFT JOIN Comments c ON p.Id = c.PostId LEFT JOIN PostHistory ph ON p.Id = ph.PostId AND ph.PostHistoryTypeId IN (4, 5)
+//     WHERE p.CreationDate >= cast('2024-10-01 12:34:56' as timestamp) - INTERVAL '1 year' GROUP BY p.Id, p.Title, p.ViewCount, p.Score),
+// RankedPosts AS (SELECT ps.*, DENSE_RANK() OVER (ORDER BY ps.Score DESC) AS ScoreRank, DENSE_RANK() OVER (ORDER BY ps.ViewCount DESC) AS ViewRank FROM PostStats ps),
+// FilteredPosts AS (SELECT rp.*, CASE WHEN rp.UpVotes > 0 THEN (rp.UpVotes * 1.0 / NULLIF(rp.UpVotes + rp.DownVotes, 0)) * 100 ELSE 0 END AS UpvotePercentage
+//     FROM RankedPosts rp WHERE rp.ScoreRank <= 10 OR rp.ViewRank <= 10)
+// SELECT fp.PostId, fp.Title, fp.ViewCount, fp.Score, fp.UpVotes, fp.DownVotes, fp.CommentCount, fp.EditCount, fp.UpvotePercentage,
+//        CASE WHEN fp.UpvotePercentage IS NOT NULL THEN CASE WHEN fp.UpvotePercentage >= 75 THEN 'High Quality' WHEN fp.UpvotePercentage >= 50 THEN 'Moderate Quality' ELSE 'Low Quality' END ELSE 'No Votes' END AS QualityAssessment
+// FROM FilteredPosts fp ORDER BY fp.Score DESC, fp.ViewCount DESC;
+//
+// Both ranks read only base columns, so the posts are picked first and the votes x comments x edits product is driven for those alone.
+fn q1447(db: &'static So) -> String {
+    let Post { creation_date, score, view_count, .. } = &db.post;
+    let recent = drain(db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1))).select(score));
+    let v = ranked(recent, |&(_, s)| Reverse(s), true);
+    let v = ranked(v, |&((p, _), _)| {
+        let w = view_count.get(p);
+        (w.is_none(), Reverse(w))
+    }, true);
+    let fp: MatSet<Id<Post>> = rel(v).filt(|((_, s), w): (((Id<Post>, i64), i64), i64)| s <= 10 || w <= 10).map(|(((p, _), _), _)| p).collect();
+    let edits = || history_of(db).select(Ident::<PostHistory>::new().with((&db.post_history.post_history_type_id).in_v(vec![4, 5])));
+    let ud = (&fp).group_by(Ident::<Post>::new()).select(votes_of(db).select(&db.vote.vote_type_id).opt().and(comments_of(db).opt()).and(edits().opt())).fold([0i64; 2], |a, ((t, _), _)| {
+        [a[0] + (t == Some(2)) as i64, a[1] + (t == Some(3)) as i64]
+    });
+    let cc = (&fp).group_by(Ident::<Post>::new()).select(comments_of(db).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
+    let ec = (&fp).group_by(Ident::<Post>::new()).select(edits().opt()).fold(0i64, |n, e| n + e.is_some() as i64);
+    let mut v = drain((&ud).and(&cc).and(&ec));
+    v.sort_by_key(|&(p, _)| (Reverse(score.get(p).unwrap()), Reverse(view_count.get(p))));
+    rows(v.into_iter().map(|(p, ((a, c), e))| {
+        let pct = if a[0] > 0 { a[0] as f64 * 1.0 / (a[0] + a[1]) as f64 * 100.0 } else { 0.0 };
+        let mut f = post_fields(db, p, &["id", "title", "views", "score"]);
+        f.extend([V::I(a[0]), V::I(a[1]), V::I(c), V::I(e), V::F(pct)]);
+        f.push(V::S(if pct >= 75.0 { "High Quality" } else if pct >= 50.0 { "Moderate Quality" } else { "Low Quality" }));
+        row(f)
+    }))
+}
+
+// WITH RankedPosts AS (SELECT p.Id, p.Title, p.Score, p.ViewCount, u.DisplayName AS OwnerDisplayName, ROW_NUMBER() OVER (PARTITION BY p.OwnerUserId ORDER BY p.Score DESC) AS PostRank,
+//        AVG(COALESCE(c.CommentsCount, 0)) OVER (PARTITION BY p.OwnerUserId) AS AvgComments, MAX(p.CreationDate) OVER (PARTITION BY p.OwnerUserId) AS LastPostDate
+//     FROM Posts p LEFT JOIN (SELECT PostId, COUNT(*) AS CommentsCount FROM Comments GROUP BY PostId) c ON p.Id = c.PostId JOIN Users u ON p.OwnerUserId = u.Id
+//     WHERE p.Score > 0 AND p.CreationDate >= DATE '2024-10-01' - INTERVAL '1 year'),
+// ClosedPosts AS (SELECT ph.PostId, COUNT(ph.Id) AS CloseVoteCount, MAX(ph.CreationDate) AS LastCloseDate FROM PostHistory ph WHERE ph.PostHistoryTypeId = 10 GROUP BY ph.PostId),
+// FinalResults AS (SELECT rp.OwnerDisplayName, COUNT(DISTINCT rp.Id) AS TotalPosts, SUM(rp.ViewCount) AS TotalViews, SUM(CASE WHEN cp.CloseVoteCount IS NOT NULL THEN 1 ELSE 0 END) AS ClosedPostCount,
+//        AVG(rp.AvgComments) AS AverageComments, MAX(rp.LastPostDate) AS LastPostDate FROM RankedPosts rp LEFT JOIN ClosedPosts cp ON rp.Id = cp.PostId GROUP BY rp.OwnerDisplayName)
+// SELECT *, CASE WHEN TotalPosts > 10 THEN 'Active Contributor' WHEN TotalPosts BETWEEN 1 AND 10 THEN 'New Contributor' ELSE 'Inactive Contributor' END AS ContributorStatus
+// FROM FinalResults WHERE LastPostDate >= DATE '2024-10-01' - INTERVAL '30 days' ORDER BY TotalViews DESC, TotalPosts DESC;
+//
+// AvgComments is the owner's window average, repeated on each of the owner's posts, and AverageComments averages those rows per display name;
+// both are summed as floats in post id order. PostRank is never read.
+fn q3042(db: &'static So) -> String {
+    let Post { score, creation_date, owner_user, view_count, .. } = &db.post;
+    let rp: MatSet<Id<Post>> = db.post.with(score.gt(0).and(creation_date.ge(add_years(date(2024, 10, 1), -1)))).with(owner_user).collect();
+    let cc = (&rp).group_by(Ident::<Post>::new()).select(comments_of(db).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
+    let win = (&rp).group_by(owner_user).select((&cc).and(creation_date)).fold([0i64, 0, i64::MIN], |a, (c, d)| [a[0] + 1, a[1] + c, a[2].max(d)]);
+    let closed: MatSet<Id<Post>> = db.post_history.with((&db.post_history.post_history_type_id).eq(10)).select(&db.post_history.post).collect();
+    let fr = (&rp)
+        .group_by(owner_user.select(&db.user.display_name))
+        .select(view_count.opt().and(Ident::<Post>::new().with(&closed).opt()).and(owner_user.select(&win)))
+        .fold((0i64, 0i64, 0i64, 0i64, 0.0f64, i64::MIN), |(n, wn, ws, cl, ac, m), ((w, c), a)| {
+            (n + 1, wn + w.is_some() as i64, ws + w.unwrap_or(0), cl + c.is_some() as i64, ac + a[1] as f64 / a[0] as f64, m.max(a[2]))
+        });
+    let cut = add_days(date(2024, 10, 1), -30);
+    let mut v = drain((&fr).filt(move |x: (i64, i64, i64, i64, f64, i64)| x.5 >= cut));
+    v.sort_by_key(|&(_, (n, wn, ws, _, _, _))| (wn == 0, Reverse(ws), Reverse(n)));
+    rows(v.into_iter().map(|(name, (n, wn, ws, cl, ac, m))| {
+        row(vec![V::S(name), V::I(n), nullable(ws, wn), V::I(cl), V::F(ac / n as f64), V::T(m), V::S(if n > 10 { "Active Contributor" } else { "New Contributor" })])
+    }))
+}
+
+// WITH RankedPosts AS (SELECT p.Id AS PostId, p.Title, p.CreationDate, p.Score, p.ViewCount, COUNT(c.Id) AS CommentCount, ROW_NUMBER() OVER (PARTITION BY p.Id ORDER BY p.CreationDate DESC) AS rn
+//     FROM Posts p LEFT JOIN Comments c ON p.Id = c.PostId GROUP BY p.Id, p.Title, p.CreationDate, p.Score, p.ViewCount),
+// UserReputation AS (SELECT u.Id AS UserId, u.Reputation, COUNT(b.Id) AS BadgeCount, AVG(v.BountyAmount) AS AvgBounty FROM Users u LEFT JOIN Badges b ON u.Id = b.UserId LEFT JOIN Votes v ON u.Id = v.UserId GROUP BY u.Id, u.Reputation),
+// ClosedPosts AS (SELECT ph.PostId, ph.CreationDate, STRING_AGG(ct.Name, ', ') AS CloseReasons FROM PostHistory ph JOIN CloseReasonTypes ct ON CAST(ph.Comment AS integer) = ct.Id
+//     WHERE ph.PostHistoryTypeId = 10 GROUP BY ph.PostId, ph.CreationDate),
+// HighScorePosts AS (SELECT rp.PostId, rp.Title, rp.CreationDate, rp.Score, rp.ViewCount, rp.CommentCount, COALESCE(cp.CloseReasons, 'No Close Reason') AS CloseReason
+//     FROM RankedPosts rp LEFT JOIN ClosedPosts cp ON rp.PostId = cp.PostId WHERE rp.Score > (SELECT AVG(Score) FROM Posts))
+// SELECT hsp.PostId, hsp.Title, hsp.CreationDate, hsp.Score, hsp.ViewCount, hsp.CommentCount, hsp.CloseReason, ur.UserId, ur.Reputation, ur.BadgeCount, ur.AvgBounty
+// FROM HighScorePosts hsp JOIN Users u ON hsp.PostId = u.Id JOIN UserReputation ur ON u.Id = ur.UserId ORDER BY hsp.Score DESC, ur.Reputation DESC LIMIT 50;
+//
+// `hsp.PostId = u.Id` joins a post id to a user id, so it goes through the raw ids; the badges x votes product is driven only for the users it
+// reaches. STRING_AGG has no ORDER BY; the port joins the names in history id order.
+fn q1945(db: &'static So) -> String {
+    let Post { score, .. } = &db.post;
+    let av = db.post.select(score).fold_flat([0i64; 2], |a, s| [a[0] + 1, a[1] + s]);
+    let hsp: MatSet<Id<Post>> = db.post.with(score.filt(move |s| s * av[0] > av[1])).collect();
+    let uidx: HashIdx<i64, Id<User>> = (&db.user.origid).inv().collect();
+    let cand: MatSet<Id<User>> = (&hsp).select((&db.post.origid).select(&uidx)).collect();
+    let ur = (&cand).group_by(Ident::<User>::new()).select(badges_of(db).opt().and(votes_by(db).select((&db.vote.bounty_amount).opt()).opt())).fold([0i64; 3], |a, (b, v)| {
+        let v = v.flatten();
+        [a[0] + b.is_some() as i64, a[1] + v.is_some() as i64, a[2] + v.unwrap_or(0)]
+    });
+    let cc = (&hsp).group_by(Ident::<Post>::new()).select(comments_of(db).opt()).fold(0i64, |n, c| n + c.is_some() as i64);
+    let reason: HashIdx<i64, Str> = (&db.close_reason_type.origid).inv().select(&db.close_reason_type.name).collect();
+    let PostHistory { post, post_history_type_id, comment, creation_date: hd, .. } = &db.post_history;
+    let cp = db
+        .post_history
+        .with(post_history_type_id.eq(10))
+        .group_by(post.and(hd))
+        .select(Ident::<PostHistory>::new().and(comment.flat_map(|s: Str| s.trim().parse::<i64>().ok()).select(&reason)))
+        .buf_fold(|it| {
+            let mut x: Vec<(Id<PostHistory>, Str)> = it.into_iter().collect();
+            x.sort_unstable_by_key(|x| x.0);
+            &*Box::leak(x.iter().map(|x| x.1).collect::<Vec<Str>>().join(", ").into_boxed_str())
+        });
+    let cv = rel(drain(&cp));
+    let by_post: HashIdx<Id<Post>, Str> = (&cv).map(|((p, _), _)| p).inv().select((&cv).map(|(_, s)| s)).collect();
+    let v = drain((&cc).and((&by_post).opt()).and((&db.post.origid).select(&uidx).select(Ident::<User>::new().and(&ur))));
+    let v = top_k(v, |&(p, (_, (u, _)))| (Reverse(score.get(p).unwrap()), Reverse(db.user.reputation.get(u).unwrap())), |&(p, ((_, r), _))| (p, r), 50);
+    rows(v.into_iter().map(|(p, ((c, r), (u, a)))| {
+        let mut f = post_fields(db, p, &["id", "title", "created", "score", "views"]);
+        f.extend([V::I(c), V::S(r.unwrap_or("No Close Reason"))]);
+        f.extend(ucols(db, u, &["uid", "rep"]));
+        f.extend([V::I(a[0]), avg(a[2], a[1])]);
+        row(f)
+    }))
+}
+
+// WITH UserActivity AS (SELECT U.Id AS UserId, U.DisplayName AS UserDisplayName, COUNT(DISTINCT P.Id) AS PostCount, SUM(CASE WHEN V.VoteTypeId = 2 THEN 1 ELSE 0 END) AS Upvotes,
+//        SUM(CASE WHEN V.VoteTypeId = 3 THEN 1 ELSE 0 END) AS Downvotes, SUM(CASE WHEN B.Date IS NOT NULL THEN 1 ELSE 0 END) AS BadgeCount
+//     FROM Users U LEFT JOIN Posts P ON U.Id = P.OwnerUserId LEFT JOIN Votes V ON P.Id = V.PostId LEFT JOIN Badges B ON U.Id = B.UserId WHERE U.Reputation >= 1000 GROUP BY U.Id, U.DisplayName),
+// PostStats AS (SELECT P.Id, P.Title, P.CreationDate, P.ViewCount, COALESCE(CASE WHEN P.AcceptedAnswerId IS NOT NULL THEN 1 ELSE 0 END, 0) AS HasAcceptedAnswer,
+//        ROW_NUMBER() OVER (PARTITION BY P.PostTypeId ORDER BY P.ViewCount DESC) AS RankByViews FROM Posts P WHERE P.CreationDate >= CURRENT_DATE - INTERVAL '6 months'),
+// TagStatistics AS (SELECT T.TagName, COUNT(DISTINCT P.Id) AS PostsWithTag, SUM(P.ViewCount) AS TotalViews, AVG(P.ViewCount) AS AvgViews FROM Tags T JOIN Posts P ON P.Tags LIKE '%' || T.TagName || '%' GROUP BY T.TagName)
+// SELECT A.UserDisplayName, A.PostCount, A.Upvotes - A.Downvotes AS NetVotes, P.Title AS TopViewedPost, P.ViewCount AS TopPostViewCount, T.TagName, T.TotalViews, T.AvgViews
+// FROM UserActivity A LEFT JOIN PostStats P ON A.PostCount > 0 AND P.RankByViews = 1 LEFT JOIN TagStatistics T ON T.PostsWithTag > 5
+// WHERE A.BadgeCount > 3 OR (A.Upvotes > 10 AND A.Downvotes < 5) ORDER BY NetVotes DESC, T.TotalViews DESC LIMIT 10 OFFSET 0;
+//
+// Both ONs name only the right side, so the users are crossed with each type's most viewed recent post (users with posts only) and with every
+// tag on more than five posts. A ViewCount tie for a type's first post goes to the smaller id. The LIKE is `tag_stats`.
+fn q23220(db: &'static So) -> String {
+    let Post { creation_date, post_type_id, view_count, .. } = &db.post;
+    let hi = || db.user.with((&db.user.reputation).ge(1000));
+    let ua = hi()
+        .group_by(Ident::<User>::new())
+        .select(posts_of(db).select(votes_of(db).select(&db.vote.vote_type_id).opt()).opt().and(badges_of(db).opt()))
+        .fold([0i64; 3], |a, (p, b)| {
+            let t = p.flatten();
+            [a[0] + (t == Some(2)) as i64, a[1] + (t == Some(3)) as i64, a[2] + b.is_some() as i64]
+        });
+    let pc = hi().group_by(Ident::<User>::new()).select(posts_of(db).opt()).fold(0i64, |n, p| n + p.is_some() as i64);
+    let users = rel(drain((&ua).filt(|a| a[2] > 3 || (a[0] > 10 && a[1] < 5)).and(&pc)));
+    let v = drain(db.post.with(creation_date.ge(add_months(current_date(), -6))).select(post_type_id));
+    let top = top_per(v, |&(_, t)| t, |&(p, _)| {
+        let w = view_count.get(p);
+        (w.is_none(), Reverse(w), p)
+    }, 1, false);
+    let pp = left_all(top.into_iter().map(|x| x.0).collect());
+    let tags = left_all(drain((&tag_stats(db)).filt(|a| a[0] > 5)));
+    let none: VecRel<usize, Option<Id<Post>>> = left_all(Vec::new());
+    type U = (Id<User>, ([i64; 3], i64));
+    let up = rel(drain((&users).filt(|(_, (_, n)): U| n > 0).cross(&pp).union((&users).filt(|(_, (_, n)): U| n == 0).cross(&none))).into_iter().map(|x| x.1).collect());
+    let mut v = Vec::new();
+    (&up).cross(&tags).drive(|_, (((u, (a, n)), p), t)| v.push((u, a, n, p, t)));
+    let v = top_k(v, |&(_, a, _, _, t)| (Reverse(a[0] - a[1]), t.is_none(), Reverse(t.map(|(_, x)| x[2]))), |&(u, _, _, p, t)| (u, p, t.map(|x| x.0)), 10);
+    rows(v.into_iter().map(|(u, a, n, p, t)| {
+        let mut f = vec![user_col(db, u, "name"), V::I(n), V::I(a[0] - a[1])];
+        f.extend(match p {
+            Some(p) => post_fields(db, p, &["title", "views"]),
+            None => vec![V::Null, V::Null],
+        });
+        f.extend(match t {
+            Some((t, x)) => [V::S(db.tag.tag_name.get(t).unwrap()), nullable(x[2], x[1]), avg(x[2], x[1])],
+            None => [V::Null, V::Null, V::Null],
+        });
+        row(f)
+    }))
+}
+
+// WITH UserVoteCounts AS (SELECT v.UserId, SUM(CASE WHEN vt.Name = 'UpMod' THEN 1 ELSE 0 END) AS UpVoteCount, SUM(CASE WHEN vt.Name = 'DownMod' THEN 1 ELSE 0 END) AS DownVoteCount,
+//        COUNT(*) AS TotalVotes FROM Votes v JOIN VoteTypes vt ON v.VoteTypeId = vt.Id GROUP BY v.UserId),
+// PostEngagements AS (SELECT p.Id AS PostId, COUNT(c.Id) AS CommentCount, COALESCE(SUM(CASE WHEN v.VoteTypeId = 2 THEN 1 ELSE 0 END), 0) AS UpVotes,
+//        COALESCE(SUM(CASE WHEN v.VoteTypeId = 3 THEN 1 ELSE 0 END), 0) AS DownVotes, AVG(EXTRACT(EPOCH FROM (p.LastActivityDate - p.CreationDate)) / 60) AS AvgResponseTime
+//     FROM Posts p LEFT JOIN Comments c ON p.Id = c.PostId LEFT JOIN Votes v ON p.Id = v.PostId GROUP BY p.Id),
+// RankedPosts AS (SELECT pe.PostId, pe.CommentCount, pe.UpVotes, pe.DownVotes, pe.AvgResponseTime, RANK() OVER (ORDER BY pe.CommentCount DESC, pe.UpVotes DESC, pe.DownVotes ASC) AS PostRank FROM PostEngagements pe)
+// SELECT up.DisplayName, COUNT(DISTINCT rp.PostId) AS EngagedPostCount, SUM(rp.UpVotes) AS TotalUpVotes, SUM(rp.DownVotes) AS TotalDownVotes, AVG(rp.AvgResponseTime) AS AvgPostResponseTime,
+//        CASE WHEN COUNT(DISTINCT rp.PostId) > 5 THEN 'High Engager' WHEN COUNT(DISTINCT rp.PostId) BETWEEN 3 AND 5 THEN 'Medium Engager' ELSE 'Low Engager' END AS EngagementLevel
+// FROM Users up JOIN Votes v ON up.Id = v.UserId JOIN RankedPosts rp ON v.PostId = rp.PostId WHERE up.Reputation > 100 AND up.Location IS NOT NULL
+// GROUP BY up.DisplayName HAVING SUM(rp.UpVotes) > (SELECT AVG(UpVoteCount) FROM UserVoteCounts uc) AND COUNT(DISTINCT rp.PostId) > 1 ORDER BY TotalUpVotes DESC, EngagedPostCount DESC;
+//
+// UserVoteCounts has a NULL-user group, counted in the AVG. PostRank is never read. PostEngagements is needed only for the posts these users
+// voted on, so the comments x votes product is driven for those alone; AvgResponseTime averages the per-row float over that product.
+fn q3966(db: &'static So) -> String {
+    let Post { last_activity_date, creation_date, .. } = &db.post;
+    let uvc = db.vote.group_by((&db.vote.user).opt()).select(vtype_name(db)).fold(0i64, |n, t| n + (t == "UpMod") as i64);
+    let a = (&uvc).fold_flat([0i64; 2], |a, n| [a[0] + 1, a[1] + n]);
+    let users = || db.user.with((&db.user.reputation).gt(100)).with(&db.user.location);
+    let voted: MatSet<Id<Post>> = users().select(votes_by(db).select(&db.vote.post)).collect();
+    let pe = (&voted)
+        .group_by(Ident::<Post>::new())
+        .select(last_activity_date.and(creation_date).and(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt())))
+        .fold((0i64, 0i64, 0i64, 0.0f64), |(n, u, d, s), ((l, c), (_, t))| (n + 1, u + (t == Some(2)) as i64, d + (t == Some(3)) as i64, s + secs(l - c) / 60.0));
+    let g = users()
+        .group_by(&db.user.display_name)
+        .select(votes_by(db).select(&db.vote.post).select(Ident::<Post>::new().and(&pe)))
+        .buf_fold(|it| {
+            let x: Vec<(Id<Post>, (i64, i64, i64, f64))> = it.into_iter().collect();
+            let mut ps: Vec<Id<Post>> = x.iter().map(|x| x.0).collect();
+            ps.sort_unstable();
+            ps.dedup();
+            let mut s = 0.0;
+            for (_, (n, _, _, t)) in &x {
+                s += t / *n as f64;
+            }
+            (ps.len() as i64, x.iter().map(|x| x.1 .1).sum::<i64>(), x.iter().map(|x| x.1 .2).sum::<i64>(), s / x.len() as f64)
+        });
+    let mut v = drain((&g).filt(move |(n, u, _, _): (i64, i64, i64, f64)| u * a[0] > a[1] && n > 1));
+    v.sort_by_key(|&(_, (n, u, _, _))| (Reverse(u), Reverse(n)));
+    rows(v.into_iter().map(|(name, (n, u, d, t))| {
+        row(vec![V::S(name), V::I(n), V::I(u), V::I(d), V::F(t), V::S(if n > 5 { "High Engager" } else if n >= 3 { "Medium Engager" } else { "Low Engager" })])
+    }))
+}
+
 pub static ENTRIES: &[harness::Entry] = &[
     ("2461", q2461),
     ("26654", q26654),
@@ -2600,4 +3281,21 @@ pub static ENTRIES: &[harness::Entry] = &[
     ("1405", q1405),
     ("25903", q25903),
     ("1843", q1843),
+    ("3855", q3855),
+    ("22789", q22789),
+    ("2997", q2997),
+    ("4451", q4451),
+    ("23826", q23826),
+    ("2592", q2592),
+    ("27864", q27864),
+    ("2272", q2272),
+    ("3351", q3351),
+    ("24878", q24878),
+    ("20633", q20633),
+    ("26268", q26268),
+    ("1447", q1447),
+    ("3042", q3042),
+    ("1945", q1945),
+    ("23220", q23220),
+    ("3966", q3966),
 ];

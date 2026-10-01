@@ -1,4 +1,5 @@
 use harness::prelude::*;
+use crate::q::{by_created, by_score};
 
 fn q16767(db: &'static So) -> String {
     let Post { answer_count, comment_count, .. } = &db.post;
@@ -8,7 +9,7 @@ fn q16767(db: &'static So) -> String {
             V::S(r.display_name),
             V::T(r.created),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
             oint(answer_count.get(r.pid)),
             V::I(comment_count.get(r.pid).unwrap()),
         ])
@@ -23,7 +24,7 @@ fn q17969(db: &'static So) -> String {
             V::S(r.display_name),
             V::T(r.created),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
             oint(answer_count.get(r.pid)),
             V::I(comment_count.get(r.pid).unwrap()),
         ])
@@ -52,9 +53,10 @@ fn q12741(db: &'static So) -> String {
 }
 
 fn count_avgrep(db: &'static So) -> String {
-    rows(by_count(db).iter().map(|a| {
-        row(vec![V::S(a.name), V::I(a.rep_n), avg(a.rep_sum, a.rep_n)])
-    }))
+    let owner_user = &db.post.owner_user;
+    let g = db.post.with(owner_user).group_by(ptype_name(db)).select(owner_user.select(&db.user.reputation)).fold([0i64; 2], |a, r| [a[0] + 1, a[1] + r]);
+    let v = top_n(drain(&g), |&(_, a)| std::cmp::Reverse(a[0]), 0);
+    rows(v.into_iter().map(|(k, a)| row(vec![V::S(k), V::I(a[0]), avg(a[1], a[0])])))
 }
 
 fn q15620(db: &'static So) -> String {
@@ -66,7 +68,7 @@ fn q15620(db: &'static So) -> String {
             V::S(r.display_name),
             V::T(r.created),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
             ostr(tags.get(r.pid)),
         ])
     }))
@@ -119,7 +121,7 @@ fn q18933(db: &'static So) -> String {
             V::I(r.id),
             title(db, r.pid),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
             V::S(r.display_name),
             V::I(r.reputation),
         ])
@@ -131,7 +133,7 @@ fn q18862(db: &'static So) -> String {
     let Tag { excerpt_post, tag_name, .. } = &db.tag;
     let User { display_name, .. } = &db.user;
 
-    let mut v: Vec<(Id<Post>, i64, i64, i64, Str, Str)> = Vec::new();
+    let mut v: Vec<(Id<Post>, i64, i64, Option<i64>, Str, Str)> = Vec::new();
     db.tag
         .with(excerpt_post.select(post_type_id).eq(1))
         .select(
@@ -139,7 +141,7 @@ fn q18862(db: &'static So) -> String {
                 .and(excerpt_post.select(
                     creation_date
                         .and(score)
-                        .and(view_count)
+                        .and(view_count.opt())
                         .and(owner_user.select(display_name)),
                 ))
                 .and(tag_name),
@@ -154,7 +156,7 @@ fn q18862(db: &'static So) -> String {
             V::S(dn),
             V::T(*created),
             V::I(*sc),
-            V::I(*views),
+            oint(*views),
             V::S(tn),
         ])
     }))

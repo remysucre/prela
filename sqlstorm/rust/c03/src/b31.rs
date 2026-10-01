@@ -83,50 +83,40 @@ struct PostRow {
     pid: Id<Post>,
     id: i64,
     created: i64,
-    score: i64,
     display_name: Str,
     comments: i64,
 }
 
-fn posts_with_comments(db: &'static So, questions_only: bool) -> Vec<PostRow> {
-    let Post { post_type_id, origid, creation_date, score, owner_user, .. } = &db.post;
+fn posts_with_comments(db: &'static So) -> Vec<PostRow> {
+    let Post { origid, creation_date, owner_user, .. } = &db.post;
     let User { display_name, .. } = &db.user;
 
     let cc = comments_per_post(db);
     let mut v = Vec::new();
-    let proj = origid
-        .and(creation_date)
-        .and(score)
-        .and(owner_user.select(display_name))
-        .and(cc);
-    let mut push = |pid: Id<Post>, ((((id, created), score), display_name), comments)| {
-        v.push(PostRow { pid, id, created, score, display_name, comments })
-    };
-    if questions_only {
-        db.post.with(post_type_id.eq(1)).select(proj).drive(&mut push);
-    } else {
-        db.post.with(owner_user).select(proj).drive(&mut push);
-    }
+    db.post
+        .with(owner_user)
+        .select(origid.and(creation_date).and(owner_user.select(display_name)).and(cc))
+        .drive(|pid, (((id, created), display_name), comments)| v.push(PostRow { pid, id, created, display_name, comments }));
     v
 }
 
+// SELECT u.DisplayName, p.Title, p.Score, COUNT(c.Id) AS CommentCount FROM Posts p JOIN Users u ON p.OwnerUserId = u.Id LEFT JOIN Comments c ON p.Id = c.PostId
+// WHERE p.PostTypeId = 1 GROUP BY u.DisplayName, p.Title, p.Score ORDER BY p.Score DESC LIMIT 10;
 fn q17350(db: &'static So) -> String {
-    let pt = &db.post.title;
-    let mut v = posts_with_comments(db, true);
-    v.sort_by(|a, b| b.score.cmp(&a.score));
-    rows(v.iter().take(10).map(|r| {
-        row(vec![
-            V::S(r.display_name),
-            ostr(pt.get(r.pid)),
-            V::I(r.score),
-            V::I(r.comments),
-        ])
-    }))
+    let Post { post_type_id, title: pt, score, owner_user, .. } = &db.post;
+    let g = db
+        .post
+        .with(post_type_id.eq(1))
+        .group_by(owner_user.select(&db.user.display_name).and(pt.opt()).and(score))
+        .select(comments_per_post(db))
+        .fold(0i64, |a, x| a + x);
+    let v = top_n(drain(&g), |&((_, s), _)| std::cmp::Reverse(s), 10);
+    rows(v.into_iter().map(|(((dn, ti), s), n)| row(vec![V::S(dn), ostr(ti), V::I(s), V::I(n)])))
 }
 
 fn q15673(db: &'static So) -> String {
     let pt = &db.post.title;
-    let mut v = posts_with_comments(db, false);
+    let mut v = posts_with_comments(db);
     v.sort_by(|a, b| b.created.cmp(&a.created));
     rows(v.iter().take(10).map(|r| {
         row(vec![
@@ -139,53 +129,42 @@ fn q15673(db: &'static So) -> String {
     }))
 }
 
+// SELECT p.Title, p.ViewCount, u.DisplayName, COUNT(c.Id) AS CommentCount FROM Posts p JOIN Users u ON p.OwnerUserId = u.Id LEFT JOIN Comments c ON p.Id = c.PostId
+// WHERE p.PostTypeId = 1 GROUP BY p.Title, p.ViewCount, u.DisplayName ORDER BY p.ViewCount DESC LIMIT 10;
 fn q17316(db: &'static So) -> String {
     let Post { post_type_id, view_count, title: pt, owner_user, .. } = &db.post;
-    let User { display_name, .. } = &db.user;
-
-    let cc = comments_per_post(db);
-    let mut v: Vec<((Str, i64, Str), i64)> = Vec::new();
-    db.post
+    let g = db
+        .post
         .with(post_type_id.eq(1))
-        .group_by(pt.and(view_count).and(owner_user.select(display_name)))
-        .select(cc)
-        .fold(0i64, |a, x| a + x)
-        .drive(|((ti, vc), dn), n| v.push(((ti, vc, dn), n)));
-    v.sort_by(|a, b| b.0.1.cmp(&a.0.1));
-    rows(v.iter().take(10).map(|((ti, vc, dn), n)| {
-        row(vec![V::S(ti), V::I(*vc), V::S(dn), V::I(*n)])
-    }))
+        .group_by(pt.opt().and(view_count.opt()).and(owner_user.select(&db.user.display_name)))
+        .select(comments_per_post(db))
+        .fold(0i64, |a, x| a + x);
+    let v = top_n(drain(&g), |&(((_, vc), _), _)| (vc.is_none(), std::cmp::Reverse(vc)), 10);
+    rows(v.into_iter().map(|(((ti, vc), dn), n)| row(vec![ostr(ti), oint(vc), V::S(dn), V::I(n)])))
 }
 
-fn question_comment_groups(db: &'static So) -> Vec<((Str, Str, i64), i64)> {
+/// Questions JOIN Users LEFT JOIN Comments `GROUP BY u.DisplayName, p.Title, p.CreationDate`.
+fn question_comment_groups(db: &'static So) -> Vec<((Str, Option<Str>, i64), i64)> {
     let Post { post_type_id, title: pt, creation_date, owner_user, .. } = &db.post;
-    let User { display_name, .. } = &db.user;
-
-    let cc = comments_per_post(db);
-    let mut v: Vec<((Str, Str, i64), i64)> = Vec::new();
-    db.post
+    let g = db
+        .post
         .with(post_type_id.eq(1))
-        .group_by(owner_user.select(display_name).and(pt).and(creation_date))
-        .select(cc)
-        .fold(0i64, |a, x| a + x)
-        .drive(|((dn, ti), cd), n| v.push(((dn, ti, cd), n)));
-    v
+        .group_by(owner_user.select(&db.user.display_name).and(pt.opt()).and(creation_date))
+        .select(comments_per_post(db))
+        .fold(0i64, |a, x| a + x);
+    drain(&g).into_iter().map(|(((dn, ti), cd), n)| ((dn, ti, cd), n)).collect()
 }
 
+// SELECT u.DisplayName, p.Title, p.CreationDate, COUNT(c.Id) AS CommentCount FROM Users u JOIN Posts p ON u.Id = p.OwnerUserId LEFT JOIN Comments c ON p.Id = c.PostId
+// WHERE p.PostTypeId = 1 GROUP BY u.DisplayName, p.Title, p.CreationDate ORDER BY CommentCount DESC;
 fn q17405(db: &'static So) -> String {
-    let mut v = question_comment_groups(db);
-    v.sort_by(|a, b| b.1.cmp(&a.1));
-    rows(v.iter().map(|((dn, ti, cd), n)| {
-        row(vec![V::S(dn), V::S(ti), V::T(*cd), V::I(*n)])
-    }))
+    rows(question_comment_groups(db).into_iter().map(|((dn, ti, cd), n)| row(vec![V::S(dn), ostr(ti), V::T(cd), V::I(n)])))
 }
 
+// SELECT p.Title, p.CreationDate, u.DisplayName AS OwnerDisplayName, COUNT(c.Id) AS CommentCount FROM Posts p JOIN Users u ON p.OwnerUserId = u.Id LEFT JOIN Comments c ON p.Id = c.PostId
+// WHERE p.PostTypeId = 1 GROUP BY p.Title, p.CreationDate, u.DisplayName ORDER BY p.CreationDate DESC;
 fn q16304(db: &'static So) -> String {
-    let mut v = question_comment_groups(db);
-    v.sort_by(|a, b| b.0.2.cmp(&a.0.2));
-    rows(v.iter().map(|((dn, ti, cd), n)| {
-        row(vec![V::S(ti), V::T(*cd), V::S(dn), V::I(*n)])
-    }))
+    rows(question_comment_groups(db).into_iter().map(|((dn, ti, cd), n)| row(vec![ostr(ti), V::T(cd), V::S(dn), V::I(n)])))
 }
 
 fn q19392(db: &'static So) -> String {

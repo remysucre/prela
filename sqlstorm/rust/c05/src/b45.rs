@@ -59,9 +59,9 @@ fn q5469(db: &'static So) -> String {
         )
         .fold(0i64, |c, ((ci, _), _)| c + ci.is_some() as i64);
     let mut out = Vec::new();
-    (&comments).and(owner_user.select(&bc).opt()).drive(|p, (c, b)| {
+    (&comments).and((&voters).opt()).and(owner_user.select(&bc).opt()).drive(|p, ((c, nv), b)| {
         let mut f = post_fields(db, p, &["id", "title", "created", "score", "views"]);
-        f.extend([V::I(c), V::I(voters.get(p).unwrap_or(0)), V::I(b.unwrap_or(0))]);
+        f.extend([V::I(c), V::I(nv.unwrap_or(0)), V::I(b.unwrap_or(0))]);
         out.push(row(f))
     });
     rows(out)
@@ -124,7 +124,7 @@ fn q14451(db: &'static So) -> String {
     let ranked = whole(&base)
         .select(Ident::<Post>::new().and(score).and(view_count.opt()).and(&cc).and(&vc))
         .window(rank, |((((_, s), v), _), _)| (s, v), desc)
-        .window(row_number, |(((((_, s), v), _), _), _)| (s, v), desc);
+        .window(row_number, |(((((p, s), v), _), _), _)| (s, v, std::cmp::Reverse(p)), desc);
     let mut out = Vec::new();
     ranked.filt(|(_, n)| n <= 100).drive(|_, ((((((p, _), _), c), v), r), _)| {
         let mut f = post_fields(

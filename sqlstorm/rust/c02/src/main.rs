@@ -6,6 +6,7 @@ mod b22;
 mod b23;
 mod b24;
 mod b25;
+mod q;
 
 fn main() {
     let mut all: Vec<harness::Entry> = Vec::new();

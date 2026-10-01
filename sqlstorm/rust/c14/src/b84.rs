@@ -4,7 +4,7 @@ use harness::prelude::*;
 // answers self-join:
 //
 //   SELECT <columns>, COUNT(c.Id) | COUNT(v.Id) | COUNT(p.Id) | COUNT(a.Id)
-//   FROM Posts p JOIN Users u ON p.OwnerUserId = u.Id
+//   FROM Posts p [LEFT] JOIN Users u ON p.OwnerUserId = u.Id
 //        [LEFT JOIN Comments c ON p.Id = c.PostId]
 //        [LEFT JOIN Votes v ON p.Id = v.PostId]
 //        [LEFT JOIN Posts a ON p.Id = a.ParentId]
@@ -18,37 +18,37 @@ use harness::prelude::*;
 // --- the group is one post -------------------------------------------------
 
 fn q15272(db: &'static So) -> String { post_rows(db, true, "c", "created", 10, &["id", "title", "body", "owner", "created", "score", "views", "#c"]) }
-fn q19157(db: &'static So) -> String { post_rows(db, true, "c", "created", 10, &["id", "title", "created", "owner", "score", "views", "#c"]) }
+fn q19157(db: &'static So) -> String { post_rows_outer(db, true, "c", "created", 10, &["id", "title", "created", "owner", "score", "views", "#c"]) }
 fn q19481(db: &'static So) -> String { post_rows(db, false, "v", "created", 10, &["id", "title", "created", "owner", "score", "views", "#v"]) }
-fn q19953(db: &'static So) -> String { post_rows(db, true, "c", "created", 10, &["id", "title", "created", "owner", "score", "#c"]) }
-fn q19656(db: &'static So) -> String { post_rows(db, true, "c", "created", 10, &["id", "title", "created", "owner", "#c"]) }
-fn q15957(db: &'static So) -> String { post_rows(db, true, "c", "created", 10, &["id", "title", "created", "views", "owner", "#c"]) }
+fn q19953(db: &'static So) -> String { post_rows_outer(db, true, "c", "created", 10, &["id", "title", "created", "owner", "score", "#c"]) }
+fn q19656(db: &'static So) -> String { post_rows_outer(db, true, "c", "created", 10, &["id", "title", "created", "owner", "#c"]) }
+fn q15957(db: &'static So) -> String { post_rows_outer(db, true, "c", "created", 10, &["id", "title", "created", "views", "owner", "#c"]) }
 fn q16342(db: &'static So) -> String { post_rows(db, true, "v", "#v,created", 10, &["id", "title", "created", "views", "owner", "#v"]) }
-fn q19261(db: &'static So) -> String { post_rows(db, false, "c", "created", 10, &["id", "title", "owner", "created", "score", "views", "#c"]) }
+fn q19261(db: &'static So) -> String { post_rows_outer(db, false, "c", "created", 10, &["id", "title", "owner", "created", "score", "views", "#c"]) }
 fn q16546(db: &'static So) -> String { post_rows(db, true, "c", "score,created", 10, &["id", "title", "owner", "created", "score", "views", "#c"]) }
-fn q19382(db: &'static So) -> String { post_rows(db, false, "c", "created", 10, &["id", "title", "owner", "created", "views", "score", "#c"]) }
+fn q19382(db: &'static So) -> String { post_rows_outer(db, false, "c", "created", 10, &["id", "title", "owner", "created", "views", "score", "#c"]) }
 fn q16231(db: &'static So) -> String { post_rows(db, true, "c", "score,created", 10, &["id", "title", "owner", "created", "views", "score", "#c"]) }
 fn q10919(db: &'static So) -> String { post_rows(db, false, "v", "created", 1000, &["id", "title", "score", "views", "created", "owner", "#v"]) }
 fn q13406(db: &'static So) -> String { post_rows(db, true, "c", "views,score", 100, &["id", "title", "views", "score", "answers", "owner", "#c"]) }
 
 // ... with Votes joined as well
 fn q15552(db: &'static So) -> String { post_rows_outer(db, true, "cv", "created", 0, &["id", "title", "created", "owner", "#cx", "#vx"]) }
-fn q15194(db: &'static So) -> String { post_rows(db, true, "cv", "created", 10, &["id", "title", "created", "owner", "#cx", "#vx"]) }
-fn q15235(db: &'static So) -> String { post_rows(db, true, "cv", "created", 10, &["id", "title", "created", "owner", "#cx", "#vx"]) }
-fn q15433(db: &'static So) -> String { post_rows(db, true, "cv", "created", 10, &["id", "title", "created", "owner", "#cx", "#vx"]) }
+fn q15194(db: &'static So) -> String { post_rows_outer(db, true, "cv", "created", 10, &["id", "title", "created", "owner", "#cx", "#vx"]) }
+fn q15235(db: &'static So) -> String { post_rows_outer(db, true, "cv", "created", 10, &["id", "title", "created", "owner", "#cx", "#vx"]) }
+fn q15433(db: &'static So) -> String { post_rows_outer(db, true, "cv", "created", 10, &["id", "title", "created", "owner", "#cx", "#vx"]) }
 fn q16353(db: &'static So) -> String { post_rows(db, true, "cv", "created", 10, &["id", "title", "created", "owner", "#cx", "#vx"]) }
 fn q16646(db: &'static So) -> String { post_rows(db, true, "cv", "created", 10, &["id", "title", "created", "owner", "#cx", "#vx"]) }
 fn q17753(db: &'static So) -> String { post_rows(db, true, "cv", "created", 10, &["id", "title", "created", "owner", "#cx", "#vx"]) }
 fn q19085(db: &'static So) -> String { post_rows(db, true, "cv", "created", 10, &["id", "title", "created", "owner", "#cx", "#vx"]) }
-fn q15040(db: &'static So) -> String { post_rows(db, false, "cv", "created", 10, &["id", "title", "created", "owner", "#cx", "#vx"]) }
-fn q16411(db: &'static So) -> String { post_rows(db, false, "cv", "created", 10, &["id", "title", "created", "owner", "#cx", "#vx"]) }
+fn q15040(db: &'static So) -> String { post_rows_outer(db, false, "cv", "created", 10, &["id", "title", "created", "owner", "#cx", "#vx"]) }
+fn q16411(db: &'static So) -> String { post_rows_outer(db, false, "cv", "created", 10, &["id", "title", "created", "owner", "#cx", "#vx"]) }
 fn q19499(db: &'static So) -> String { post_rows(db, false, "cv", "created", 10, &["id", "title", "created", "score", "owner", "#cx", "#vx"]) }
 fn q16183(db: &'static So) -> String { post_rows(db, false, "cv", "created", 10, &["id", "title", "owner", "created", "score", "#cx", "#vx"]) }
 fn q17842(db: &'static So) -> String { post_rows(db, true, "cv", "created", 10, &["id", "title", "#cx", "#vx", "owner", "created"]) }
 fn q15274(db: &'static So) -> String { post_rows(db, true, "cv", "created", 10, &["id", "title", "owner", "created", "#cx", "#vx"]) }
 fn q15998(db: &'static So) -> String { post_rows(db, true, "cv", "created", 10, &["id", "title", "owner", "created", "#cx", "#vx"]) }
 fn q16377(db: &'static So) -> String { post_rows(db, true, "cv", "created", 10, &["id", "title", "owner", "created", "#cx", "#vx"]) }
-fn q18214(db: &'static So) -> String { post_rows(db, true, "cv", "created", 10, &["id", "title", "owner", "created", "#cx", "#vx"]) }
+fn q18214(db: &'static So) -> String { post_rows_outer(db, true, "cv", "created", 10, &["id", "title", "owner", "created", "#cx", "#vx"]) }
 
 // --- the group is a value tuple --------------------------------------------
 
@@ -65,7 +65,7 @@ fn q17006(db: &'static So) -> String { tuple_rows(by_name_title_date_score(db, t
 fn q16804(db: &'static So) -> String { tuple_rows(by_name_title_date_score_outer(db, true, "c", PostWhere::All), "created", 100, &["owner", "title", "created", "score", "#c"]) }
 fn q18118(db: &'static So) -> String { tuple_rows(by_name_title_date_score(db, false, "c", PostWhere::All), "created", 10, &["owner", "title", "created", "score", "#c"]) }
 fn q15291(db: &'static So) -> String { tuple_rows(by_name_title_date_score(db, true, "a", PostWhere::All), "created", 10, &["title", "created", "score", "owner", "#a"]) }
-fn q19156(db: &'static So) -> String { tuple_rows(by_name_title_date_score_views(db, true, "a", PostWhere::All), "created", 10, &["title", "owner", "created", "score", "views", "#a"]) }
+fn q19156(db: &'static So) -> String { tuple_rows(name_title_date_score_views_outer(db, true, "a", PostWhere::All), "created", 10, &["title", "owner", "created", "score", "views", "#a"]) }
 fn q16059(db: &'static So) -> String { tuple_rows(by_name_title_date_views(db, false, "c", PostWhere::All), "created", 10, &["owner", "title", "created", "views", "#c"]) }
 
 fn q15478(db: &'static So) -> String { tuple_rows(by_name_title_date(db, true, "c", PostWhere::All), "created", 10, &["owner", "title", "created", "#c"]) }
@@ -82,20 +82,46 @@ fn q19675(db: &'static So) -> String { tuple_rows(by_name_title_date(db, false, 
 // Comments and the answers self-join both present, so they cross
 fn q15006(db: &'static So) -> String { tuple_rows(by_name_title_date(db, true, "ca", PostWhere::All), "created", 10, &["title", "created", "owner", "#cx", "#ax"]) }
 fn q16123(db: &'static So) -> String { tuple_rows(by_name_title_date(db, true, "ca", PostWhere::All), "created", 10, &["title", "created", "owner", "#cx", "#ax"]) }
-fn q19824(db: &'static So) -> String { tuple_rows(by_name_title_date(db, true, "ca", PostWhere::All), "created", 10, &["title", "created", "owner", "#cx", "#ax"]) }
-fn q18161(db: &'static So) -> String { tuple_rows(by_name_title_date(db, true, "ca", PostWhere::All), "created", 10, &["title", "created", "owner", "#ax", "#cx"]) }
+fn q19824(db: &'static So) -> String { tuple_rows(by_name_title_date_outer(db, true, "ca", PostWhere::All), "created", 10, &["title", "created", "owner", "#cx", "#ax"]) }
+fn q18161(db: &'static So) -> String { tuple_rows(by_name_title_date_outer(db, true, "ca", PostWhere::All), "created", 10, &["title", "created", "owner", "#ax", "#cx"]) }
 
 // the answers self-join alone: COUNT(p.Id) counts a post once per answer
 fn q17026(db: &'static So) -> String { tuple_rows(by_name_title_date(db, true, "a", PostWhere::All), "created", 0, &["title", "created", "owner", "#a"]) }
 fn q17509(db: &'static So) -> String { tuple_rows(by_name_title_date(db, true, "a", PostWhere::All), "created", 10, &["title", "created", "owner", "#a"]) }
 fn q18341(db: &'static So) -> String { tuple_rows(by_name_title_date(db, true, "a", PostWhere::All), "created", 10, &["title", "created", "owner", "#a"]) }
-fn q19219(db: &'static So) -> String { tuple_rows(by_name_title_date(db, true, "a", PostWhere::All), "created", 10, &["title", "created", "owner", "#a"]) }
+fn q19219(db: &'static So) -> String { tuple_rows(by_name_title_date_outer(db, true, "a", PostWhere::All), "created", 10, &["title", "created", "owner", "#a"]) }
 
-fn q15594(db: &'static So) -> String { tuple_rows(by_name_title_date(db, true, "cv", PostWhere::All), "created", 10, &["title", "created", "owner", "#cx", "#vx"]) }
-fn q15956(db: &'static So) -> String { tuple_rows(by_name_title_date(db, true, "cv", PostWhere::All), "created", 10, &["title", "created", "owner", "#cx", "#vx"]) }
-fn q16445(db: &'static So) -> String { tuple_rows(by_name_title_date(db, false, "cv", PostWhere::All), "created", 10, &["title", "created", "owner", "#cx", "#vx"]) }
+fn q15594(db: &'static So) -> String { tuple_rows(by_name_title_date_outer(db, true, "cv", PostWhere::All), "created", 10, &["title", "created", "owner", "#cx", "#vx"]) }
+fn q15956(db: &'static So) -> String { tuple_rows(by_name_title_date_outer(db, true, "cv", PostWhere::All), "created", 10, &["title", "created", "owner", "#cx", "#vx"]) }
+fn q16445(db: &'static So) -> String { tuple_rows(by_name_title_date_outer(db, false, "cv", PostWhere::All), "created", 10, &["title", "created", "owner", "#cx", "#vx"]) }
 fn q16089(db: &'static So) -> String { tuple_rows(by_name_title_date(db, true, "v", PostWhere::All), "#v", 10, &["title", "created", "owner", "#v"]) }
 fn q16658(db: &'static So) -> String { tuple_rows(by_name_title_date(db, true, "v", PostWhere::All), "#v", 10, &["title", "created", "owner", "#v"]) }
+
+fn name_title_date_score_views_outer(db: &'static So, only_q: bool, joins: &str, w: PostWhere) -> Vec<TupleGroup> {
+    let Post { title, creation_date, score, view_count, owner_user, .. } = &db.post;
+    let key = owner_user
+        .select(&db.user.display_name)
+        .opt()
+        .and(title.opt())
+        .and(creation_date)
+        .and(score)
+        .and(view_count.opt());
+    group_posts(db, &post_base(db, only_q, true, w), &key, joins)
+        .into_iter()
+        .map(|(((((o, t), cd), s), vw), agg)| TupleGroup {
+            owner: o,
+            title: t,
+            created: cd,
+            score: s,
+            views: vw,
+            ptype: None,
+            body: None,
+            rep: None,
+            owner_id: None,
+            agg,
+        })
+        .collect()
+}
 
 pub static ENTRIES: &[harness::Entry] = &[
     ("10919", q10919), ("13406", q13406), ("15006", q15006), ("15040", q15040),

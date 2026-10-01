@@ -5,14 +5,17 @@ fn q17061(db: &'static So) -> String {
     let Vote { vote_type_id, post, .. } = &db.vote;
     let User { display_name, .. } = &db.user;
 
-    let mut v: Vec<(Id<Post>, i64, Str)> = Vec::new();
+    let mut v: Vec<(Id<Post>, i64, Str, i64)> = Vec::new();
     db.vote
         .with(vote_type_id.eq(2))
-        .select(post.and(post.select(creation_date.and(owner_user.select(display_name)))))
-        .drive(|_, (p, (created, dn))| v.push((p, created, dn)));
+        .select(
+            post.and(post.select(creation_date.and(owner_user.select(display_name))))
+                .and(vote_type_id),
+        )
+        .drive(|_, ((p, (created, dn)), vt)| v.push((p, created, dn, vt)));
     v.sort_by(|a, b| b.1.cmp(&a.1));
-    rows(v.iter().take(10).map(|(p, created, dn)| {
-        row(vec![V::S(dn), ostr(title.get(*p)), V::T(*created), V::I(2)])
+    rows(v.iter().take(10).map(|(p, created, dn, vt)| {
+        row(vec![V::S(dn), ostr(title.get(*p)), V::T(*created), V::I(*vt)])
     }))
 }
 
@@ -128,23 +131,23 @@ fn q19125(db: &'static So) -> String {
         &db.post;
     let User { display_name, .. } = &db.user;
 
-    let mut v: Vec<(Id<Post>, i64, i64, i64, Str)> = Vec::new();
+    let mut v: Vec<(Id<Post>, i64, Option<i64>, i64, Str)> = Vec::new();
     db.post
         .with(post_type_id.eq(1))
         .select(
             creation_date
-                .and(view_count)
+                .and(view_count.opt())
                 .and(score)
                 .and(owner_user.select(display_name)),
         )
         .drive(|pid, (((created, views), sc), dn)| v.push((pid, created, views, sc, dn)));
-    v.sort_by(|a, b| b.2.cmp(&a.2));
+    v.sort_by_key(|r| (r.2.is_none(), std::cmp::Reverse(r.2)));
     rows(v.iter().take(10).map(|(pid, created, views, sc, dn)| {
         row(vec![
             V::S(dn),
             ostr(title.get(*pid)),
             V::T(*created),
-            V::I(*views),
+            oint(*views),
             V::I(*sc),
         ])
     }))

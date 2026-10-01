@@ -178,8 +178,9 @@ fn q15793(db: &'static So) -> String {
         db.vote.with(vote_type_id.eq(8)).select(post).inv().collect();
     let per_user = owner_user
         .inv()
-        .select(bounty.select(bounty_amount).opt())
+        .select(bounty.select(bounty_amount.opt()).opt())
         .dense_fold_outer(db.user.id.n, (0i64, 0i64, 0i64), |(n, bs, bn), b| {
+            let b = b.flatten();
             (n + 1, bs + b.unwrap_or(0), bn + b.is_some() as i64)
         });
     let mut v = Vec::new();
@@ -224,7 +225,7 @@ fn q18677(db: &'static So) -> String {
         .select(comments_of(db).opt())
         .fold(0i64, |a, c| a + c.is_some() as i64)
         .drive(|(((id, dn), t), cd), n| v.push((n, id, t, cd, dn)));
-    v.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| (a.1, a.2, a.3).cmp(&(b.1, b.2, b.3))));
+    v.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| (a.1, a.2.is_none(), a.2, a.3).cmp(&(b.1, b.2.is_none(), b.2, b.3))));
     rows(v.iter().take(10).map(|&(n, id, t, cd, dn)| {
         row(vec![V::I(id), V::S(dn), ostr(t), V::T(cd), V::I(n)])
     }))

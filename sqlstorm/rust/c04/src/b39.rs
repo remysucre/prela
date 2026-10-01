@@ -1,25 +1,22 @@
 use harness::prelude::*;
 
+/// `AVG(..) OVER ()` has no PARTITION BY: one row over the whole base,
+/// crossed with each row before the ORDER BY ... LIMIT.
 fn q11057(db: &'static So) -> String {
-    let Post { post_type_id, owner_user, origid, title, view_count, score, creation_date, .. } =
-        &db.post;
+    let Post { post_type_id, owner_user, title, view_count, score, creation_date, .. } = &db.post;
     let rep = owner_user.select(&db.user.reputation);
     let base = owned(db).with(post_type_id.eq(1));
 
-    let (n, ss, vn, vs, rs) = (&base).select(score.and(view_count.opt()).and(&rep)).fold_flat(
+    let avgs = whole(&base).select(score.and(view_count.opt()).and(&rep)).fold(
         (0i64, 0i64, 0i64, 0i64, 0i64),
-        |(n, ss, vn, vs, rs), ((s, v), r)| {
-            (n + 1, ss + s, vn + v.is_some() as i64, vs + v.unwrap_or(0), rs + r)
-        },
+        |(n, ss, vn, vs, rs), ((s, v), r)| (n + 1, ss + s, vn + v.is_some() as i64, vs + v.unwrap_or(0), rs + r),
     );
 
-    let mut v: Vec<(Id<Post>, i64, i64, i64, i64)> = Vec::new();
-    (&base).select(origid.and(score).and(&rep).and(creation_date))
-        .drive(|p, (((id, s), r), cd)| v.push((p, id, s, r, cd)));
-    v.sort_by(|a, b| b.4.cmp(&a.4));
-    rows(v.iter().take(100).map(|&(p, id, s, r, _)| {
+    let v = drain((&base).select(creation_date.and(score).and(&rep)).cross(&avgs));
+    let v = top_n(v, |&(_, (((cd, _), _), _))| std::cmp::Reverse(cd), 100);
+    rows(v.into_iter().map(|((p, ()), (((_, s), r), (n, ss, vn, vs, rs)))| {
         row(vec![
-            V::I(id),
+            V::I(db.post.origid.get(p).unwrap()),
             ostr(title.get(p)),
             oint(view_count.get(p)),
             V::I(s),
@@ -36,10 +33,12 @@ fn q13330(db: &'static So) -> String {
     let User { origid: uid, display_name, reputation, .. } = &db.user;
     let base = owned(db).with(creation_date.between(date(2023, 1, 1), date(2023, 12, 31)));
 
-    let (n, ss) = (&base).select(score).fold_flat((0i64, 0i64), |(n, s), x| (n + 1, s + x));
+    let agg = whole(&base).select(score).fold((0i64, 0i64), |(n, s), x| (n + 1, s + x));
     let mut out = Vec::new();
-    (&base).select(origid.and(creation_date).and(score).and(owner_user.select(uid.and(display_name).and(reputation))))
-        .drive(|p, (((id, cd), s), ((u, dn), rep))| {
+    (&base)
+        .select(origid.and(creation_date).and(score).and(owner_user.select(uid.and(display_name).and(reputation))))
+        .cross(&agg)
+        .drive(|(p, ()), ((((id, cd), s), ((u, dn), rep)), (n, ss))| {
             out.push(row(vec![
                 V::I(id),
                 ostr(title.get(p)),

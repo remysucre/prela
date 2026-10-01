@@ -2030,15 +2030,15 @@ fn q13734(db: &'static So) -> String {
         V::I(a[0]),
         avg(a[2], a[1]),
         avg(a[3], a[0]),
-        V::I(a[4]),
-        V::I(a[5]),
-        V::I(a[6]),
-        V::I(a[7]),
-        V::I(a[8]),
+        nullable(a[4], a[0]),
+        nullable(a[5], a[0]),
+        nullable(a[6], a[0]),
+        nullable(a[7], a[0]),
+        nullable(a[8], a[0]),
         V::I(authors),
         V::I(tags),
-        V::T(a[9]),
-        V::T(a[10]),
+        if a[0] == 0 { V::Null } else { V::T(a[9]) },
+        if a[0] == 0 { V::Null } else { V::T(a[10]) },
     ])
 }
 

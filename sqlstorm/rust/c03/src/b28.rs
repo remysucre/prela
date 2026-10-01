@@ -10,6 +10,7 @@ struct Wide {
     answers_n: i64,
     answers_sum: i64,
     q_answers: i64,
+    q_answers_n: i64,
     q_comments: i64,
     comment_sum: i64,
     fav_n: i64,
@@ -34,6 +35,7 @@ fn wide(db: &'static So) -> Vec<Wide> {
         answers_n: 0,
         answers_sum: 0,
         q_answers: 0,
+        q_answers_n: 0,
         q_comments: 0,
         comment_sum: 0,
         fav_n: 0,
@@ -68,6 +70,7 @@ fn wide(db: &'static So) -> Vec<Wide> {
             fav_n: a.fav_n + fc.is_some() as i64,
             fav_sum: a.fav_sum + fc.unwrap_or(0),
             q_answers: a.q_answers + if ti == 1 { ac.unwrap_or(0) } else { 0 },
+            q_answers_n: a.q_answers_n + (ti != 1 || ac.is_some()) as i64,
             q_comments: a.q_comments + if ti == 1 { c } else { 0 },
             ..a
         })
@@ -76,6 +79,9 @@ fn wide(db: &'static So) -> Vec<Wide> {
     out
 }
 
+// SELECT pt.Name AS PostType, COUNT(p.Id) AS PostCount, AVG(p.Score) AS AverageScore, AVG(p.ViewCount) AS AverageViews,
+//        SUM(CASE WHEN p.PostTypeId = 1 THEN p.AnswerCount ELSE 0 END) AS TotalAnswers, SUM(CASE WHEN p.PostTypeId = 1 THEN p.CommentCount ELSE 0 END) AS TotalComments
+// FROM Posts p JOIN PostTypes pt ON p.PostTypeId = pt.Id GROUP BY pt.Name ORDER BY PostCount DESC;
 fn q13903(db: &'static So) -> String {
     rows(wide(db).iter().map(|a| {
         row(vec![
@@ -83,7 +89,7 @@ fn q13903(db: &'static So) -> String {
             V::I(a.n),
             avg(a.score_sum, a.n),
             avg(a.views_sum, a.views_n),
-            V::I(a.q_answers),
+            nullable(a.q_answers, a.q_answers_n),
             V::I(a.q_comments),
         ])
     }))
@@ -345,54 +351,20 @@ fn q12493(db: &'static So) -> String {
     }))
 }
 
+// SELECT PH.PostHistoryTypeId, P.Title AS PostTitle, P.CreationDate AS PostCreationDate, U.DisplayName AS UserDisplayName, PH.CreationDate AS HistoryCreationDate, COUNT(*) AS ChangeCount
+// FROM PostHistory PH JOIN Posts P ON PH.PostId = P.Id JOIN Users U ON PH.UserId = U.Id WHERE PH.CreationDate >= cast('2024-10-01 12:34:56' as timestamp) - INTERVAL '1 month'
+// GROUP BY PH.PostHistoryTypeId, P.Title, P.CreationDate, U.DisplayName, PH.CreationDate ORDER BY ChangeCount DESC;
 fn q10232(db: &'static So) -> String {
-    let PostHistory { post_history_type_id, post, creation_date, user, .. } =
-        &db.post_history;
+    let PostHistory { post_history_type_id, post, creation_date, user, .. } = &db.post_history;
     let Post { title: pt, creation_date: pcd, .. } = &db.post;
-    let User { display_name, .. } = &db.user;
-
-    let cut = ts(2024, 9, 1, 12, 34, 56);
-    let mut all: Vec<(i64, Option<Str>, i64, Str, i64, i64)> = Vec::new();
-
-    db.post_history
-        .with(creation_date.ge(cut))
-        .group_by(
-            post_history_type_id
-                .and(post.select(pt))
-                .and(post.select(pcd))
-                .and(user.select(display_name))
-                .and(creation_date),
-        )
+    let g = db
+        .post_history
+        .with(creation_date.ge(ts(2024, 9, 1, 12, 34, 56)))
+        .group_by(post_history_type_id.and(post.select(pt).opt()).and(post.select(pcd)).and(user.select(&db.user.display_name)).and(creation_date))
         .select(creation_date)
-        .fold(0i64, |a, _| a + 1)
-        .drive(|((((t, ti), pc), dn), hc), n| {
-            all.push((t, Some(ti), pc, dn, hc, n))
-        });
-
-    db.post_history
-        .with(creation_date.ge(cut))
-        .minus(post.select(pt))
-        .group_by(
-            post_history_type_id
-                .and(post.select(pcd))
-                .and(user.select(display_name))
-                .and(creation_date),
-        )
-        .select(creation_date)
-        .fold(0i64, |a, _| a + 1)
-        .drive(|(((t, pc), dn), hc), n| all.push((t, None, pc, dn, hc, n)));
-
-    all.sort_by(|a, b| b.5.cmp(&a.5));
-    rows(all.iter().map(|(t, ti, pc, dn, hc, n)| {
-        row(vec![
-            V::I(*t),
-            ti.map(V::S).unwrap_or(V::Null),
-            V::T(*pc),
-            V::S(dn),
-            V::T(*hc),
-            V::I(*n),
-        ])
-    }))
+        .fold(0i64, |a, _| a + 1);
+    let v = top_n(drain(&g), |&(_, n)| std::cmp::Reverse(n), 0);
+    rows(v.into_iter().map(|(((((t, ti), pc), dn), hc), n)| row(vec![V::I(t), ostr(ti), V::T(pc), V::S(dn), V::T(hc), V::I(n)])))
 }
 
 pub const ENTRIES: &[harness::Entry] = &[

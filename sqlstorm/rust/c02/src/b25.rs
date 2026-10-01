@@ -1,4 +1,5 @@
 use harness::prelude::*;
+use crate::q::by_created;
 
 // COUNT(DISTINCT p.OwnerUserId) per post type name.
 fn distinct_owners(db: &'static So) -> Fold<Str, i64> {
@@ -14,12 +15,21 @@ fn q11239(db: &'static So) -> String {
     rows(v.into_iter().map(|(nm, (a, d))| row(vec![V::S(nm), V::I(a[0]), avg(a[3], a[2]), V::I(d.unwrap_or(0))])))
 }
 
-// 11911: SELECT pt.Name AS PostTypeName, COUNT(p.Id) AS TotalPosts, AVG(p.Score) AS AverageScore, COUNT(DISTINCT p.OwnerUserId) AS UniqueUsers
-//        FROM Posts p JOIN PostTypes pt ON p.PostTypeId = pt.Id GROUP BY pt.Name ORDER BY TotalPosts DESC;
-// 14915: the same, GROUP BY pt.Id, pt.Name (names are unique per id), with the last column named TotalUsers.
-fn count_avgscore_distinctusers(db: &'static So) -> String {
+// SELECT pt.Name AS PostTypeName, COUNT(p.Id) AS TotalPosts, AVG(p.Score) AS AverageScore, COUNT(DISTINCT p.OwnerUserId) AS UniqueUsers
+// FROM Posts p JOIN PostTypes pt ON p.PostTypeId = pt.Id GROUP BY pt.Name ORDER BY TotalPosts DESC;
+fn q11911(db: &'static So) -> String {
     let v = drain((&stats_by_type(db)).and((&distinct_owners(db)).opt()));
     rows(v.into_iter().map(|(nm, (a, d))| row(vec![V::S(nm), V::I(a[0]), avg(a[1], a[0]), V::I(d.unwrap_or(0))])))
+}
+
+// SELECT pt.Name AS PostType, COUNT(p.Id) AS TotalPosts, AVG(p.Score) AS AverageScore, COUNT(DISTINCT p.OwnerUserId) AS TotalUsers
+// FROM Posts p JOIN PostTypes pt ON p.PostTypeId = pt.Id GROUP BY pt.Id, pt.Name ORDER BY TotalPosts DESC;
+fn q14915(db: &'static So) -> String {
+    let Post { post_type, score, owner_user_id, .. } = &db.post;
+    let sc = db.post.group_by(post_type).select(score).fold([0i64; 2], |a, s| [a[0] + 1, a[1] + s]);
+    let d = db.post.group_by(post_type).select(owner_user_id).count_distinct();
+    let v = drain((&sc).and((&d).opt()));
+    rows(v.into_iter().map(|(t, (a, d))| row(vec![tname(db, t), V::I(a[0]), avg(a[1], a[0]), V::I(d.unwrap_or(0))])))
 }
 
 // SELECT pt.Name AS PostType, COUNT(p.Id) AS TotalPosts, AVG(p.Score) AS AverageScore, SUM(p.ViewCount) AS TotalViews, COUNT(DISTINCT p.OwnerUserId) AS UniqueUsers
@@ -141,9 +151,9 @@ fn q15356(db: &'static So) -> String {
 pub const ENTRIES: &[harness::Entry] = &[
     ("11239", q11239),
     ("17893", q17893),
-    ("11911", count_avgscore_distinctusers),
+    ("11911", q11911),
     ("10119", q10119),
-    ("14915", count_avgscore_distinctusers),
+    ("14915", q14915),
     ("12062", q12062),
     ("18750", q18750),
     ("12140", q12140),

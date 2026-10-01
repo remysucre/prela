@@ -161,6 +161,8 @@ fn type_stats(db: &'static So) -> Fold<Str, (i64, i64, i64, i64, i64)> {
         })
 }
 
+/// `SUM(TotalPosts) OVER ()` is one row over the grouped result, crossed with
+/// each group.
 fn q11469(db: &'static So) -> String {
     let stats = type_stats(db);
     let authors = db
@@ -168,9 +170,9 @@ fn q11469(db: &'static So) -> String {
         .group_by((&db.post.post_type).select(&db.post_type.name))
         .select(&db.post.owner_user_id)
         .count_distinct();
-    let total = (&stats).fold_flat(0i64, |a, s| a + s.0);
+    let total = whole(&stats).select(&stats).fold(0i64, |a, s: (i64, i64, i64, i64, i64)| a + s.0);
     let mut out = Vec::new();
-    (&stats).drive(|k, (n, s, pos, vn, vs)| {
+    (&stats).and((&authors).opt()).cross(&total).drive(|(k, ()), (((n, s, pos, vn, vs), au), total)| {
         out.push(row(vec![
             V::S(k),
             V::I(n),
@@ -178,8 +180,8 @@ fn q11469(db: &'static So) -> String {
             avg(s, n),
             nullable(vs, vn),
             avg(vs, n),
-            V::I(authors.get(k).unwrap_or(0)),
-            V::F(n as f64 / total as f64 * 100.0),
+            V::I(au.unwrap_or(0)),
+            if total == 0 { V::Null } else { V::F(n as f64 / total as f64 * 100.0) },
             V::F(pos as f64 / n as f64 * 100.0),
         ]))
     });
@@ -191,26 +193,25 @@ fn q14162(db: &'static So) -> String {
     let rk = whole(&db.user.id)
         .select((&db.user.display_name).and(&db.user.reputation))
         .window(rank, |(_, rep)| rep, desc);
+    let tu: HashIdx<(), (Str, i64)> = (&rk).filt(|(_, r)| r <= 10).map(|(x, _)| x).collect();
     let mut out = Vec::new();
-    (&stats).drive(|k, (n, s, _, vn, vs)| {
-        (&rk).filt(|(_, r)| r <= 10).drive(
-            |_, ((dn, rep), _)| {
-                out.push(row(vec![V::S(k), V::I(n), nullable(vs, vn), avg(s, n), V::S(dn), V::I(rep)]))
-            },
-        )
+    (&stats).cross(&tu).drive(|(k, ()), ((n, s, _, vn, vs), (dn, rep))| {
+        out.push(row(vec![V::S(k), V::I(n), nullable(vs, vn), avg(s, n), V::S(dn), V::I(rep)]))
     });
     rows(out)
 }
 
+/// `COUNT(*) OVER ()` over TopPosts: a fold of the ranked rows, keyed by the
+/// window's single partition, so it pairs with each row by `.and`.
 fn q14525(db: &'static So) -> String {
     let Post { score, creation_date, .. } = &db.post;
     let rk = whole(owned(db))
         .select(Ident::<Post>::new().and(score).and(creation_date))
         .window(rank, |((_, s), cd)| (s, cd), desc);
     let top = (&rk).filt(|(_, r)| r <= 100);
-    let n = (&top).fold_flat(0i64, |a, _| a + 1);
+    let n = (&top).fold(0i64, |a, _| a + 1);
     let mut out = Vec::new();
-    (&top).drive(|_, (((p, _), _), _)| {
+    (&top).and(&n).drive(|_, ((((p, _), _), _), n)| {
         let mut f = post_fields(
             db,
             p,

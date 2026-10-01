@@ -1,4 +1,5 @@
 use harness::prelude::*;
+use std::cmp::Reverse;
 
 fn leak_join(parts: impl IntoIterator<Item = Str>, sep: &str) -> Str {
     Box::leak(parts.into_iter().collect::<Vec<_>>().join(sep).into_boxed_str())
@@ -56,13 +57,13 @@ fn last_history(db: &'static So, types: [i64; 2]) -> DenseFold<Id<Post>, i64> {
 // Comments, Badges and Votes then cross: CommentCount counts a comment once
 // per badge and per vote.
 fn q21293(db: &'static So) -> String {
-    let Post { score, view_count, creation_date, tags_str, owner_user, .. } = &db.post;
+    let Post { score, view_count, creation_date, tags_str, owner_user, owner_user_id, .. } = &db.post;
     let closed = last_history(db, [10, 11]);
     let rk = db
         .post
         .with(creation_date.ge(year_ago()))
         .with(tags_str)
-        .group_by(owner_user)
+        .group_by(owner_user_id)
         .select(Ident::<Post>::new().and(score))
         .window(row_number, |(_, s)| s, desc);
     // each of the top five is joined to its comments, its owner's badges and
@@ -124,9 +125,8 @@ fn q21293(db: &'static So) -> String {
 // WHERE (mi.Score IS NOT NULL AND mi.Score > 0) OR (mi.TotalBounties IS NOT NULL AND mi.TotalBounties > 0)
 // GROUP BY ... ORDER BY mi.RankScore ASC, mi.ViewCount DESC LIMIT 100
 //
-// `string_to_array(Tags, '<>')` splits on a pair that never occurs — Tags is
-// `<a><b>`, whose only pair is `><` — so the lateral gives back the whole tag
-// string, one row, and STRING_AGG of it is `tags_str` itself.
+// The tag lateral neither filters nor reorders, so the hundred rows are picked
+// first and STRING_AGG is taken only for them.
 // The Votes join carries `v.VoteTypeId = 9` in the ON clause, so it is a
 // per-question bounty sum, not a cross product.
 fn q22123(db: &'static So) -> String {
@@ -153,23 +153,28 @@ fn q22123(db: &'static So) -> String {
         .with(creation_date.ge(year_ago()))
         .group_by(post_type_id)
         .select(
-            origid
+            Ident::<Post>::new()
                 .and(title.opt())
                 .and(creation_date)
                 .and(view_count.opt())
                 .and(score)
-                .and(owner_user.select(Ident::<User>::new().with((&pop).filt(|(n, b)| b > 0 || n > 5))).select(display_name.and(&pop)).opt())
-                .and(tags_str.opt()),
+                .and(owner_user.select(Ident::<User>::new().with((&pop).filt(|(n, b)| b > 0 || n > 5))).select(display_name.and(&pop)).opt()),
         )
-        .window(rank, |((((((_, _), cd), _), s), _), _)| (s, cd), cmp);
+        .window(rank, |(((((_, _), cd), _), s), _)| (s, cd), cmp);
     let mut v = Vec::new();
     (&rk)
-        .filt(|(((((((_, _), _), _), s), pu), _), _)| s > 0 || pu.map_or(false, |(_, (_, b))| b > 0))
-        .drive(|_, (((((((id, t), cd), w), s), pu), tags), r)| v.push((r, w, id, t, cd, s, pu, tags)));
+        .filt(|((((((_, _), _), _), s), pu), _)| s > 0 || pu.map_or(false, |(_, (_, b))| b > 0))
+        .drive(|_, ((((((p, t), cd), w), s), pu), r)| v.push((r, w, p, t, cd, s, pu)));
     v.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| desc_nulls_last(&a.1, &b.1)));
-    rows(v.iter().take(100).map(|&(r, w, id, t, cd, s, pu, tags)| {
+    v.truncate(100);
+    let tp: MatSet<Id<Post>> = rel(v.iter().map(|x| x.2).collect()).map(|p| p).collect();
+    let tags = (&tp)
+        .group_by(Ident::<Post>::new())
+        .select(tags_str.flat_map(|t: Str| t.split("<>")))
+        .buf_fold(|ts| leak_join(ts.iter().copied(), ", "));
+    rows(v.iter().map(|&(r, w, p, t, cd, s, pu)| {
         row(vec![
-            V::I(id),
+            V::I(origid.get(p).unwrap()),
             ostr(t),
             V::I(((now() - cd) as f64 / 1e6 / 3600.0).round() as i64),
             oint(w),
@@ -183,7 +188,7 @@ fn q22123(db: &'static So) -> String {
                 6..=15 => "Medium",
                 _ => "High",
             }),
-            ostr(tags),
+            ostr(tags.get(p)),
         ])
     }))
 }
@@ -213,11 +218,11 @@ fn q22123(db: &'static So) -> String {
 // ORDER BY UPV.UpVotes DESC, U.Reputation DESC LIMIT 50
 //
 // `PW.PostId = U.Id` is another user-id-to-post-id join, so it goes through
-// `origid`. Votes.UserId is NULL for all but a handful of rows in this dump,
-// so every one of the fifty rows has UpVotes 0 and no matching post: the
-// ordering is decided entirely by Reputation.
+// `origid`. The ORDER BY ... LIMIT reads only UserVoteStats and Users, and
+// both LEFT JOINs match at most once, so the fifty users are picked first.
 fn q22247(db: &'static So) -> String {
     let User { origid, display_name, reputation, location, about_me, .. } = &db.user;
+    let Post { post_type_id, title, view_count, creation_date, tags_str, .. } = &db.post;
     // Votes and Badges both hang off u.Id, so they cross: the vote sums are
     // over the joined rows
     let votes = db
@@ -225,6 +230,13 @@ fn q22247(db: &'static So) -> String {
         .group_by(Ident::<User>::new())
         .select(votes_by(db).select(&db.vote.vote_type_id).opt().and(badges_of(db).opt()))
         .fold((0i64, 0i64), |(u, d), (t, _)| (u + (t == Some(2)) as i64, d + (t == Some(3)) as i64));
+    let mut cand = Vec::new();
+    db.user
+        .select(reputation.and(&votes).and(location.opt()).and(about_me.opt()))
+        .filt(|(((_, _), loc), about)| loc.is_some() || about.is_some())
+        .drive(|u, (((rep, (up, _)), _), _)| cand.push((u, up, rep)));
+    let top = top_n(cand, |&(_, up, rep)| (Reverse(up), Reverse(rep)), 50);
+    let tu: MatSet<Id<User>> = rel(top.iter().map(|x| x.0).collect()).map(|u| u).collect();
     let latest: HashIdx<Id<Post>, Id<PostHistory>> = db
         .post_history
         .with((&db.post_history.post_history_type_id).is_in([10, 11]))
@@ -234,54 +246,50 @@ fn q22247(db: &'static So) -> String {
         .filt(|(_, n)| n <= 1)
         .map(|((h, _), _)| h)
         .collect();
-    let avgc = (&db.comment.post).inv().select(&db.comment.score).dense_fold_outer(
-        db.post.id.n,
-        (0i64, 0i64),
-        |(n, s), x| (n + 1, s + x),
-    );
     let pidx: HashIdx<i64, Id<Post>> = (&db.post.origid).inv().collect();
-    let recent = origid.select(&pidx).with((&db.post.creation_date).ge(date(2023, 10, 1)));
-    let mut v = Vec::new();
-    db.user
-        .select(
-            display_name
-                .and(reputation)
-                .and(&votes)
-                .and(location.opt())
-                .and(about_me.opt())
-                .and(recent.opt()),
-        )
-        .filt(|(((((_, _), _), loc), about), _)| loc.is_some() || about.is_some())
-        .drive(|_, (((((dn, rep), (u2, d3)), _), _), post)| v.push((u2, rep, dn, d3, post)));
-    v.sort_by(|a, b| (b.0, b.1).cmp(&(a.0, a.1)));
-    rows(v.iter().take(50).map(|&(up, rep, dn, down, post)| {
-        let mut f = vec![V::S(dn), V::I(rep)];
-        match post {
-            None => f.extend([V::I(-1), V::S("No Recent Post"), V::S("N/A"), V::I(up), V::I(down),
-                              V::Null, V::Null, V::Null]),
-            Some(p) => {
-                let ph = latest.get(p);
-                f.extend([
-                    V::I(db.post.origid.get(p).unwrap()),
-                    V::S(db.post.title.get(p).unwrap_or("No Recent Post")),
-                    V::S(ph.and_then(|h| db.post_history.comment.get(h)).unwrap_or("N/A")),
-                    V::I(up),
-                    V::I(down),
-                ]);
-                if db.post.post_type_id.get(p) == Some(1) {
-                    let (n, s) = avgc.get(p).unwrap();
-                    f.extend([
-                        oint(db.post.view_count.get(p)),
-                        V::F(if n == 0 { 0.0 } else { (s as f64 / n as f64 * 100.0).round() / 100.0 }),
-                        ostr(db.post.tags_str.get(p)),
-                    ])
-                } else {
-                    f.extend([V::Null, V::Null, V::Null])
+    let recent = || origid.select(&pidx).with(creation_date.ge(date(2023, 10, 1)));
+    let pw_posts: MatSet<Id<Post>> = (&tu).select(recent()).collect();
+    let ps = (&pw_posts)
+        .with(post_type_id.eq(1))
+        .group_by(Ident::<Post>::new())
+        .select(comments_of(db).select(&db.comment.score).opt().and(tags_str.flat_map(|t: Str| t.split(',')).opt()))
+        .buf_fold(|xs| {
+            let (n, s) = xs.iter().fold((0i64, 0i64), |(n, s), &(c, _)| (n + c.is_some() as i64, s + c.unwrap_or(0)));
+            let mut ts: Vec<Str> = xs.iter().filter_map(|&(_, t)| t).collect();
+            ts.sort_unstable();
+            ts.dedup();
+            (n, s, if ts.is_empty() { None } else { Some(leak_join(ts, ", ")) })
+        });
+    let pw = recent().select(
+        Ident::<Post>::new()
+            .and(title.opt())
+            .and(latest.select(&db.post_history.comment).opt())
+            .and(view_count.opt().and(&ps).opt()),
+    );
+    let mut out = Vec::new();
+    (&tu).select(display_name.and(reputation).and(&votes).and(pw.opt())).drive(
+        |_, (((dn, rep), (up, down)), pw)| {
+            let mut f = vec![V::S(dn), V::I(rep)];
+            match pw {
+                None => f.extend([V::I(-1), V::S("No Recent Post"), V::S("N/A"), V::I(up), V::I(down),
+                                  V::Null, V::Null, V::Null]),
+                Some((((p, t), cr), st)) => {
+                    f.extend(post_fields(db, p, &["id"]));
+                    f.extend([V::S(t.unwrap_or("No Recent Post")), V::S(cr.unwrap_or("N/A")), V::I(up), V::I(down)]);
+                    match st {
+                        None => f.extend([V::Null, V::Null, V::Null]),
+                        Some((w, (n, s, tags))) => f.extend([
+                            oint(w),
+                            V::F(if n == 0 { 0.0 } else { (s as f64 / n as f64 * 100.0).round() / 100.0 }),
+                            ostr(tags),
+                        ]),
+                    }
                 }
             }
-        }
-        row(f)
-    }))
+            out.push(row(f))
+        },
+    );
+    rows(out)
 }
 
 // WITH RankedPosts AS (
@@ -446,9 +454,8 @@ fn q20479(db: &'static So) -> String {
 //                  WHERE p.OwnerUserId = tu.UserId AND p.PostTypeId = 1), 'No Tags')
 // FROM TopUsers tu WHERE tu.QuestionCount > 5 ORDER BY tu.TotalScore DESC, tu.QuestionCount DESC
 //
-// The correlated aggregate splits Tags on ',', which never occurs, so it is
-// the distinct whole tag strings of the user's questions — over all of them,
-// not just the recent ones the rank is built from.
+// The correlated aggregate is over all the user's questions, not just the
+// recent ones the rank is built from.
 // rewrites/2020: STRING_AGG(DISTINCT ...) has no ORDER BY, so DuckDB's answer
 // moved with the thread count.
 fn q2020(db: &'static So) -> String {
@@ -465,9 +472,8 @@ fn q2020(db: &'static So) -> String {
     let tags = db
         .post
         .with(post_type_id.eq(1))
-        .with(tags_str)
         .group_by(owner_user)
-        .select(tags_str)
+        .select(tags_str.flat_map(|t: Str| t.split(',')))
         .buf_fold(|mut xs| {
             xs.sort_unstable();
             xs.dedup();

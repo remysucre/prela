@@ -73,10 +73,24 @@ fn q19100(db: &'static So) -> String {
 }
 
 fn q12701(db: &'static So) -> String {
+    let Post { post_type_id, tags_str, .. } = &db.post;
+    let pieces: MatSet<(Id<Post>, Str)> = db.post.select(Ident::<Post>::new().and(tags_str.flat_map(|t: Str| t.split("<>")))).collect();
+    let pieces_of: HashIdx<Id<Post>, Str> = (&pieces).map(|(p, _)| p).inv().select((&pieces).map(|(_, s)| s)).collect();
+    let by_name: HashIdx<Str, Id<Tag>> = (&db.tag.tag_name).inv().collect();
+    let agg = db
+        .post
+        .with(post_type_id.eq(1))
+        .group_by(Ident::<Post>::new())
+        .select(comments_of(db).opt().and(votes_of(db).opt()).and((&pieces_of).select((&by_name).opt()).opt()))
+        .buf_fold(|rs| {
+            let names: Vec<Str> = rs.iter().filter_map(|&(_, t)| t.flatten()).map(|t| db.tag.tag_name.get(t).unwrap()).collect();
+            let joined: Option<Str> = (!names.is_empty()).then(|| &*Box::leak(names.join(", ").into_boxed_str()));
+            (rs.iter().filter(|((c, _), _)| c.is_some()).count() as i64, rs.iter().filter(|((_, v), _)| v.is_some()).count() as i64, joined)
+        });
     let mut out = Vec::new();
-    engagement(db, db.post.with((&db.post.post_type_id).eq(1))).drive(|p, (c, v, _, _)| {
+    (&agg).drive(|p, (c, v, tags)| {
         let mut f = post_fields(db, p, &["id", "title", "created", "score", "views", "rep"]);
-        f.extend([V::I(c), V::I(v), V::Null]);
+        f.extend([V::I(c), V::I(v), ostr(tags)]);
         out.push(row(f))
     });
     rows(out)

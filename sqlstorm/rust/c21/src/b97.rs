@@ -1163,8 +1163,9 @@ fn q13619(db: &'static So) -> String {
 // WHERE
 // p.CreationDate >= '2023-01-01'
 // ORDER BY
-// p.CreationDate DESC
+// p.CreationDate DESC, p.Id, ph.Id
 // LIMIT 100;
+// rewrites/12544.sql: the ORDER BY gains p.Id, ph.Id as a tiebreak.
 fn q12544(db: &'static So) -> String {
     let Post { creation_date, .. } = &db.post;
     let mut v = Vec::new();

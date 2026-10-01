@@ -8,40 +8,45 @@ fn now() -> i64 {
     ts(2024, 10, 1, 12, 34, 56)
 }
 
-// LEFT JOIN unnest(string_to_array(p.Tags, ',')) ... ON TRUE. No Tags value in
-// this corpus contains a comma, so the split yields exactly one element, the
-// whole tag string, and the lateral contributes one row per post — NULL where
-// Tags is. So it neither multiplies nor filters, and `tags_str` IS t.TagName.
 fn q11653(db: &'static So) -> String {
     let Post { creation_date, owner_user, tags_str, .. } = &db.post;
-    let base = db.post.with(owner_user);
-    let e = engagement(db, &base);
+    let elems = tags_str.flat_map(|t: Str| t.split(','));
     let mut v = Vec::new();
-    (&base).select(creation_date).drive(|p, cd| v.push((cd, p)));
+    db.post
+        .with(owner_user)
+        .group_by(Ident::<Post>::new().and(creation_date).and(elems.opt()))
+        .select(comments_of(db).opt().and(votes_of(db).opt()))
+        .fold((0i64, 0i64), |(c, n), (ci, vi)| (c + ci.is_some() as i64, n + vi.is_some() as i64))
+        .drive(|((p, cd), t), (c, n)| v.push((cd, p, t, c, n)));
     v.sort_by(|a, b| b.0.cmp(&a.0));
-    rows(v.iter().take(100).map(|&(_, p)| {
-        let (c, vt, _, _) = e.get(p).unwrap();
+    rows(v.iter().take(100).map(|&(_, p, t, c, n)| {
         let mut f = post_fields(db, p, &["id", "title", "created", "score", "views"]);
-        f.extend([V::I(c), V::I(vt)]);
+        f.extend([V::I(c), V::I(n)]);
         f.extend(post_fields(db, p, &["owner", "rep"]));
-        f.push(ostr(tags_str.get(p)));
+        f.push(ostr(t));
         row(f)
     }))
 }
 
 fn q11554(db: &'static So) -> String {
     let Post { post_type_id, creation_date, owner_user, tags_str, .. } = &db.post;
-    let base = db.post.with(post_type_id.eq(1)).with(owner_user);
-    let e = engagement(db, &base);
+    let elems = tags_str.flat_map(|t: Str| t.split(','));
     let mut v = Vec::new();
-    (&base).select(creation_date).drive(|p, cd| v.push((cd, p)));
+    db.post
+        .with(post_type_id.eq(1))
+        .with(owner_user)
+        .group_by(Ident::<Post>::new().and(creation_date).and(elems.opt()))
+        .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()))
+        .fold((0i64, 0i64, 0i64), |(c, up, down), (ci, vt)| {
+            (c + ci.is_some() as i64, up + (vt == Some(2)) as i64, down + (vt == Some(3)) as i64)
+        })
+        .drive(|((p, cd), t), (c, up, down)| v.push((cd, p, t, c, up, down)));
     v.sort_by(|a, b| b.0.cmp(&a.0));
-    rows(v.iter().take(100).map(|&(_, p)| {
-        let (c, _, up, down) = e.get(p).unwrap();
+    rows(v.iter().take(100).map(|&(_, p, t, c, up, down)| {
         let mut f = post_fields(db, p, &["id", "title", "created", "owner"]);
         f.extend([V::I(c), V::I(up), V::I(down)]);
         f.extend(post_fields(db, p, &["views", "score"]));
-        f.push(ostr(tags_str.get(p)));
+        f.push(ostr(t));
         row(f)
     }))
 }
@@ -76,7 +81,7 @@ fn q5603(db: &'static So) -> String {
 // COUNT(DISTINCT ...) alongside ordinary aggregates on the same group: two
 // folds over the same key, joined by probing one from the other.
 fn q13456(db: &'static So) -> String {
-    let Post { post_type, score, owner_user, creation_date, .. } = &db.post;
+    let Post { post_type, score, owner_user_id, creation_date, .. } = &db.post;
     let cutoff = add_years(now(), -1);
     let main = db
         .post
@@ -88,7 +93,7 @@ fn q13456(db: &'static So) -> String {
         .post
         .with(creation_date.ge(cutoff))
         .group_by(post_type.select(&db.post_type.name))
-        .select(owner_user)
+        .select(owner_user_id)
         .count_distinct();
     let mut out = Vec::new();
     main.and((&uniq).opt()).drive(|k, ((n, s), u)| {
@@ -98,7 +103,7 @@ fn q13456(db: &'static So) -> String {
 }
 
 fn q12038(db: &'static So) -> String {
-    let Post { post_type, score, view_count, answer_count, creation_date, owner_user, .. } =
+    let Post { post_type, score, view_count, answer_count, creation_date, owner_user_id, .. } =
         &db.post;
     let main = db
         .post
@@ -127,7 +132,7 @@ fn q12038(db: &'static So) -> String {
     let uniq = db
         .post
         .group_by(post_type.select(&db.post_type.name))
-        .select(owner_user)
+        .select(owner_user_id)
         .count_distinct();
     let mut out = Vec::new();
     main.and((&uniq).opt()).drive(
@@ -195,7 +200,7 @@ fn q10616(db: &'static So) -> String {
 fn q7289(db: &'static So) -> String {
     let User { display_name, reputation, creation_date, .. } = &db.user;
     let pv = posts_of(db).select(
-        (&db.post.post_type_id)
+        ptype_name(db)
             .and(votes_of(db).select((&db.vote.bounty_amount).opt()).opt()),
     );
     let nb = badges_per_user(db);
@@ -207,8 +212,8 @@ fn q7289(db: &'static So) -> String {
             let bounty = p.and_then(|(_, v)| v).flatten();
             (
                 n + p.is_some() as i64,
-                q + p.map_or(false, |(t, _)| t == 1) as i64,
-                a + p.map_or(false, |(t, _)| t == 2) as i64,
+                q + p.map_or(false, |(t, _)| t == "Question") as i64,
+                a + p.map_or(false, |(t, _)| t == "Answer") as i64,
                 bs + bounty.unwrap_or(0),
                 bn + bounty.is_some() as i64,
             )

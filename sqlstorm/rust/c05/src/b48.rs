@@ -242,12 +242,12 @@ fn q29079(db: &'static So) -> String {
         .fold((0i64, 0i64, 0i64), |(n, u, s), (((_, x), sc), _)| (n + 1, u + x, s + sc));
     let by_name: HashIdx<Str, Id<Tag>> = (&db.tag.tag_name).inv().collect();
     let high = db.user.with((&db.user.reputation).gt(1000)).fold_flat(0i64, |a, _| a + 1);
-    type R = (Option<Str>, (i64, i64, i64));
-    let av = rel(drain(&agg));
-    let td = (&av).select(Same::<R>::new().and(Same::<R>::new().flat_map(|(tags, _): R| tags.into_iter().flat_map(|t| t.split('>'))).select(&by_name)));
-    rows(drain(td).into_iter().map(|(_, ((_, (n, u, s)), t))| {
-        row(vec![V::Owned(format!("<{}>", db.tag.tag_name.get(t).unwrap())), V::I(n), V::I(u), avg(s, n), V::I(high)])
-    }))
+    let td = (&agg).and(Same::<Option<Str>>::new().flat_map(|tags: Option<Str>| tags.into_iter().flat_map(|t| t.split('>'))).select(&by_name));
+    let mut out = Vec::new();
+    td.drive(|_, ((n, u, s), t)| {
+        out.push(row(vec![V::Owned(format!("<{}>", db.tag.tag_name.get(t).unwrap())), V::I(n), V::I(u), avg(s, n), V::I(high)]))
+    });
+    rows(out)
 }
 
 fn q2520(db: &'static So) -> String {
@@ -348,11 +348,11 @@ fn q28706(db: &'static So) -> String {
     (&rn)
         .filt(|(_, n)| n == 1)
         .map(|((p, _), _)| p)
-        .select(Ident::<Post>::new().and(&tags_by_post).and(owner_user.select(display_name).select(&tops_by_name)))
-        .drive(|_, ((p, t), (dn, n, s))| {
+        .select(Ident::<Post>::new().and((&tags_by_post).select(Ident::<Tag>::new().and(&tag_stats))).and(owner_user.select(display_name).select(&tops_by_name)))
+        .drive(|_, ((p, (t, (tn, _))), (dn, n, s))| {
             let mut f = post_fields(db, p, &["id", "title", "body", "created", "owner"]);
             f.push(oint(tags_str.get(p).map(|x| x.matches('>').count() as i64)));
-            f.extend([V::S(db.tag.tag_name.get(t).unwrap()), V::I(tag_stats.get(t).unwrap().0)]);
+            f.extend([V::S(db.tag.tag_name.get(t).unwrap()), V::I(tn)]);
             f.extend([V::S(dn), V::I(n), V::I(s)]);
             out.push(row(f))
         });
@@ -376,16 +376,14 @@ fn q7784(db: &'static So) -> String {
         .fold((0i64, 0i64, 0i64, 0i64), |(n, s, vn, vs), (sc, v)| (n + 1, s + sc, vn + v.is_some() as i64, vs + v.unwrap_or(0)));
     let history = db.post_history.with(hd.ge(add_months(ts(2024, 10, 1, 12, 34, 56), -6)));
     let mut out = Vec::new();
-    (&stats).filt(|a| a.0 > 0).drive(|name, (n, s, vn, vs)| {
-        (&history).select(post).drive(|h, p| {
-            let mut f = vec![V::S(name), V::I(n), avg(s, n), avg(vs, vn)];
-            f.extend(post_fields(db, p, &["id", "title", "created"]));
-            f.push(V::T(hd.get(h).unwrap()));
-            f.push(ostr(owner_display_name.get(p)));
-            f.extend(post_fields(db, p, &["score"]));
-            f.extend([ostr(comment.get(h)), ostr(text.get(h))]);
-            out.push(row(f))
-        })
+    (&stats).filt(|a| a.0 > 0).cross((&history).select(post)).drive(|(name, h), ((n, s, vn, vs), p)| {
+        let mut f = vec![V::S(name), V::I(n), avg(s, n), avg(vs, vn)];
+        f.extend(post_fields(db, p, &["id", "title", "created"]));
+        f.push(V::T(hd.get(h).unwrap()));
+        f.push(ostr(owner_display_name.get(p)));
+        f.extend(post_fields(db, p, &["score"]));
+        f.extend([ostr(comment.get(h)), ostr(text.get(h))]);
+        out.push(row(f))
     });
     rows(out)
 }

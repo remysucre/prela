@@ -116,8 +116,8 @@ fn q16071(db: &'static So) -> String {
         .fold((0i64, 0i64, 0i64), |(c, bn, bs), (x, y, z)| (c + x, bn + y, bs + z))
         .drive(|dn, (c, bn, bs)| v.push((dn, c, bn, bs)));
 
-    v.sort_by(|a, b| b.1.cmp(&a.1).then(b.3.cmp(&a.3)));
-    rows(v.iter().take(10).map(|(dn, c, bn, bs)| {
+    let v = top_n(v, |&(_, c, bn, bs)| (std::cmp::Reverse(c), bn == 0, std::cmp::Reverse(bs)), 10);
+    rows(v.iter().map(|(dn, c, bn, bs)| {
         row(vec![V::S(dn), V::I(*c), nullable(*bs, *bn)])
     }))
 }
@@ -250,36 +250,17 @@ fn q15743(db: &'static So) -> String {
     }))
 }
 
-/// `GROUP BY u.DisplayName, p.Title` over every post type, so the answers —
-/// which have no Title — form SQL's one NULL group per user. Absence has no
-/// group in prela, so the untitled posts are folded in a second pass.
 fn q18045(db: &'static So) -> String {
     let Post { creation_date, title: pt, owner_user, .. } = &db.post;
     let User { display_name, .. } = &db.user;
-    let since = date(2023, 1, 1);
-
-    let cc = comments_per_post(db);
-    let mut v: Vec<(Str, Option<Str>, i64)> = Vec::new();
-
-    db.post
-        .with(creation_date.ge(since))
-        .group_by(owner_user.select(display_name).and(pt))
-        .select(&cc)
-        .fold(0i64, |a, x| a + x)
-        .drive(|(dn, ti), n| v.push((dn, Some(ti), n)));
-
-    db.post
-        .with(creation_date.ge(since))
-        .minus(pt)
-        .group_by(owner_user.select(display_name))
-        .select(&cc)
-        .fold(0i64, |a, x| a + x)
-        .drive(|dn, n| v.push((dn, None, n)));
-
-    v.sort_by(|a, b| b.2.cmp(&a.2));
-    rows(v.iter().take(10).map(|(dn, ti, n)| {
-        row(vec![V::S(dn), ostr(*ti), V::I(*n)])
-    }))
+    let g = db
+        .post
+        .with(creation_date.ge(date(2023, 1, 1)))
+        .group_by(owner_user.select(display_name).and(pt.opt()))
+        .select(comments_of(db).opt())
+        .fold(0i64, |a, c| a + c.is_some() as i64);
+    let v = top_n(drain(&g), |&(_, n)| std::cmp::Reverse(n), 10);
+    rows(v.into_iter().map(|((dn, ti), n)| row(vec![V::S(dn), ostr(ti), V::I(n)])))
 }
 
 pub const ENTRIES: &[harness::Entry] = &[

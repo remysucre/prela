@@ -290,9 +290,9 @@ fn self_votes(db: &'static So) -> HashIdx<Id<Post>, Id<Vote>> {
 // ViewCount DESC
 // LIMIT 100;
 fn q13850(db: &'static So) -> String {
-    let bf = db.badge.group_by(&db.badge.user).fold(0i64, |a, _| a + 1);
+    let bf = db.badge.group_by(&db.badge.user_id).fold(0i64, |a, _| a + 1);
     let mut v = Vec::new();
-    questions_only(db).select(Ident::<Post>::new().and(comments_per_post(db)).and((&db.post.owner_user).select(&bf).opt()).and(votes_per_post(db))).drive(|_, x| v.push(x));
+    questions_only(db).select(Ident::<Post>::new().and(comments_per_post(db)).and((&db.post.owner_user_id).select(&bf).opt()).and(votes_per_post(db))).drive(|_, x| v.push(x));
     out(v, |&(((p, _), _), _)| views_desc(db, p), 100, |&(((p, c), b), x)| {
         let mut f = post_fields(db, p, &["id", "title", "created", "views", "score", "answers"]);
         f.extend([V::I(c), V::I(b.unwrap_or(0)), V::I(x)]);
@@ -577,11 +577,11 @@ fn q13861(db: &'static So) -> String {
 // ORDER BY
 // NumberOfPosts DESC;
 fn q13867(db: &'static So) -> String {
-    let bf = db.badge.group_by(&db.badge.user).fold(0i64, |a, _| a + 1);
+    let bf = db.badge.group_by(&db.badge.user_id).fold(0i64, |a, _| a + 1);
     let f = by_key(
         db.post.iq(),
         name(db),
-        (&db.post.view_count).opt().and(votes_per_post(db)).and((&db.post.owner_user).select(&bf).opt()).and(comments_per_post(db)),
+        (&db.post.view_count).opt().and(votes_per_post(db)).and((&db.post.owner_user_id).select(&bf).opt()).and(comments_per_post(db)),
         [0i64; 6],
         |a, (((w, x), b), c)| [a[0] + 1, a[1] + w.is_some() as i64, a[2] + w.unwrap_or(0), a[3] + x, a[4] + b.unwrap_or(0), a[5] + c],
     );
@@ -1133,11 +1133,11 @@ fn q13923(db: &'static So) -> String {
     let umin = db.user.select(&db.user.origid).fold_flat(i64::MAX, |m, x| m.min(x));
     let User { up_votes, down_votes, .. } = &db.user;
     let us = g(db).select(up_votes.and(down_votes).and(badges_of(db).opt())).fold([0i64; 3], |a, ((u, d), b)| [a[0] + b.is_some() as i64, a[1] + u, a[2] + d]);
-    let one_u = rel(drain(db.user.with((&db.user.origid).eq(umin)).select(&us)));
+    let mu: HashIdx<(), Id<User>> = db.user.with((&db.user.origid).eq(umin)).map(|_| ()).inv().collect();
     let mut v = Vec::new();
-    (&pt).cross(&one_u).drive(|(t, _), (a, (_, ua))| v.push((t, a, ua)));
+    (&pt).and(Ident::<PostType>::new().map(|_| ()).select(&mu).select(&us).opt()).drive(|t, (a, ua)| v.push((t, a, ua)));
     rows(v.iter().map(|&(t, a, ua)| {
-        row(vec![V::S(db.post_type.name.get(t).unwrap()), V::I(a[0]), avg(a[1], a[0]), avg(a[3], a[2]), avg(a[4], a[0]), avg(a[5], a[0]), V::I(ua[1]), V::I(ua[2]), V::I(ua[0])])
+        row(vec![V::S(db.post_type.name.get(t).unwrap()), V::I(a[0]), avg(a[1], a[0]), avg(a[3], a[2]), avg(a[4], a[0]), avg(a[5], a[0]), V::I(ua.map_or(0, |x| x[1])), V::I(ua.map_or(0, |x| x[2])), oint(ua.map(|x| x[0]))])
     }))
 }
 
@@ -2214,9 +2214,9 @@ fn q14007(db: &'static So) -> String {
 // PS.Score DESC, PS.ViewCount DESC
 // LIMIT 100;
 fn q14015(db: &'static So) -> String {
-    let bu = badges_per_user(db);
+    let bu = db.badge.group_by(&db.badge.user_id).fold(0i64, |a, _| a + 1);
     let mut v = Vec::new();
-    stats_fold(db, db.post.iq(), Ident::<Post>::new(), "cv", &[]).and((&db.post.owner_user).select(&bu).opt()).drive(|p, (s, b)| v.push((p, s, b)));
+    stats_fold(db, db.post.iq(), Ident::<Post>::new(), "cv", &[]).and((&db.post.owner_user_id).select(&bu).opt()).drive(|p, (s, b)| v.push((p, s, b)));
     out(v, |&(p, _, _)| score_views(db, p), 100, |&(p, s, b)| {
         let mut f = post_fields(db, p, &["id", "title", "created", "views", "score", "rep"]);
         f.extend([V::I(s.cx), V::I(s.vx), V::I(b.unwrap_or(0))]);

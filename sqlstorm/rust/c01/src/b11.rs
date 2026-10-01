@@ -3,7 +3,7 @@ use harness::prelude::*;
 struct QRow {
     pid: Id<Post>,
     score: i64,
-    views: i64,
+    views: Option<i64>,
     created: i64,
     body: Str,
     display_name: Str,
@@ -19,7 +19,7 @@ fn questions(db: &'static So) -> Vec<QRow> {
         .with(post_type_id.eq(1))
         .select(
             score
-                .and(view_count)
+                .and(view_count.opt())
                 .and(creation_date)
                 .and(body)
                 .and(owner_user.select(display_name)),
@@ -72,7 +72,7 @@ fn q16233(db: &'static So) -> String {
             V::S(r.display_name),
             ostr(title.get(r.pid)),
             V::T(r.created),
-            V::I(r.views),
+            oint(r.views),
             oint(answer_count.get(r.pid)),
             V::I(r.score),
         ])
@@ -158,7 +158,7 @@ fn q15585(db: &'static So) -> String {
             ostr(title.get(r.pid)),
             V::T(r.created),
             V::S(r.display_name),
-            V::I(r.views),
+            oint(r.views),
             oint(answer_count.get(r.pid)),
         ])
     }))
@@ -172,7 +172,7 @@ fn q15060(db: &'static So) -> String {
             V::T(r.created),
             V::S(r.display_name),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
             oint(answer_count.get(r.pid)),
         ])
     }))

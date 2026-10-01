@@ -1,4 +1,5 @@
 use harness::prelude::*;
+use crate::q::{type_id_aggs, by_created};
 
 struct TRow {
     pid: Id<Post>,
@@ -61,7 +62,7 @@ fn excerpt_tag_posts(db: &'static So) -> String {
     let Tag { excerpt_post, tag_name, .. } = &db.tag;
     let User { display_name, .. } = &db.user;
 
-    let mut v: Vec<(Id<Post>, i64, i64, i64, Str, Str)> = Vec::new();
+    let mut v: Vec<(Id<Post>, i64, i64, Option<i64>, Str, Str)> = Vec::new();
     db.tag
         .with(excerpt_post.select(post_type_id).eq(1))
         .select(
@@ -69,7 +70,7 @@ fn excerpt_tag_posts(db: &'static So) -> String {
                 .and(excerpt_post.select(
                     creation_date
                         .and(score)
-                        .and(view_count)
+                        .and(view_count.opt())
                         .and(owner_user.select(display_name)),
                 ))
                 .and(tag_name),
@@ -84,7 +85,7 @@ fn excerpt_tag_posts(db: &'static So) -> String {
             V::S(dn),
             V::T(*created),
             V::I(*sc),
-            V::I(*views),
+            oint(*views),
             V::S(tn),
         ])
     }))
@@ -121,7 +122,7 @@ fn q18983(db: &'static So) -> String {
             V::T(r.created),
             V::S(r.display_name),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
             V::I(cc.get(r.pid).unwrap()),
         ])
     }))
@@ -137,7 +138,7 @@ fn q19323(db: &'static So) -> String {
             V::S(r.display_name),
             V::T(r.created),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
             oint(ac.get(r.pid)),
         ])
     }))
@@ -154,15 +155,8 @@ fn q11453(db: &'static So) -> String {
 }
 
 fn q12137(db: &'static So) -> String {
-    rows(by_count(db).iter().map(|a| {
-        row(vec![
-            V::I(a.type_id),
-            V::S(a.name),
-            V::I(a.n),
-            avg(a.score_sum, a.n),
-            nullable(a.views_sum, a.views_n),
-        ])
-    }))
+    let id = &db.post_type.origid;
+    rows(type_id_aggs(db).into_iter().map(|(t, a)| row(vec![V::I(id.get(t).unwrap()), tname(db, t), V::I(a[0]), avg(a[1], a[0]), nullable(a[3], a[2])])))
 }
 
 fn q11783(db: &'static So) -> String {
@@ -217,7 +211,7 @@ fn q15013(db: &'static So) -> String {
             V::S(r.display_name),
             V::T(r.created),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
             oint(answer_count.get(r.pid)),
             V::I(comment_count.get(r.pid).unwrap()),
         ])

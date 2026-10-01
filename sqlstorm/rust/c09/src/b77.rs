@@ -1,3 +1,4 @@
+use crate::q::{Question, by_created, by_score, by_views};
 use harness::prelude::*;
 
 // Seventy-three spellings of three queries. Every one is
@@ -13,392 +14,385 @@ use harness::prelude::*;
 // join is written `JOIN` or `INNER JOIN`. The comment over each one is its
 // select list and its ORDER BY. All three cuts are clean: rows 10 and 11
 // differ in the sort column, so no rewrite is needed.
-fn top(db: &'static So, mut v: Vec<Question>, n: usize, cols: &[&str]) -> String {
-    v.truncate(n);
+fn top(db: &'static So, v: Vec<Question>, cols: &[&str]) -> String {
     rows(v.iter().map(|q| row(post_fields(db, q.pid, cols))))
 }
 
-fn newest(db: &'static So, n: usize, cols: &[&str]) -> String {
-    let mut v = questions(db);
-    v.sort_by(|a, b| b.created.cmp(&a.created));
-    top(db, v, n, cols)
+fn newest(db: &'static So, cols: &[&str]) -> String {
+    top(db, by_created(db), cols)
 }
 
-fn best(db: &'static So, n: usize, cols: &[&str]) -> String {
-    let mut v = questions(db);
-    v.sort_by(|a, b| b.score.cmp(&a.score));
-    top(db, v, n, cols)
+fn best(db: &'static So, cols: &[&str]) -> String {
+    top(db, by_score(db), cols)
 }
 
-fn most_viewed(db: &'static So, n: usize, cols: &[&str]) -> String {
-    let mut v = questions(db);
-    v.sort_by(|a, b| b.views.cmp(&a.views));
-    top(db, v, n, cols)
+fn most_viewed(db: &'static So, cols: &[&str]) -> String {
+    top(db, by_views(db), cols)
 }
 
 // title, created, owner, views | ORDER BY views DESC LIMIT 10
 fn q19357(db: &'static So) -> String {
-    most_viewed(db, 10, &["title", "created", "owner", "views"])
+    most_viewed(db, &["title", "created", "owner", "views"])
 }
 
 // owner, title, created, views | ORDER BY created DESC LIMIT 10
 fn q15074(db: &'static So) -> String {
-    newest(db, 10, &["owner", "title", "created", "views"])
+    newest(db, &["owner", "title", "created", "views"])
 }
 
 // title, created, owner, views | ORDER BY created DESC LIMIT 10
 fn q15102(db: &'static So) -> String {
-    newest(db, 10, &["title", "created", "owner", "views"])
+    newest(db, &["title", "created", "owner", "views"])
 }
 
 // title, owner, created, views | ORDER BY created DESC LIMIT 10
 fn q15928(db: &'static So) -> String {
-    newest(db, 10, &["title", "owner", "created", "views"])
+    newest(db, &["title", "owner", "created", "views"])
 }
 
 // owner, title, created, views | ORDER BY created DESC LIMIT 10
 fn q16488(db: &'static So) -> String {
-    newest(db, 10, &["owner", "title", "created", "views"])
+    newest(db, &["owner", "title", "created", "views"])
 }
 
 // title, created, owner, views | ORDER BY created DESC LIMIT 10
 fn q18531(db: &'static So) -> String {
-    newest(db, 10, &["title", "created", "owner", "views"])
+    newest(db, &["title", "created", "owner", "views"])
 }
 
 // title, created, views, owner | ORDER BY created DESC LIMIT 10
 fn q19591(db: &'static So) -> String {
-    newest(db, 10, &["title", "created", "views", "owner"])
+    newest(db, &["title", "created", "views", "owner"])
 }
 
 // title, views, owner, created | ORDER BY created DESC LIMIT 10
 fn q19615(db: &'static So) -> String {
-    newest(db, 10, &["title", "views", "owner", "created"])
+    newest(db, &["title", "views", "owner", "created"])
 }
 
 // title, owner, views, created | ORDER BY created DESC LIMIT 10
 fn q19715(db: &'static So) -> String {
-    newest(db, 10, &["title", "owner", "views", "created"])
+    newest(db, &["title", "owner", "views", "created"])
 }
 
 // owner, title, created, views | ORDER BY created DESC LIMIT 10
 fn q19942(db: &'static So) -> String {
-    newest(db, 10, &["owner", "title", "created", "views"])
+    newest(db, &["owner", "title", "created", "views"])
 }
 
 // id, title, created, owner, score | ORDER BY created DESC LIMIT 10
 fn q15035(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "created", "owner", "score"])
+    newest(db, &["id", "title", "created", "owner", "score"])
 }
 
 // id, title, owner, created, score | ORDER BY created DESC LIMIT 10
 fn q15046(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "owner", "created", "score"])
+    newest(db, &["id", "title", "owner", "created", "score"])
 }
 
 // id, title, score, owner, created | ORDER BY created DESC LIMIT 10
 fn q15141(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "score", "owner", "created"])
+    newest(db, &["id", "title", "score", "owner", "created"])
 }
 
 // id, title, created, score, owner | ORDER BY created DESC LIMIT 10
 fn q15215(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "created", "score", "owner"])
+    newest(db, &["id", "title", "created", "score", "owner"])
 }
 
 // id, title, created, score, owner | ORDER BY created DESC LIMIT 10
 fn q15238(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "created", "score", "owner"])
+    newest(db, &["id", "title", "created", "score", "owner"])
 }
 
 // id, title, owner, created, score | ORDER BY created DESC LIMIT 10
 fn q15288(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "owner", "created", "score"])
+    newest(db, &["id", "title", "owner", "created", "score"])
 }
 
 // id, title, owner, created, score | ORDER BY created DESC LIMIT 10
 fn q15311(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "owner", "created", "score"])
+    newest(db, &["id", "title", "owner", "created", "score"])
 }
 
 // id, title, owner, created, score | ORDER BY created DESC LIMIT 10
 fn q15349(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "owner", "created", "score"])
+    newest(db, &["id", "title", "owner", "created", "score"])
 }
 
 // id, title, owner, score, created | ORDER BY created DESC LIMIT 10
 fn q15389(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "owner", "score", "created"])
+    newest(db, &["id", "title", "owner", "score", "created"])
 }
 
 // id, title, owner, created, score | ORDER BY created DESC LIMIT 10
 fn q15418(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "owner", "created", "score"])
+    newest(db, &["id", "title", "owner", "created", "score"])
 }
 
 // id, title, owner, created, score | ORDER BY created DESC LIMIT 10
 fn q15556(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "owner", "created", "score"])
+    newest(db, &["id", "title", "owner", "created", "score"])
 }
 
 // id, title, created, owner, score | ORDER BY created DESC LIMIT 10
 fn q15617(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "created", "owner", "score"])
+    newest(db, &["id", "title", "created", "owner", "score"])
 }
 
 // id, title, owner, score, created | ORDER BY created DESC LIMIT 10
 fn q15675(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "owner", "score", "created"])
+    newest(db, &["id", "title", "owner", "score", "created"])
 }
 
 // id, title, score, owner, created | ORDER BY created DESC LIMIT 10
 fn q15711(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "score", "owner", "created"])
+    newest(db, &["id", "title", "score", "owner", "created"])
 }
 
 // id, title, score, created, owner | ORDER BY created DESC LIMIT 10
 fn q15965(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "score", "created", "owner"])
+    newest(db, &["id", "title", "score", "created", "owner"])
 }
 
 // id, title, score, created, owner | ORDER BY created DESC LIMIT 10
 fn q16232(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "score", "created", "owner"])
+    newest(db, &["id", "title", "score", "created", "owner"])
 }
 
 // id, title, created, owner, score | ORDER BY created DESC LIMIT 10
 fn q16461(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "created", "owner", "score"])
+    newest(db, &["id", "title", "created", "owner", "score"])
 }
 
 // id, title, owner, created, score | ORDER BY created DESC LIMIT 10
 fn q16808(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "owner", "created", "score"])
+    newest(db, &["id", "title", "owner", "created", "score"])
 }
 
 // id, title, score, owner, created | ORDER BY created DESC LIMIT 10
 fn q17577(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "score", "owner", "created"])
+    newest(db, &["id", "title", "score", "owner", "created"])
 }
 
 // id, title, created, score, owner | ORDER BY created DESC LIMIT 10
 fn q17677(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "created", "score", "owner"])
+    newest(db, &["id", "title", "created", "score", "owner"])
 }
 
 // id, title, score, owner, created | ORDER BY created DESC LIMIT 10
 fn q17803(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "score", "owner", "created"])
+    newest(db, &["id", "title", "score", "owner", "created"])
 }
 
 // id, title, created, score, owner | ORDER BY created DESC LIMIT 10
 fn q17887(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "created", "score", "owner"])
+    newest(db, &["id", "title", "created", "score", "owner"])
 }
 
 // id, title, created, owner, score | ORDER BY created DESC LIMIT 10
 fn q18048(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "created", "owner", "score"])
+    newest(db, &["id", "title", "created", "owner", "score"])
 }
 
 // owner, title, created, views, score | ORDER BY score DESC LIMIT 10
 fn q15285(db: &'static So) -> String {
-    best(db, 10, &["owner", "title", "created", "views", "score"])
+    best(db, &["owner", "title", "created", "views", "score"])
 }
 
 // title, owner, created, score, views | ORDER BY score DESC LIMIT 10
 fn q15527(db: &'static So) -> String {
-    best(db, 10, &["title", "owner", "created", "score", "views"])
+    best(db, &["title", "owner", "created", "score", "views"])
 }
 
 // title, owner, created, score, views | ORDER BY score DESC LIMIT 10
 fn q15646(db: &'static So) -> String {
-    best(db, 10, &["title", "owner", "created", "score", "views"])
+    best(db, &["title", "owner", "created", "score", "views"])
 }
 
 // title, owner, created, score, views | ORDER BY score DESC LIMIT 10
 fn q15872(db: &'static So) -> String {
-    best(db, 10, &["title", "owner", "created", "score", "views"])
+    best(db, &["title", "owner", "created", "score", "views"])
 }
 
 // owner, title, created, score, views | ORDER BY score DESC LIMIT 10
 fn q15878(db: &'static So) -> String {
-    best(db, 10, &["owner", "title", "created", "score", "views"])
+    best(db, &["owner", "title", "created", "score", "views"])
 }
 
 // title, created, owner, views, score | ORDER BY score DESC LIMIT 10
 fn q15879(db: &'static So) -> String {
-    best(db, 10, &["title", "created", "owner", "views", "score"])
+    best(db, &["title", "created", "owner", "views", "score"])
 }
 
 // title, owner, score, views, created | ORDER BY score DESC LIMIT 10
 fn q16158(db: &'static So) -> String {
-    best(db, 10, &["title", "owner", "score", "views", "created"])
+    best(db, &["title", "owner", "score", "views", "created"])
 }
 
 // title, owner, created, score, views | ORDER BY score DESC LIMIT 10
 fn q16275(db: &'static So) -> String {
-    best(db, 10, &["title", "owner", "created", "score", "views"])
+    best(db, &["title", "owner", "created", "score", "views"])
 }
 
 // title, created, owner, score, views | ORDER BY score DESC LIMIT 10
 fn q16817(db: &'static So) -> String {
-    best(db, 10, &["title", "created", "owner", "score", "views"])
+    best(db, &["title", "created", "owner", "score", "views"])
 }
 
 // owner, title, created, views, score | ORDER BY score DESC LIMIT 10
 fn q16895(db: &'static So) -> String {
-    best(db, 10, &["owner", "title", "created", "views", "score"])
+    best(db, &["owner", "title", "created", "views", "score"])
 }
 
 // owner, title, created, views, score | ORDER BY score DESC LIMIT 10
 fn q17816(db: &'static So) -> String {
-    best(db, 10, &["owner", "title", "created", "views", "score"])
+    best(db, &["owner", "title", "created", "views", "score"])
 }
 
 // title, owner, created, score, views | ORDER BY score DESC LIMIT 10
 fn q17835(db: &'static So) -> String {
-    best(db, 10, &["title", "owner", "created", "score", "views"])
+    best(db, &["title", "owner", "created", "score", "views"])
 }
 
 // title, views, owner, score, created | ORDER BY score DESC LIMIT 10
 fn q18754(db: &'static So) -> String {
-    best(db, 10, &["title", "views", "owner", "score", "created"])
+    best(db, &["title", "views", "owner", "score", "created"])
 }
 
 // title, created, owner, views, score | ORDER BY score DESC LIMIT 10
 fn q19712(db: &'static So) -> String {
-    best(db, 10, &["title", "created", "owner", "views", "score"])
+    best(db, &["title", "created", "owner", "views", "score"])
 }
 
 // title, created, owner, score, views | ORDER BY score DESC LIMIT 10
 fn q19845(db: &'static So) -> String {
-    best(db, 10, &["title", "created", "owner", "score", "views"])
+    best(db, &["title", "created", "owner", "score", "views"])
 }
 
 // id, title, created, owner, views | ORDER BY views DESC LIMIT 10
 fn q17249(db: &'static So) -> String {
-    most_viewed(db, 10, &["id", "title", "created", "owner", "views"])
+    most_viewed(db, &["id", "title", "created", "owner", "views"])
 }
 
 // id, title, views, owner, created | ORDER BY views DESC LIMIT 10
 fn q19109(db: &'static So) -> String {
-    most_viewed(db, 10, &["id", "title", "views", "owner", "created"])
+    most_viewed(db, &["id", "title", "views", "owner", "created"])
 }
 
 // id, title, created, owner, views | ORDER BY created DESC LIMIT 10
 fn q15340(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "created", "owner", "views"])
+    newest(db, &["id", "title", "created", "owner", "views"])
 }
 
 // id, title, created, views, owner | ORDER BY created DESC LIMIT 10
 fn q16213(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "created", "views", "owner"])
+    newest(db, &["id", "title", "created", "views", "owner"])
 }
 
 // id, title, created, owner, views | ORDER BY created DESC LIMIT 10
 fn q16347(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "created", "owner", "views"])
+    newest(db, &["id", "title", "created", "owner", "views"])
 }
 
 // id, title, created, owner, views | ORDER BY created DESC LIMIT 10
 fn q16557(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "created", "owner", "views"])
+    newest(db, &["id", "title", "created", "owner", "views"])
 }
 
 // id, title, owner, created, views | ORDER BY created DESC LIMIT 10
 fn q16648(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "owner", "created", "views"])
+    newest(db, &["id", "title", "owner", "created", "views"])
 }
 
 // id, title, owner, created, views | ORDER BY created DESC LIMIT 10
 fn q17356(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "owner", "created", "views"])
+    newest(db, &["id", "title", "owner", "created", "views"])
 }
 
 // id, title, created, views, owner | ORDER BY created DESC LIMIT 10
 fn q17796(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "created", "views", "owner"])
+    newest(db, &["id", "title", "created", "views", "owner"])
 }
 
 // id, title, views, owner, created | ORDER BY created DESC LIMIT 10
 fn q18001(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "views", "owner", "created"])
+    newest(db, &["id", "title", "views", "owner", "created"])
 }
 
 // id, title, views, owner, created | ORDER BY created DESC LIMIT 10
 fn q18319(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "views", "owner", "created"])
+    newest(db, &["id", "title", "views", "owner", "created"])
 }
 
 // id, title, views, created, owner | ORDER BY created DESC LIMIT 10
 fn q18363(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "views", "created", "owner"])
+    newest(db, &["id", "title", "views", "created", "owner"])
 }
 
 // id, title, created, views, owner | ORDER BY created DESC LIMIT 10
 fn q18494(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "created", "views", "owner"])
+    newest(db, &["id", "title", "created", "views", "owner"])
 }
 
 // id, title, body, owner, created | ORDER BY created DESC LIMIT 10
 fn q16745(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "body", "owner", "created"])
+    newest(db, &["id", "title", "body", "owner", "created"])
 }
 
 // id, title, created, owner, rep | ORDER BY created DESC LIMIT 10
 fn q15193(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "created", "owner", "rep"])
+    newest(db, &["id", "title", "created", "owner", "rep"])
 }
 
 // id, title, created, owner, rep | ORDER BY created DESC LIMIT 10
 fn q15627(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "created", "owner", "rep"])
+    newest(db, &["id", "title", "created", "owner", "rep"])
 }
 
 // id, title, created, owner, rep | ORDER BY created DESC LIMIT 10
 fn q15775(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "created", "owner", "rep"])
+    newest(db, &["id", "title", "created", "owner", "rep"])
 }
 
 // id, title, created, owner, rep | ORDER BY created DESC LIMIT 10
 fn q16316(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "created", "owner", "rep"])
+    newest(db, &["id", "title", "created", "owner", "rep"])
 }
 
 // id, title, created, owner, rep | ORDER BY created DESC LIMIT 10
 fn q18825(db: &'static So) -> String {
-    newest(db, 10, &["id", "title", "created", "owner", "rep"])
+    newest(db, &["id", "title", "created", "owner", "rep"])
 }
 
 // id, title, created, owner, views, score | ORDER BY score DESC LIMIT 10
 fn q15881(db: &'static So) -> String {
-    best(db, 10, &["id", "title", "created", "owner", "views", "score"])
+    best(db, &["id", "title", "created", "owner", "views", "score"])
 }
 
 // id, title, owner, created, score, views | ORDER BY score DESC LIMIT 10
 fn q15964(db: &'static So) -> String {
-    best(db, 10, &["id", "title", "owner", "created", "score", "views"])
+    best(db, &["id", "title", "owner", "created", "score", "views"])
 }
 
 // id, title, created, owner, score, views | ORDER BY score DESC LIMIT 10
 fn q16321(db: &'static So) -> String {
-    best(db, 10, &["id", "title", "created", "owner", "score", "views"])
+    best(db, &["id", "title", "created", "owner", "score", "views"])
 }
 
 // id, title, owner, created, score, views | ORDER BY score DESC LIMIT 10
 fn q16661(db: &'static So) -> String {
-    best(db, 10, &["id", "title", "owner", "created", "score", "views"])
+    best(db, &["id", "title", "owner", "created", "score", "views"])
 }
 
 // id, title, owner, created, views, score | ORDER BY score DESC LIMIT 10
 fn q16866(db: &'static So) -> String {
-    best(db, 10, &["id", "title", "owner", "created", "views", "score"])
+    best(db, &["id", "title", "owner", "created", "views", "score"])
 }
 
 // id, title, score, views, owner, created | ORDER BY score DESC LIMIT 10
 fn q16962(db: &'static So) -> String {
-    best(db, 10, &["id", "title", "score", "views", "owner", "created"])
+    best(db, &["id", "title", "score", "views", "owner", "created"])
 }
 
 pub static ENTRIES: &[harness::Entry] = &[

@@ -4,7 +4,7 @@ struct QRow {
     pid: Id<Post>,
     id: i64,
     score: i64,
-    views: i64,
+    views: Option<i64>,
     created: i64,
     body: Str,
     display_name: Str,
@@ -23,7 +23,7 @@ fn questions(db: &'static So) -> Vec<QRow> {
         .select(
             origid
                 .and(score)
-                .and(view_count)
+                .and(view_count.opt())
                 .and(creation_date)
                 .and(body)
                 .and(owner_user.select(display_name.and(reputation))),
@@ -68,7 +68,7 @@ fn q15106(db: &'static So) -> String {
             ostr(title.get(r.pid)),
             V::S(r.display_name),
             V::T(r.created),
-            V::I(r.views),
+            oint(r.views),
         ])
     }))
 }
@@ -170,7 +170,7 @@ fn q15130(db: &'static So) -> String {
             V::T(r.created),
             V::S(r.display_name),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
         ])
     }))
 }
@@ -183,7 +183,7 @@ fn q15015(db: &'static So) -> String {
             ostr(title.get(r.pid)),
             V::T(r.created),
             V::I(r.score),
-            V::I(r.views),
+            oint(r.views),
         ])
     }))
 }

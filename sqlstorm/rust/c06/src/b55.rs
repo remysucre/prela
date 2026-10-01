@@ -1,23 +1,6 @@
 use std::cmp::Reverse;
 use harness::prelude::*;
 
-// ORDER BY (a key, b key) LIMIT n over a CROSS JOIN, the product driven by prela's `.cross`. The order leads with the a key, so an a row
-// with k rows strictly ahead of it starts at position k * |b| + 1: only a rows whose key is at most that of the row at index (n - 1) / |b|
-// can reach the first n. That cut-off key is picked first and the a side filtered on it in prela, as for a rank read from base columns.
-fn cross_top<A: Copy, B: Copy, KA: Ord, KB: Ord>(a: Vec<A>, ka: impl Fn(&A) -> KA, b: Vec<B>, kb: impl Fn(&B) -> KB, n: usize) -> Vec<(A, B)> {
-    let n = if n == usize::MAX { 0 } else { n };
-    let a = top_n(a, &ka, 0);
-    let ra = rel(a);
-    let rb = rel(b);
-    let v = if n > 0 && !rb.v.is_empty() && (n - 1) / rb.v.len() + 1 < ra.v.len() {
-        let cut = ka(&ra.v[(n - 1) / rb.v.len()]);
-        drain((&ra).filt(|x| ka(&x) <= cut).cross(&rb))
-    } else {
-        drain((&ra).cross(&rb))
-    };
-    top_n(v, |(_, (x, y))| (ka(x), kb(y)), n).into_iter().map(|x| x.1).collect()
-}
-
 fn year_ago() -> i64 {
     add_years(ts(2024, 10, 1, 12, 34, 56), -1)
 }
@@ -89,12 +72,12 @@ fn q5906(db: &'static So) -> String {
             (bn + v.is_some() as i64, bs + v.unwrap_or(0), b + bi.is_some() as i64)
         })
         .map(|(bn, bs, b)| ((bn > 0).then_some(bs), b));
-    let top_users = drain(db.user.select((&db.user.display_name).and(&totals)).filt(|(_, (t, _))| t.is_some_and(|t| t > 10)));
+    let top_users = rel(drain(db.user.select((&db.user.display_name).and(&totals)).filt(|(_, (t, _))| t.is_some_and(|t| t > 10))));
     let base = owned(db).with(post_type_id.eq(1)).with(score.gt(10));
     let rk = whole(&base).select(Ident::<Post>::new().and(creation_date)).window(rank, |(_, cd)| cd, desc);
-    let posts = drain(&rk);
-    let v = cross_top(posts, |&(_, ((_, _), r))| r, top_users, |&(_, (_, (t, _)))| Reverse(t.unwrap()), 100);
-    rows(v.into_iter().map(|((_, ((p, _), _)), (_, (dn, (t, b))))| {
+    // a post ranked r has r - 1 posts ahead of it, each crossed with every top user, so only r <= 100 can reach the first 100 rows
+    let v = top_n(drain((&rk).filt(|(_, r)| r <= 100).cross(&top_users)), |(_, ((_, r), (_, (_, (t, _)))))| (*r, Reverse(t.unwrap())), 100);
+    rows(v.into_iter().map(|(_, (((p, _), _), (_, (dn, (t, b)))))| {
         let mut f = post_fields(db, p, &["id", "title", "created", "score", "views", "answers", "comments", "owner"]);
         f.extend([V::S(dn), V::I(t.unwrap()), V::I(b)]);
         row(f)
@@ -174,13 +157,12 @@ fn q8028(db: &'static So) -> String {
         .filt(|(_, r)| r <= 10)
         .map(|((p, _), _)| p)
         .select(Ident::<Post>::new().and(&cc))
-        .drive(|_, (p, c)| {
-        db.tag.with(&top).select(&db.tag.tag_name).drive(|_, name| {
+        .cross(&top)
+        .drive(|_, ((p, c), t)| {
             let mut f = post_fields(db, p, &["title", "score"]);
-            f.extend([V::I(c), V::S(name)]);
+            f.extend([V::I(c), V::S(db.tag.tag_name.get(t).unwrap())]);
             out.push(row(f))
-        })
-    });
+        });
     rows(out)
 }
 
@@ -264,9 +246,10 @@ fn q14428(db: &'static So) -> String {
 
 fn q7306(db: &'static So) -> String {
     let Post { post_type, post_type_id, creation_date, score, view_count, owner_user, .. } = &db.post;
-    let up = votes_of_type(db, 2);
-    let down = votes_of_type(db, 3);
-    let voted = (&db.vote.post).inv().fold(0i64, |a, _| a + 1);
+    let pv = (&db.vote.post)
+        .inv()
+        .select(vtype_name(db))
+        .fold((0i64, 0i64), |(u, d), n| (u + (n == "UpMod") as i64, d + (n == "DownMod") as i64));
     let badges = (&db.badge.user).inv().fold(0i64, |a, _| a + 1);
     let base = db.post.with(creation_date.ge(add_years(current_date(), -1))).with(post_type_id.is_in([1, 2]));
     let rn = (&base)
@@ -277,8 +260,7 @@ fn q7306(db: &'static So) -> String {
     (&rn)
         .filt(|(_, n)| n <= 10)
         .map(|(((p, _), _), _)| p)
-        .with(&voted)
-        .select(Ident::<Post>::new().and((&up).and(&down).and(owner_user.select(&badges))))
+        .select(Ident::<Post>::new().and((&pv).and(owner_user.select(&badges))))
         .drive(|_, (p, ((u, d), b))| {
         let mut f = post_fields(db, p, &["id", "title", "created", "score"]);
         f.extend([V::I(u), V::I(d), V::I(b)]);

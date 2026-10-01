@@ -80,7 +80,34 @@ fn q11889(db: &'static So) -> String { render_posts(db, posts(db, true, true, "c
 fn q12459(db: &'static So) -> String { render_posts(db, posts(db, true, true, "cvb"), "created", 100, &["title", "created", "owner", "#cx", "#vx", "#b"]) }
 fn q11769(db: &'static So) -> String { render_posts(db, posts(db, true, false, "cvh"), "#cx,created", 100, &["id", "title", "created", "owner", "#cx", "#up", "#down", "#hmax"]) }
 fn q13555(db: &'static So) -> String { render_posts(db, posts(db, true, true, "cva"), "created", 0, &["id", "title", "created", "views", "score", "owner", "#cx", "#a", "#v"]) }
-fn q12352(db: &'static So) -> String { render_posts(db, posts(db, true, false, "cv"), "created", 0, &["title", "created", "score", "views", "#cx", "#vx", "owner", "rep"]) }
+// GROUP BY p.Title, p.CreationDate, p.Score, p.ViewCount, u.DisplayName, u.Reputation: no p.Id.
+fn q12352(db: &'static So) -> String {
+    let Post { title, creation_date, score, view_count, owner_user, .. } = &db.post;
+    let key = owner_user
+        .select(&db.user.display_name)
+        .and(owner_user.select(&db.user.reputation))
+        .and(title.opt())
+        .and(creation_date)
+        .and(score)
+        .and(view_count.opt());
+    let g = group_posts(db, &post_base(db, true, true, PostWhere::All), &key, "cv");
+    let v = g
+        .into_iter()
+        .map(|((((((o, r), t), cd), s), w), agg)| TupleGroup {
+            owner: Some(o),
+            title: t,
+            created: cd,
+            score: s,
+            views: w,
+            ptype: None,
+            body: None,
+            rep: Some(r),
+            owner_id: None,
+            agg,
+        })
+        .collect();
+    tuple_rows(v, "created", 0, &["title", "created", "score", "views", "#cx", "#vx", "owner", "rep"])
+}
 fn q14044(db: &'static So) -> String { tuple_rows(by_name_title_date_score_views(db, true, "cvh", PostWhere::All), "score,created", 100, &["title", "created", "owner", "views", "score", "#cx", "#vx", "#hmax"]) }
 
 // --- a CreationDate filter -------------------------------------------------
@@ -125,7 +152,7 @@ fn q12324(db: &'static So) -> String { render_posts(db, posts_where(db, false, f
 fn q14534(db: &'static So) -> String { render_posts(db, posts_where(db, false, false, "cvb", PostWhere::CreatedGe(date(2020, 1, 1))), "created", 100, &["id", "title", "created", "score", "views", "owner", "#c", "#b", "#up", "#down"]) }
 fn q14354(db: &'static So) -> String { render_posts(db, posts_where(db, false, false, "cv", PostWhere::CreatedGe(date(2022, 1, 1))), "created", 100, &["id", "title", "created", "score", "views", "answers", "comments", "owner_id", "owner", "rep", "#cx", "#vx"]) }
 fn q14060(db: &'static So) -> String { render_posts(db, posts_where(db, false, true, "cvh", PostWhere::CreatedGe(date(2022, 1, 1))), "created", 100, &["id", "title", "created", "score", "owner", "#cx", "#vx", "#hx"]) }
-fn q13756(db: &'static So) -> String { render_posts(db, posts_where(db, false, true, "cvh", PostWhere::CreatedGe(date(2023, 1, 1))), "created", 100, &["id", "title", "created", "score", "views", "owner", "rep", "#cx", "#v", "#hmax"]) }
+fn q13756(db: &'static So) -> String { render_posts(db, posts(db, false, true, "cvh"), "created", 100, &["id", "title", "created", "score", "views", "owner", "rep", "#cx", "#v", "#hmax"]) }
 fn q13024(db: &'static So) -> String { render_posts(db, posts_where(db, false, false, "b", PostWhere::CreatedGe(date(2022, 1, 1))), "score,created", 0, &["id", "title", "created", "score", "views", "answers", "owner_id", "owner", "rep", "#bx"]) }
 fn q11123(db: &'static So) -> String { render_posts(db, posts_where(db, false, false, "cv", PostWhere::CreatedGe(date(2023, 1, 1))), "score,created", 0, &["id", "title", "owner", "created", "score", "views", "answers", "comments", "#cx", "#up", "#down"]) }
 fn q14579(db: &'static So) -> String { render_posts(db, posts_where(db, false, false, "cv", PostWhere::CreatedGe(date(2020, 1, 1))), "score,created", 100, &["id", "title", "created", "score", "views", "owner", "#cx", "#vx"]) }
@@ -134,7 +161,7 @@ fn q10094(db: &'static So) -> String { render_posts(db, posts_where(db, false, f
 fn q13721(db: &'static So) -> String { render_posts(db, posts_where(db, false, false, "cvb", PostWhere::CreatedGe(date(2023, 1, 1))), "score,views", 0, &["id", "title", "created", "score", "views", "#cx", "#vx", "#b", "owner"]) }
 fn q14891(db: &'static So) -> String { render_posts(db, posts_where(db, false, false, "cvb", PostWhere::CreatedGe(date(2022, 1, 1))), "views", 0, &["id", "title", "created", "views", "#c", "#v", "#b", "owner", "rep", "activity"]) }
 fn q13148(db: &'static So) -> String { render_posts(db, posts_where(db, false, false, "cv", PostWhere::CreatedGe(date(2020, 1, 1))), "#vx,created", 0, &["id", "title", "created", "owner_id", "owner", "rep", "#vx", "#up", "#down", "#cx"]) }
-fn q12287(db: &'static So) -> String { render_posts(db, posts_where(db, false, false, "cv", PostWhere::CreatedGe(date(2020, 1, 1))), "created", 100, &["title", "created", "score", "views", "answers", "owner", "rep", "#vx", "#cx"]) }
+fn q12287(db: &'static So) -> String { render_posts(db, posts(db, false, false, "cv"), "created", 100, &["title", "created", "score", "views", "answers", "owner", "rep", "#vx", "#cx"]) }
 
 // --- other filters ---------------------------------------------------------
 

@@ -17,14 +17,6 @@ fn month_ago() -> i64 {
     ts(2024, 9, 1, 12, 34, 56)
 }
 
-fn count<Q: Drive>(q: Q) -> i64 {
-    q.fold_flat(0i64, |a, _| a + 1)
-}
-
-fn sum_n<Q: Drive<R = i64>>(q: Q) -> (i64, i64) {
-    q.fold_flat((0i64, 0i64), |(n, s), x| (n + 1, s + x))
-}
-
 fn badges_distinct(db: &'static So) -> Fold<Id<Post>, i64> {
     per_post_distinct(db, (&db.post.owner_user).select(badges_of(db)))
 }
@@ -1696,16 +1688,20 @@ fn q10824(db: &'static So) -> String {
 fn q14930(db: &'static So) -> String {
     let Post { score, view_count, answer_count, owner_user, post_type_id, creation_date, .. } = &db.post;
     let base = db.post.with(creation_date.ge(date(2023, 1, 1)).and(post_type_id.in_v(vec![1, 2])));
-    let a = (&base)
+    let a = whole(&base)
         .select(score.and(view_count.opt()).and(answer_count.opt()).and(owner_user.select(&db.user.reputation).opt()).and(comments_of(db).select(&db.comment.score).opt()).and(votes_of(db).opt()))
-        .fold_flat([0i64; 8], |a, (((((s, w), an), r), c), _)| {
+        .fold([0i64; 8], |a, (((((s, w), an), r), c), _)| {
             [a[0] + 1, a[1] + s, a[2] + w.unwrap_or(0), a[3] + an.unwrap_or(0), a[4] + r.is_some() as i64, a[5] + r.unwrap_or(0), a[6] + c.is_some() as i64, a[7] + c.unwrap_or(0)]
         });
-    let one = |f: Fold<(), i64>| (&f).fold_flat(0i64, |a, x| a + x);
-    let p = one(whole(&base).select(Ident::<Post>::new()).count_distinct());
-    let c = one(whole(&base).select(comments_of(db)).count_distinct());
-    let x = one(whole(&base).select(votes_of(db)).count_distinct());
-    row(vec![V::I(p), V::I(c), V::I(x), avg(a[1], a[0]), avg(a[7], a[6]), avg(a[2], a[0]), avg(a[3], a[0]), avg(a[5], a[4])])
+    let p = whole(&base).count_distinct();
+    let c = whole(&base).select(comments_of(db)).count_distinct();
+    let x = whole(&base).select(votes_of(db)).count_distinct();
+    let mut out = Vec::new();
+    rel(vec![()]).select((&a).opt().and((&p).opt()).and((&c).opt()).and((&x).opt())).drive(|_, (((a, p), c), x)| {
+        let (a, n) = (a.unwrap_or([0; 8]), |v: Option<i64>| V::I(v.unwrap_or(0)));
+        out.push(row(vec![n(p), n(c), n(x), avg(a[1], a[0]), avg(a[7], a[6]), avg(a[2], a[0]), avg(a[3], a[0]), avg(a[5], a[4])]));
+    });
+    rows(out)
 }
 
 // SELECT
@@ -1786,9 +1782,16 @@ fn q14543(db: &'static So) -> String {
 // CommentStats c,
 // VoteStats v;
 fn q11935(db: &'static So) -> String {
-    let (vn, vs) = sum_n(db.post.select(&db.post.view_count));
-    let (rn, rs) = sum_n(&db.user.reputation);
-    row(vec![V::I(count(db.post.iq())), avg(vs, vn), V::I(rn), avg(rs, rn), V::I(count(db.comment.iq())), V::I(count(db.vote.iq()))])
+    let ps = whole(db.post.iq()).select((&db.post.view_count).opt()).fold([0i64; 3], |a, w| [a[0] + 1, a[1] + w.is_some() as i64, a[2] + w.unwrap_or(0)]);
+    let us = user_reps(db);
+    let cs = whole(db.comment.iq()).fold(0i64, |n, _| n + 1);
+    let vs = whole(db.vote.iq()).fold(0i64, |n, _| n + 1);
+    let mut out = Vec::new();
+    rel(vec![()]).select((&ps).opt().and((&us).opt()).and((&cs).opt()).and((&vs).opt())).drive(|_, (((p, u), c), v)| {
+        let (p, u) = (p.unwrap_or([0; 3]), u.unwrap_or(NO_USERS));
+        out.push(row(vec![V::I(p[0]), avg(p[2], p[1]), V::I(u[0]), avg(u[1], u[0]), V::I(c.unwrap_or(0)), V::I(v.unwrap_or(0))]));
+    });
+    rows(out)
 }
 
 // WITH PostStats AS (
@@ -1826,23 +1829,36 @@ fn q11935(db: &'static So) -> String {
 // CommentStats CS,
 // UserStats US;
 fn q11990(db: &'static So) -> String {
-    let (pn, ps) = sum_n(&db.post.score);
-    let (vn, vs) = sum_n(db.post.select(&db.post.view_count));
-    let (cn, cs) = sum_n(&db.comment.score);
-    let (rn, rs) = sum_n(&db.user.reputation);
-    row(vec![V::I(pn), avg(ps, pn), avg(vs, vn), V::I(cn), avg(cs, cn), V::I(rn), avg(rs, rn)])
+    let ps = whole(db.post.iq()).select((&db.post.score).and((&db.post.view_count).opt())).fold([0i64; 4], |a, (s, w)| [a[0] + 1, a[1] + s, a[2] + w.is_some() as i64, a[3] + w.unwrap_or(0)]);
+    let cs = whole(db.comment.iq()).select(&db.comment.score).fold([0i64; 2], |a, s| [a[0] + 1, a[1] + s]);
+    let us = user_reps(db);
+    let mut out = Vec::new();
+    rel(vec![()]).select((&ps).opt().and((&cs).opt()).and((&us).opt())).drive(|_, ((p, c), u)| {
+        let (p, c, u) = (p.unwrap_or([0; 4]), c.unwrap_or([0; 2]), u.unwrap_or(NO_USERS));
+        out.push(row(vec![V::I(p[0]), avg(p[1], p[0]), avg(p[3], p[2]), V::I(c[0]), avg(c[1], c[0]), V::I(u[0]), avg(u[1], u[0])]));
+    });
+    rows(out)
 }
 
 // Post types beside one-row user aggregates (a CTE cross join with a single row).
-fn types_with_users(db: &'static So, cols: &[&str], extra: impl Fn() -> Vec<V>) -> Vec<String> {
-    by_count(db)
-        .iter()
-        .map(|a| {
-            let mut f = type_fields(a, cols);
-            f.extend(extra());
-            row(f)
-        })
-        .collect()
+const NO_USERS: [i64; 5] = [0, 0, i64::MIN, i64::MAX, 0];
+
+fn user_reps(db: &'static So) -> Fold<(), [i64; 5]> {
+    whole(db.user.iq())
+        .select((&db.user.reputation).and(&db.user.views))
+        .fold([0, 0, i64::MIN, i64::MAX, 0], |a, (r, v)| [a[0] + 1, a[1] + r, a[2].max(r), a[3].min(r), a[4] + v])
+}
+
+// Posts grouped by type name, each beside the one-row UserStats CTE.
+fn types_with_users(db: &'static So, out: impl Fn(Str, [i64; 4], [i64; 5]) -> Vec<V>) -> Vec<(i64, Str, String)> {
+    let types = db.post
+        .group_by((&db.post.post_type).select(&db.post_type.name))
+        .select((&db.post.score).and((&db.post.view_count).opt()))
+        .fold([0i64; 4], |a, (s, w)| [a[0] + 1, a[1] + s, a[2] + w.is_some() as i64, a[3] + w.unwrap_or(0)]);
+    let us = rel(vec![()]).select(user_reps(db).opt());
+    let mut v = Vec::new();
+    (&types).cross(&us).drive(|(k, _), (a, u)| v.push((a[0], k, row(out(k, a, u.unwrap_or(NO_USERS))))));
+    v
 }
 
 // WITH PostStats AS (
@@ -1878,8 +1894,9 @@ fn types_with_users(db: &'static So, cols: &[&str], extra: impl Fn() -> Vec<V>) 
 // ORDER BY
 // ps.PostType;
 fn q12870(db: &'static So) -> String {
-    let (rn, rs) = sum_n(&db.user.reputation);
-    rows(types_with_users(db, &["name", "n", "score_avg", "views_avg"], || vec![V::I(rn), avg(rs, rn)]))
+    let mut v = types_with_users(db, |k, a, u| vec![V::S(k), V::I(a[0]), avg(a[1], a[0]), avg(a[3], a[2]), V::I(u[0]), avg(u[1], u[0])]);
+    v.sort_by_key(|x| x.1);
+    rows(v.into_iter().map(|x| x.2))
 }
 
 // WITH PostStats AS (
@@ -1918,10 +1935,9 @@ fn q12870(db: &'static So) -> String {
 // ORDER BY
 // ps.TotalPosts DESC;
 fn q12461(db: &'static So) -> String {
-    let (rn, rs) = sum_n(&db.user.reputation);
-    let mx = (&db.user.reputation).fold_flat(i64::MIN, |a, x| a.max(x));
-    let mn = (&db.user.reputation).fold_flat(i64::MAX, |a, x| a.min(x));
-    rows(types_with_users(db, &["name", "n", "views_avg", "score_sum"], || vec![V::I(rn), avg(rs, rn), V::I(mx), V::I(mn)]))
+    let mut v = types_with_users(db, |k, a, u| vec![V::S(k), V::I(a[0]), avg(a[3], a[2]), V::I(a[1]), V::I(u[0]), avg(u[1], u[0]), omax(u[2], u[0]), omax(u[3], u[0])]);
+    v.sort_by_key(|x| Reverse(x.0));
+    rows(v.into_iter().map(|x| x.2))
 }
 
 // WITH PostStats AS (
@@ -1959,9 +1975,9 @@ fn q12461(db: &'static So) -> String {
 // ORDER BY
 // ps.TotalPosts DESC;
 fn q12999(db: &'static So) -> String {
-    let (rn, rs) = sum_n(&db.user.reputation);
-    let (_, views) = sum_n(&db.user.views);
-    rows(types_with_users(db, &["name", "n", "score_avg", "views_avg"], || vec![V::I(rn), avg(rs, rn), V::I(views)]))
+    let mut v = types_with_users(db, |k, a, u| vec![V::S(k), V::I(a[0]), avg(a[1], a[0]), avg(a[3], a[2]), V::I(u[0]), avg(u[1], u[0]), nullable(u[4], u[0])]);
+    v.sort_by_key(|x| Reverse(x.0));
+    rows(v.into_iter().map(|x| x.2))
 }
 
 // --- post types ---------------------------------------------------------------

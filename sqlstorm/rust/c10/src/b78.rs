@@ -1,75 +1,22 @@
 use harness::prelude::*;
 
 // Mechanical spellings of a handful of queries. Each `fn` carries its select
-// list and its FROM/WHERE/ORDER BY in the comment above it; the shared shapes
-// are:
+// list and its ORDER BY in the comment above it; the shared shape is
 //
-//   T1  SELECT <post/owner cols> FROM Posts p JOIN Users u ON p.OwnerUserId = u.Id
-//       WHERE p.PostTypeId = 1 ORDER BY <CreationDate|Score|ViewCount> DESC LIMIT n
-//   T2  SELECT <post/owner cols, pt.Name> FROM Posts p JOIN Users u ... JOIN PostTypes pt ...
-//       WHERE <one predicate> ORDER BY p.CreationDate DESC LIMIT n
-//   T3  SELECT pt.Name, <aggregates> FROM Posts p JOIN PostTypes pt ON p.PostTypeId = pt.Id
-//       GROUP BY pt.Name ORDER BY <the count> DESC
-//
-// Every cut was checked: rows n and n+1 differ in the sort column, so none of
-// these needs a rewrite. T3 has no LIMIT and the harness compares rows as a
-// sorted multiset, so its ORDER BY does not matter either.
-fn take_n(db: &'static So, mut v: Vec<Question>, n: usize, cols: &[&str]) -> String {
-    v.truncate(n);
-    rows(v.iter().map(|q| row(post_fields(db, q.pid, cols))))
+//   SELECT <post/owner cols> FROM Posts p JOIN Users u ON p.OwnerUserId = u.Id
+//   WHERE p.PostTypeId = 1 ORDER BY <CreationDate|Score> DESC LIMIT 10
+fn top_questions(db: &'static So, key: &'static Col<Post, i64>, n: usize, cols: &[&str]) -> String {
+    let Post { post_type_id, owner_user, .. } = &db.post;
+    let v = top_n(drain(db.post.with(post_type_id.eq(1)).with(owner_user).select(key)), |&(_, k)| std::cmp::Reverse(k), n);
+    rows(v.iter().map(|&(p, _)| row(post_fields(db, p, cols))))
 }
 
 fn newest(db: &'static So, n: usize, cols: &[&str]) -> String {
-    let mut v = questions(db);
-    v.sort_by(|a, b| b.created.cmp(&a.created));
-    take_n(db, v, n, cols)
+    top_questions(db, &db.post.creation_date, n, cols)
 }
 
 fn best(db: &'static So, n: usize, cols: &[&str]) -> String {
-    let mut v = questions(db);
-    v.sort_by(|a, b| b.score.cmp(&a.score));
-    take_n(db, v, n, cols)
-}
-
-fn most_viewed(db: &'static So, n: usize, cols: &[&str]) -> String {
-    let mut v = questions(db);
-    v.sort_by(|a, b| b.views.cmp(&a.views));
-    take_n(db, v, n, cols)
-}
-
-// Posts with an owner, newest first, under one restriction. PostTypes is an
-// inner join on a NOT NULL column, so it only supplies pt.Name.
-fn newest_posts<Q: Probe<D = Id<Post>>>(
-    db: &'static So,
-    keep: Q,
-    n: usize,
-    cols: &[&str],
-) -> String {
-    let Post { creation_date, owner_user, .. } = &db.post;
-    let mut v = Vec::new();
-    db.post.with(owner_user).with(keep).select(creation_date).drive(|p, cd| v.push((cd, p)));
-    v.sort_by(|a, b| b.0.cmp(&a.0));
-    rows(v.iter().take(n).map(|&(_, p)| row(post_fields(db, p, cols))))
-}
-
-fn since2023(db: &'static So, n: usize, cols: &[&str]) -> String {
-    newest_posts(db, (&db.post.creation_date).ge(date(2023, 1, 1)), n, cols)
-}
-
-fn scored(db: &'static So, n: usize, cols: &[&str]) -> String {
-    newest_posts(db, (&db.post.score).gt(0), n, cols)
-}
-
-fn viewed(db: &'static So, n: usize, cols: &[&str]) -> String {
-    newest_posts(db, (&db.post.view_count).gt(100), n, cols)
-}
-
-fn question(db: &'static So, n: usize, cols: &[&str]) -> String {
-    newest_posts(db, (&db.post.post_type_id).eq(1), n, cols)
-}
-
-fn types(db: &'static So, cols: &[&str]) -> String {
-    rows(by_count(db).iter().map(|a| row(type_fields(a, cols))))
+    top_questions(db, &db.post.score, n, cols)
 }
 
 // id, title, created, owner, views, score | questions ORDER BY score DESC LIMIT 10

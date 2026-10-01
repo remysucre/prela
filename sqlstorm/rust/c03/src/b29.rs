@@ -70,59 +70,28 @@ fn q14220(db: &'static So) -> String {
     }))
 }
 
+// SELECT u.DisplayName, COUNT(b.Id) AS BadgeCount FROM Users u LEFT JOIN Badges b ON u.Id = b.UserId GROUP BY u.DisplayName ORDER BY BadgeCount DESC LIMIT 10;
 fn q16078(db: &'static So) -> String {
-    let Badge { user, origid, .. } = &db.badge;
-    let User { display_name, .. } = &db.user;
-
-    let mut all: Vec<(Str, i64)> = Vec::new();
-    db.badge
-        .group_by(user.select(display_name))
-        .select(origid)
-        .fold(0i64, |a, _| a + 1)
-        .drive(|k, n| all.push((k, n)));
-    all.sort_by(|a, b| b.1.cmp(&a.1));
-    rows(all.iter().take(10).map(|(dn, n)| row(vec![V::S(dn), V::I(*n)])))
+    let g = db.user.group_by(&db.user.display_name).select(badges_of(db).opt()).fold(0i64, |a, b| a + b.is_some() as i64);
+    let v = top_n(drain(&g), |&(_, n)| std::cmp::Reverse(n), 10);
+    rows(v.into_iter().map(|(dn, n)| row(vec![V::S(dn), V::I(n)])))
 }
 
-fn posts_per_name(db: &'static So) -> Vec<(Str, i64)> {
-    let Post { owner_user, origid, .. } = &db.post;
-    let User { display_name, .. } = &db.user;
-
-    let mut all: Vec<(Str, i64)> = Vec::new();
-    db.post
-        .with(owner_user)
-        .group_by(owner_user.select(display_name))
-        .select(origid)
-        .fold(0i64, |a, _| a + 1)
-        .drive(|k, n| all.push((k, n)));
-    all.sort_by(|a, b| b.1.cmp(&a.1));
-    all
-}
-
+// SELECT u.DisplayName, COUNT(p.Id) AS PostCount FROM Users u LEFT JOIN Posts p ON u.Id = p.OwnerUserId GROUP BY u.DisplayName ORDER BY PostCount DESC LIMIT 10;
 fn q17876(db: &'static So) -> String {
-    rows(posts_per_name(db).iter().take(10).map(|(dn, n)| {
-        row(vec![V::S(dn), V::I(*n)])
-    }))
+    let g = db.user.group_by(&db.user.display_name).select(posts_of(db).opt()).fold(0i64, |a, p| a + p.is_some() as i64);
+    let v = top_n(drain(&g), |&(_, n)| std::cmp::Reverse(n), 10);
+    rows(v.into_iter().map(|(dn, n)| row(vec![V::S(dn), V::I(n)])))
 }
 
+// SELECT u.Id AS UserId, u.DisplayName, COUNT(p.Id) AS PostCount FROM Users u LEFT JOIN Posts p ON u.Id = p.OwnerUserId GROUP BY u.Id, u.DisplayName ORDER BY PostCount DESC LIMIT 10;
 fn q16034(db: &'static So) -> String {
-    let Post { owner_user, origid, .. } = &db.post;
-    let User { origid: uid, display_name, .. } = &db.user;
-
-    let mut all: Vec<(Id<User>, i64)> = Vec::new();
-    db.post
-        .with(owner_user)
-        .group_by(owner_user)
-        .select(origid)
-        .fold(0i64, |a, _| a + 1)
-        .drive(|u, n| all.push((u, n)));
-    all.sort_by(|a, b| b.1.cmp(&a.1));
-    rows(all.iter().take(10).map(|(u, n)| {
-        row(vec![
-            V::I(uid.get(*u).unwrap()),
-            V::S(display_name.get(*u).unwrap()),
-            V::I(*n),
-        ])
+    let g = db.user.group_by(Ident::<User>::new()).select(posts_of(db).opt()).fold(0i64, |a, p| a + p.is_some() as i64);
+    let v = top_n(drain(&g), |&(_, n)| std::cmp::Reverse(n), 10);
+    rows(v.into_iter().map(|(u, n)| {
+        let mut f = ucols(db, u, &["uid", "name"]);
+        f.push(V::I(n));
+        row(f)
     }))
 }
 
@@ -192,26 +161,22 @@ fn q16957(db: &'static So) -> String {
     }))
 }
 
+// SELECT u.DisplayName, COUNT(p.Id) AS PostCount, SUM(v.BountyAmount) AS TotalBounty FROM Users u LEFT JOIN Posts p ON u.Id = p.OwnerUserId LEFT JOIN Votes v ON p.Id = v.PostId
+// GROUP BY u.DisplayName ORDER BY PostCount DESC LIMIT 10;
 fn q16665(db: &'static So) -> String {
-    let Post { owner_user, .. } = &db.post;
-    let Vote { bounty_amount, .. } = &db.vote;
-    let User { display_name, .. } = &db.user;
-
-    let mut per_user: Vec<(Str, i64, i64, i64)> = Vec::new();
-    db.post
-        .with(owner_user)
-        .group_by(owner_user.select(display_name))
-        .select(votes_of(db).select(bounty_amount.opt()).opt())
-        .fold((0i64, 0i64, 0i64), |(c, bn, bs), b| {
-            let b = b.flatten();
-            (c + 1, bn + b.is_some() as i64, bs + b.unwrap_or(0))
-        })
-        .drive(|dn, (c, bn, bs)| per_user.push((dn, c, bn, bs)));
-
-    per_user.sort_by(|a, b| b.1.cmp(&a.1));
-    rows(per_user.iter().take(10).map(|(dn, c, bn, bs)| {
-        row(vec![V::S(dn), V::I(*c), nullable(*bs, *bn)])
-    }))
+    let g = db
+        .user
+        .group_by(&db.user.display_name)
+        .select(posts_of(db).select(votes_of(db).select((&db.vote.bounty_amount).opt()).opt()).opt())
+        .fold([0i64; 3], |a, p| match p {
+            Some(b) => {
+                let b = b.flatten();
+                [a[0] + 1, a[1] + b.is_some() as i64, a[2] + b.unwrap_or(0)]
+            }
+            None => a,
+        });
+    let v = top_n(drain(&g), |&(_, a)| std::cmp::Reverse(a[0]), 10);
+    rows(v.into_iter().map(|(dn, a)| row(vec![V::S(dn), V::I(a[0]), nullable(a[2], a[1])])))
 }
 
 // SELECT DATE_TRUNC('month', CreationDate) AS Month, COUNT(*) AS TotalPosts, AVG(Score) AS AverageScore, COUNT(DISTINCT OwnerUserId) AS UniqueUsers
