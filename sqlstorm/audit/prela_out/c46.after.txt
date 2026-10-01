@@ -1,0 +1,142 @@
+warning: function `views_score` is never used
+  --> c46/src/b125.rs:90:4
+   |
+90 | fn views_score(db: &'static So, p: Id<Post>) -> ((bool, Reverse<Option<i64>>), Reverse<i64>) {
+   |    ^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `round2` is never used
+   --> c46/src/b125.rs:120:4
+    |
+120 | fn round2(x: f64) -> f64 {
+    |    ^^^^^^
+
+warning: function `by_voter` is never used
+   --> c46/src/b125.rs:124:4
+    |
+124 | fn by_voter(db: &'static So) -> HashIdx<Id<User>, Id<Vote>> {
+    |    ^^^^^^^^
+
+warning: function `by_name` is never used
+   --> c46/src/b125.rs:128:4
+    |
+128 | fn by_name(db: &'static So) -> HashIdx<Str, Id<User>> {
+    |    ^^^^^^^
+
+warning: function `history_types` is never used
+   --> c46/src/b125.rs:132:4
+    |
+132 | fn history_types(db: &'static So) -> Fold<Id<Post>, [i64; 4]> {
+    |    ^^^^^^^^^^^^^
+
+warning: function `vote_named` is never used
+   --> c46/src/b125.rs:139:4
+    |
+139 | fn vote_named(db: &'static So) -> Fold<Id<User>, [i64; 3]> {
+    |    ^^^^^^^^^^
+
+warning: function `fkey` is never used
+   --> c46/src/b125.rs:161:4
+    |
+161 | fn fkey(x: f64) -> i64 {
+    |    ^^^^
+
+warning: function `uqacx` is never used
+   --> c46/src/b125.rs:184:4
+    |
+184 | fn uqacx(db: &'static So) -> Fold<Id<User>, [i64; 5]> {
+    |    ^^^^^
+
+warning: function `ratio32` is never used
+   --> c46/src/b125.rs:199:4
+    |
+199 | fn ratio32(n: i64, d: i64) -> V {
+    |    ^^^^^^^
+
+warning: function `leak_join` is never used
+   --> c46/src/b125.rs:203:4
+    |
+203 | fn leak_join(parts: impl IntoIterator<Item = Str>, sep: &str) -> Str {
+    |    ^^^^^^^^^
+
+warning: function `named_owner` is never used
+   --> c46/src/b125.rs:215:4
+    |
+215 | fn named_owner(db: &'static So, p: Id<Post>, dflt: Str) -> V {
+    |    ^^^^^^^^^^^
+
+warning: function `hours_to` is never used
+   --> c46/src/b125.rs:219:4
+    |
+219 | fn hours_to(t0: i64, t: i64) -> f64 {
+    |    ^^^^^^^^
+
+warning: function `edit_names` is never used
+   --> c46/src/b125.rs:230:4
+    |
+230 | fn edit_names(db: &'static So) -> Fold<Id<Post>, [i64; 5]> {
+    |    ^^^^^^^^^^
+
+warning: function `self_votes` is never used
+   --> c46/src/b125.rs:237:4
+    |
+237 | fn self_votes(db: &'static So) -> HashIdx<Id<Post>, Id<Vote>> {
+    |    ^^^^^^^^^^
+
+load: 0.03s  (posts n=246673, users n=267193, votes n=926084)
+14172    ok      0.219s  100 rows
+14173    ok      0.014s  100 rows
+14182    ok      0.131s  267193 rows
+14184    ok      0.020s  165 rows
+14187    ok      0.617s  190502 rows
+14191    ok      0.070s  267193 rows
+14192    ok      0.166s  267193 rows
+14193    ok      3.159s  190502 rows
+14200    ok      0.043s  100 rows
+14208    ok      0.117s  246673 rows
+14209    ok      0.197s  267193 rows
+14211    ok      0.382s  100 rows
+14242    ok      0.063s  65122 rows
+14250    ok      0.146s  267193 rows
+14251    ok      0.008s  1 rows
+14256    ok      0.007s  1 rows
+14265    ok      0.033s  51409 rows
+14266    ok      0.047s  100 rows
+14277    ok      0.173s  190502 rows
+14279    ok      0.015s  16313 rows
+14298    ok      0.338s  267193 rows
+14299    ok      0.035s  100 rows
+14300    ok      0.011s  100 rows
+14303    ok      0.005s  100 rows
+14304    ok      3.831s  190502 rows
+14305    ok      0.028s  1 rows
+14307    ok      0.035s  10080 rows
+14309    ok      0.199s  267193 rows
+14313    ok      1.073s  190502 rows
+14316    ok      0.009s  6 rows
+14318    ok      0.605s  267193 rows
+14321    ok      0.549s  240022 rows
+14323    ok      0.134s  267193 rows
+14327    ok      0.454s  100 rows
+14329    ok      0.211s  100 rows
+14331    ok      0.266s  246673 rows
+14336    ok      0.033s  65122 rows
+14337    ok      0.367s  240022 rows
+14344    ok      0.005s  1 rows
+14346    ok      0.021s  4307 rows
+14360    ok      0.063s  22698 rows
+14372    ok      0.004s  1 rows
+14376    ok      0.002s  1 rows
+14386    ok      0.013s  100 rows
+14388    ok      0.010s  6 rows
+14401    ok      0.603s  100 rows
+14406    ok      0.169s  190502 rows
+14407    ok      0.192s  240022 rows
+14416    ok      0.442s  267193 rows
+14418    ok      0.093s  6 rows
+14432    ok      0.175s  267193 rows
+14443    ok      0.017s  10 rows
+14456    ok      2.000s  100 rows
+14465    ok      0.008s  100 rows
+54 ok, 0 diff, 0 skipped

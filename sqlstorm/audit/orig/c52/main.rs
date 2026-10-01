@@ -1,0 +1,9 @@
+mod b131;
+
+fn main() {
+    let mut all: Vec<harness::Entry> = Vec::new();
+    for e in [b131::ENTRIES] {
+        all.extend_from_slice(e);
+    }
+    harness::run(&all)
+}

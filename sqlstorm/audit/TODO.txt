@@ -1,0 +1,9 @@
+c113: relaxed-constant verification for rewritten queries with empty/1-row oracles (rubric section added after it ran)
+c62, c04: same relaxed check (started before the rubric section)
+c06: ports grouping by tag/post-type id where SQL groups by name (e.g. 28976) left unfixed — fix
+c00-c05, c07, c09, c62, c113: sweep for group-by-id-vs-name (rubric rule added after them)
+c08: 20479 assumes TagName unique; harness users_where host filter (if !inner || n>0) — note
+harness group_posts: "#b" (COUNT DISTINCT b.Id) double-counts when posts in a group share an owner — find every port reading #b / agg.b with joins containing b
+c27 11450, c28 13988: raw-id joins done through edges, kept ok on data grounds — should be fixed (data-specific)
+harness stats_fold join 'b' goes through owner_user edge (raw-id issue); DuckDB default TZ here is America/Los_Angeles vs harness NY assumption (CURRENT_DATE oracles)
+c40 12331: STRING_AGG w/o ORDER BY — order arbitrary; port matches by luck (consider rewrites/ entry)

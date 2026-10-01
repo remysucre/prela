@@ -1,0 +1,88 @@
+warning: function `month_ago` is never used
+  --> c37/src/b116.rs:20:4
+   |
+20 | fn month_ago() -> i64 {
+   |    ^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `by_voter` is never used
+   --> c37/src/b116.rs:124:4
+    |
+124 | fn by_voter(db: &'static So) -> HashIdx<Id<User>, Id<Vote>> {
+    |    ^^^^^^^^
+
+warning: function `history_types` is never used
+   --> c37/src/b116.rs:132:4
+    |
+132 | fn history_types(db: &'static So) -> Fold<Id<Post>, [i64; 4]> {
+    |    ^^^^^^^^^^^^^
+
+warning: function `fkey` is never used
+   --> c37/src/b116.rs:161:4
+    |
+161 | fn fkey(x: f64) -> i64 {
+    |    ^^^^
+
+warning: function `owner_posts` is never used
+   --> c37/src/b116.rs:170:4
+    |
+170 | fn owner_posts(db: &'static So) -> Fold<Id<User>, [i64; 6]> {
+    |    ^^^^^^^^^^^
+
+load: 0.03s  (posts n=246673, users n=267193, votes n=926084)
+11113    ok      0.080s  100 rows
+11115    ok      0.260s  442093 rows
+11118    ok      0.193s  267193 rows
+11122    ok      0.012s  100 rows
+11131    ok      0.025s  100 rows
+11135    ok      0.138s  10 rows
+11148    ok      0.011s  0 rows
+11150    ok      0.229s  240022 rows
+11152    ok      0.003s  1 rows
+11153    ok      0.056s  100 rows
+11154    ok      0.880s  246673 rows
+11165    ok      0.026s  100 rows
+11181    ok      0.113s  267193 rows
+11187    ok      0.031s  8 rows
+11190    ok      0.017s  100 rows
+11205    ok      0.133s  1 rows
+11207    ok      0.065s  100 rows
+11215    ok      0.065s  6 rows
+11218    ok      0.024s  100 rows
+11220    ok      0.039s  100 rows
+11221    ok      0.028s  100 rows
+11224    ok      3.279s  100 rows
+11225    ok      2.772s  22698 rows
+11226    ok      0.052s  0 rows
+11240    ok      0.019s  10 rows
+11242    ok      0.008s  8380 rows
+11243    ok      0.024s  5648 rows
+11245    ok      0.205s  50 rows
+11246    ok      0.001s  1 rows
+11267    ok      0.009s  100 rows
+11268    ok      0.038s  100 rows
+11270    ok      0.286s  442093 rows
+11274    ok      0.038s  100 rows
+11280    ok      0.003s  6 rows
+11282    ok      0.033s  100 rows
+11284    ok      0.285s  267193 rows
+11285    ok      0.157s  100 rows
+11315    ok      0.029s  6 rows
+11322    ok      0.027s  7441 rows
+11326    ok      0.348s  100 rows
+11333    ok      0.004s  1 rows
+11342    ok      0.033s  23900 rows
+11346    ok      6.592s  10 rows
+11351    ok      0.028s  10 rows
+11352    ok      0.329s  442093 rows
+11357    ok      0.002s  100 rows
+11358    ok      0.021s  100 rows
+11363    ok      0.506s  190502 rows
+11366    ok      0.007s  1 rows
+11373    ok      0.011s  100 rows
+11376    ok      0.257s  240022 rows
+11384    ok      0.280s  240022 rows
+11392    ok      0.007s  100 rows
+11393    ok      0.548s  267193 rows
+54 ok, 0 diff, 0 skipped

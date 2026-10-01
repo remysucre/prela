@@ -1,0 +1,193 @@
+warning: function `one` is never used
+  --> c49/src/b128.rs:28:4
+   |
+28 | fn one(f: Fold<(), i64>) -> i64 {
+   |    ^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `by_key` is never used
+  --> c49/src/b128.rs:45:4
+   |
+45 | fn by_key<Q, K, R, S, F>(base: Q, key: K, joined: R, init: S, f: F) -> Fold<ROf<K>, S>
+   |    ^^^^^^
+
+warning: function `name` is never used
+  --> c49/src/b128.rs:59:4
+   |
+59 | fn name(db: &'static So) -> Compose<&'static Col<Post, Id<PostType>>, &'static Col<PostType, Str>> {
+   |    ^^^^
+
+warning: function `score_views` is never used
+  --> c49/src/b128.rs:86:4
+   |
+86 | fn score_views(db: &'static So, p: Id<Post>) -> (Reverse<i64>, (bool, Reverse<Option<i64>>)) {
+   |    ^^^^^^^^^^^
+
+warning: function `views_score` is never used
+  --> c49/src/b128.rs:90:4
+   |
+90 | fn views_score(db: &'static So, p: Id<Post>) -> ((bool, Reverse<Option<i64>>), Reverse<i64>) {
+   |    ^^^^^^^^^^^
+
+warning: function `pids` is never used
+   --> c49/src/b128.rs:112:4
+    |
+112 | fn pids(db: &'static So) -> HashIdx<i64, Id<Post>> {
+    |    ^^^^
+
+warning: function `by_voter` is never used
+   --> c49/src/b128.rs:124:4
+    |
+124 | fn by_voter(db: &'static So) -> HashIdx<Id<User>, Id<Vote>> {
+    |    ^^^^^^^^
+
+warning: function `by_name` is never used
+   --> c49/src/b128.rs:128:4
+    |
+128 | fn by_name(db: &'static So) -> HashIdx<Str, Id<User>> {
+    |    ^^^^^^^
+
+warning: function `history_types` is never used
+   --> c49/src/b128.rs:132:4
+    |
+132 | fn history_types(db: &'static So) -> Fold<Id<Post>, [i64; 4]> {
+    |    ^^^^^^^^^^^^^
+
+warning: function `vote_named` is never used
+   --> c49/src/b128.rs:139:4
+    |
+139 | fn vote_named(db: &'static So) -> Fold<Id<User>, [i64; 3]> {
+    |    ^^^^^^^^^^
+
+warning: function `upqa` is never used
+   --> c49/src/b128.rs:146:4
+    |
+146 | fn upqa(db: &'static So) -> Fold<Id<User>, [i64; 6]> {
+    |    ^^^^
+
+warning: function `user_votes` is never used
+   --> c49/src/b128.rs:154:4
+    |
+154 | fn user_votes(db: &'static So) -> Fold<Id<User>, [i64; 3]> {
+    |    ^^^^^^^^^^
+
+warning: function `owner_posts` is never used
+   --> c49/src/b128.rs:170:4
+    |
+170 | fn owner_posts(db: &'static So) -> Fold<Id<User>, [i64; 6]> {
+    |    ^^^^^^^^^^^
+
+warning: function `post_totals` is never used
+   --> c49/src/b128.rs:178:4
+    |
+178 | fn post_totals(db: &'static So) -> [i64; 4] {
+    |    ^^^^^^^^^^^
+
+warning: function `uqacx` is never used
+   --> c49/src/b128.rs:184:4
+    |
+184 | fn uqacx(db: &'static So) -> Fold<Id<User>, [i64; 5]> {
+    |    ^^^^^
+
+warning: function `post_votes` is never used
+   --> c49/src/b128.rs:191:4
+    |
+191 | fn post_votes(db: &'static So) -> Fold<Id<Post>, [i64; 3]> {
+    |    ^^^^^^^^^^
+
+warning: function `ratio32` is never used
+   --> c49/src/b128.rs:199:4
+    |
+199 | fn ratio32(n: i64, d: i64) -> V {
+    |    ^^^^^^^
+
+warning: function `leak_join` is never used
+   --> c49/src/b128.rs:203:4
+    |
+203 | fn leak_join(parts: impl IntoIterator<Item = Str>, sep: &str) -> Str {
+    |    ^^^^^^^^^
+
+warning: function `named_owner` is never used
+   --> c49/src/b128.rs:215:4
+    |
+215 | fn named_owner(db: &'static So, p: Id<Post>, dflt: Str) -> V {
+    |    ^^^^^^^^^^^
+
+warning: function `user_posts_q` is never used
+   --> c49/src/b128.rs:223:4
+    |
+223 | fn user_posts_q(db: &'static So) -> Fold<Id<User>, [i64; 4]> {
+    |    ^^^^^^^^^^^^
+
+warning: function `edit_names` is never used
+   --> c49/src/b128.rs:230:4
+    |
+230 | fn edit_names(db: &'static So) -> Fold<Id<Post>, [i64; 5]> {
+    |    ^^^^^^^^^^
+
+warning: function `self_votes` is never used
+   --> c49/src/b128.rs:237:4
+    |
+237 | fn self_votes(db: &'static So) -> HashIdx<Id<Post>, Id<Vote>> {
+    |    ^^^^^^^^^^
+
+warning: function `history_n_max` is never used
+   --> c49/src/b128.rs:242:4
+    |
+242 | fn history_n_max(db: &'static So) -> Fold<Id<Post>, (i64, i64)> {
+    |    ^^^^^^^^^^^^^
+
+load: 0.03s  (posts n=246673, users n=267193, votes n=926084)
+26513    ok      0.094s  100 rows
+26637    ok      0.048s  100 rows
+27244    ok      0.011s  10 rows
+27339    ok      0.006s  852 rows
+27582    ok      0.005s  1155 rows
+27651    ok      0.058s  16934 rows
+27684    ok      0.012s  10 rows
+27709    ok      0.068s  1 rows
+27739    ok      0.028s  10 rows
+28007    ok      0.009s  693 rows
+28010    ok      0.051s  100 rows
+28165    ok      0.057s  10 rows
+28173    ok      0.271s  97643 rows
+28604    ok      0.014s  10 rows
+28646    ok      0.001s  10 rows
+2885     ok      0.017s  10 rows
+28879    ok      1.264s  0 rows
+29086    ok      0.022s  10 rows
+29321    ok      0.001s  96 rows
+29487    ok      0.008s  10 rows
+29631    ok      0.008s  50 rows
+29726    ok      0.028s  50 rows
+29842    ok      0.023s  10 rows
+30841    ok      0.026s  10 rows
+31194    ok      0.025s  0 rows
+31614    ok      0.003s  0 rows
+33104    ok      0.048s  10 rows
+3335     ok      0.321s  28833 rows
+33426    ok      0.001s  169 rows
+3453     ok      0.006s  10 rows
+3972     ok      0.105s  154017 rows
+4625     ok      0.008s  10 rows
+4845     ok      0.014s  50 rows
+5004     ok      0.019s  10 rows
+5020     ok      0.091s  50 rows
+5032     ok      0.001s  10 rows
+5090     ok      0.001s  10 rows
+5112     ok      0.015s  10 rows
+5115     ok      0.001s  10 rows
+5130     ok      0.018s  10 rows
+5138     ok      0.156s  100 rows
+5157     ok      0.013s  588 rows
+5168     ok      0.040s  50 rows
+5201     ok      0.020s  853 rows
+5232     ok      0.109s  10 rows
+5262     ok      0.267s  15724 rows
+5305     ok      0.024s  100 rows
+5390     ok      0.012s  10 rows
+5399     ok      0.038s  100 rows
+5407     ok      0.001s  20 rows
+5417     ok      0.005s  10 rows
+51 ok, 0 diff, 0 skipped

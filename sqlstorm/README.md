@@ -24,6 +24,9 @@ prints where the port stands — counts, which crate has room, the next batch,
 and whether the tree is dirty — derived from the files, so it cannot go stale
 the way a paragraph does.
 
+The 86 queries that only Postgres and Umbra validated have Postgres oracles
+instead; `notes/pg-oracle.md` has their tools and what differs.
+
 The loop, from this directory:
 
     PY=/Users/paultalma/projects/sqlstorm_data/venv/bin/python
@@ -225,10 +228,12 @@ not dropped — they still have to be looked at to finish the corpus.
 
 ## Status
 
-`./tools/status.sh` is the live answer. As of batch 181 (c100): 8,189 queries
-ported and matching DuckDB, 45 blocked on a missing feature (nearly all
-recursive CTEs), 634 the corpus ships broken (DuckDB refuses them), 3 with no
-oracle, 166 with a rewritten oracle. About 1,370 worklist queries remain.
+`./tools/status.sh` is the live answer. As of batch 194 (c113): 9,123 queries
+ported and matching DuckDB, 75 blocked on a missing feature (nearly all
+recursive CTEs), 1,042 the corpus ships broken (DuckDB refuses them), 5 with no
+oracle, 224 with a rewritten oracle. The DuckDB-valid worklist is exhausted:
+`next.py` offers no more candidates. What remains is the 5,692 queries
+SQLStorm did not mark DuckDB-valid (see "Order of work").
 
 The ports in batches 134-140 that multiplied per-child counts have been
 redone, and every crate has been audited for filters and joins done in host
