@@ -581,6 +581,27 @@ impl<E> Default for Ident<E> {
         Ident(PhantomData)
     }
 }
+impl<E: 'static> Query for Ident<E> {
+    type D = Id<E>;
+    type R = Id<E>;
+}
+impl<E: 'static> Member for Ident<E> {
+    #[inline(always)]
+    fn member(&self, _x: Id<E>) -> bool {
+        true
+    }
+}
+impl<E: 'static> Probe for Ident<E> {
+    #[inline(always)]
+    fn probe<K: FnMut(Id<E>)>(&self, x: Id<E>, mut k: K) {
+        k(x);
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut(Id<E>) -> bool>(&self, x: Id<E>, mut k: K) -> bool {
+        k(x)
+    }
+}
+
 // identity relation
 // Like `Ident`, but for an arbitrary col
 // currently used to include row infor in window function payload
@@ -614,27 +635,6 @@ impl<D: Copy + Eq + Hash> Probe for Same<D> {
     }
     #[inline(always)]
     fn probe_any<K: FnMut(D) -> bool>(&self, x: D, mut k: K) -> bool {
-        k(x)
-    }
-}
-
-impl<E: 'static> Query for Ident<E> {
-    type D = Id<E>;
-    type R = Id<E>;
-}
-impl<E: 'static> Member for Ident<E> {
-    #[inline(always)]
-    fn member(&self, _x: Id<E>) -> bool {
-        true
-    }
-}
-impl<E: 'static> Probe for Ident<E> {
-    #[inline(always)]
-    fn probe<K: FnMut(Id<E>)>(&self, x: Id<E>, mut k: K) {
-        k(x);
-    }
-    #[inline(always)]
-    fn probe_any<K: FnMut(Id<E>) -> bool>(&self, x: Id<E>, mut k: K) -> bool {
         k(x)
     }
 }
