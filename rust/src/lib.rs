@@ -50,6 +50,9 @@ pub mod engine;
 pub mod format;
 pub mod job_queries;
 pub mod job_schema;
+// Reads Parquet directly, so it needs the same parquet/arrow deps as `regen`.
+#[cfg(feature = "regen")]
+pub mod join_tree;
 pub mod loader;
 pub mod tpch_queries;
 pub mod tpch_schema;

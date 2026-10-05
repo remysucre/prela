@@ -264,6 +264,16 @@ fn split_and(p: PredicateExpr, out: &mut Vec<PredicateExpr>) {
 
 // ===== scan ===============================================================
 
+fn footer_rows(builder: &ParquetRecordBatchReaderBuilder<File>) -> usize {
+    builder.metadata().file_metadata().num_rows() as usize
+}
+
+// A file's row count from its footer alone, without decoding any data.
+pub fn row_count(path: &str) -> usize {
+    let builder = ParquetRecordBatchReaderBuilder::try_new(File::open(path).expect(path)).unwrap();
+    footer_rows(&builder)
+}
+
 // Column names -> a ProjectionMask over the file's root columns.
 fn mask(builder: &ParquetRecordBatchReaderBuilder<File>, cols: &[String]) -> ProjectionMask {
     let idx = cols.iter().map(|c| builder.schema().index_of(c).unwrap());
@@ -283,7 +293,7 @@ pub fn scan(
     // The page index lets Parquet skip whole pages that a filter rules out.
     let options = ArrowReaderOptions::new().with_page_index(true);
     let builder = ParquetRecordBatchReaderBuilder::try_new_with_options(file, options).unwrap();
-    let row_count = builder.metadata().file_metadata().num_rows() as usize;
+    let row_count = footer_rows(&builder);
 
     let mut predicates: Vec<Box<dyn ArrowPredicate>> = Vec::new();
     for ColumnFilter { columns, mut eval } in filters {

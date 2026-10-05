@@ -31,6 +31,14 @@ name = "regen"
 path = "src/bin/regen.rs"
 required-features = ["regen"]
 
+[[example]]
+name = "tree_query"
+required-features = ["regen"]
+
+[[example]]
+name = "testing"
+required-features = ["regen"]
+
 [profile.release]
 lto = "fat"
 codegen-units = 1
