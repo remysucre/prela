@@ -3005,9 +3005,9 @@ fn q13773(db: &'static So) -> String {
     });
     let u = db.user.select(&db.user.reputation).fold_flat([0i64; 3], |a, r| [a[0] + 1, a[1] + r, a[2] + (r > 1000) as i64]);
     let x = db.vote.select(&db.vote.vote_type_id).fold_flat([0i64; 4], |a, t| [a[0] + 1, a[1] + (t == 2) as i64, a[2] + (t == 3) as i64, a[3] + (t == 6) as i64]);
-    let mut f = vec![V::I(p[0]), V::I(owners), V::I(p[1]), V::I(p[2]), nullable(p[4], p[3]), V::I(p[5])];
-    f.extend(ints(&u));
-    f.extend(ints(&x));
+    let mut f = vec![V::I(p[0]), V::I(owners), V::I(p[1]), V::I(p[2]), nullable(p[4], p[3]), nullable(p[5], p[0])];
+    f.extend([V::I(u[0]), nullable(u[1], u[0]), V::I(u[2])]);
+    f.extend([V::I(x[0]), nullable(x[1], x[0]), nullable(x[2], x[0]), nullable(x[3], x[0])]);
     row(f)
 }
 

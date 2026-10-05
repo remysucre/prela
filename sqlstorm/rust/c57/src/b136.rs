@@ -969,7 +969,7 @@ fn q10006(db: &'static So) -> String {
 // U.Reputation DESC
 // LIMIT 100;
 fn q10025(db: &'static So) -> String {
-    let us = user_stats_fold(db, Ident::<User>::new(), UserWhere::All, "vb", any_post);
+    let us = user_counts(db, UserWhere::All, "vb");
     let dp = ud(db, UserWhere::All, posts_of(db));
     let bu = badges_per_user(db);
     let Post { score, view_count, answer_count, .. } = &db.post;
@@ -5269,6 +5269,52 @@ fn q33531(db: &'static So) -> String {
     let mut v = Vec::new();
     (&g).filt(|a: [i64; 3]| a[0] > 2).drive(|k, a| v.push((k, a)));
     rows(v.iter().map(|&(((u, t), h), a)| row(vec![V::S(u), ostr(t), V::S(if h { "Yes" } else { "No" }), V::I(a[0]), avg(a[1], a[0]), V::T(a[2])])))
+}
+
+#[derive(Clone, Copy, Default)]
+struct UC {
+    n: i64,
+    q: i64,
+    a: i64,
+    t38: i64,
+    cx: i64,
+    up: i64,
+    down: i64,
+    bx: i64,
+    gold: i64,
+    silver: i64,
+    bronze: i64,
+    views_sum: i64,
+}
+
+fn user_counts(db: &'static So, w: UserWhere, joins: &str) -> DenseFold<Id<User>, UC> {
+    let (c, v, b) = (joins.contains('c'), joins.contains('v'), joins.contains('b'));
+    let post = (&db.post.post_type_id)
+        .and((&db.post.view_count).opt())
+        .and(comments_of_if(db, c).opt())
+        .and(votes_of_if(db, v).select(&db.vote.vote_type_id).opt());
+    user_base(db, w)
+        .group_by(Ident::<User>::new())
+        .select(posts_of(db).select(post).opt().and(badges_of_if(db, b).select(&db.badge.class).opt()))
+        .dense_fold(db.user.id.n, UC::default(), |mut a, (p, b)| {
+            if let Some((((t, w), c), v)) = p {
+                a.n += 1;
+                a.q += (t == 1) as i64;
+                a.a += (t == 2) as i64;
+                a.t38 += (3..=8).contains(&t) as i64;
+                a.views_sum += w.unwrap_or(0);
+                a.cx += c.is_some() as i64;
+                a.up += (v == Some(2)) as i64;
+                a.down += (v == Some(3)) as i64;
+            }
+            if let Some(cls) = b {
+                a.bx += 1;
+                a.gold += (cls == 1) as i64;
+                a.silver += (cls == 2) as i64;
+                a.bronze += (cls == 3) as i64;
+            }
+            a
+        })
 }
 
 pub static ENTRIES: &[harness::Entry] = &[

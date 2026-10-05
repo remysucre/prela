@@ -189,13 +189,14 @@ fn q10696(db: &'static So) -> String {
 
     let win = || db.post.with(creation_date.ge(date(2023, 1, 1)));
 
-    let (qn, qs, an, asum, cc) = win()
+    let (n, qn, qs, an, asum, cc) = win()
         .with(creation_date.lt(date(2024, 1, 1)))
         .select(post_type_id.and(score).and(comment_count))
         .fold_flat(
-            (0i64, 0i64, 0i64, 0i64, 0i64),
-            |(qn, qs, an, asum, cc), ((ty, sc), c)| {
+            (0i64, 0i64, 0i64, 0i64, 0i64, 0i64),
+            |(n, qn, qs, an, asum, cc), ((ty, sc), c)| {
                 (
+                    n + 1,
                     qn + (ty == 1) as i64,
                     qs + if ty == 1 { sc } else { 0 },
                     an + (ty == 2) as i64,
@@ -219,7 +220,7 @@ fn q10696(db: &'static So) -> String {
         avg(qs, qn),
         avg(asum, an),
         nullable(vs, vn),
-        V::I(cc),
+        nullable(cc, n),
         nullable(acs, acn),
     ])
 }

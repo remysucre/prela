@@ -1,6 +1,52 @@
 use harness::prelude::*;
 use std::cmp::Reverse;
 
+fn unit() -> VecRel<usize, ()> {
+    rel(vec![()])
+}
+
+fn like(s: &str, p: &str) -> bool {
+    let (s, p): (Vec<char>, Vec<char>) = (s.chars().collect(), p.chars().collect());
+    let (mut i, mut j, mut star, mut mark) = (0, 0, None, 0);
+    while i < s.len() {
+        if j < p.len() && p[j] == '%' {
+            star = Some(j);
+            mark = i;
+            j += 1;
+        } else if j < p.len() && (p[j] == '_' || p[j] == s[i]) {
+            i += 1;
+            j += 1;
+        } else if let Some(st) = star {
+            j = st + 1;
+            mark += 1;
+            i = mark;
+        } else {
+            return false;
+        }
+    }
+    p[j..].iter().all(|&c| c == '%')
+}
+
+fn segments(s: Str) -> Vec<Str> {
+    s.split('<').skip(1).filter_map(|x| x.find('>').map(|j| &x[..j])).collect()
+}
+
+/// The (post, tag) pairs whose Tags contains '<' || TagName || '>': POSITION(..) > 0, or `LIKE '%<' || TagName || '>%'` when
+/// `pat`. A name free of '<' and '>' (and, under LIKE, of '%' and '_') can only occur as a whole bracketed segment; any other
+/// name is matched against every distinct Tags string.
+fn bracketed(db: &'static So, pat: bool) -> MatSet<(Id<Post>, Id<Tag>)> {
+    let name = &db.tag.tag_name;
+    let plain = move |n: Str| !n.contains(['<', '>']) && !(pat && n.contains(['%', '_']));
+    let seg: HashIdx<Str, Id<Tag>> = db.tag.with(name.filt(plain)).select(name).inv().collect();
+    let odd: HashIdx<Str, Id<Tag>> = db.tag.with(name.filt(move |n| !plain(n))).select(name).inv().collect();
+    let strs: MatSet<Str> = (&db.post.tags_str).collect();
+    let hit: HashIdx<Str, Id<Tag>> = (&strs)
+        .select_where(&odd, move |s: Str, n: Str| if pat { like(s, &format!("%<{n}>%")) } else { s.contains(&format!("<{n}>")) })
+        .collect();
+    let tags = &db.post.tags_str;
+    db.post.select(Ident::<Post>::new().and(tags.flat_map(segments).select(&seg))).union(db.post.select(Ident::<Post>::new().and(tags.select(&hit)))).collect()
+}
+
 // WITH RankedPosts AS (SELECT p.Id AS PostId, p.Title, p.CreationDate, p.OwnerUserId, p.Score, COUNT(a.Id) AS AnswerCount,
 //        ROW_NUMBER() OVER (PARTITION BY p.OwnerUserId ORDER BY p.CreationDate DESC) AS UserPostRank
 //     FROM Posts p LEFT JOIN Posts a ON a.ParentId = p.Id AND a.PostTypeId = 2
@@ -1370,10 +1416,12 @@ fn q29091(db: &'static So) -> String {
     let w = db.post.with(post_type_id.eq(1)).group_by(owner_user_id.opt()).select(Ident::<Post>::new().and(creation_date)).window(row_number, |(p, d)| (Reverse(d), p), asc);
     let fp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r == 1).map(|((p, _), _)| p).collect();
     let up = |s: Str, pat: &str| s.to_uppercase().contains(pat);
-    let a = (&fp).select(title.opt().and(body.opt()).and(score)).fold_flat([0i64; 4], |a, ((t, b), s)| {
-        [a[0] + 1, a[1] + t.map_or(false, |t| up(t, "SQL")) as i64, a[2] + b.map_or(false, |b| up(b, "STRING")) as i64, a[3] + s]
+    let all: HashIdx<(), Id<Post>> = whole(&fp).collect();
+    let agg = (&unit()).select((&all).select(title.opt().and(body.opt()).and(score)).opt()).fold([0i64; 4], |a, x| match x {
+        Some(((t, b), s)) => [a[0] + 1, a[1] + t.map_or(false, |t| up(t, "SQL")) as i64, a[2] + b.map_or(false, |b| up(b, "STRING")) as i64, a[3] + s],
+        None => a,
     });
-    rows([row(vec![V::I(a[0]), V::I(a[1]), V::I(a[2]), avg(a[3], a[0])])])
+    rows(drain(&agg).into_iter().map(|(_, a)| row(vec![V::I(a[0]), nullable(a[1], a[0]), nullable(a[2], a[0]), avg(a[3], a[0])])))
 }
 
 // WITH RankedPosts AS (SELECT p.Id AS PostId, p.Title, p.CreationDate, p.Score, p.ViewCount, COUNT(DISTINCT c.Id) AS CommentCount, COUNT(DISTINCT a.Id) AS AnswerCount,
@@ -2148,16 +2196,15 @@ fn q5276(db: &'static So) -> String {
 // TopTags AS (SELECT TagName, PostCount, TotalWordCount, ROW_NUMBER() OVER (ORDER BY PostCount DESC, TotalWordCount DESC) AS rn FROM TagPostCounts)
 // SELECT ups.UserId, ups.DisplayName, ups.TotalPosts, ups.QuestionCount, ups.AnswerCount, ups.TotalScore, ups.LastPostDate, tt.TagName, tt.PostCount, tt.TotalWordCount
 // FROM UserPostStats ups JOIN TopTags tt ON tt.rn <= 5 WHERE ups.TotalPosts > 20 ORDER BY ups.TotalScore DESC, ups.LastPostDate DESC;
-//
-// Tag names hold no '<' or '>', so the LIKE matches exactly the posts listing
-// that tag.
 fn q29374(db: &'static So) -> String {
-    let Post { tags_str, body, .. } = &db.post;
-    let tagged: HashIdx<Str, Id<Post>> = db.post.select(tags_str.flat_map(tag_list)).inv().collect();
+    let Post { body, .. } = &db.post;
+    type R = (Id<Post>, Id<Tag>);
+    let bt = bracketed(db, true);
+    let by_tag: HashIdx<Id<Tag>, R> = (&bt).map(|(_, t): R| t).inv().collect();
     let tc = db
         .tag
         .group_by(&db.tag.tag_name)
-        .select((&db.tag.tag_name).select(&tagged).select(body.opt()))
+        .select((&by_tag).map(|(p, _): R| p).select(body.opt()))
         .fold((0i64, None), |(n, w): (i64, Option<i64>), b| {
             (n + 1, match b {
                 Some(b) => Some(w.unwrap_or(0) + b.matches(' ').count() as i64),

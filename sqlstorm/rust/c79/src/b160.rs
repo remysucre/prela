@@ -1,6 +1,48 @@
 use harness::prelude::*;
 use std::cmp::Reverse;
 
+fn like(s: &str, p: &str) -> bool {
+    let (s, p): (Vec<char>, Vec<char>) = (s.chars().collect(), p.chars().collect());
+    let (mut i, mut j, mut star, mut mark) = (0, 0, None, 0);
+    while i < s.len() {
+        if j < p.len() && p[j] == '%' {
+            star = Some(j);
+            mark = i;
+            j += 1;
+        } else if j < p.len() && (p[j] == '_' || p[j] == s[i]) {
+            i += 1;
+            j += 1;
+        } else if let Some(st) = star {
+            j = st + 1;
+            mark += 1;
+            i = mark;
+        } else {
+            return false;
+        }
+    }
+    p[j..].iter().all(|&c| c == '%')
+}
+
+fn segments(s: Str) -> Vec<Str> {
+    s.split('<').skip(1).filter_map(|x| x.find('>').map(|j| &x[..j])).collect()
+}
+
+/// The (post, tag) pairs whose Tags contains '<' || TagName || '>': POSITION(..) > 0, or `LIKE '%<' || TagName || '>%'` when
+/// `pat`. A name free of '<' and '>' (and, under LIKE, of '%' and '_') can only occur as a whole bracketed segment; any other
+/// name is matched against every distinct Tags string.
+fn bracketed(db: &'static So, pat: bool) -> MatSet<(Id<Post>, Id<Tag>)> {
+    let name = &db.tag.tag_name;
+    let plain = move |n: Str| !n.contains(['<', '>']) && !(pat && n.contains(['%', '_']));
+    let seg: HashIdx<Str, Id<Tag>> = db.tag.with(name.filt(plain)).select(name).inv().collect();
+    let odd: HashIdx<Str, Id<Tag>> = db.tag.with(name.filt(move |n| !plain(n))).select(name).inv().collect();
+    let strs: MatSet<Str> = (&db.post.tags_str).collect();
+    let hit: HashIdx<Str, Id<Tag>> = (&strs)
+        .select_where(&odd, move |s: Str, n: Str| if pat { like(s, &format!("%<{n}>%")) } else { s.contains(&format!("<{n}>")) })
+        .collect();
+    let tags = &db.post.tags_str;
+    db.post.select(Ident::<Post>::new().and(tags.flat_map(segments).select(&seg))).union(db.post.select(Ident::<Post>::new().and(tags.select(&hit)))).collect()
+}
+
 fn tag_name_stats(db: &'static So) -> Fold<Str, [i64; 7]> {
     let lt = tag_mentions(db);
     let by_tag: HashIdx<Id<Tag>, (Id<Post>, Id<Tag>)> = (&lt).map(|(_, t)| t).inv().collect();
@@ -3065,7 +3107,7 @@ fn q25114(db: &'static So) -> String {
 //
 // TagStatistics and UserStatistics are joined on conditions that name only their own side, so each is crossed with the top questions.
 fn q29499(db: &'static So) -> String {
-    let Post { post_type_id, owner_user, creation_date, score, title, tags, .. } = &db.post;
+    let Post { post_type_id, owner_user, creation_date, score, title, .. } = &db.post;
     let since = add_years(ts(2024, 10, 1, 12, 34, 56), -1);
     let w = db
         .post
@@ -3075,7 +3117,9 @@ fn q29499(db: &'static So) -> String {
         .select(Ident::<Post>::new().and(score).and(creation_date))
         .window(row_number, |((p, s), d)| (Reverse(s), Reverse(d), p), asc);
     let tp: MatSet<Id<Post>> = (&w).filt(|(_, n)| n <= 10).map(|(((p, _), _), _)| p).collect();
-    let by_tag: HashIdx<Id<Tag>, Id<Post>> = tags.inv().collect();
+    type R = (Id<Post>, Id<Tag>);
+    let bt = bracketed(db, true);
+    let by_tag: HashIdx<Id<Tag>, Id<Post>> = (&bt).map(|(_, t): R| t).inv().map(|(p, _): R| p).collect();
     let ts_ = db.tag.group_by(&db.tag.tag_name).select((&by_tag).select(Ident::<Post>::new().with(creation_date.ge(since))).select(score)).fold([0i64; 2], |a, s| [a[0] + 1, a[1] + s]);
     let tsv: HashIdx<(), (Str, [i64; 2])> = whole(&ts_).select(Same::<Str>::new().and((&ts_).filt(|a| a[0] > 5))).collect();
     let us = db

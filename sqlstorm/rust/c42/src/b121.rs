@@ -447,11 +447,14 @@ fn q12818(db: &'static So) -> String {
 // U.Reputation DESC,
 // U.TotalPostScore DESC;
 fn q12826(db: &'static So) -> String {
-    let us = user_stats_fold(db, Ident::<User>::new(), UserWhere::All, "b", any_post);
+    let us = user_base(db, UserWhere::All)
+        .group_by(Ident::<User>::new())
+        .select(posts_of(db).select(&db.post.score).opt().and(badges_of(db).opt()))
+        .fold([0i64; 3], |a, (s, b)| [a[0] + s.is_some() as i64, a[1] + s.unwrap_or(0), a[2] + b.is_some() as i64]);
     let pf = owned(db).group_by(&db.post.owner_user).select((&db.post.score).and((&db.post.view_count).opt())).fold([0i64; 3], |a, (s, w)| [a[0] + 1, a[1] + s, a[2] + w.unwrap_or(0)]);
     let mut v = Vec::new();
     (&us).and((&pf).opt()).drive(|u, (a, p)| v.push((u, a, p.unwrap_or([0; 3]))));
-    rows(v.iter().map(|&(u, a, p)| row(vec![user_col(db, u, "uid"), user_col(db, u, "rep"), V::I(a.n), ustat_field(&a, "score_sum"), V::I(a.bx), V::I(p[0]), or0(p[1], p[0]), V::I(p[2])])))
+    rows(v.iter().map(|&(u, a, p)| row(vec![user_col(db, u, "uid"), user_col(db, u, "rep"), V::I(a[0]), nullable(a[1], a[0]), V::I(a[2]), V::I(p[0]), or0(p[1], p[0]), V::I(p[2])])))
 }
 
 // WITH UserMetrics AS (
@@ -1491,7 +1494,13 @@ fn q12965(db: &'static So) -> String {
 // ORDER BY
 // UserLevel DESC;
 fn q12969(db: &'static So) -> String {
-    let us = user_stats_fold(db, Ident::<User>::new(), UserWhere::All, "cv", any_post);
+    let us = user_base(db, UserWhere::All)
+        .group_by(Ident::<User>::new())
+        .select(posts_of(db).select((&db.post.score).and(comments_of(db).opt()).and(votes_of(db).opt())).opt())
+        .dense_fold(db.user.id.n, (0i64, 0i64), |(n, s), p| match p {
+            Some(((x, _), _)) => (n + 1, s + x),
+            None => (n, s),
+        });
     let dp = ud(db, UserWhere::All, posts_of(db));
     let dc = ud(db, UserWhere::All, posts_of(db).select(comments_of(db)));
     let dv = ud(db, UserWhere::All, posts_of(db).select(votes_of(db)));
@@ -1511,8 +1520,8 @@ fn q12969(db: &'static So) -> String {
         .group_by((&db.user.reputation).map(level))
         .select((&us).and((&dp).opt()).and((&dc).opt()).and((&dv).opt()))
         .fold(([0i64; 5], 0f64), |(a, s), (((u, p), c), x)| {
-            let m = u.n > 0;
-            ([a[0] + 1, a[1] + p.unwrap_or(0), a[2] + m as i64, a[3] + c.unwrap_or(0), a[4] + x.unwrap_or(0)], if m { s + u.score_sum as f64 / u.n as f64 } else { s })
+            let m = u.0 > 0;
+            ([a[0] + 1, a[1] + p.unwrap_or(0), a[2] + m as i64, a[3] + c.unwrap_or(0), a[4] + x.unwrap_or(0)], if m { s + u.1 as f64 / u.0 as f64 } else { s })
         });
     let mut v = Vec::new();
     (&f).drive(|k, a| v.push((k, a)));

@@ -424,7 +424,7 @@ fn q12713(db: &'static So) -> String {
         .fold_flat((0i64, 0i64, 0i64, 0i64, 0i64, 0i64, i64::MIN, i64::MAX), |(n, q, a, vn, vs, s, mx, mn), (((t, w), x), cd)| {
             (n + 1, q + (t == 1) as i64, a + (t == 2) as i64, vn + w.is_some() as i64, vs + w.unwrap_or(0), s + x, mx.max(cd), mn.min(cd))
         });
-    row(vec![V::I(n), V::I(q), V::I(a), avg(vs, vn), avg(s, n), V::T(mx), V::T(mn)])
+    row(vec![V::I(n), nullable(q, n), nullable(a, n), avg(vs, vn), avg(s, n), tmax(mx), tmin(mn)])
 }
 
 // SELECT
@@ -934,8 +934,7 @@ fn q11275(db: &'static So) -> String {
     render_posts(db, posts_with_counts(db, false, true, "c"), "score,#c", 0, &["id", "title", "created", "views", "score", "#c", "rep"])
 }
 
-// The groups are (post columns, t.TagName) where the tag is the post's
-// excerpt tag, at most one per post, so the key is a function of the post.
+// The groups are (post columns, t.TagName), one per tag whose excerpt is the post.
 fn excerpt_tag(db: &'static So) -> HashIdx<Id<Post>, Str> {
     (&db.tag.excerpt_post).inv().select(&db.tag.tag_name).collect()
 }

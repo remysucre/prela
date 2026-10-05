@@ -1500,15 +1500,24 @@ fn q6125(db: &'static So) -> String {
 // U.PostCount DESC
 // LIMIT 50;
 fn q6131(db: &'static So) -> String {
-    let us = user_stats_fold(db, Ident::<User>::new(), UserWhere::All, "v", any_post);
+    let top: MatSet<Id<User>> = whole(user_base(db, UserWhere::All)).select(Ident::<User>::new().and(&db.user.reputation)).window(rank, |(_, r)| r, desc).filt(|(_, n)| n <= 50).map(|((u, _), _)| u).collect();
+    let us = db
+        .user
+        .with(&top)
+        .group_by(Ident::<User>::new())
+        .select(posts_of(db).select((&db.post.post_type_id).and(votes_of(db).select(&db.vote.vote_type_id).opt())).opt())
+        .fold([0i64; 5], |a, p| match p {
+            Some((t, vt)) => [a[0] + 1, a[1] + (t == 1) as i64, a[2] + (t == 2) as i64, a[3] + (vt == Some(2)) as i64, a[4] + (vt == Some(3)) as i64],
+            None => a,
+        });
     let bc = badge_classes(db);
     let mut v = Vec::new();
     (&us).and((&bc).opt()).drive(|u, (a, b)| v.push((u, a, b.unwrap_or([0; 4]))));
-    out(v, |&(u, a, _)| (rep_desc(db, u), Reverse(a.n)), 50, |&(u, a, b)| {
+    out(v, |&(u, a, _)| (rep_desc(db, u), Reverse(a[0])), 50, |&(u, a, b)| {
         let mut f = vec![user_col(db, u, "uid"), user_col(db, u, "name"), user_col(db, u, "rep")];
-        f.extend(ints(&[a.n, a.q, a.a]));
+        f.extend(ints(&a[..3]));
         f.extend(ints(&b));
-        f.extend(ints(&[a.up, a.down]));
+        f.extend(ints(&a[3..]));
         f
     })
 }

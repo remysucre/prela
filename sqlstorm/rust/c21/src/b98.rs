@@ -68,7 +68,19 @@ fn q19938(db: &'static So) -> String {
 // ORDER BY
 // p.CreationDate DESC;
 fn q14582(db: &'static So) -> String {
-    stat_rows(db, post_stats(db, since(db, date(2022, 1, 1)), "cvb", &[]), |p, _| cd(db, p), 0, &["id", "title", "created", "score", "views", "#cx", "#vx", "#bx"])
+    let bidx: HashIdx<i64, Id<Badge>> = (&db.badge.user_id).inv().collect();
+    let mut v = Vec::new();
+    since(db, date(2022, 1, 1))
+        .group_by(Ident::<Post>::new())
+        .select(comments_of(db).opt().and(votes_of(db).opt()).and((&db.post.owner_user_id).select(&bidx).opt()))
+        .fold([0i64; 3], |a, ((c, x), b)| [a[0] + c.is_some() as i64, a[1] + x.is_some() as i64, a[2] + b.is_some() as i64])
+        .drive(|p, a| v.push((p, a)));
+    v.sort_by_key(|&(p, _)| cd(db, p));
+    rows(v.iter().map(|&(p, a)| {
+        let mut f = post_fields(db, p, &["id", "title", "created", "score", "views"]);
+        f.extend(a.iter().map(|&x| V::I(x)));
+        row(f)
+    }))
 }
 
 // SELECT

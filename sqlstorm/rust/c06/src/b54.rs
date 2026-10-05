@@ -132,30 +132,29 @@ fn q7485(db: &'static So) -> String {
     let Post { post_type_id, creation_date, parent, .. } = &db.post;
     let ac = parent.inv().dense_fold_outer(db.post.id.n, 0i64, |a, _| a + 1);
     let mentions = tag_mentions(db);
-    let tag_of = (&mentions).map(|(_, t)| t);
-    let counts = (&mentions).group_by(&tag_of).fold(0i64, |a, _| a + 1);
-    let top: MatSet<Id<Tag>> = whole(&counts)
-        .select(Ident::<Tag>::new().and(&counts))
+    let name_of = (&mentions).map(|(_, t)| t).select(&db.tag.tag_name);
+    let counts = (&mentions).group_by(&name_of).fold(0i64, |a, _| a + 1);
+    let top: MatSet<Str> = whole(&counts)
+        .select(Same::<Str>::new().and(&counts))
         .window(
             row_number,
             |(t, n)| (n, t),
-            |x: &(i64, Id<Tag>), y: &(i64, Id<Tag>)| y.0.cmp(&x.0).then(x.1.cmp(&y.1)),
+            |x: &(i64, Str), y: &(i64, Str)| y.0.cmp(&x.0).then(x.1.cmp(&y.1)),
         )
         .filt(|(_, n)| n <= 5)
         .map(|((t, _), _)| t)
         .collect();
-    let tags_by_post: HashIdx<Id<Post>, Id<Tag>> =
-        (&mentions).with((&tag_of).with(&top)).map(|(p, _)| p).inv().select(&tag_of).collect();
+    let post_names: MatSet<(Id<Post>, Str)> = (&mentions).with((&name_of).with(&top)).map(|(p, _)| p).and(&name_of).collect();
+    let names_by_post: HashIdx<Id<Post>, Str> = (&post_names).map(|(p, _)| p).inv().select((&post_names).map(|(_, n)| n)).collect();
     let mut v = Vec::new();
-    owned(db).with(post_type_id.eq(1)).select(creation_date.and(&tags_by_post)).drive(|p, (cd, t)| v.push((cd, p, t)));
+    owned(db).with(post_type_id.eq(1)).select(creation_date.and(&names_by_post)).drive(|p, (cd, t)| v.push((cd, p, t)));
     v.sort_by(|a, b| b.0.cmp(&a.0));
     rows(v.iter().take(10).map(|&(_, p, t)| {
         let mut f = post_fields(db, p, &["title", "created", "score", "views", "owner"]);
-        f.extend([V::S(db.tag.tag_name.get(t).unwrap()), V::I(ac.get(p).unwrap())]);
+        f.extend([V::S(t), V::I(ac.get(p).unwrap())]);
         row(f)
     }))
 }
-
 fn q9716(db: &'static So) -> String {
     let Post { post_type, creation_date, .. } = &db.post;
     let cc = comments_per_post(db);

@@ -969,7 +969,7 @@ fn q12919(db: &'static So) -> String {
     let (n, vn, vs, s, c, x) = (&per_post).and(view_count.opt()).and(score).fold_flat((0i64, 0i64, 0i64, 0i64, 0i64, 0i64), |(n, vn, vs, sc, c, x), ((st, w), s)| {
         (n + 1, vn + w.is_some() as i64, vs + w.unwrap_or(0), sc + s, c + st.cx, x + st.vx)
     });
-    row(vec![V::I(n), avg(vs, vn), avg(s, n), V::I(c), V::I(x)])
+    row(vec![V::I(n), avg(vs, vn), avg(s, n), nullable(c, n), nullable(x, n)])
 }
 
 // WITH BenchmarkData AS (
@@ -1492,8 +1492,8 @@ fn q11325(db: &'static So) -> String {
 // p.CreationDate DESC
 // LIMIT 100;
 fn q13988(db: &'static So) -> String {
-    let excerpt: HashIdx<Id<Post>, Id<Tag>> = (&db.tag.excerpt_post).inv().collect();
-    let tag_of_link = (&db.post_link.related_post).select(&excerpt);
+    let excerpt: HashIdx<i64, Id<Tag>> = (&db.tag.excerpt_post_id).inv().collect();
+    let tag_of_link = (&db.post_link.related_post_id).select(&excerpt);
     let j: MatSet<(Id<Post>, Option<Id<PostLink>>, Option<Id<Tag>>)> = all_questions(db)
         .select(Ident::<Post>::new().and(links_of(db).select(Ident::<PostLink>::new().and(tag_of_link.opt())).opt()))
         .map(|(p, l)| match l {
@@ -1854,8 +1854,13 @@ fn q14079(db: &'static So) -> String {
 // TotalPosts DESC, u.Reputation DESC
 // LIMIT 100;
 fn q10962(db: &'static So) -> String {
-    let v = users_stats_with(db, UserWhere::All, "cbv", any_post, &[], &[]);
-    users_rows(db, v, |u, s, _| (Reverse(s.n), Reverse(db.user.reputation.get(u).unwrap())), 100, &["uid", "name", "rep", "#n", "#cx", "#q", "#a", "#bx", "#up", "#down"])
+    let mut v = Vec::new();
+    user_counts(db, UserWhere::All, "cbv").drive(|u, a| v.push((u, a)));
+    out(v, |&(u, a)| (Reverse(a.n), Reverse(db.user.reputation.get(u).unwrap())), 100, |&(u, a)| {
+        let mut f = vec![user_col(db, u, "uid"), user_col(db, u, "name"), user_col(db, u, "rep")];
+        f.extend([a.n, a.cx, a.q, a.a, a.bx, a.up, a.down].map(V::I));
+        f
+    })
 }
 
 // SELECT
@@ -2168,6 +2173,61 @@ fn q14381(db: &'static So) -> String {
 // FETCH FIRST 100 ROWS ONLY;
 fn q12058(db: &'static So) -> String {
     stats_rows(db, stats_with(db, owned_since(db, add_months(current_date(), -6)), "v", &[], &[]), |p, _| newest(db, p), 100, &["id", "title", "created", "uid", "owner", "rep", "views", "score", "answers", "comments", "#vx", "up_frac", "down_frac"])
+}
+
+#[derive(Clone, Copy, Default)]
+struct UC {
+    n: i64,
+    q: i64,
+    a: i64,
+    t38: i64,
+    cx: i64,
+    up: i64,
+    down: i64,
+    bx: i64,
+    gold: i64,
+    silver: i64,
+    bronze: i64,
+    views_sum: i64,
+}
+
+fn user_counts(db: &'static So, w: UserWhere, joins: &str) -> DenseFold<Id<User>, UC> {
+    let (c, v, b) = (joins.contains('c'), joins.contains('v'), joins.contains('b'));
+    let post = (&db.post.post_type_id)
+        .and((&db.post.view_count).opt())
+        .and(comments_of_if(db, c).opt())
+        .and(votes_of_if(db, v).select(&db.vote.vote_type_id).opt());
+    user_base(db, w)
+        .group_by(Ident::<User>::new())
+        .select(posts_of(db).select(post).opt().and(badges_of_if(db, b).select(&db.badge.class).opt()))
+        .dense_fold(db.user.id.n, UC::default(), |mut a, (p, b)| {
+            if let Some((((t, w), c), v)) = p {
+                a.n += 1;
+                a.q += (t == 1) as i64;
+                a.a += (t == 2) as i64;
+                a.t38 += (3..=8).contains(&t) as i64;
+                a.views_sum += w.unwrap_or(0);
+                a.cx += c.is_some() as i64;
+                a.up += (v == Some(2)) as i64;
+                a.down += (v == Some(3)) as i64;
+            }
+            if let Some(cls) = b {
+                a.bx += 1;
+                a.gold += (cls == 1) as i64;
+                a.silver += (cls == 2) as i64;
+                a.bronze += (cls == 3) as i64;
+            }
+            a
+        })
+}
+
+fn out<X, T: Ord>(mut v: Vec<X>, key: impl Fn(&X) -> T, n: usize, f: impl Fn(&X) -> Vec<V>) -> String {
+    v.sort_by_key(|x| key(x));
+    let n = if n == 0 { v.len() } else { n };
+    if n < v.len() && key(&v[n - 1]) == key(&v[n]) {
+        eprintln!("tie at the LIMIT cut");
+    }
+    rows(v.iter().take(n).map(|x| row(f(x))))
 }
 
 pub static ENTRIES: &[harness::Entry] = &[

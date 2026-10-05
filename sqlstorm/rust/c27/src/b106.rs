@@ -54,6 +54,37 @@ fn users_with(db: &'static So, w: UserWhere, joins: &str, pf: fn(i64, i64) -> bo
     v
 }
 
+fn ucv<K>(db: &'static So, key: K) -> Fold<ROf<K>, [i64; 10]>
+where
+    K: IntoQuery,
+    K::Q: Probe<D = Id<User>>,
+    ROf<K>: Eq + std::hash::Hash + Copy,
+{
+    let Post { post_type_id, score, view_count, creation_date, .. } = &db.post;
+    user_base(db, UserWhere::All)
+        .group_by(key)
+        .select(posts_of(db).select(post_type_id.and(score).and(view_count.opt()).and(creation_date).and(comments_of(db).opt()).and(votes_of(db).opt())).opt())
+        .fold([0, 0, 0, 0, 0, 0, 0, 0, i64::MIN, i64::MAX], |a, p| match p {
+            Some((((((t, s), w), d), c), v)) => [
+                a[0] + 1,
+                a[1] + (t == 1) as i64,
+                a[2] + (t == 2) as i64,
+                a[3] + s,
+                a[4] + c.is_some() as i64,
+                a[5] + v.is_some() as i64,
+                a[6] + w.is_some() as i64,
+                a[7] + w.unwrap_or(0),
+                a[8].max(d),
+                a[9].min(d),
+            ],
+            None => a,
+        })
+}
+
+fn ucv_t(a: &[i64; 10], x: i64) -> V {
+    if a[0] == 0 { V::Null } else { V::T(x) }
+}
+
 fn user_rows<T: Ord>(db: &'static So, mut v: Vec<(Id<User>, UStats, [i64; 4])>, key: impl Fn(Id<User>, &UStats, &[i64; 4]) -> T, n: usize, cols: &[&str]) -> String {
     v.sort_by_key(|(u, s, d)| key(*u, s, d));
     let n = if n == 0 { v.len() } else { n };
@@ -325,8 +356,13 @@ fn q13900(db: &'static So) -> String {
 // PostCount DESC
 // LIMIT 100;
 fn q10255(db: &'static So) -> String {
-    let v = users_with(db, UserWhere::All, "cv", any_post, &[]);
-    user_rows(db, v, |_, s, _| Reverse(s.n), 100, &["uid", "name", "#n", "#q", "#a", "#cx", "#vx", "rep", "ucreated", "last_access"])
+    let v = top_n(drain(&ucv(db, Ident::<User>::new())), |&(u, a)| (Reverse(a[0]), u), 100);
+    rows(v.iter().map(|&(u, a)| {
+        let mut f = ucols(db, u, &["uid", "name"]);
+        f.extend([V::I(a[0]), V::I(a[1]), V::I(a[2]), V::I(a[4]), V::I(a[5])]);
+        f.extend(ucols(db, u, &["rep", "ucreated", "last_access"]));
+        row(f)
+    }))
 }
 
 // SELECT
@@ -385,8 +421,12 @@ fn q10752(db: &'static So) -> String {
 // TotalPosts DESC
 // LIMIT 100;
 fn q10448(db: &'static So) -> String {
-    let v = users_with(db, UserWhere::All, "cv", any_post, &[]);
-    user_rows(db, v, |_, s, _| Reverse(s.n), 100, &["name", "#n", "#q", "#a", "#cx", "#vx", "views_avg", "score_avg", "created_max"])
+    let v = top_n(drain(&ucv(db, Ident::<User>::new())), |&(u, a)| (Reverse(a[0]), u), 100);
+    rows(v.iter().map(|&(u, a)| {
+        let mut f = ucols(db, u, &["name"]);
+        f.extend([V::I(a[0]), V::I(a[1]), V::I(a[2]), V::I(a[4]), V::I(a[5]), avg(a[7], a[6]), avg(a[3], a[0]), ucv_t(&a, a[8])]);
+        row(f)
+    }))
 }
 
 // SELECT
@@ -443,14 +483,8 @@ fn q11173(db: &'static So) -> String {
 // TotalPosts DESC
 // FETCH FIRST 100 ROWS ONLY;
 fn q11971(db: &'static So) -> String {
-    let mut v = Vec::new();
-    user_stats_fold(db, &db.user.display_name, UserWhere::All, "cv", any_post).drive(|k, s| v.push((k, s)));
-    v.sort_by_key(|x| Reverse(x.1.n));
-    rows(v.iter().take(100).map(|(k, s)| {
-        let mut f = vec![V::S(k)];
-        f.extend(["#n", "#q", "#a", "score_avg", "#cx", "#vx", "created_max", "created_min"].iter().map(|c| ustat_field(s, c)));
-        row(f)
-    }))
+    let v = top_n(drain(&ucv(db, &db.user.display_name)), |&(k, a)| (Reverse(a[0]), k), 100);
+    rows(v.iter().map(|&(k, a)| row(vec![V::S(k), V::I(a[0]), V::I(a[1]), V::I(a[2]), avg(a[3], a[0]), V::I(a[4]), V::I(a[5]), ucv_t(&a, a[8]), ucv_t(&a, a[9])])))
 }
 
 // SELECT
@@ -1019,9 +1053,22 @@ fn q14762(db: &'static So) -> String {
 // ORDER BY
 // p.CreationDate DESC;
 fn q11450(db: &'static So) -> String {
-    let b = badges_distinct(db);
+    let bidx: HashIdx<i64, Id<Badge>> = (&db.badge.user_id).inv().collect();
+    let owner_badges = || (&db.post.owner_user_id).select(&bidx);
+    let f = all_questions(db)
+        .group_by(Ident::<Post>::new())
+        .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()).and(owner_badges().opt()).and(links_of(db).opt()))
+        .fold([0i64; 3], |a, (((c, t), _), _)| [a[0] + c.is_some() as i64, a[1] + (t == Some(2)) as i64, a[2] + (t == Some(3)) as i64]);
+    let b = per_post_distinct(db, owner_badges());
     let r = per_post_distinct(db, links_of(db).select(&db.post_link.related_post_id));
-    stats_rows(db, stats_with(db, all_questions(db), "cvbl", &[], &[&b, &r]), |_, _| 0, 0, &["id", "title", "created", "#cx", "#up", "#down", "#d0", "#d1", "views", "score"])
+    let mut v = Vec::new();
+    f.and((&b).opt()).and((&r).opt()).drive(|p, ((a, b), r)| v.push((p, a, b.unwrap_or(0), r.unwrap_or(0))));
+    rows(v.iter().map(|&(p, a, b, r)| {
+        let mut f = post_fields(db, p, &["id", "title", "created"]);
+        f.extend([V::I(a[0]), V::I(a[1]), V::I(a[2]), V::I(b), V::I(r)]);
+        f.extend(post_fields(db, p, &["views", "score"]));
+        row(f)
+    }))
 }
 
 // SELECT

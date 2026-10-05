@@ -1039,7 +1039,26 @@ fn q8272(db: &'static So) -> String {
     let c = per_post_distinct(db, comments_of(db));
     let h = per_post_distinct(db, history_of(db));
     let r = per_post_distinct(db, links_of(db).select(&db.post_link.related_post_id));
-    stats_rows(db, stats_with(db, since(db, date(2020, 1, 1)), "cvhbl", &[], &[&c, &h, &r]), |p, _| newest(db, p), 100, &["id", "title", "created", "#d0", "#up", "#down", "#d1", "#gold", "#silver", "#bronze", "#d2"])
+    let bidx: HashIdx<i64, Id<Badge>> = (&db.badge.user_id).inv().collect();
+    let f = since(db, date(2020, 1, 1))
+        .group_by(Ident::<Post>::new())
+        .select(
+            comments_of(db)
+                .opt()
+                .and(votes_of(db).select(&db.vote.vote_type_id).opt())
+                .and(history_of(db).opt())
+                .and((&db.post.owner_user_id).select(&bidx).select(&db.badge.class).opt())
+                .and(links_of(db).opt()),
+        )
+        .fold([0i64; 5], |a, ((((_, t), _), b), _)| [a[0] + (t == Some(2)) as i64, a[1] + (t == Some(3)) as i64, a[2] + (b == Some(1)) as i64, a[3] + (b == Some(2)) as i64, a[4] + (b == Some(3)) as i64]);
+    let mut v = Vec::new();
+    f.and((&c).opt()).and((&h).opt()).and((&r).opt()).drive(|p, (((a, c), h), r)| v.push((p, a, [c, h, r].map(|x| x.unwrap_or(0)))));
+    v.sort_by_key(|&(p, _, _)| newest(db, p));
+    rows(v.iter().take(100).map(|&(p, a, d)| {
+        let mut f = post_fields(db, p, &["id", "title", "created"]);
+        f.extend([V::I(d[0]), V::I(a[0]), V::I(a[1]), V::I(d[1]), V::I(a[2]), V::I(a[3]), V::I(a[4]), V::I(d[2])]);
+        row(f)
+    }))
 }
 
 // GROUP BY a post and a column of one of its joined history rows.
@@ -1710,8 +1729,19 @@ fn q13055(db: &'static So) -> String {
 // TotalPosts DESC
 // LIMIT 10;
 fn q10217(db: &'static So) -> String {
-    let v = users_stats_with(db, UserWhere::All, "cv", any_post, &[], &[]);
-    users_rows(db, v, |_, s, _| Reverse(s.n), 10, &["uid", "name", "#n", "#q", "#a", "#45", "#cx", "#vx"])
+    let us = user_base(db, UserWhere::All)
+        .group_by(Ident::<User>::new())
+        .select(posts_of(db).select((&db.post.post_type_id).and(comments_of(db).opt()).and(votes_of(db).opt())).opt())
+        .fold([0i64; 6], |a, p| match p {
+            Some(((t, c), v)) => [a[0] + 1, a[1] + (t == 1) as i64, a[2] + (t == 2) as i64, a[3] + (t == 4 || t == 5) as i64, a[4] + c.is_some() as i64, a[5] + v.is_some() as i64],
+            None => a,
+        });
+    let v = top_n(drain(&us), |&(u, a)| (Reverse(a[0]), u), 10);
+    rows(v.into_iter().map(|(u, a)| {
+        let mut f = ucols(db, u, &["uid", "name"]);
+        f.extend(a.map(V::I));
+        row(f)
+    }))
 }
 
 // WITH UserPostStats AS (

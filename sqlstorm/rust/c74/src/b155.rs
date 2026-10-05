@@ -1585,12 +1585,12 @@ fn q114(db: &'static So) -> String {
 //     FROM Users u LEFT JOIN Posts p ON u.Id = p.OwnerUserId LEFT JOIN (SELECT PostId, COUNT(*) AS vote_count FROM Votes GROUP BY PostId) v ON p.Id = v.PostId
 //     GROUP BY u.Id, u.DisplayName, u.Reputation, u.CreationDate),
 // TopTags AS (SELECT t.TagName, COUNT(p.Id) AS PostCount FROM Tags t JOIN Posts p ON p.Tags LIKE '%' || t.TagName || '%' GROUP BY t.TagName ORDER BY PostCount DESC LIMIT 5)
-// SELECT us.UserId, us.DisplayName, us.Reputation, us.TotalPosts, us.Questions, us.Answers, us.AcceptedAnswers, us.AvgVotes, STRING_AGG(tt.TagName, ', ') AS PopularTags
+// SELECT us.UserId, us.DisplayName, us.Reputation, us.TotalPosts, us.Questions, us.Answers, us.AcceptedAnswers, us.AvgVotes, STRING_AGG(tt.TagName, ', ' ORDER BY tt.PostCount DESC) AS PopularTags
 // FROM UserStats us LEFT JOIN TopTags tt ON us.Questions > 0
 // GROUP BY us.UserId, us.DisplayName, us.Reputation, us.TotalPosts, us.Questions, us.Answers, us.AcceptedAnswers, us.AvgVotes
 // HAVING us.Reputation > (SELECT AVG(Reputation) FROM Users WHERE Reputation IS NOT NULL) ORDER BY us.Reputation DESC LIMIT 10;
 //
-// The ON names only us, so TopTags is crossed with the users that have questions. STRING_AGG has no ORDER BY; the port lists the tags in TopTags order, as DuckDB does here.
+// The ON names only us, so TopTags is crossed with the users that have questions. STRING_AGG is ordered by PostCount DESC (uses rewrites/2023.sql).
 // The ORDER BY and HAVING read only Reputation, so the ten users are picked first.
 fn q2023(db: &'static So) -> String {
     let (n, s) = db.user.select(&db.user.reputation).fold_flat((0i64, 0i64), |(n, s), r| (n + 1, s + r));
@@ -2116,12 +2116,12 @@ fn q7298(db: &'static So) -> String {
             }
         });
     let (n, s) = (&ua).fold_flat((0i64, 0i64), |(n, s), a| (n + 1, s + a[0]));
-    let mv = db.post.select(view_count).fold_flat(i64::MIN, |m, w| m.max(w));
+    let (vn, mv) = db.post.select(view_count).fold_flat((0i64, i64::MIN), |(n, m), w| (n + 1, m.max(w)));
     let w = whole(&ua).select(Ident::<User>::new().and(&ua)).window(rank, |(_, a)| Reverse(a[0]), asc);
     rows(drain((&w).filt(|(_, r)| r <= 10)).into_iter().map(|(_, ((u, a), _))| {
         let mut f = vec![user_col(db, u, "name")];
         f.extend(a.map(V::I));
-        f.extend([avg(s, n), V::I(mv)]);
+        f.extend([avg(s, n), omax(mv, vn)]);
         row(f)
     }))
 }

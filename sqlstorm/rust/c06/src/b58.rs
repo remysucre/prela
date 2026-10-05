@@ -333,15 +333,14 @@ fn q26640(db: &'static So) -> String {
 
 fn q7117(db: &'static So) -> String {
     let Post { post_type_id, score, .. } = &db.post;
-    let mut top = Vec::new();
-    whole(&db.user.id)
+    let top: HashIdx<(), Id<User>> = whole(&db.user.id)
         .select(Ident::<User>::new().and(&db.user.reputation))
         .window(row_number, |(_, rep)| rep, desc)
         .filt(|((_, rep), n)| n == 1 && rep > 5000)
-        .drive(|_, ((u, _), _)| top.push(u));
-    let top = rel(top);
+        .map(|((u, _), _)| u)
+        .collect();
     let mut out = Vec::new();
-    db.post.with(post_type_id.eq(1)).with(score.gt(0)).cross(&top).drive(|(p, _), (_, u)| {
+    db.post.with(post_type_id.eq(1)).with(score.gt(0)).cross(&top).drive(|(p, ()), (_, u)| {
         let mut f = post_fields(db, p, &["id", "title", "score", "views", "comments", "activity"]);
         f.extend(user_cols(db, Some(u), &["name", "rep"]));
         out.push(row(f))

@@ -1,6 +1,48 @@
 use harness::prelude::*;
 use std::cmp::Reverse;
 
+fn like(s: &str, p: &str) -> bool {
+    let (s, p): (Vec<char>, Vec<char>) = (s.chars().collect(), p.chars().collect());
+    let (mut i, mut j, mut star, mut mark) = (0, 0, None, 0);
+    while i < s.len() {
+        if j < p.len() && p[j] == '%' {
+            star = Some(j);
+            mark = i;
+            j += 1;
+        } else if j < p.len() && (p[j] == '_' || p[j] == s[i]) {
+            i += 1;
+            j += 1;
+        } else if let Some(st) = star {
+            j = st + 1;
+            mark += 1;
+            i = mark;
+        } else {
+            return false;
+        }
+    }
+    p[j..].iter().all(|&c| c == '%')
+}
+
+fn segments(s: Str) -> Vec<Str> {
+    s.split('<').skip(1).filter_map(|x| x.find('>').map(|j| &x[..j])).collect()
+}
+
+/// The (post, tag) pairs whose Tags contains '<' || TagName || '>': POSITION(..) > 0, or `LIKE '%<' || TagName || '>%'` when
+/// `pat`. A name free of '<' and '>' (and, under LIKE, of '%' and '_') can only occur as a whole bracketed segment; any other
+/// name is matched against every distinct Tags string.
+fn bracketed(db: &'static So, pat: bool) -> MatSet<(Id<Post>, Id<Tag>)> {
+    let name = &db.tag.tag_name;
+    let plain = move |n: Str| !n.contains(['<', '>']) && !(pat && n.contains(['%', '_']));
+    let seg: HashIdx<Str, Id<Tag>> = db.tag.with(name.filt(plain)).select(name).inv().collect();
+    let odd: HashIdx<Str, Id<Tag>> = db.tag.with(name.filt(move |n| !plain(n))).select(name).inv().collect();
+    let strs: MatSet<Str> = (&db.post.tags_str).collect();
+    let hit: HashIdx<Str, Id<Tag>> = (&strs)
+        .select_where(&odd, move |s: Str, n: Str| if pat { like(s, &format!("%<{n}>%")) } else { s.contains(&format!("<{n}>")) })
+        .collect();
+    let tags = &db.post.tags_str;
+    db.post.select(Ident::<Post>::new().and(tags.flat_map(segments).select(&seg))).union(db.post.select(Ident::<Post>::new().and(tags.select(&hit)))).collect()
+}
+
 /// COUNT(DISTINCT p.Id) per user over `Users LEFT JOIN Posts`; users with no post are absent (join it with `.opt()`).
 fn distinct_posts(db: &'static So) -> Fold<Id<User>, i64> {
     db.user.group_by(Ident::<User>::new()).select(posts_of(db)).count_distinct()
@@ -920,15 +962,17 @@ fn q34265(db: &'static So) -> String {
 // SELECT fp.PostId, fp.Title, fp.TagsList, fp.CreationDate, fp.ViewCount, fp.OwnerDisplayName, fp.CommentCount, fp.UpvoteCount, fp.DownvoteCount, fp.EngagementLevel
 // FROM FilteredPosts fp WHERE fp.CommentCount > 5 OR fp.UpvoteCount > 10 ORDER BY fp.ViewCount DESC, fp.CreationDate DESC;
 //
-// A tag name never contains '<' or '>', so '<name>' occurs in Tags exactly when the post carries that tag: the join is the Post.tags edge.
 // STRING_AGG has no ORDER BY; DuckDB's is in Tags.Id order (every row of the oracle), which is the order kept here.
 fn q28032(db: &'static So) -> String {
+    type R = (Id<Post>, Id<Tag>);
+    let bt = bracketed(db, false);
+    let by_post: HashIdx<Id<Post>, R> = (&bt).map(|(p, _): R| p).inv().collect();
     let s = db
         .post
         .group_by(Ident::<Post>::new())
         .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()))
         .fold([0i64; 3], |a, (c, t)| [a[0] + c.is_some() as i64, a[1] + (t == Some(2)) as i64, a[2] + (t == Some(3)) as i64]);
-    let names = db.post.group_by(Ident::<Post>::new()).select((&db.post.tags).opt()).buf_fold(|it| {
+    let names = db.post.group_by(Ident::<Post>::new()).select((&by_post).map(|(_, t): R| t).opt()).buf_fold(|it| {
         let mut t: Vec<Id<Tag>> = it.into_iter().flatten().collect();
         t.sort_unstable();
         let n: Vec<Str> = t.into_iter().map(|t| db.tag.tag_name.get(t).unwrap()).collect();

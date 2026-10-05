@@ -138,14 +138,14 @@ fn q8028(db: &'static So) -> String {
     let Post { post_type, creation_date, score, .. } = &db.post;
     let cc = comments_per_post(db);
     let mentions = tag_mentions(db);
-    let tag_of = (&mentions).map(|(_, t)| t);
-    let counts = (&mentions).group_by(&tag_of).fold(0i64, |a, _| a + 1);
-    let top: MatSet<Id<Tag>> = whole(&counts)
-        .select(Ident::<Tag>::new().and(&counts))
+    let name_of = (&mentions).map(|(_, t)| t).select(&db.tag.tag_name);
+    let counts = (&mentions).group_by(&name_of).fold(0i64, |a, _| a + 1);
+    let top: MatSet<Str> = whole(&counts)
+        .select(Same::<Str>::new().and(&counts))
         .window(
             row_number,
             |(t, n)| (n, t),
-            |x: &(i64, Id<Tag>), y: &(i64, Id<Tag>)| y.0.cmp(&x.0).then(x.1.cmp(&y.1)),
+            |x: &(i64, Str), y: &(i64, Str)| y.0.cmp(&x.0).then(x.1.cmp(&y.1)),
         )
         .filt(|(_, n)| n <= 5)
         .map(|((t, _), _)| t)
@@ -160,7 +160,7 @@ fn q8028(db: &'static So) -> String {
         .cross(&top)
         .drive(|_, ((p, c), t)| {
             let mut f = post_fields(db, p, &["title", "score"]);
-            f.extend([V::I(c), V::S(db.tag.tag_name.get(t).unwrap())]);
+            f.extend([V::I(c), V::S(t)]);
             out.push(row(f))
         });
     rows(out)
@@ -245,12 +245,12 @@ fn q14428(db: &'static So) -> String {
 }
 
 fn q7306(db: &'static So) -> String {
-    let Post { post_type, post_type_id, creation_date, score, view_count, owner_user, .. } = &db.post;
+    let Post { post_type, post_type_id, creation_date, score, view_count, owner_user_id, .. } = &db.post;
     let pv = (&db.vote.post)
         .inv()
         .select(vtype_name(db))
         .fold((0i64, 0i64), |(u, d), n| (u + (n == "UpMod") as i64, d + (n == "DownMod") as i64));
-    let badges = (&db.badge.user).inv().fold(0i64, |a, _| a + 1);
+    let badges = db.badge.group_by(&db.badge.user_id).fold(0i64, |a, _| a + 1);
     let base = db.post.with(creation_date.ge(add_years(current_date(), -1))).with(post_type_id.is_in([1, 2]));
     let rn = (&base)
         .group_by(post_type)
@@ -260,7 +260,7 @@ fn q7306(db: &'static So) -> String {
     (&rn)
         .filt(|(_, n)| n <= 10)
         .map(|(((p, _), _), _)| p)
-        .select(Ident::<Post>::new().and((&pv).and(owner_user.select(&badges))))
+        .select(Ident::<Post>::new().and((&pv).and(owner_user_id.select(&badges))))
         .drive(|_, (p, ((u, d), b))| {
         let mut f = post_fields(db, p, &["id", "title", "created", "score"]);
         f.extend([V::I(u), V::I(d), V::I(b)]);

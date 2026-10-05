@@ -1686,7 +1686,8 @@ fn q12313(db: &'static So) -> String {
 // LIMIT 100;
 fn q12323(db: &'static So) -> String {
     let uid = uids(db);
-    let us = user_stats_fold(db, Ident::<User>::new(), UserWhere::All, "bv", any_post);
+    let pid = pids(db);
+    let us = user_counts_of(db, db.user.with((&db.user.origid).select(&pid)), "bv");
     let dp = ud(db, UserWhere::All, posts_of(db));
     let bu = badges_per_user(db);
     let mut v = Vec::new();
@@ -1901,8 +1902,9 @@ fn q12330(db: &'static So) -> String {
 // (SELECT AVG(PostCount) FROM PostCounts) AS AvgPostsPerType,
 // (SELECT AVG(UserCount) FROM UserReputations) AS AvgUsersPerReputation,
 // (SELECT AvgViewCount FROM AveragePostViewCount) AS AvgViewCount,
-// (SELECT STRING_AGG(TagName, ', ') FROM PopularTags) AS TopTags
+// (SELECT STRING_AGG(TagName, ', ' ORDER BY TotalCount DESC) FROM PopularTags) AS TopTags
 // ;
+// (uses rewrites/12331.sql: the STRING_AGG is ordered by TotalCount DESC)
 fn q12331(db: &'static So) -> String {
     let pc = db.post.group_by(&db.post.post_type_id).fold(0i64, |a, _| a + 1);
     let rc = db.user.group_by(&db.user.reputation).fold(0i64, |a, _| a + 1);
@@ -3259,13 +3261,18 @@ fn q12500(db: &'static So) -> String {
 // LIMIT 100;
 fn q12506(db: &'static So) -> String {
     let uid = uids(db);
-    let us = user_stats_fold(db, Ident::<User>::new(), UserWhere::All, "bv", any_post);
+    let pid = pids(db);
+    let us = user_counts_of(db, db.user.with((&db.user.origid).select(&pid)), "bv");
     let dp = ud(db, UserWhere::All, posts_of(db));
     let bu = badges_per_user(db);
     let c = per_post_distinct(db, comments_of(db));
     let h = per_post_distinct(db, history_of(db));
     let mut v = Vec::new();
-    stats_fold(db, db.post.with((&db.post.origid).select(&uid)), Ident::<Post>::new(), "cvh", &[])
+    db.post
+        .with((&db.post.origid).select(&uid))
+        .group_by(Ident::<Post>::new())
+        .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()).and(history_of(db).opt()))
+        .dense_fold(db.post.id.n, [0i64; 2], |a, ((_, t), _)| [a[0] + (t == Some(2)) as i64, a[1] + (t == Some(3)) as i64])
         .and((&c).opt())
         .and((&h).opt())
         .and((&db.post.origid).select(&uid).select(Ident::<User>::new().and(&us).and((&dp).opt()).and(&bu)))
@@ -3273,9 +3280,59 @@ fn q12506(db: &'static So) -> String {
     out(v, |&(p, _, _, _, u, _, _, _)| (rep_desc(db, u), views_desc(db, p)), 100, |&(p, s, c, h, u, a, d, b)| {
         let mut f = vec![user_col(db, u, "uid"), user_col(db, u, "rep"), V::I(b), V::I(d), V::I(a.up), V::I(a.down)];
         f.extend(post_fields(db, p, &["id", "title", "created", "views"]));
-        f.extend([V::I(c), V::I(s.up), V::I(s.down), V::I(h)]);
+        f.extend([V::I(c), V::I(s[0]), V::I(s[1]), V::I(h)]);
         f
     })
+}
+
+#[derive(Clone, Copy, Default)]
+struct UC {
+    n: i64,
+    q: i64,
+    a: i64,
+    t38: i64,
+    cx: i64,
+    up: i64,
+    down: i64,
+    bx: i64,
+    gold: i64,
+    silver: i64,
+    bronze: i64,
+    views_sum: i64,
+}
+
+fn user_counts(db: &'static So, w: UserWhere, joins: &str) -> DenseFold<Id<User>, UC> {
+    user_counts_of(db, user_base(db, w), joins)
+}
+
+fn user_counts_of<Q: Drive<D = Id<User>, R = Id<User>>>(db: &'static So, users: Q, joins: &str) -> DenseFold<Id<User>, UC> {
+    let (c, v, b) = (joins.contains('c'), joins.contains('v'), joins.contains('b'));
+    let post = (&db.post.post_type_id)
+        .and((&db.post.view_count).opt())
+        .and(comments_of_if(db, c).opt())
+        .and(votes_of_if(db, v).select(&db.vote.vote_type_id).opt());
+    users
+        .group_by(Ident::<User>::new())
+        .select(posts_of(db).select(post).opt().and(badges_of_if(db, b).select(&db.badge.class).opt()))
+        .dense_fold(db.user.id.n, UC::default(), |mut a, (p, b)| {
+            if let Some((((t, w), c), v)) = p {
+                a.n += 1;
+                a.q += (t == 1) as i64;
+                a.a += (t == 2) as i64;
+                a.t38 += (3..=8).contains(&t) as i64;
+                a.views_sum += w.unwrap_or(0);
+                a.cx += c.is_some() as i64;
+                a.up += (v == Some(2)) as i64;
+                a.down += (v == Some(3)) as i64;
+            }
+            if let Some(cls) = b {
+                a.bx += 1;
+                a.gold += (cls == 1) as i64;
+                a.silver += (cls == 2) as i64;
+                a.bronze += (cls == 3) as i64;
+            }
+            a
+        })
 }
 
 pub static ENTRIES: &[harness::Entry] = &[

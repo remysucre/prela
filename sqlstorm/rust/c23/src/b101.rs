@@ -1418,16 +1418,17 @@ fn q14046(db: &'static So) -> String {
 // p.CreationDate >= '2021-01-01'
 // AND p.PostTypeId = 1
 fn q11578(db: &'static So) -> String {
-    let Post { score, view_count, owner_user, creation_date, post_type_id, .. } = &db.post;
+    let Post { score, view_count, owner_user, owner_user_id, creation_date, post_type_id, .. } = &db.post;
+    let bidx: HashIdx<i64, Id<Badge>> = (&db.badge.user_id).inv().collect();
     let base = db.post.with(creation_date.ge(date(2021, 1, 1)).and(post_type_id.eq(1)));
-    let (n, s, vn, vs) = (&base).select(score.and(view_count.opt()).and(votes_of(db).opt()).and(owner_user.select(badges_of(db)).opt())).fold_flat(
+    let (n, s, vn, vs) = (&base).select(score.and(view_count.opt()).and(votes_of(db).opt()).and(owner_user_id.select(&bidx).opt())).fold_flat(
         (0i64, 0i64, 0i64, 0i64),
         |(n, s, vn, vs), (((x, w), _), _)| (n + 1, s + x, vn + w.is_some() as i64, vs + w.unwrap_or(0)),
     );
     let one = |f: Fold<(), i64>| (&f).fold_flat(0i64, |a, x| a + x);
     let p = one(whole(&base).select(Ident::<Post>::new()).count_distinct());
     let x = one(whole(&base).select(votes_of(db)).count_distinct());
-    let b = one(whole(&base).select(owner_user.select(badges_of(db))).count_distinct());
+    let b = one(whole(&base).select(owner_user_id.select(&bidx)).count_distinct());
     let u = one(whole(&base).select(owner_user).count_distinct());
     row(vec![V::I(p), avg(s, n), avg(vs, vn), V::I(x), V::I(b), V::I(u)])
 }

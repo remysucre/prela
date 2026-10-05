@@ -462,7 +462,7 @@ fn q14479(db: &'static So) -> String {
     let dp = ud(db, UserWhere::All, posts_of(db));
     let dv = ud(db, UserWhere::All, votes_by(db));
     let t = db.user.select((&db.user.reputation).and((&dp).opt()).and((&dv).opt())).fold_flat([0i64; 4], |a, ((r, p), x)| [a[0] + 1, a[1] + r, a[2] + p.unwrap_or(0), a[3] + x.unwrap_or(0)]);
-    row(vec![V::I(count(db.post.iq())), V::I(count(db.user.iq())), V::I(count(db.vote.iq())), avg(t[1], t[0]), V::I(t[2]), V::I(t[3])])
+    row(vec![V::I(count(db.post.iq())), V::I(count(db.user.iq())), V::I(count(db.vote.iq())), avg(t[1], t[0]), nullable(t[2], t[0]), nullable(t[3], t[0])])
 }
 
 // WITH UserPostStats AS (
@@ -662,6 +662,52 @@ fn q14513(db: &'static So) -> String {
     }))
 }
 
+#[derive(Clone, Copy, Default)]
+struct UC {
+    n: i64,
+    q: i64,
+    a: i64,
+    t38: i64,
+    cx: i64,
+    up: i64,
+    down: i64,
+    bx: i64,
+    gold: i64,
+    silver: i64,
+    bronze: i64,
+    views_sum: i64,
+}
+
+fn user_counts(db: &'static So, w: UserWhere, joins: &str) -> DenseFold<Id<User>, UC> {
+    let (c, v, b) = (joins.contains('c'), joins.contains('v'), joins.contains('b'));
+    let post = (&db.post.post_type_id)
+        .and((&db.post.view_count).opt())
+        .and(comments_of_if(db, c).opt())
+        .and(votes_of_if(db, v).select(&db.vote.vote_type_id).opt());
+    user_base(db, w)
+        .group_by(Ident::<User>::new())
+        .select(posts_of(db).select(post).opt().and(badges_of_if(db, b).select(&db.badge.class).opt()))
+        .dense_fold(db.user.id.n, UC::default(), |mut a, (p, b)| {
+            if let Some((((t, w), c), v)) = p {
+                a.n += 1;
+                a.q += (t == 1) as i64;
+                a.a += (t == 2) as i64;
+                a.t38 += (3..=8).contains(&t) as i64;
+                a.views_sum += w.unwrap_or(0);
+                a.cx += c.is_some() as i64;
+                a.up += (v == Some(2)) as i64;
+                a.down += (v == Some(3)) as i64;
+            }
+            if let Some(cls) = b {
+                a.bx += 1;
+                a.gold += (cls == 1) as i64;
+                a.silver += (cls == 2) as i64;
+                a.bronze += (cls == 3) as i64;
+            }
+            a
+        })
+}
+
 // WITH UserActivity AS (
 // SELECT
 // u.Id AS UserId,
@@ -728,17 +774,22 @@ fn q14513(db: &'static So) -> String {
 fn q14515(db: &'static So) -> String {
     let uid = uids(db);
     let pid = pids(db);
-    let us = user_stats_fold(db, Ident::<User>::new(), UserWhere::All, "vb", any_post);
-    let pf = stats_fold(db, db.post.with((&db.post.origid).select(&uid)), Ident::<Post>::new(), "ch", &[]);
+    let us = user_counts(db, UserWhere::All, "vb");
+    let pf = db
+        .post
+        .with((&db.post.origid).select(&uid))
+        .group_by(Ident::<Post>::new())
+        .select(comments_of(db).opt().and(history_of(db).select(&db.post_history.post_history_type_id).opt()))
+        .dense_fold(db.post.id.n, [0i64; 3], |a, (c, h)| [a[0] + c.is_some() as i64, a[1] + (h == Some(10)) as i64, a[2] + (h == Some(11)) as i64]);
     let mut v = Vec::new();
     (&us).and((&db.user.origid).select(&pid).select(Ident::<Post>::new().and(&pf)).opt()).drive(|u, (a, p)| v.push((u, a, p)));
     rows(v.iter().map(|&(u, a, p)| {
         let mut f = vec![user_col(db, u, "uid"), user_col(db, u, "name")];
-        f.extend(["#n", "#q", "#a", "#up", "#down", "#bx"].iter().map(|c| ustat_field(&a, c)));
+        f.extend([a.n, a.q, a.a, a.up, a.down, a.bx].map(V::I));
         match p {
             Some((p, s)) => {
                 f.extend(post_fields(db, p, &["id", "title", "created", "views", "score"]));
-                f.extend([V::I(s.cx), V::I(s.h10), V::I(s.h11)]);
+                f.extend(s.map(V::I));
             }
             None => f.extend(nulls(8)),
         }
@@ -1645,8 +1696,9 @@ fn q14635(db: &'static So) -> String {
 // FROM
 // PostStats
 // ORDER BY
-// EngagementScore DESC
+// EngagementScore DESC, PostId
 // LIMIT 100;
+// (uses rewrites/14653.sql: PostId breaks the EngagementScore tie at the cut)
 fn q14653(db: &'static So) -> String {
     let pv = post_votes(db);
     let mut v = Vec::new();
@@ -3288,7 +3340,7 @@ fn q14799(db: &'static So) -> String {
 fn q14807(db: &'static So) -> String {
     let p = post_totals(db);
     let x = db.vote.select(&db.vote.vote_type_id).fold_flat([0i64; 3], |a, t| [a[0] + 1, a[1] + (t == 2) as i64, a[2] + (t == 3) as i64]);
-    row(vec![V::I(count(db.user.iq())), V::I(p[0]), avg(p[1], p[0]), V::I(count(db.comment.iq())), V::I(x[1]), V::I(x[2]), V::I(x[0])])
+    row(vec![V::I(count(db.user.iq())), V::I(p[0]), avg(p[1], p[0]), V::I(count(db.comment.iq())), nullable(x[1], x[0]), nullable(x[2], x[0]), V::I(x[0])])
 }
 
 // WITH UserPostStats AS (

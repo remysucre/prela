@@ -17,8 +17,21 @@ fn month_ago() -> i64 {
     ts(2024, 9, 1, 12, 34, 56)
 }
 
+fn badges_by_uid(db: &'static So) -> HashIdx<i64, Id<Badge>> {
+    (&db.badge.user_id).inv().collect()
+}
+
 fn badges_distinct(db: &'static So) -> Fold<Id<Post>, i64> {
-    per_post_distinct(db, (&db.post.owner_user).select(badges_of(db)))
+    let bidx = badges_by_uid(db);
+    per_post_distinct(db, (&db.post.owner_user_id).select(&bidx))
+}
+
+// Posts LEFT JOIN Comments LEFT JOIN Votes LEFT JOIN Badges ON p.OwnerUserId = b.UserId: [COUNT(c.Id), up, down].
+fn cvb_raw<Q: Drive<D = Id<Post>, R = Id<Post>>>(db: &'static So, base: Q) -> Fold<Id<Post>, [i64; 3]> {
+    let bidx = badges_by_uid(db);
+    base.group_by(Ident::<Post>::new())
+        .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()).and((&db.post.owner_user_id).select(&bidx).opt()))
+        .fold([0i64; 3], |a, ((c, t), _)| [a[0] + c.is_some() as i64, a[1] + (t == Some(2)) as i64, a[2] + (t == Some(3)) as i64])
 }
 
 fn ud<R>(db: &'static So, w: UserWhere, r: R) -> Fold<Id<User>, i64>
@@ -535,8 +548,13 @@ fn q14286(db: &'static So) -> String {
 fn q13603(db: &'static So) -> String {
     let w = UserWhere::RepGt(0);
     let (p, c) = (ud(db, w, posts_of(db)), ud(db, w, posts_of(db).select(comments_of(db))));
-    let v = users_stats_with(db, w, "cvb", any_post, &[], &[&p, &c]);
-    users_rows(db, v, |_, s, d| (Reverse(d[0]), Reverse(s.up)), 100, &["name", "rep", "#d0", "#d1", "#up", "#down", "#bx"])
+    let mut v = Vec::new();
+    user_counts(db, w, "cvb").and((&p).opt()).and((&c).opt()).drive(|u, ((a, p), c)| v.push((u, a, p.unwrap_or(0), c.unwrap_or(0))));
+    out(v, |&(_, a, p, _)| (Reverse(p), Reverse(a.up)), 100, |&(u, a, p, c)| {
+        let mut f = vec![user_col(db, u, "name"), user_col(db, u, "rep")];
+        f.extend([p, c, a.up, a.down, a.bx].map(V::I));
+        f
+    })
 }
 
 // SELECT
@@ -568,8 +586,13 @@ fn q13603(db: &'static So) -> String {
 fn q12149(db: &'static So) -> String {
     let w = UserWhere::RepGt(0);
     let (p, c) = (ud(db, w, posts_of(db)), ud(db, w, posts_of(db).select(comments_of(db))));
-    let v = users_stats_with(db, w, "cvb", any_post, &[], &[&p, &c]);
-    users_rows(db, v, |u, _, d| (Reverse(d[0]), rep_desc(db, u)), 100, &["uid", "name", "rep", "#d0", "#d1", "#up", "#down", "#bx"])
+    let mut v = Vec::new();
+    user_counts(db, w, "cvb").and((&p).opt()).and((&c).opt()).drive(|u, ((a, p), c)| v.push((u, a, p.unwrap_or(0), c.unwrap_or(0))));
+    out(v, |&(u, _, p, _)| (Reverse(p), rep_desc(db, u)), 100, |&(u, a, p, c)| {
+        let mut f = vec![user_col(db, u, "uid"), user_col(db, u, "name"), user_col(db, u, "rep")];
+        f.extend([p, c, a.up, a.down, a.bx].map(V::I));
+        f
+    })
 }
 
 // SELECT
@@ -913,7 +936,17 @@ fn q19314(db: &'static So) -> String {
 // p.Score DESC, p.ViewCount DESC;
 fn q11784(db: &'static So) -> String {
     let b = badges_distinct(db);
-    stats_rows(db, stats_with(db, since(db, date(2023, 1, 1)), "cvb", &[], &[&b]), |_, _| 0, 0, &["id", "title", "created", "score", "views", "#cx", "#up", "#down", "#d0"])
+    let mut v = Vec::new();
+    cvb_raw(db, since(db, date(2023, 1, 1))).and((&b).opt()).drive(|p, (a, d)| v.push((p, a, d.unwrap_or(0))));
+    v.sort_by_key(|&(p, _, _)| {
+        let w = db.post.view_count.get(p);
+        (Reverse(db.post.score.get(p).unwrap()), w.is_none(), Reverse(w))
+    });
+    rows(v.iter().map(|&(p, a, d)| {
+        let mut f = post_fields(db, p, &["id", "title", "created", "score", "views"]);
+        f.extend([V::I(a[0]), V::I(a[1]), V::I(a[2]), V::I(d)]);
+        row(f)
+    }))
 }
 
 // SELECT
@@ -1385,12 +1418,14 @@ fn q14319(db: &'static So) -> String {
 // ORDER BY p.CreationDate DESC;
 fn q11011(db: &'static So) -> String {
     let b = badges_distinct(db);
-    let v = stats_with(db, since(db, date(2022, 1, 1)), "cvb", &[], &[&b]);
-    rows(v.iter().map(|(p, s, d)| {
-        let mut f = stat_fields(db, *p, s, &["id", "title", "created", "views", "score", "#cx", "#up", "#down"]);
-        f.extend([V::I(d[0])]);
-        f.extend(post_fields(db, *p, &["type"]));
-        f.push(V::I(db.post.accepted_answer_id.get(*p).unwrap_or(-1)));
+    let mut v = Vec::new();
+    cvb_raw(db, since(db, date(2022, 1, 1))).and((&b).opt()).drive(|p, (a, d)| v.push((p, a, d.unwrap_or(0))));
+    v.sort_by_key(|&(p, _, _)| newest(db, p));
+    rows(v.iter().map(|&(p, a, d)| {
+        let mut f = post_fields(db, p, &["id", "title", "created", "views", "score"]);
+        f.extend([V::I(a[0]), V::I(a[1]), V::I(a[2]), V::I(d)]);
+        f.extend(post_fields(db, p, &["type"]));
+        f.push(V::I(db.post.accepted_answer_id.get(p).unwrap_or(-1)));
         row(f)
     }))
 }
@@ -2264,16 +2299,17 @@ fn q9214(db: &'static So) -> String {
 // ORDER BY
 // p.PostTypeId;
 fn q14226(db: &'static So) -> String {
-    let Post { post_type_id, score, view_count, owner_user, .. } = &db.post;
+    let Post { post_type_id, score, view_count, owner_user_id, .. } = &db.post;
+    let bidx = badges_by_uid(db);
     let base = since(db, year_ago());
     let f = by_key(
         &base,
         post_type_id,
-        score.and(view_count.opt()).and(comments_of(db).opt()).and(votes_of(db).select((&db.vote.vote_type_id).in_v(vec![8, 9]).map(|_| ()).and((&db.vote.bounty_amount).opt())).opt()).and(owner_user.select(badges_of(db)).opt()),
+        score.and(view_count.opt()).and(comments_of(db).opt()).and(votes_of(db).select((&db.vote.vote_type_id).in_v(vec![8, 9]).map(|_| ()).and((&db.vote.bounty_amount).opt())).opt()).and(owner_user_id.select(&bidx).opt()),
         [0i64; 5],
         |a, ((((s, w), c), x), _)| [a[0] + 1, a[1] + w.unwrap_or(0), a[2] + s, a[3] + c.is_some() as i64, a[4] + x.and_then(|x| x.1).unwrap_or(0)],
     );
-    let b = dby(&base, post_type_id, owner_user.select(badges_of(db)));
+    let b = dby(&base, post_type_id, owner_user_id.select(&bidx));
     let mut v = with_d(&f, &[&b]);
     v.sort_by_key(|x| x.0);
     rows(v.iter().map(|&(t, a, d)| row(vec![V::I(t), V::I(a[0]), V::I(a[1]), V::I(a[2]), V::F(a[1] as f64 / a[0] as f64), V::F(a[2] as f64 / a[0] as f64), V::I(a[3]), V::I(a[4]), V::I(d[0])])))
@@ -2355,6 +2391,61 @@ fn q11045(db: &'static So) -> String {
     f.and((&c).opt()).drive(|k, ((a, d), c)| v.push((k, a, d, c.unwrap_or(0))));
     v.sort_by_key(|x| Reverse(x.1[0]));
     rows(v.iter().map(|&(k, a, d, c)| row(vec![V::S(k), V::I(a[0]), nullable(a[2], a[1]), V::I(a[3]), avg(a[3], a[0]), V::F(d as f64 / a[0] as f64 / 1e6 / 3600.0), V::I(c), V::I(a[4]), V::I(a[5])])))
+}
+
+#[derive(Clone, Copy, Default)]
+struct UC {
+    n: i64,
+    q: i64,
+    a: i64,
+    t38: i64,
+    cx: i64,
+    up: i64,
+    down: i64,
+    bx: i64,
+    gold: i64,
+    silver: i64,
+    bronze: i64,
+    views_sum: i64,
+}
+
+fn user_counts(db: &'static So, w: UserWhere, joins: &str) -> DenseFold<Id<User>, UC> {
+    let (c, v, b) = (joins.contains('c'), joins.contains('v'), joins.contains('b'));
+    let post = (&db.post.post_type_id)
+        .and((&db.post.view_count).opt())
+        .and(comments_of_if(db, c).opt())
+        .and(votes_of_if(db, v).select(&db.vote.vote_type_id).opt());
+    user_base(db, w)
+        .group_by(Ident::<User>::new())
+        .select(posts_of(db).select(post).opt().and(badges_of_if(db, b).select(&db.badge.class).opt()))
+        .dense_fold(db.user.id.n, UC::default(), |mut a, (p, b)| {
+            if let Some((((t, w), c), v)) = p {
+                a.n += 1;
+                a.q += (t == 1) as i64;
+                a.a += (t == 2) as i64;
+                a.t38 += (3..=8).contains(&t) as i64;
+                a.views_sum += w.unwrap_or(0);
+                a.cx += c.is_some() as i64;
+                a.up += (v == Some(2)) as i64;
+                a.down += (v == Some(3)) as i64;
+            }
+            if let Some(cls) = b {
+                a.bx += 1;
+                a.gold += (cls == 1) as i64;
+                a.silver += (cls == 2) as i64;
+                a.bronze += (cls == 3) as i64;
+            }
+            a
+        })
+}
+
+fn out<X, T: Ord>(mut v: Vec<X>, key: impl Fn(&X) -> T, n: usize, f: impl Fn(&X) -> Vec<V>) -> String {
+    v.sort_by_key(|x| key(x));
+    let n = if n == 0 { v.len() } else { n };
+    if n < v.len() && key(&v[n - 1]) == key(&v[n]) {
+        eprintln!("tie at the LIMIT cut");
+    }
+    rows(v.iter().take(n).map(|x| row(f(x))))
 }
 
 pub static ENTRIES: &[harness::Entry] = &[

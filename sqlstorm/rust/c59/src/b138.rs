@@ -1040,7 +1040,7 @@ fn q4716(db: &'static So) -> String {
 // us.TotalPosts DESC, us.TotalUpvotes DESC
 // FETCH FIRST 50 ROWS ONLY;
 fn q7510(db: &'static So) -> String {
-    let us = user_stats_fold(db, Ident::<User>::new(), UserWhere::RepGt(1000), "vb", any_post);
+    let us = user_counts(db, UserWhere::RepGt(1000), "vb");
     let dp = ud(db, UserWhere::All, posts_of(db));
     let hs = || db.post_history.with((&db.post_history.post_history_type_id).filt(|t: i64| matches!(t, 4 | 5 | 6 | 10 | 11)));
     let hn = hs().group_by(&db.post_history.user).select(&db.post_history.creation_date).fold((0i64, i64::MIN), |(n, m), d| (n + 1, m.max(d)));
@@ -1049,7 +1049,7 @@ fn q7510(db: &'static So) -> String {
     (&us).and((&dp).opt()).and((&hn).opt()).and((&hd).opt()).drive(|u, (((a, d), h), e)| v.push((u, a, d.unwrap_or(0), h, e.unwrap_or(0))));
     out(v, |&(_, a, d, ..)| (Reverse(d), Reverse(a.up)), 50, |&(u, a, d, h, e)| {
         let mut f = vec![user_col(db, u, "uid"), user_col(db, u, "name")];
-        f.extend(ints(&[d, a.q, a.a, a.up, a.down, a.bcls[1], a.bcls[2], a.bcls[3], a.views_sum, h.map_or(0, |h| h.0), e]));
+        f.extend(ints(&[d, a.q, a.a, a.up, a.down, a.gold, a.silver, a.bronze, a.views_sum, h.map_or(0, |h| h.0), e]));
         f.push(ots(h.map(|h| h.1)));
         f
     })
@@ -3711,16 +3711,19 @@ fn q7669(db: &'static So) -> String {
 // ORDER BY
 // PS.Score DESC, PS.ViewCount DESC;
 fn q7479(db: &'static So) -> String {
-    let us = user_stats_fold(db, Ident::<User>::new(), UserWhere::All, "v", any_post);
+    let us = user_base(db, UserWhere::All)
+        .group_by(Ident::<User>::new())
+        .select(posts_of(db).select((&db.post.post_type_id).and(votes_of(db).opt())).opt())
+        .fold(0i64, |a, p| a + p.map_or(0, |(t, _)| (t == 1 || t == 2) as i64));
     let top: MatSet<Id<User>> = whole(&db.user.id)
         .select(Ident::<User>::new().and(&us))
-        .window(row_number, |(_, a): (Id<User>, UStats)| a.q + a.a, desc)
+        .window(row_number, |(_, a)| a, desc)
         .filt(|(_, n)| n <= 10)
         .map(|((u, _), _)| u)
         .collect();
     let names: HashIdx<Str, Id<User>> = (&top).select(&db.user.display_name).inv().collect();
     let mut v = Vec::new();
-    stats_fold(db, owned(db).with((&db.post.view_count).gt(100)), Ident::<Post>::new(), "cv", &[])
+    stats_fold(db, owned(db).with((&db.post.view_count).gt(100)).with((&db.post.owner_user).select(&db.user.display_name).select(&names)), Ident::<Post>::new(), "cv", &[])
         .and((&db.post.owner_user).select(&db.user.display_name).select(&names))
         .drive(|p, (s, u)| v.push((p, s, u)));
     rows(v.iter().map(|&(p, s, u)| {
@@ -5303,7 +5306,7 @@ fn q7694(db: &'static So) -> String {
 // PostCount DESC, UpVotes DESC
 // LIMIT 10;
 fn q9133(db: &'static So) -> String {
-    let us = user_stats_fold(db, Ident::<User>::new(), UserWhere::All, "vb", any_post);
+    let us = user_counts(db, UserWhere::All, "vb");
     let dp = ud(db, UserWhere::All, posts_of(db));
     let bu = badges_per_user(db);
     let ep = db.post_history.group_by(&db.post_history.user).select(&db.post_history.post).count_distinct();
@@ -5687,6 +5690,52 @@ fn q7876(db: &'static So) -> String {
         f.extend(ints(&h));
         row(f)
     }))
+}
+
+#[derive(Clone, Copy, Default)]
+struct UC {
+    n: i64,
+    q: i64,
+    a: i64,
+    t38: i64,
+    cx: i64,
+    up: i64,
+    down: i64,
+    bx: i64,
+    gold: i64,
+    silver: i64,
+    bronze: i64,
+    views_sum: i64,
+}
+
+fn user_counts(db: &'static So, w: UserWhere, joins: &str) -> DenseFold<Id<User>, UC> {
+    let (c, v, b) = (joins.contains('c'), joins.contains('v'), joins.contains('b'));
+    let post = (&db.post.post_type_id)
+        .and((&db.post.view_count).opt())
+        .and(comments_of_if(db, c).opt())
+        .and(votes_of_if(db, v).select(&db.vote.vote_type_id).opt());
+    user_base(db, w)
+        .group_by(Ident::<User>::new())
+        .select(posts_of(db).select(post).opt().and(badges_of_if(db, b).select(&db.badge.class).opt()))
+        .dense_fold(db.user.id.n, UC::default(), |mut a, (p, b)| {
+            if let Some((((t, w), c), v)) = p {
+                a.n += 1;
+                a.q += (t == 1) as i64;
+                a.a += (t == 2) as i64;
+                a.t38 += (3..=8).contains(&t) as i64;
+                a.views_sum += w.unwrap_or(0);
+                a.cx += c.is_some() as i64;
+                a.up += (v == Some(2)) as i64;
+                a.down += (v == Some(3)) as i64;
+            }
+            if let Some(cls) = b {
+                a.bx += 1;
+                a.gold += (cls == 1) as i64;
+                a.silver += (cls == 2) as i64;
+                a.bronze += (cls == 3) as i64;
+            }
+            a
+        })
 }
 
 pub static ENTRIES: &[harness::Entry] = &[

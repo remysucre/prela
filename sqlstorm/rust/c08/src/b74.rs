@@ -57,8 +57,9 @@ fn last_history(db: &'static So, types: [i64; 2]) -> DenseFold<Id<Post>, i64> {
 // Comments, Badges and Votes then cross: CommentCount counts a comment once
 // per badge and per vote.
 fn q21293(db: &'static So) -> String {
-    let Post { score, view_count, creation_date, tags_str, owner_user, owner_user_id, .. } = &db.post;
+    let Post { score, view_count, creation_date, tags_str, owner_user_id, .. } = &db.post;
     let closed = last_history(db, [10, 11]);
+    let bidx: HashIdx<i64, Id<Badge>> = (&db.badge.user_id).inv().collect();
     let rk = db
         .post
         .with(creation_date.ge(year_ago()))
@@ -76,7 +77,7 @@ fn q21293(db: &'static So) -> String {
         .select(
             comments_of(db)
                 .opt()
-                .and(owner_user.select(badges_of(db).select(&db.badge.date)).opt())
+                .and(owner_user_id.select(&bidx).select(&db.badge.date).opt())
                 .and(votes_of(db).select(&db.vote.vote_type_id).opt()),
         )
         .fold((0i64, i64::MIN, 0i64), |(c, bd, u), ((ci, b), vt)| {
@@ -392,19 +393,21 @@ fn q25191(db: &'static So) -> String {
 // rewrites/20479: the ROW_NUMBER over `AcceptedAnswerId = -1` covers thousands
 // of posts and its ORDER BY is not total.
 fn q20479(db: &'static So) -> String {
-    let Post { score, view_count, creation_date, tags_str, accepted_answer_id, owner_user, origid, .. } =
+    let Post { score, view_count, creation_date, tags_str, accepted_answer_id, owner_user_id, origid, .. } =
         &db.post;
+    let bidx: HashIdx<i64, Id<Badge>> = (&db.badge.user_id).inv().collect();
+    let tag_by_name: HashIdx<Str, Id<Tag>> = (&db.tag.tag_name).inv().collect();
     let base = db.post.with(creation_date.ge(year_ago())).with(view_count.gt(0));
     // each post joined to its comments, its votes and the pieces of its tag
-    // string (the lateral; a post with no tags keeps one row): the counts are
-    // over those joined rows
+    // string (the lateral; a post with no tags keeps one row), each piece LEFT
+    // JOINed to the Tags of that name: the counts are over those joined rows
     let per = (&base)
         .group_by(Ident::<Post>::new())
         .select(
             comments_of(db)
                 .opt()
                 .and(votes_of(db).select(&db.vote.vote_type_id).opt())
-                .and(tags_str.flat_map(tag_list).opt()),
+                .and(tags_str.flat_map(tag_list).select((&tag_by_name).opt()).opt()),
         )
         .fold((0i64, 0i64, 0i64), |(c, u, d), ((ci, vt), _)| {
             (c + ci.is_some() as i64, u + (vt == Some(2)) as i64, d + (vt == Some(3)) as i64)
@@ -424,7 +427,7 @@ fn q20479(db: &'static So) -> String {
                 .and(origid)
                 .and(score)
                 .and(&per)
-                .and(owner_user.select(badges_of(db).select(&db.badge.name)).opt()),
+                .and(owner_user_id.select(&bidx).select(&db.badge.name).opt()),
         )
         .drive(|_, ((((p, id), s), (c, u2, d3)), badge)| out.push((id, p, s, c, u2, d3, badge)));
     rows(out.iter().map(|&(id, p, s, c, u2, d3, badge)| {

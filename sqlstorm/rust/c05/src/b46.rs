@@ -239,7 +239,7 @@ fn q9466(db: &'static So) -> String {
     let Post { post_type, creation_date, score, view_count, .. } = &db.post;
     let mentions = tag_mentions_ci(db);
     let stats = (&mentions)
-        .group_by((&mentions).map(|(_, t)| t))
+        .group_by((&mentions).map(|(_, t)| t).select(&db.tag.tag_name))
         .select((&mentions).map(|(p, _)| p).select(view_count.opt()))
         .fold((0i64, 0i64, 0i64), |(n, vn, vs), v| (n + 1, vn + v.is_some() as i64, vs + v.unwrap_or(0)));
     let base = owned(db).with(creation_date.ge(year_ago()));
@@ -250,7 +250,7 @@ fn q9466(db: &'static So) -> String {
     let mut out = Vec::new();
     (&rn).filt(|(_, n)| n <= 5).cross((&stats).filt(|(n, _, _)| n > 10)).drive(|(_, t), ((((p, _), _), _), (_, vn, vs))| {
         let mut f = post_fields(db, p, &["id", "title", "score", "views", "created", "owner"]);
-        f.extend([V::S(db.tag.tag_name.get(t).unwrap()), nullable(vs, vn)]);
+        f.extend([V::S(t), nullable(vs, vn)]);
         out.push(row(f))
     });
     rows(out)

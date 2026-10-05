@@ -56,11 +56,12 @@ fn q13085(db: &'static So) -> String {
 }
 
 fn q14980(db: &'static So) -> String {
-    let Post { owner_user, view_count, score, .. } = &db.post;
+    let Post { owner_user_id, view_count, score, .. } = &db.post;
+    let bidx: HashIdx<i64, Id<Badge>> = (&db.badge.user_id).inv().collect();
     let counts = db
         .post
         .group_by(Ident::<Post>::new())
-        .select(comments_of(db).opt().and(owner_user.select(badges_of(db)).opt()))
+        .select(comments_of(db).opt().and(owner_user_id.select(&bidx).opt()))
         .fold((0i64, 0i64), |(c, b), (ci, bi)| (c + ci.is_some() as i64, b + bi.is_some() as i64));
     let ranked = whole(db.post.iq())
         .select(Ident::<Post>::new().and(view_count.opt()).and(score).and(&counts))

@@ -1848,9 +1848,10 @@ fn q29432(db: &'static So) -> String {
 // PostSummary AS (SELECT P.OwnerUserId, COUNT(P.Id) AS PostCount, SUM(P.Score) AS TotalScore, SUM(CASE WHEN P.PostTypeId = 1 THEN 1 ELSE 0 END) AS QuestionCount,
 //        SUM(CASE WHEN P.PostTypeId = 2 THEN 1 ELSE 0 END) AS AnswerCount FROM Posts P GROUP BY P.OwnerUserId),
 // CombinedMetrics AS (SELECT U.Id AS UserId, U.DisplayName, COALESCE(UB.BadgeCount, 0) AS BadgeCount, COALESCE(PS.PostCount, 0) AS PostCount, COALESCE(PS.TotalScore, 0) AS TotalScore,
-//        COALESCE(PS.QuestionCount, 0) AS QuestionCount, COALESCE(PS.AnswerCount, 0) AS AnswerCount, ROW_NUMBER() OVER (ORDER BY COALESCE(PS.TotalScore, 0) DESC) AS Rank
+//        COALESCE(PS.QuestionCount, 0) AS QuestionCount, COALESCE(PS.AnswerCount, 0) AS AnswerCount, ROW_NUMBER() OVER (ORDER BY COALESCE(PS.TotalScore, 0) DESC, U.Id) AS Rank
 //     FROM Users U LEFT JOIN UserBadgeSummary UB ON U.Id = UB.UserId LEFT JOIN PostSummary PS ON U.Id = PS.OwnerUserId)
 // SELECT UserId, DisplayName, BadgeCount, PostCount, TotalScore, QuestionCount, AnswerCount, Rank FROM CombinedMetrics WHERE BadgeCount > 0 OR PostCount > 0 ORDER BY Rank LIMIT 50;
+// (uses rewrites/1946.sql: U.Id breaks the TotalScore tie in Rank)
 fn q1946(db: &'static So) -> String {
     let ub = db.user.group_by(Ident::<User>::new()).select(badges_of(db).opt()).fold(0i64, |n, b| n + b.is_some() as i64);
     let Post { owner_user, score, post_type_id, .. } = &db.post;
@@ -2523,7 +2524,7 @@ fn q2531(db: &'static So) -> String {
     }))
 }
 
-// WITH RankedPosts AS (SELECT p.Id AS PostId, p.Title, p.Score, p.CreationDate, ROW_NUMBER() OVER (PARTITION BY p.OwnerUserId ORDER BY p.CreationDate DESC) AS UserRank, COUNT(v.Id) AS VoteCount, p.OwnerUserId
+// WITH RankedPosts AS (SELECT p.Id AS PostId, p.Title, p.Score, p.CreationDate, ROW_NUMBER() OVER (PARTITION BY p.OwnerUserId ORDER BY p.CreationDate DESC, p.Id) AS UserRank, COUNT(v.Id) AS VoteCount, p.OwnerUserId
 //     FROM Posts p LEFT JOIN Votes v ON p.Id = v.PostId AND v.VoteTypeId = 2 WHERE p.CreationDate >= '2024-10-01 12:34:56'::timestamp - INTERVAL '1 year'
 //     GROUP BY p.Id, p.OwnerUserId, p.Title, p.Score, p.CreationDate),
 // TopUsers AS (SELECT u.Id AS UserId, u.DisplayName, SUM(p.Score) AS TotalScore, COUNT(DISTINCT p.Id) AS PostCount FROM Users u JOIN Posts p ON u.Id = p.OwnerUserId
@@ -2531,6 +2532,7 @@ fn q2531(db: &'static So) -> String {
 // PostDetails AS (SELECT rp.PostId, rp.Title, rp.Score, rp.CreationDate, tu.DisplayName AS OwnerName, tu.TotalScore AS OwnerTotalScore, tu.PostCount AS OwnerPostCount, rp.VoteCount
 //     FROM RankedPosts rp JOIN TopUsers tu ON rp.OwnerUserId = tu.UserId WHERE rp.UserRank <= 5)
 // SELECT pd.PostId, pd.Title, pd.Score, pd.CreationDate, pd.OwnerName, pd.OwnerTotalScore, pd.OwnerPostCount, pd.VoteCount FROM PostDetails pd ORDER BY pd.Score DESC, pd.CreationDate DESC;
+// (uses rewrites/7191.sql: p.Id breaks the CreationDate tie in UserRank)
 fn q7191(db: &'static So) -> String {
     let Post { creation_date, owner_user, score, .. } = &db.post;
     let recent = || db.post.with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)));
@@ -2766,18 +2768,18 @@ fn q9996(db: &'static So) -> String {
 //
 // PostRank reads only base columns, so the top posts are picked first and the comment x vote product is driven for those alone.
 fn q8575(db: &'static So) -> String {
-    let Post { post_type_id, score, view_count, owner_user, .. } = &db.post;
+    let Post { post_type_id, score, view_count, owner_user, owner_user_id, .. } = &db.post;
     let w = whole(db.post.with(post_type_id.is_in([1, 2]))).select(Ident::<Post>::new().and(score).and(view_count.opt())).window(rank, |((_, s), w)| (Reverse(s), w.is_none(), Reverse(w)), asc);
     let tp: MatSet<Id<Post>> = (&w).filt(|(_, r)| r <= 10).map(|(((p, _), _), _)| p).collect();
     let s = (&tp)
         .group_by(Ident::<Post>::new())
         .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()))
         .fold([0i64; 3], |a, (c, t)| [a[0] + c.is_some() as i64, a[1] + (t == Some(2)) as i64, a[2] + (t == Some(3)) as i64]);
-    let Badge { user, date, name, .. } = &db.badge;
-    let md = db.badge.group_by(user).select(date).fold(i64::MIN, |m, d| m.max(d));
-    let at: HashIdx<(Id<User>, i64), Id<Badge>> = db.badge.select(user.and(date)).inv().collect();
-    let latest = Ident::<User>::new().and(&md).select(&at).select(name);
-    rows(drain((&s).and(owner_user.select(latest).opt())).into_iter().map(|(p, (a, b))| {
+    let Badge { user_id, date, name, .. } = &db.badge;
+    let md = db.badge.group_by(user_id).select(date).fold(i64::MIN, |m, d| m.max(d));
+    let at: HashIdx<(i64, i64), Id<Badge>> = db.badge.select(user_id.and(date)).inv().collect();
+    let latest = Same::<i64>::new().and(&md).select(&at).select(name);
+    rows(drain((&s).and(owner_user_id.select(latest).opt())).into_iter().map(|(p, (a, b))| {
         let mut f = post_fields(db, p, &["id", "title", "created", "views", "score"]);
         f.push(V::S(owner_user.get(p).map_or("Community", |u| db.user.display_name.get(u).unwrap())));
         f.extend(a.map(V::I));
@@ -2965,7 +2967,7 @@ fn q139(db: &'static So) -> String {
 }
 
 // WITH RankedPosts AS (SELECT p.Id AS PostId, p.Title, u.DisplayName AS OwnerDisplayName, p.CreationDate, p.Score, p.ViewCount,
-//        ROW_NUMBER() OVER (PARTITION BY p.OwnerUserId ORDER BY p.Score DESC, p.ViewCount DESC) AS Rank
+//        ROW_NUMBER() OVER (PARTITION BY p.OwnerUserId ORDER BY p.Score DESC, p.ViewCount DESC, p.Id) AS Rank
 //     FROM Posts p JOIN Users u ON p.OwnerUserId = u.Id WHERE p.PostTypeId = 1 AND p.CreationDate >= cast('2024-10-01 12:34:56' as timestamp) - INTERVAL '1 year'),
 // TopPosts AS (SELECT rp.PostId, rp.Title, rp.OwnerDisplayName, rp.CreationDate, rp.Score, rp.ViewCount FROM RankedPosts rp WHERE rp.Rank <= 5),
 // PostsWithBadges AS (SELECT tp.PostId, tp.Title, tp.OwnerDisplayName, tp.CreationDate, tp.Score, tp.ViewCount, COUNT(b.Id) AS BadgeCount
@@ -2973,6 +2975,7 @@ fn q139(db: &'static So) -> String {
 // SELECT p.Title, p.OwnerDisplayName, p.CreationDate, p.Score, p.ViewCount, p.BadgeCount,
 //        CASE WHEN p.BadgeCount >= 5 THEN 'Gold Contributor' WHEN p.BadgeCount >= 3 THEN 'Silver Contributor' WHEN p.BadgeCount >= 1 THEN 'Bronze Contributor' ELSE 'No Badges' END AS ContributionLevel
 // FROM PostsWithBadges p ORDER BY p.Score DESC, p.ViewCount DESC;
+// (uses rewrites/9543.sql: p.Id breaks the Score, ViewCount tie in Rank)
 fn q9543(db: &'static So) -> String {
     let Post { post_type_id, creation_date, owner_user, score, view_count, .. } = &db.post;
     let w = db

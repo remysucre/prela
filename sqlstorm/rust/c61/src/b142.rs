@@ -1,5 +1,9 @@
 use harness::prelude::*;
 
+fn unit() -> VecRel<usize, ()> {
+    rel(vec![()])
+}
+
 fn kahan((s, err): (f64, f64), x: f64) -> (f64, f64) {
     let y = x - err;
     let t = s + y;
@@ -75,11 +79,11 @@ fn q12687(db: &'static So) -> String {
             None => (s, n),
         });
     row(vec![
-        V::I(t[0]),
+        nullable(t[0], t[8]),
         nullable(t[1], t[2]),
         avg(t[3], t[4]),
         nullable(t[5], t[6]),
-        V::I(t[7]),
+        nullable(t[7], t[8]),
         V::I(t[8]),
         tmax(t[9]),
         tmin(t[10]),
@@ -136,7 +140,11 @@ fn q14231(db: &'static So) -> String {
     });
     let owners = db.post.group_by(post_type_id).select(owner_user_id).count_distinct();
     let User { reputation, up_votes, down_votes, .. } = &db.user;
-    let us = whole(&db.user.id).select(reputation.and(up_votes).and(down_votes)).fold((0i64, 0i64, 0i64), |(n, r, v), ((rep, u), d)| (n + 1, r + rep, v + u + d));
+    let users: HashIdx<(), Id<User>> = whole(db.user.iq()).collect();
+    let us = (&unit()).select((&users).select(reputation.and(up_votes).and(down_votes)).opt()).fold((0i64, 0i64, 0i64), |(n, r, v), x| match x {
+        Some(((rep, u), d)) => (n + 1, r + rep, v + u + d),
+        None => (n, r, v),
+    });
     let vs = db
         .vote
         .with((&db.vote.vote_type_id).is_in([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16]))
@@ -147,8 +155,8 @@ fn q14231(db: &'static So) -> String {
         .and((&owners).opt())
         .cross(&us)
         .cross(&vs)
-        .drive(|((t, ()), vt), ((((n, wn, w, s), o), (un, ur, uv)), vn)| {
-            out.push(row(vec![V::I(t), V::I(n), nullable(w, wn), avg(s, n), V::I(o.unwrap_or(0)), V::I(un), avg(ur, un), V::I(uv), V::I(vt), V::I(vn)]))
+        .drive(|((t, _), vt), ((((n, wn, w, s), o), (un, ur, uv)), vn)| {
+            out.push(row(vec![V::I(t), V::I(n), nullable(w, wn), avg(s, n), V::I(o.unwrap_or(0)), V::I(un), avg(ur, un), nullable(uv, un), V::I(vt), V::I(vn)]))
         });
     rows(out)
 }
@@ -188,14 +196,18 @@ fn q14922(db: &'static So) -> String {
             ]
         });
     let User { reputation, creation_date: ucd, .. } = &db.user;
-    let us = whole(&db.user.id).select(reputation.and(ucd)).fold((0i64, 0i64, i64::MAX, i64::MIN), |(n, r, lo, hi), (rep, d)| (n + 1, r + rep, lo.min(d), hi.max(d)));
+    let users: HashIdx<(), Id<User>> = whole(db.user.iq()).collect();
+    let us = (&unit()).select((&users).select(reputation.and(ucd)).opt()).fold((0i64, 0i64, i64::MAX, i64::MIN), |(n, r, lo, hi), x| match x {
+        Some((rep, d)) => (n + 1, r + rep, lo.min(d), hi.max(d)),
+        None => (n, r, lo, hi),
+    });
     let vs = db
         .vote
         .group_by((&db.vote.vote_type).select(&db.vote_type.name))
         .select((&db.vote.bounty_amount).opt())
         .fold((0i64, 0i64, 0i64), |(n, bn, b), x| (n + 1, bn + x.is_some() as i64, b + x.unwrap_or(0)));
     let mut out = Vec::new();
-    (&ps).cross(&us).cross(&vs).drive(|((t, ()), vt), ((a, (un, ur, lo, hi)), (vn, bn, b))| {
+    (&ps).cross(&us).cross(&vs).drive(|((t, _), vt), ((a, (un, ur, lo, hi)), (vn, bn, b))| {
         out.push(row(vec![
             V::S(t),
             V::I(a[0]),

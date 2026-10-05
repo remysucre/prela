@@ -83,7 +83,7 @@ fn q28976(db: &'static So) -> String {
     let Post { post_type, creation_date, score, view_count, origid, tags_str, title, .. } = &db.post;
     let base = db.post.with(creation_date.ge(date(2023, 10, 1)));
     let kept: MatSet<Id<Post>> = (&base)
-        .group_by(post_type)
+        .group_by(post_type.select(&db.post_type.name))
         .select(Ident::<Post>::new().and(score).and(view_count.opt()))
         .window(row_number, |((_, s), _)| s, desc)
         .window(row_number, |(((_, _), v), _)| v, desc)

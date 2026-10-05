@@ -775,7 +775,7 @@ fn q12437(db: &'static So) -> String {
         V::I(count(db.post.iq())),
         mean(db.post.with((&db.post.post_type_id).eq(1)).select(&db.post.score)),
         V::I(count(db.user.iq())),
-        V::I(max_rep),
+        omax(max_rep, count(db.user.iq())),
     ])
 }
 
@@ -823,7 +823,7 @@ fn q14893(db: &'static So) -> String {
 // ;
 fn q10797(db: &'static So) -> String {
     let latest = (&db.post.creation_date).fold_flat(i64::MIN, |a, d| a.max(d));
-    row(vec![V::I(count(db.post.iq())), V::I(count(db.user.iq())), V::I(count(db.vote.iq())), mean(&db.user.reputation), V::T(latest)])
+    row(vec![V::I(count(db.post.iq())), V::I(count(db.user.iq())), V::I(count(db.vote.iq())), mean(&db.user.reputation), tmax(latest)])
 }
 
 // SELECT
@@ -1154,10 +1154,11 @@ fn q12894(db: &'static So) -> String {
 // ORDER BY
 // TotalPosts DESC;
 fn q12462(db: &'static So) -> String {
-    let Post { post_type, score, owner_user, .. } = &db.post;
+    let Post { post_type, score, owner_user_id, .. } = &db.post;
+    let bidx: HashIdx<i64, Id<Badge>> = (&db.badge.user_id).inv().collect();
     let name = post_type.select(&db.post_type.name);
-    let main = db.post.group_by(&name).select(score.and(owner_user.select(badges_of(db)).opt())).fold((0i64, 0i64), |(n, s), (x, _)| (n + 1, s + x));
-    let holders = db.post.group_by(&name).select(owner_user.select(badges_of(db)).select(&db.badge.user_id)).count_distinct();
+    let main = db.post.group_by(&name).select(score.and(owner_user_id.select(&bidx).opt())).fold((0i64, 0i64), |(n, s), (x, _)| (n + 1, s + x));
+    let holders = db.post.group_by(&name).select(owner_user_id.select(&bidx).select(&db.badge.user_id)).count_distinct();
     let mut v = Vec::new();
     main.and((&holders).opt()).drive(|k, ((n, s), u)| v.push((k, n, s, u.unwrap_or(0))));
     rows(v.iter().map(|&(k, n, s, u)| row(vec![V::S(k), V::I(n), avg(s, n), V::I(u)])))

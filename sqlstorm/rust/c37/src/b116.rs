@@ -1474,14 +1474,23 @@ fn q11224(db: &'static So) -> String {
 // PVS.VoteCount DESC, US.TotalScore DESC;
 fn q11225(db: &'static So) -> String {
     let acc: HashIdx<i64, Id<User>> = (&db.user.account_id).inv().collect();
-    let us = user_stats_fold(db, Ident::<User>::new(), UserWhere::All, "b", any_post);
+    let need: MatSet<Id<User>> = db.post.select((&db.post.origid).select(&acc)).collect();
+    let us = db
+        .user
+        .with(&need)
+        .group_by(Ident::<User>::new())
+        .select(badges_of(db).opt().and(posts_of(db).select((&db.post.score).and((&db.post.view_count).opt())).opt()))
+        .fold([0i64; 5], |a, (b, p)| {
+            let (s, w) = p.map_or((None, None), |(s, w)| (Some(s), w));
+            [a[0] + b.is_some() as i64, a[1] + s.is_some() as i64, a[2] + s.unwrap_or(0), a[3] + w.is_some() as i64, a[4] + w.unwrap_or(0)]
+        });
     let mut v = Vec::new();
     stats_fold(db, db.post.with((&db.post.origid).select(&acc)), Ident::<Post>::new(), "v", &[])
         .and((&db.post.origid).select(&acc).select(Ident::<User>::new().and(&us)))
         .drive(|p, (s, (u, a))| v.push((p, s, u, a)));
     rows(v.iter().map(|&(p, s, u, a)| {
         let mut f = post_fields(db, p, &["id", "title", "type_id"]);
-        f.extend([V::I(s.vx), V::I(s.up), V::I(s.down), user_col(db, u, "uid"), user_col(db, u, "name"), V::I(a.bx), ustat_field(&a, "views_sum"), ustat_field(&a, "score_sum")]);
+        f.extend([V::I(s.vx), V::I(s.up), V::I(s.down), user_col(db, u, "uid"), user_col(db, u, "name"), V::I(a[0]), nullable(a[4], a[3]), nullable(a[2], a[1])]);
         row(f)
     }))
 }

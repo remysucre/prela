@@ -317,9 +317,9 @@ fn q28706(db: &'static So) -> String {
     let Post { owner_user, post_type_id, creation_date, score, tags_str, .. } = &db.post;
     let User { display_name, reputation, .. } = &db.user;
     let mentions = tag_mentions(db);
-    let tag_of = (&mentions).map(|(_, t)| t);
+    let name_of = (&mentions).map(|(_, t)| t).select(&db.tag.tag_name);
     let tag_stats = (&mentions)
-        .group_by(&tag_of)
+        .group_by(&name_of)
         .select((&mentions).map(|(p, _)| p).select(score))
         .fold((0i64, 0i64), |(n, pos), s| (n + 1, pos + (s > 0) as i64));
     let per_user = owner_user.inv().select(score).fold((0i64, 0i64), |(n, s), x| (n + 1, s + x));
@@ -337,7 +337,8 @@ fn q28706(db: &'static So) -> String {
         .map(|((_, a), _)| a)
         .collect();
     let tops_by_name: HashIdx<Str, (Str, i64, i64)> = (&tops).map(|(dn, _, _)| dn).inv().collect();
-    let tags_by_post: HashIdx<Id<Post>, Id<Tag>> = (&mentions).map(|(p, _)| p).inv().select(&tag_of).collect();
+    let post_names: MatSet<(Id<Post>, Str)> = (&mentions).map(|(p, _)| p).and(&name_of).collect();
+    let names_by_post: HashIdx<Id<Post>, Str> = (&post_names).map(|(p, _)| p).inv().select((&post_names).map(|(_, n)| n)).collect();
 
     let base = owned(db).with(post_type_id.eq(1));
     let rn = (&base)
@@ -348,11 +349,11 @@ fn q28706(db: &'static So) -> String {
     (&rn)
         .filt(|(_, n)| n == 1)
         .map(|((p, _), _)| p)
-        .select(Ident::<Post>::new().and((&tags_by_post).select(Ident::<Tag>::new().and(&tag_stats))).and(owner_user.select(display_name).select(&tops_by_name)))
+        .select(Ident::<Post>::new().and((&names_by_post).select(Same::<Str>::new().and(&tag_stats))).and(owner_user.select(display_name).select(&tops_by_name)))
         .drive(|_, ((p, (t, (tn, _))), (dn, n, s))| {
             let mut f = post_fields(db, p, &["id", "title", "body", "created", "owner"]);
             f.push(oint(tags_str.get(p).map(|x| x.matches('>').count() as i64)));
-            f.extend([V::S(db.tag.tag_name.get(t).unwrap()), V::I(tn)]);
+            f.extend([V::S(t), V::I(tn)]);
             f.extend([V::S(dn), V::I(n), V::I(s)]);
             out.push(row(f))
         });

@@ -544,12 +544,15 @@ fn q13859(db: &'static So) -> String {
 // ORDER BY u.Reputation DESC
 // LIMIT 100;
 fn q13861(db: &'static So) -> String {
-    let us = user_stats_fold(db, Ident::<User>::new(), UserWhere::All, "cb", any_post);
+    let top: MatSet<Id<User>> = whole(user_base(db, UserWhere::All)).select(Ident::<User>::new().and(&db.user.reputation)).window(rank, |(_, r)| r, desc).filt(|(_, n)| n <= 100).map(|((u, _), _)| u).collect();
+    let us = db.user.with(&top).group_by(Ident::<User>::new()).select(posts_of(db).select(comments_of(db).opt()).opt().and(badges_of(db).opt())).fold([0i64; 3], |a, (p, b)| {
+        [a[0] + p.is_some() as i64, a[1] + matches!(p, Some(Some(_))) as i64, a[2] + b.is_some() as i64]
+    });
     let vs = vote_named(db);
     let mut v = Vec::new();
     (&us).and((&vs).opt()).drive(|u, (a, x)| v.push((u, a, x.unwrap_or([0; 3]))));
     out(v, |&(u, _, _)| rep_desc(db, u), 100, |&(u, a, x)| {
-        let mut f = vec![user_col(db, u, "uid"), user_col(db, u, "rep"), V::I(a.n), V::I(a.cx), V::I(a.bx)];
+        let mut f = vec![user_col(db, u, "uid"), user_col(db, u, "rep"), V::I(a[0]), V::I(a[1]), V::I(a[2])];
         f.extend(ints(&x));
         f
     })
@@ -3343,8 +3346,8 @@ fn q14137(db: &'static So) -> String {
     let User { reputation, views, up_votes, down_votes, .. } = &db.user;
     let u = db.user.select(reputation.and(views).and(up_votes).and(down_votes)).fold_flat([0i64; 5], |a, (((r, w), x), y)| [a[0] + 1, a[1] + r, a[2] + w, a[3] + x, a[4] + y]);
     let x = db.vote.select(&db.vote.vote_type_id).fold_flat([0i64; 5], |a, t| [a[0] + 1, a[1] + (t == 2) as i64, a[2] + (t == 3) as i64, a[3] + (t == 6) as i64, a[4] + (t == 11) as i64]);
-    let mut f = vec![V::I(p[0]), V::I(owners), V::I(p[1]), V::I(p[2]), V::I(p[3]), avg(p[5], p[4]), avg(p[6], p[0]), avg(p[8], p[7]), V::I(u[0]), avg(u[1], u[0]), V::I(u[2]), V::I(u[3]), V::I(u[4])];
-    f.extend(ints(&x));
+    let mut f = vec![V::I(p[0]), V::I(owners), nullable(p[1], p[0]), nullable(p[2], p[0]), nullable(p[3], p[0]), avg(p[5], p[4]), avg(p[6], p[0]), avg(p[8], p[7]), V::I(u[0]), avg(u[1], u[0]), nullable(u[2], u[0]), nullable(u[3], u[0]), nullable(u[4], u[0])];
+    f.extend([V::I(x[0]), nullable(x[1], x[0]), nullable(x[2], x[0]), nullable(x[3], x[0]), nullable(x[4], x[0])]);
     row(f)
 }
 

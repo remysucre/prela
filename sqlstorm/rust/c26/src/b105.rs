@@ -15,6 +15,33 @@ fn views_desc(db: &'static So, p: Id<Post>) -> (bool, Reverse<Option<i64>>) {
 }
 
 // Posts grouped by `key`, folding what each post is joined to.
+fn badges_by_uid(db: &'static So) -> HashIdx<i64, Id<Badge>> {
+    (&db.badge.user_id).inv().collect()
+}
+
+fn cvb<Q: Drive<D = Id<Post>, R = Id<Post>>>(db: &'static So, base: Q, cols: &[&str]) -> String {
+    let bidx = badges_by_uid(db);
+    let f = base
+        .group_by(Ident::<Post>::new())
+        .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()).and((&db.post.owner_user_id).select(&bidx).opt()))
+        .fold([0i64; 3], |a, ((c, t), _)| [a[0] + c.is_some() as i64, a[1] + (t == Some(2)) as i64, a[2] + (t == Some(3)) as i64]);
+    let b = db.post.group_by(Ident::<Post>::new()).select((&db.post.owner_user_id).select(&bidx)).count_distinct();
+    let mut v = Vec::new();
+    f.and((&b).opt()).drive(|p, (a, n)| v.push((p, [a[0], a[1], a[2], n.unwrap_or(0)])));
+    rows(v.iter().map(|&(p, a)| {
+        row(cols
+            .iter()
+            .map(|c| match *c {
+                "#cx" => V::I(a[0]),
+                "#up" => V::I(a[1]),
+                "#down" => V::I(a[2]),
+                "#d0" => V::I(a[3]),
+                _ => post_fields(db, p, &[c]).pop().unwrap(),
+            })
+            .collect())
+    }))
+}
+
 fn fold_by<Q, K, R, S, F>(base: Q, key: K, joined: R, init: S, f: F) -> Fold<ROf<K>, S>
 where
     Q: Drive<D = Id<Post>, R = Id<Post>>,
@@ -614,11 +641,12 @@ fn q13992(db: &'static So) -> String {
 // ORDER BY
 // TotalPosts DESC;
 fn q11778(db: &'static So) -> String {
-    let Post { score, view_count, answer_count, owner_user, .. } = &db.post;
+    let Post { score, view_count, answer_count, owner_user_id, .. } = &db.post;
+    let bidx = badges_by_uid(db);
     let f = fold_by(
         db.post.iq(),
         name(db),
-        view_count.opt().and(score).and(answer_count.opt()).and(comments_of(db).opt()).and(owner_user.select(badges_of(db)).opt()),
+        view_count.opt().and(score).and(answer_count.opt()).and(comments_of(db).opt()).and(owner_user_id.select(&bidx).opt()),
         [0i64; 8],
         |a, ((((w, s), an), c), b)| {
             [a[0] + 1, a[1] + w.is_some() as i64, a[2] + w.unwrap_or(0), a[3] + s, a[4] + an.is_some() as i64, a[5] + an.unwrap_or(0), a[6] + c.is_some() as i64, a[7] + b.is_some() as i64]
@@ -783,12 +811,13 @@ fn q13143(db: &'static So) -> String {
 // GROUP BY p.Title, p.CreationDate
 // ORDER BY p.CreationDate DESC;
 fn q14567(db: &'static So) -> String {
-    let Post { title, creation_date, owner_user, .. } = &db.post;
+    let Post { title, creation_date, owner_user_id, .. } = &db.post;
+    let bidx = badges_by_uid(db);
     let base = db.post.with(creation_date.ge(ts(2023, 10, 1, 12, 34, 56)));
     let key = title.opt().and(creation_date);
-    let f = fold_by(&base, &key, comments_of(db).opt().and(votes_of(db).opt()).and(owner_user.select(badges_of(db)).opt()).and(history_of(db).opt()), [0i64; 1], |a, (((c, _), _), _)| [a[0] + c.is_some() as i64]);
+    let f = fold_by(&base, &key, comments_of(db).opt().and(votes_of(db).opt()).and(owner_user_id.select(&bidx).opt()).and(history_of(db).opt()), [0i64; 1], |a, (((c, _), _), _)| [a[0] + c.is_some() as i64]);
     let x = distinct_by(&base, &key, votes_of(db));
-    let b = distinct_by(&base, &key, owner_user.select(badges_of(db)));
+    let b = distinct_by(&base, &key, owner_user_id.select(&bidx));
     let h = distinct_by(&base, &key, history_of(db));
     let mut v = Vec::new();
     f.and((&x).opt()).and((&b).opt()).and((&h).opt()).drive(|(t, c), (((a, x), b), h)| v.push((t, c, a[0], [x, b, h].map(|n| n.unwrap_or(0)))));
@@ -976,9 +1005,7 @@ fn q11944(db: &'static So) -> String {
 // ORDER BY
 // LastActivityDate DESC;
 fn q14853(db: &'static So) -> String {
-    let base = db.post.with((&db.post.post_type_id).eq(1));
-    let b = per_post_distinct(db, (&db.post.owner_user).select(badges_of(db)));
-    stats_rows(db, stats_with(db, base, "cvb", &[], &[&b]), |_, _| 0, 0, &["id", "title", "#cx", "#up", "#down", "#d0", "created"])
+    cvb(db, db.post.with((&db.post.post_type_id).eq(1)), &["id", "title", "#cx", "#up", "#down", "#d0", "created"])
 }
 
 // SELECT
@@ -1004,8 +1031,7 @@ fn q14853(db: &'static So) -> String {
 // ORDER BY
 // p.CreationDate DESC;
 fn q14673(db: &'static So) -> String {
-    let b = per_post_distinct(db, (&db.post.owner_user).select(badges_of(db)));
-    stats_rows(db, stats_with(db, since(db, date(2023, 1, 1)), "cvb", &[], &[&b]), |_, _| 0, 0, &["id", "title", "created", "#cx", "#up", "#down", "#d0"])
+    cvb(db, since(db, date(2023, 1, 1)), &["id", "title", "created", "#cx", "#up", "#down", "#d0"])
 }
 
 // SELECT
@@ -1033,9 +1059,7 @@ fn q14673(db: &'static So) -> String {
 // ORDER BY
 // p.ViewCount DESC;
 fn q11493(db: &'static So) -> String {
-    let base = db.post.with((&db.post.post_type_id).eq(1));
-    let b = per_post_distinct(db, (&db.post.owner_user).select(badges_of(db)));
-    stats_rows(db, stats_with(db, base, "cvb", &[], &[&b]), |_, _| 0, 0, &["id", "title", "created", "views", "#cx", "#up", "#down", "answers", "#d0"])
+    cvb(db, db.post.with((&db.post.post_type_id).eq(1)), &["id", "title", "created", "views", "#cx", "#up", "#down", "answers", "#d0"])
 }
 
 // SELECT DISTINCT
@@ -1697,7 +1721,7 @@ fn q10900(db: &'static So) -> String {
     let (n, rs, wn, ws, x) = (&per_user).fold_flat((0i64, 0.0f64, 0i64, 0i64, 0i64), |(n, rs, wn, ws, x), a| {
         (n + 1, rs + a[1] as f64 / a[0] as f64, wn + (a[2] > 0) as i64, ws + a[3], x + a[4])
     });
-    row(vec![V::I(n), V::F(rs / n as f64), nullable(ws, wn), V::I(x)])
+    row(vec![V::I(n), if n == 0 { V::Null } else { V::F(rs / n as f64) }, nullable(ws, wn), nullable(x, n)])
 }
 
 fn count<Q: Drive>(q: Q) -> i64 {

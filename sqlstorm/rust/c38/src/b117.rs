@@ -1646,7 +1646,7 @@ fn q11567(db: &'static So) -> String {
     let mut out = Vec::new();
     rel(vec![()]).select((&ps).opt().and((&owners).opt()).and((&us).opt()).and((&vs).opt()).and((&voters).opt()).and((&voted).opt())).drive(|_, (((((p, o), u), x), vr), vd)| {
         let (p, u, z) = (p.unwrap_or([0; 4]), u.unwrap_or([0, 0, i64::MIN]), |x: Option<i64>| V::I(x.unwrap_or(0)));
-        out.push(row(vec![V::I(p[0]), z(o), V::I(p[1]), V::I(p[2]), V::I(p[3]), V::I(u[0]), avg(u[1], u[0]), if u[0] == 0 { V::Null } else { V::T(u[2]) }, z(x), z(vr), z(vd)]))
+        out.push(row(vec![V::I(p[0]), z(o), nullable(p[1], p[0]), nullable(p[2], p[0]), nullable(p[3], p[0]), V::I(u[0]), avg(u[1], u[0]), if u[0] == 0 { V::Null } else { V::T(u[2]) }, z(x), z(vr), z(vd)]))
     });
     rows(out)
 }
@@ -2853,19 +2853,24 @@ fn q11720(db: &'static So) -> String {
 // LIMIT 100;
 fn q11724(db: &'static So) -> String {
     let uid = uids(db);
-    let us = user_stats_fold(db, Ident::<User>::new(), UserWhere::All, "bv", any_post);
+    let pid = pids(db);
+    let us = user_counts_of(db, db.user.with((&db.user.origid).select(&pid)), "bv");
     let dp = ud(db, UserWhere::All, posts_of(db));
     let bu = badges_per_user(db);
     let dv = per_post_distinct(db, votes_of(db).select(&db.vote.user_id));
     let mut v = Vec::new();
-    stats_fold(db, db.post.with((&db.post.origid).select(&uid)), Ident::<Post>::new(), "cv", &[])
+    db.post
+        .with((&db.post.origid).select(&uid))
+        .group_by(Ident::<Post>::new())
+        .select(comments_of(db).opt().and(votes_of(db).opt()))
+        .dense_fold(db.post.id.n, 0i64, |n, (c, _)| n + c.is_some() as i64)
         .and((&dv).opt())
         .and((&db.post.origid).select(&uid).select(Ident::<User>::new().and(&us).and((&dp).opt()).and(&bu)))
         .drive(|p, ((s, x), (((u, a), d), b))| v.push((p, s, x.unwrap_or(0), u, a, d.unwrap_or(0), b)));
     out(v, |&(p, _, _, u, _, _, _)| (rep_desc(db, u), views_desc(db, p)), 100, |&(p, s, x, u, a, d, b)| {
         let mut f = vec![user_col(db, u, "uid"), user_col(db, u, "rep"), V::I(d), V::I(b), V::I(a.up), V::I(a.down)];
         f.extend(post_fields(db, p, &["id", "title", "created", "views", "score"]));
-        f.extend([V::I(s.cx), V::I(x)]);
+        f.extend([V::I(s), V::I(x)]);
         f
     })
 }
@@ -3045,6 +3050,56 @@ fn q11743(db: &'static So) -> String {
     let mut v = Vec::new();
     (&f).and((&owners).opt()).drive(|k, (a, o)| v.push((k, a, o.unwrap_or(0))));
     rows(v.iter().map(|&(k, a, o)| row(vec![V::S(k), V::I(a[0]), avg(a[1], a[0]), avg(a[3], a[2]), nullable(a[5], a[4]), V::I(o)])))
+}
+
+#[derive(Clone, Copy, Default)]
+struct UC {
+    n: i64,
+    q: i64,
+    a: i64,
+    t38: i64,
+    cx: i64,
+    up: i64,
+    down: i64,
+    bx: i64,
+    gold: i64,
+    silver: i64,
+    bronze: i64,
+    views_sum: i64,
+}
+
+fn user_counts(db: &'static So, w: UserWhere, joins: &str) -> DenseFold<Id<User>, UC> {
+    user_counts_of(db, user_base(db, w), joins)
+}
+
+fn user_counts_of<Q: Drive<D = Id<User>, R = Id<User>>>(db: &'static So, users: Q, joins: &str) -> DenseFold<Id<User>, UC> {
+    let (c, v, b) = (joins.contains('c'), joins.contains('v'), joins.contains('b'));
+    let post = (&db.post.post_type_id)
+        .and((&db.post.view_count).opt())
+        .and(comments_of_if(db, c).opt())
+        .and(votes_of_if(db, v).select(&db.vote.vote_type_id).opt());
+    users
+        .group_by(Ident::<User>::new())
+        .select(posts_of(db).select(post).opt().and(badges_of_if(db, b).select(&db.badge.class).opt()))
+        .dense_fold(db.user.id.n, UC::default(), |mut a, (p, b)| {
+            if let Some((((t, w), c), v)) = p {
+                a.n += 1;
+                a.q += (t == 1) as i64;
+                a.a += (t == 2) as i64;
+                a.t38 += (3..=8).contains(&t) as i64;
+                a.views_sum += w.unwrap_or(0);
+                a.cx += c.is_some() as i64;
+                a.up += (v == Some(2)) as i64;
+                a.down += (v == Some(3)) as i64;
+            }
+            if let Some(cls) = b {
+                a.bx += 1;
+                a.gold += (cls == 1) as i64;
+                a.silver += (cls == 2) as i64;
+                a.bronze += (cls == 3) as i64;
+            }
+            a
+        })
 }
 
 pub static ENTRIES: &[harness::Entry] = &[

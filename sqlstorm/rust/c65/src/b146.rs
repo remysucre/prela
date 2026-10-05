@@ -1,6 +1,48 @@
 use harness::prelude::*;
 use std::cmp::Reverse;
 
+fn like(s: &str, p: &str) -> bool {
+    let (s, p): (Vec<char>, Vec<char>) = (s.chars().collect(), p.chars().collect());
+    let (mut i, mut j, mut star, mut mark) = (0, 0, None, 0);
+    while i < s.len() {
+        if j < p.len() && p[j] == '%' {
+            star = Some(j);
+            mark = i;
+            j += 1;
+        } else if j < p.len() && (p[j] == '_' || p[j] == s[i]) {
+            i += 1;
+            j += 1;
+        } else if let Some(st) = star {
+            j = st + 1;
+            mark += 1;
+            i = mark;
+        } else {
+            return false;
+        }
+    }
+    p[j..].iter().all(|&c| c == '%')
+}
+
+fn segments(s: Str) -> Vec<Str> {
+    s.split('<').skip(1).filter_map(|x| x.find('>').map(|j| &x[..j])).collect()
+}
+
+/// The (post, tag) pairs whose Tags contains '<' || TagName || '>': POSITION(..) > 0, or `LIKE '%<' || TagName || '>%'` when
+/// `pat`. A name free of '<' and '>' (and, under LIKE, of '%' and '_') can only occur as a whole bracketed segment; any other
+/// name is matched against every distinct Tags string.
+fn bracketed(db: &'static So, pat: bool) -> MatSet<(Id<Post>, Id<Tag>)> {
+    let name = &db.tag.tag_name;
+    let plain = move |n: Str| !n.contains(['<', '>']) && !(pat && n.contains(['%', '_']));
+    let seg: HashIdx<Str, Id<Tag>> = db.tag.with(name.filt(plain)).select(name).inv().collect();
+    let odd: HashIdx<Str, Id<Tag>> = db.tag.with(name.filt(move |n| !plain(n))).select(name).inv().collect();
+    let strs: MatSet<Str> = (&db.post.tags_str).collect();
+    let hit: HashIdx<Str, Id<Tag>> = (&strs)
+        .select_where(&odd, move |s: Str, n: Str| if pat { like(s, &format!("%<{n}>%")) } else { s.contains(&format!("<{n}>")) })
+        .collect();
+    let tags = &db.post.tags_str;
+    db.post.select(Ident::<Post>::new().and(tags.flat_map(segments).select(&seg))).union(db.post.select(Ident::<Post>::new().and(tags.select(&hit)))).collect()
+}
+
 type UP = (Id<User>, [i64; 10]);
 
 /// One window over every row of a fold, the whole fold as the single partition.
@@ -1955,16 +1997,18 @@ fn q6248(db: &'static So) -> String {
 // LEFT JOIN PostHistory ph ON ph.PostId = p.Id AND ph.CreationDate = (SELECT MAX(CreationDate) FROM PostHistory WHERE PostId = p.Id)
 // LEFT JOIN Users u ON ph.UserId = u.Id WHERE t.TagRank <= 10 ORDER BY t.TagRank;
 //
-// Tag names hold no '<' or '>', so '%<name>%' matches exactly the posts
-// listing that tag.
 fn q28562(db: &'static So) -> String {
-    let Post { creation_date, owner_user, view_count, score, tags_str, .. } = &db.post;
-    let tagged: HashIdx<Str, Id<Post>> = db.post.select(tags_str.flat_map(tag_list)).inv().collect();
+    let Post { creation_date, owner_user, view_count, score, .. } = &db.post;
+    type R = (Id<Post>, Id<Tag>);
+    let bt = bracketed(db, true);
+    let by_tag: HashIdx<Id<Tag>, R> = (&bt).map(|(_, t): R| t).inv().collect();
+    let pn: MatSet<(Id<Post>, Str)> = (&bt).select(Same::<R>::new().map(|(p, _): R| p).and(Same::<R>::new().map(|(_, t): R| t).select(&db.tag.tag_name))).collect();
+    let tagged: HashIdx<Str, Id<Post>> = (&pn).map(|(_, n): (Id<Post>, Str)| n).inv().map(|(p, _): (Id<Post>, Str)| p).collect();
     let recent = Ident::<Post>::new().with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)));
     let st = db
         .tag
         .group_by(&db.tag.tag_name)
-        .select((&db.tag.tag_name).select(&tagged).select(recent).select(view_count.opt().and(score).and(owner_user.select(&db.user.reputation))))
+        .select((&by_tag).map(|(p, _): R| p).select(recent).select(view_count.opt().and(score).and(owner_user.select(&db.user.reputation))))
         .fold([0i64; 5], |a, ((w, s), r)| [a[0] + 1, a[1] + w.is_some() as i64, a[2] + w.unwrap_or(0), a[3] + s, a[4] + r]);
     let tt = rel(top_n(drain(&st), |&(_, a)| (Reverse(a[0]), Reverse(a[3])), 10));
     let PostHistory { post, .. } = &db.post_history;

@@ -1195,8 +1195,8 @@ fn q14251(db: &'static So) -> String {
     let du = one(whole(db.post.iq()).select(&db.post.owner_user_id).count_distinct());
     let dv = one(whole(db.vote.iq()).select(&db.vote.user_id).count_distinct());
     let dc = one(whole(db.comment.iq()).select(&db.comment.user_id).count_distinct());
-    let act = count(db.user.with((&db.user.reputation).gt(0)));
-    row(vec![V::I(count(db.post.iq())), V::I(du), V::I(count(db.vote.iq())), V::I(dv), V::I(count(db.comment.iq())), V::I(dc), V::I(count(db.user.iq())), V::I(act)])
+    let (un, act) = db.user.select(&db.user.reputation).fold_flat((0i64, 0i64), |(n, a), r| (n + 1, a + (r > 0) as i64));
+    row(vec![V::I(count(db.post.iq())), V::I(du), V::I(count(db.vote.iq())), V::I(dv), V::I(count(db.comment.iq())), V::I(dc), V::I(un), nullable(act, un)])
 }
 
 // WITH PostStatistics AS (
@@ -1261,11 +1261,11 @@ fn q14256(db: &'static So) -> String {
     row(vec![
         V::I(p[0]),
         V::I(du),
-        V::I(p[1]),
+        nullable(p[1], p[0]),
         avg(p[3], p[2]),
         avg(p[4], p[0]),
-        V::I(p[5]),
-        V::I(p[6]),
+        nullable(p[5], p[0]),
+        nullable(p[6], p[0]),
         V::I(u[0]),
         avg(u[1], u[0]),
         omax(u[2], u[0]),
@@ -2881,16 +2881,16 @@ fn q14372(db: &'static So) -> String {
     row(vec![
         V::I(p[0]),
         V::I(du),
-        V::I(p[1]),
-        V::I(p[2]),
-        V::I(p[3]),
+        nullable(p[1], p[0]),
+        nullable(p[2], p[0]),
+        nullable(p[3], p[0]),
         V::I(u[0]),
         avg(u[1], u[0]),
         if u[0] == 0 { V::Null } else { V::T(u[2]) },
         if u[0] == 0 { V::Null } else { V::T(u[3]) },
         V::I(x[0]),
-        V::I(x[1]),
-        V::I(x[2]),
+        nullable(x[1], x[0]),
+        nullable(x[2], x[0]),
         V::I(c[0]),
         avg(c[1], c[0]),
     ])
@@ -2936,7 +2936,7 @@ fn q14376(db: &'static So) -> String {
     let p = post_totals(db);
     let u = db.user.select(&db.user.reputation).fold_flat([0i64; 2], |a, r| [a[0] + 1, a[1] + r]);
     let x = db.vote.select(&db.vote.vote_type_id).fold_flat([0i64; 3], |a, t| [a[0] + 1, a[1] + (t == 2) as i64, a[2] + (t == 3) as i64]);
-    row(vec![V::I(p[0]), avg(p[1], p[0]), nullable(p[3], p[2]), V::I(u[0]), avg(u[1], u[0]), V::I(x[0]), V::I(x[1]), V::I(x[2])])
+    row(vec![V::I(p[0]), avg(p[1], p[0]), nullable(p[3], p[2]), V::I(u[0]), avg(u[1], u[0]), V::I(x[0]), nullable(x[1], x[0]), nullable(x[2], x[0])])
 }
 
 // SELECT
@@ -3274,10 +3274,16 @@ fn q14407(db: &'static So) -> String {
 // ORDER BY
 // TotalEngagement DESC;
 fn q14416(db: &'static So) -> String {
-    let us = user_stats_fold(db, Ident::<User>::new(), UserWhere::All, "cv", any_post);
+    let us = user_base(db, UserWhere::All)
+        .group_by(Ident::<User>::new())
+        .select(posts_of(db).select(comments_of(db).opt().and(votes_of(db).opt())).opt())
+        .fold([0i64; 3], |a, p| match p {
+            Some((c, v)) => [a[0] + 1, a[1] + c.is_some() as i64, a[2] + v.is_some() as i64],
+            None => a,
+        });
     let mut v = Vec::new();
     (&us).drive(|u, a| v.push((u, a)));
-    rows(v.iter().map(|&(u, a)| row(vec![user_col(db, u, "uid"), V::I(a.n), V::I(a.cx), V::I(a.vx), V::I(a.n + a.cx + a.vx)])))
+    rows(v.iter().map(|&(u, a)| row(vec![user_col(db, u, "uid"), V::I(a[0]), V::I(a[1]), V::I(a[2]), V::I(a[0] + a[1] + a[2])])))
 }
 
 // SELECT

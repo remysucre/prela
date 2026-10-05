@@ -1666,12 +1666,22 @@ fn q12653(db: &'static So) -> String {
 // ORDER BY ps.CreationDate DESC
 // LIMIT 100;
 fn q12659(db: &'static So) -> String {
-    let us = user_stats_fold(db, Ident::<User>::new(), UserWhere::All, "b", any_post);
+    let top: MatSet<Id<Post>> = whole(owned(db)).select(Ident::<Post>::new().and(&db.post.creation_date)).window(rank, |(_, d)| d, desc).filt(|(_, r)| r <= 100).map(|((p, _), _)| p).collect();
+    let need: MatSet<Id<User>> = db.post.with(&top).select(&db.post.owner_user).collect();
+    let us = db
+        .user
+        .with(&need)
+        .group_by(Ident::<User>::new())
+        .select(badges_of(db).opt().and(posts_of(db).select((&db.post.score).and((&db.post.view_count).opt())).opt()))
+        .fold([0i64; 5], |a, (b, p)| {
+            let (s, w) = p.map_or((None, None), |(s, w)| (Some(s), w));
+            [a[0] + b.is_some() as i64, a[1] + s.is_some() as i64, a[2] + s.unwrap_or(0), a[3] + w.is_some() as i64, a[4] + w.unwrap_or(0)]
+        });
     let mut v = Vec::new();
-    stats_fold(db, owned(db), Ident::<Post>::new(), "cav", &[]).and((&db.post.owner_user).select(Ident::<User>::new().and(&us))).drive(|p, (s, (u, a))| v.push((p, s, u, a)));
+    stats_fold(db, db.post.with(&top), Ident::<Post>::new(), "cav", &[]).and((&db.post.owner_user).select(Ident::<User>::new().and(&us))).drive(|p, (s, (u, a))| v.push((p, s, u, a)));
     out(v, |&(p, _, _, _)| newest(db, p), 100, |&(p, s, u, a)| {
         let mut f = post_fields(db, p, &["id", "title", "created", "score", "views"]);
-        f.extend([V::I(s.cx), V::I(s.ax), V::I(s.up), V::I(s.down), user_col(db, u, "name"), V::I(a.bx), ustat_field(&a, "score_sum"), ustat_field(&a, "views_sum")]);
+        f.extend([V::I(s.cx), V::I(s.ax), V::I(s.up), V::I(s.down), user_col(db, u, "name"), V::I(a[0]), nullable(a[2], a[1]), nullable(a[4], a[3])]);
         f
     })
 }

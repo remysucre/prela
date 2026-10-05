@@ -239,7 +239,7 @@ fn q18898(db: &'static So) -> String {
         .select(view_count)
         .fold_flat((0i64, 0i64), |(n, s), x| (n + 1, s + x));
 
-    row(vec![V::I(total), V::I(q), V::I(a), avg(vs, vn)])
+    row(vec![V::I(total), nullable(q, total), nullable(a, total), avg(vs, vn)])
 }
 
 // SELECT U.DisplayName, COUNT(P.Id) AS PostCount, SUM(COALESCE(P.ViewCount, 0)) AS TotalViews FROM Users U JOIN Posts P ON U.Id = P.OwnerUserId

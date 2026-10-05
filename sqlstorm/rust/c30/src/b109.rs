@@ -634,7 +634,18 @@ fn q11255(db: &'static So) -> String {
 // ORDER BY
 // p.CreationDate DESC;
 fn q12665(db: &'static So) -> String {
-    stats_rows(db, stats_with(db, since(db, ts(2024, 9, 1, 12, 34, 56)), "cvb", &[], &[]), |_, _| 0, 0, &["id", "title", "created", "#cx", "#up", "#down", "#bx"])
+    let bidx: HashIdx<i64, Id<Badge>> = (&db.badge.user_id).inv().collect();
+    let mut v = Vec::new();
+    since(db, ts(2024, 9, 1, 12, 34, 56))
+        .group_by(Ident::<Post>::new())
+        .select(comments_of(db).opt().and(votes_of(db).select(&db.vote.vote_type_id).opt()).and((&db.post.owner_user_id).select(&bidx).opt()))
+        .fold([0i64; 4], |a, ((c, t), b)| [a[0] + c.is_some() as i64, a[1] + (t == Some(2)) as i64, a[2] + (t == Some(3)) as i64, a[3] + b.is_some() as i64])
+        .drive(|p, a| v.push((p, a)));
+    rows(v.iter().map(|&(p, a)| {
+        let mut f = post_fields(db, p, &["id", "title", "created"]);
+        f.extend(a.iter().map(|&x| V::I(x)));
+        row(f)
+    }))
 }
 
 // Users LEFT JOIN Posts [...] per user.

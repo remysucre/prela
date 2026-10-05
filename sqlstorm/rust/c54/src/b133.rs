@@ -1071,7 +1071,7 @@ fn q10537(db: &'static So) -> String {
     let du = one(whole(db.post.iq()).select(&db.post.owner_user_id).count_distinct());
     let x = db.vote.select(&db.vote.vote_type_id).fold_flat([0i64; 3], |a, t| [a[0] + 1, a[1] + (t == 2) as i64, a[2] + (t == 3) as i64]);
     let r = questions_only(db).select((&db.post.creation_date).and(children_of(db).select(&db.post.creation_date))).fold_flat((0i64, 0.0f64), |(n, s), (q, a)| (n + 1, s + (a - q) as f64 / 1e6));
-    row(vec![V::I(p[0]), V::I(du), V::I(p[1]), V::I(p[2]), V::I(x[0]), V::I(x[1]), V::I(x[2]), if r.0 == 0 { V::Null } else { V::F(r.1 / r.0 as f64) }])
+    row(vec![V::I(p[0]), V::I(du), nullable(p[1], p[0]), nullable(p[2], p[0]), V::I(x[0]), nullable(x[1], x[0]), nullable(x[2], x[0]), if r.0 == 0 { V::Null } else { V::F(r.1 / r.0 as f64) }])
 }
 
 // WITH PostStats AS (

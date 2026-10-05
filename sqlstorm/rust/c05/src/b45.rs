@@ -39,10 +39,11 @@ fn q13677(db: &'static So) -> String {
 }
 
 fn q5469(db: &'static So) -> String {
-    let Post { post_type_id, creation_date, score, owner_user, .. } = &db.post;
+    let Post { post_type_id, creation_date, score, owner_user_id, .. } = &db.post;
     let Vote { vote_type_id, post, user_id, .. } = &db.vote;
     let voters = db.vote.with(vote_type_id.is_in([2, 3])).group_by(post).select(user_id).count_distinct();
-    let bc = badges_per_user(db);
+    let bidx: HashIdx<i64, Id<Badge>> = (&db.badge.user_id).inv().collect();
+    let bc = db.badge.group_by(&db.badge.user_id).fold(0i64, |a, _| a + 1);
     let base = db.post.with(post_type_id.eq(1)).with(creation_date.ge(add_years(ts(2024, 10, 1, 12, 34, 56), -1)));
     let rn = whole(&base)
         .select(Ident::<Post>::new().and(score).and(creation_date))
@@ -55,11 +56,11 @@ fn q5469(db: &'static So) -> String {
             comments_of(db)
                 .opt()
                 .and(votes_of(db).with(vote_type_id.is_in([2, 3])).opt())
-                .and(owner_user.select(badges_of(db)).opt()),
+                .and(owner_user_id.select(&bidx).opt()),
         )
         .fold(0i64, |c, ((ci, _), _)| c + ci.is_some() as i64);
     let mut out = Vec::new();
-    (&comments).and((&voters).opt()).and(owner_user.select(&bc).opt()).drive(|p, ((c, nv), b)| {
+    (&comments).and((&voters).opt()).and(owner_user_id.select(&bc).opt()).drive(|p, ((c, nv), b)| {
         let mut f = post_fields(db, p, &["id", "title", "created", "score", "views"]);
         f.extend([V::I(c), V::I(nv.unwrap_or(0)), V::I(b.unwrap_or(0))]);
         out.push(row(f))

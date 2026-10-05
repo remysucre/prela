@@ -108,12 +108,12 @@ fn totals(db: &'static So, from: Option<i64>) -> (i64, i64, i64, i64, i64, i64, 
 
 fn q17893(db: &'static So) -> String {
     let (t, q, a, _, vn, vs, _) = totals(db, Some(date(2023, 1, 1)));
-    row(vec![V::I(t), V::I(q), V::I(a), avg(vs, vn)])
+    row(vec![V::I(t), nullable(q, t), nullable(a, t), avg(vs, vn)])
 }
 
 fn q12062(db: &'static So) -> String {
     let (t, q, a, ss, vn, vs, _) = totals(db, None);
-    row(vec![V::I(t), V::I(q), V::I(a), avg(ss, t), avg(vs, vn)])
+    row(vec![V::I(t), nullable(q, t), nullable(a, t), avg(ss, t), avg(vs, vn)])
 }
 
 fn q18750(db: &'static So) -> String {

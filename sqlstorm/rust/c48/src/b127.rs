@@ -991,7 +991,7 @@ fn q14903(db: &'static So) -> String {
     let du = one(whole(db.post.iq()).select(&db.post.owner_user_id).count_distinct());
     let dv = one(whole(db.vote.iq()).select(&db.vote.user_id).count_distinct());
     let u = db.user.select(&db.user.reputation).fold_flat([0, 0, i64::MIN], |a: [i64; 3], r| [a[0] + 1, a[1] + r, a[2].max(r)]);
-    row(vec![V::I(p[0]), V::I(du), V::I(p[1]), V::I(p[2]), V::I(count(db.vote.iq())), V::I(dv), V::I(u[0]), avg(u[1], u[0]), V::I(u[2])])
+    row(vec![V::I(p[0]), V::I(du), nullable(p[1], p[0]), nullable(p[2], p[0]), V::I(count(db.vote.iq())), V::I(dv), V::I(u[0]), avg(u[1], u[0]), omax(u[2], u[0])])
 }
 
 // WITH PostStats AS (

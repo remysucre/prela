@@ -14,10 +14,10 @@ fn q28124(db: &'static So) -> String {
         .fold((Id::new(0), 0i64, 0i64), |(_, _, n), (p, d)| (p, d, n + 1));
     let activity_by_post: HashIdx<Id<Post>, (Id<Post>, i64, i64)> = (&activity).map(|a| a.0).inv().select(&activity).collect();
     let mentions = tag_mentions(db);
-    let tag_of = (&mentions).map(|(_, t)| t);
-    let counts = (&mentions).group_by(&tag_of).fold(0i64, |a, _| a + 1);
-    let popular_by_post: HashIdx<Id<Post>, Id<Tag>> =
-        (&mentions).with((&tag_of).with((&counts).gt(10))).map(|(p, _)| p).inv().select(&tag_of).collect();
+    let name_of = (&mentions).map(|(_, t)| t).select(&db.tag.tag_name);
+    let counts = (&mentions).group_by(&name_of).fold(0i64, |a, _| a + 1);
+    let popular: MatSet<(Id<Post>, Str)> = (&mentions).with((&name_of).with((&counts).gt(10))).map(|(p, _)| p).and(&name_of).collect();
+    let popular_by_post: HashIdx<Id<Post>, Str> = (&popular).map(|(p, _)| p).inv().select((&popular).map(|(_, n)| n)).collect();
     let base = owned(db).with(post_type_id.eq(1));
     let rk = whole(&base).select(Ident::<Post>::new().and(creation_date)).window(rank, |(_, cd)| cd, desc);
     let mut out = Vec::new();
@@ -27,7 +27,7 @@ fn q28124(db: &'static So) -> String {
         .select(Ident::<Post>::new().and(activity_by_post.opt().and(popular_by_post.opt())))
         .drive(|_, (p, (a, t))| {
         let mut f = post_fields(db, p, &["id", "title", "body", "created", "owner", "views", "score", "answers", "comments", "tags"]);
-        f.push(ostr(t.map(|t| db.tag.tag_name.get(t).unwrap())));
+        f.push(ostr(t));
         match a {
             Some((_, d, n)) => f.extend([V::T(d), V::I(n)]),
             None => f.extend([V::Null, V::Null]),

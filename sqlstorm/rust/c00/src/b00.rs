@@ -47,7 +47,7 @@ fn q10576(db: &'static So) -> String {
 // 14374 — SELECT COUNT(*), AVG(Reputation) FROM Users
 fn q14374(db: &'static So) -> String {
     let (sum, n) = (&db.user.reputation).fold_flat((0i64, 0i64), |(s, c), r| (s + r, c + 1));
-    row(vec![V::I(n), V::F(sum as f64 / n as f64)])
+    row(vec![V::I(n), avg(sum, n)])
 }
 
 // 10235 — Posts JOIN PostTypes, COUNT(p.Id) GROUP BY pt.Name
@@ -79,7 +79,7 @@ fn q13637(db: &'static So) -> String {
         .with(post_type_id.eq(1))
         .select(owner_user.select(reputation))
         .fold_flat((0i64, 0i64), |(s, c), r| (s + r, c + 1));
-    row(vec![V::F(sum as f64 / n as f64)])
+    row(vec![avg(sum, n)])
 }
 
 // 19206 — SELECT Id, DisplayName, Reputation, CreationDate FROM Users

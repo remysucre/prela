@@ -4,7 +4,6 @@
 // type-name compositions nearly every query joins through.
 
 use crate::fmt::V;
-use std::cmp::Reverse;
 use crate::schema::*;
 use crate::views::*;
 use prela::engine::*;
@@ -83,27 +82,6 @@ pub fn rel<R: Copy>(v: Vec<R>) -> VecRel<usize, R> {
     VecRel::new(v)
 }
 
-/// ORDER BY (a key, b key) LIMIT n over the cross product of `a` and `b`,
-/// without building the product: the order is lexicographic, so the rows come
-/// one run of equal `a` keys at a time, best first, each run crossed with
-/// all of `b` and sorted by the `b` key, until `n` rows are in hand.
-pub fn lex_top<A: Copy, B: Copy, KA: Ord, KB: Ord>(a: Vec<A>, ka: impl Fn(&A) -> KA, b: Vec<B>, kb: impl Fn(&B) -> KB, n: usize) -> Vec<(A, B)> {
-    let a = top_n(a, &ka, 0);
-    let b = top_n(b, &kb, 0);
-    let mut out: Vec<(A, B)> = Vec::new();
-    let mut i = 0;
-    while i < a.len() && out.len() <= n {
-        let mut j = i;
-        let mut run = Vec::new();
-        while j < a.len() && ka(&a[j]) == ka(&a[i]) {
-            run.extend(b.iter().map(|&y| (a[j], y)));
-            j += 1;
-        }
-        out.extend(top_n(run, |(_, y)| kb(y), 0));
-        i = j;
-    }
-    top_n(out, |(x, y)| (ka(x), kb(y)), n)
-}
 
 /// The right side of `LEFT JOIN r ON <condition not mentioning the left>`:
 /// every row of `r` if there is one, else the single all-NULL row.
@@ -221,7 +199,7 @@ pub fn now_utc() -> i64 {
 
 /// COUNT(DISTINCT p.Id) per user over `Users LEFT JOIN Posts`.
 pub fn user_distinct_posts(db: &'static So) -> Fold<Id<User>, i64> {
-    db.user.group_by(Ident::<User>::new()).select(posts_of(db).opt()).buf_fold(distinct_some)
+    db.user.group_by(Ident::<User>::new()).select(posts_of(db).opt()).fold(0i64, |n, p| n + p.is_some() as i64)
 }
 
 /// Per user over `Users LEFT JOIN Posts LEFT JOIN Badges` (the product):
@@ -264,38 +242,8 @@ pub fn ranked<X, K: Ord>(mut v: Vec<X>, key: impl Fn(&X) -> K, dense: bool) -> V
     out
 }
 
-/// The rows with `ROW_NUMBER()` (or, with `ties`, `RANK()`) at most `n`
-/// within each `PARTITION BY g ORDER BY k`.
-pub fn top_per<X, G: Ord, K: Ord>(mut v: Vec<X>, g: impl Fn(&X) -> G, k: impl Fn(&X) -> K, n: usize, ties: bool) -> Vec<X> {
-    v.sort_by(|a, b| g(a).cmp(&g(b)).then_with(|| k(a).cmp(&k(b))));
-    let mut keep = vec![false; v.len()];
-    let (mut j, mut r) = (0, 0);
-    for i in 0..v.len() {
-        if i == 0 || g(&v[i - 1]) != g(&v[i]) {
-            j = i;
-        }
-        if !ties || i == j || k(&v[i - 1]) != k(&v[i]) {
-            r = i - j + 1;
-        }
-        keep[i] = r <= n;
-    }
-    v.into_iter().zip(keep).filter(|x| x.1).map(|x| x.0).collect()
-}
 
-/// The users with RANK() OVER (ORDER BY TotalScore DESC) <= 10 over `user_posts`, with that rank.
-pub fn top_score_users(db: &'static So) -> Vec<(Id<User>, [i64; 10], i64)> {
-    let v = top_n(drain(&user_posts(db)), |&(_, a)| (a[1] == 0, Reverse(a[4])), 10);
-    (0..v.len()).map(|i| (v[i].0, v[i].1, 1 + v[..i].iter().filter(|x| x.1[4] > v[i].1[4]).count() as i64)).collect()
-}
 
-/// Users with RANK() by total score, and by views (or post count), either at most 10, sorted by (score rank, other) or the reverse.
-pub fn two_ranks(db: &'static So, score_first: bool, second_views: bool) -> Vec<(((Id<User>, [i64; 10]), i64), i64)> {
-    let v = ranked(drain(&user_posts(db)), |&(_, a)| (a[1] == 0, Reverse(a[4])), false);
-    let v = if second_views { ranked(v, |&((_, a), _)| (a[5] == 0, Reverse(a[6])), false) } else { ranked(v, |&((_, a), _)| (false, Reverse(a[1])), false) };
-    let mut v: Vec<_> = v.into_iter().filter(|&((_, s), w)| s <= 10 || w <= 10).collect();
-    v.sort_by_key(|&((_, s), w)| if score_first { (s, w) } else { (w, s) });
-    v
-}
 
 /// `CAST(ts AS VARCHAR)`: seconds, then the fraction with its trailing zeros
 /// dropped (none at all when it is zero).
@@ -306,16 +254,26 @@ pub fn ts_text(us: i64) -> String {
     if frac == "." { head.to_string() } else { format!("{head}{frac}") }
 }
 
-/// Turns ranks from `ranked` over a key that leads with the partition `g`
-/// into ranks within each partition, as `RANK() OVER (PARTITION BY g ...)`.
-pub fn per_group<X: Copy, G: PartialEq>(v: Vec<(X, i64)>, g: impl Fn(&X) -> G) -> Vec<(X, i64)> {
-    let mut first = 0;
-    (0..v.len())
-        .map(|i| {
-            if i == 0 || g(&v[i].0) != g(&v[i - 1].0) {
-                first = v[i].1 - 1;
-            }
-            (v[i].0, v[i].1 - first)
-        })
-        .collect()
+
+/// SQL `LIKE`: '%' matches any run, '_' any one character, no escape.
+pub fn like(s: &str, p: &str) -> bool {
+    let (s, p): (Vec<char>, Vec<char>) = (s.chars().collect(), p.chars().collect());
+    let (mut i, mut j, mut star, mut mark) = (0, 0, None, 0);
+    while i < s.len() {
+        if j < p.len() && p[j] == '%' {
+            star = Some(j);
+            mark = i;
+            j += 1;
+        } else if j < p.len() && (p[j] == '_' || p[j] == s[i]) {
+            i += 1;
+            j += 1;
+        } else if let Some(st) = star {
+            j = st + 1;
+            mark += 1;
+            i = mark;
+        } else {
+            return false;
+        }
+    }
+    p[j..].iter().all(|&c| c == '%')
 }

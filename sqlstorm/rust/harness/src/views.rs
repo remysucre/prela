@@ -1127,11 +1127,23 @@ pub fn tag_list(t: Str) -> std::str::Split<'static, &'static str> {
     t[1..t.len() - 1].split("><")
 }
 
+/// The (post, tag) pairs with `p.Tags LIKE '%' || t.TagName || '%'`. A name free of '<', '>', '%' and '_' can only match
+/// inside one bracketed tag, so it is tested against the distinct tags; any other name is LIKE-matched against every distinct
+/// Tags string.
 pub fn tag_mentions(db: &'static So) -> MatSet<(Id<Post>, Id<Tag>)> {
+    let name = &db.tag.tag_name;
+    let plain = |n: Str| !n.contains(['<', '>', '%', '_']);
+    let plain_names: HashIdx<Str, Id<Tag>> = db.tag.with(name.filt(plain)).select(name).inv().collect();
+    let odd_names: HashIdx<Str, Id<Tag>> = db.tag.with(name.filt(move |n| !plain(n))).select(name).inv().collect();
     let elems: MatSet<Str> = (&db.post.tags_str).flat_map(tag_list).collect();
-    let contains: HashIdx<Str, Id<Tag>> =
-        (&elems).select_where((&db.tag.tag_name).inv(), |e: Str, n: Str| e.contains(n)).collect();
-    db.post.select(Ident::<Post>::new().and((&db.post.tags_str).flat_map(tag_list).select(&contains))).collect()
+    let contains: HashIdx<Str, Id<Tag>> = (&elems).select_where(&plain_names, |e: Str, n: Str| e.contains(n)).collect();
+    let strs: MatSet<Str> = (&db.post.tags_str).collect();
+    let liked: HashIdx<Str, Id<Tag>> = (&strs).select_where(&odd_names, |s: Str, n: Str| crate::kit::like(s, &format!("%{n}%"))).collect();
+    let tags = &db.post.tags_str;
+    db.post
+        .select(Ident::<Post>::new().and(tags.flat_map(tag_list).select(&contains)))
+        .union(db.post.select(Ident::<Post>::new().and(tags.select(&liked))))
+        .collect()
 }
 
 pub fn min_some(a: Option<i64>, b: Option<i64>) -> Option<i64> {

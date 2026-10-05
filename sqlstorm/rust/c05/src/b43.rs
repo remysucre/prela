@@ -155,14 +155,14 @@ fn q12691(db: &'static So) -> String {
 }
 
 fn q8952(db: &'static So) -> String {
-    let Post { post_type_id, score, parent, creation_date, .. } = &db.post;
+    let Post { post_type_id, score, parent_id, creation_date, .. } = &db.post;
     let up = votes_of_type(db, 2);
     let down = votes_of_type(db, 3);
     let cc = comments_per_post(db);
     let (n, s) = db.post.select(score).fold_flat((0i64, 0i64), |(n, s), x| (n + 1, s + x));
     let base = owned(db).with(post_type_id.eq(1)).with(score.gt(0));
     let rn = (&base)
-        .group_by(parent.opt())
+        .group_by(parent_id.opt())
         .select(Ident::<Post>::new().and(score).and(creation_date))
         .window(row_number, |((_, s), cd)| (s, cd), desc);
     let mut v = Vec::new();

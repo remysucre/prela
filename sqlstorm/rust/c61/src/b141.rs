@@ -9,6 +9,10 @@ fn vote_type_name(db: &'static So) -> Compose<&'static Col<Vote, Id<VoteType>>, 
     (&db.vote.vote_type).select(&db.vote_type.name)
 }
 
+fn unit() -> VecRel<usize, ()> {
+    rel(vec![()])
+}
+
 fn top<Q: Drive, K: Ord>(q: Q, key: impl Fn(&(Q::D, Q::R)) -> K, n: usize) -> VecRel<usize, (Q::D, Q::R)> {
     let mut v = Vec::new();
     q.drive(|d, t| v.push((d, t)));
@@ -71,11 +75,15 @@ fn q11485(db: &'static So) -> String {
         .fold((0i64, 0i64, 0i64, 0i64), |(n, s, vn, vs), (sc, v)| {
             (n + 1, s + sc, vn + v.is_some() as i64, vs + v.unwrap_or(0))
         });
-    let ur = whole(&db.user.id).select(&db.user.reputation).fold((0i64, 0i64), |(n, s), r| (n + 1, s + r));
+    let users: HashIdx<(), Id<User>> = whole(db.user.iq()).collect();
+    let ur = (&unit()).select((&users).select(&db.user.reputation).opt()).fold((0i64, 0i64), |(n, s), r| match r {
+        Some(r) => (n + 1, s + r),
+        None => (n, s),
+    });
     let tags = db.post.with(post_type_id.eq(1)).group_by(tags_str.opt()).fold(0i64, |n, _| n + 1);
     let pt = top(&tags, |&(_, n)| Reverse(n), 10);
     let mut out = Vec::new();
-    (&pc).cross(&ur).cross(&pt).drive(|((t, ()), _), (((n, s, vn, vs), (un, us)), (tg, tc))| {
+    (&pc).cross(&ur).cross(&pt).drive(|((t, _), _), (((n, s, vn, vs), (un, us)), (tg, tc))| {
         out.push(row(vec![V::I(t), V::I(n), avg(vs, vn), avg(s, n), avg(us, un), V::I(un), ostr(tg), V::I(tc)]))
     });
     rows(out)
@@ -96,9 +104,13 @@ fn q11485(db: &'static So) -> String {
 fn q13476(db: &'static So) -> String {
     let pc = db.post.group_by(type_name(db)).select(&db.post.score).fold((0i64, 0i64), |(n, s), sc| (n + 1, s + sc));
     let vc = db.vote.group_by(vote_type_name(db)).fold(0i64, |n, _| n + 1);
-    let us = whole(&db.user.id).select(&db.user.reputation).fold((0i64, 0i64), |(n, s), r| (n + 1, s + r));
+    let users: HashIdx<(), Id<User>> = whole(db.user.iq()).collect();
+    let us = (&unit()).select((&users).select(&db.user.reputation).opt()).fold((0i64, 0i64), |(n, s), r| match r {
+        Some(r) => (n + 1, s + r),
+        None => (n, s),
+    });
     let mut out = Vec::new();
-    (&pc).cross(&us).cross(&vc).drive(|((t, ()), vt), (((n, s), (un, us)), vn)| {
+    (&pc).cross(&us).cross(&vc).drive(|((t, _), vt), (((n, s), (un, us)), vn)| {
         out.push(row(vec![V::S(t), V::I(n), avg(s, n), V::S(vt), V::I(vn), V::I(un), avg(us, un)]))
     });
     rows(out)
@@ -121,7 +133,8 @@ fn q13476(db: &'static So) -> String {
 //        vs.VoteTypeName, vs.VoteCount
 // FROM PostsByType pp CROSS JOIN TopUsers tu CROSS JOIN VotesStatistics vs;
 fn q11785(db: &'static So) -> String {
-    let total = whole(&db.post.id).fold(0i64, |n, _| n + 1);
+    let posts: HashIdx<(), Id<Post>> = whole(db.post.iq()).collect();
+    let total = (&unit()).select((&posts).opt()).fold(0i64, |n, p| n + p.is_some() as i64);
     let pp = db.post.group_by(type_name(db)).fold(0i64, |n, _| n + 1);
     let per_user = (&db.post.owner_user).inv().fold(0i64, |n, _| n + 1);
     let tu = top(&per_user, |&(_, n)| Reverse(n), 10);
@@ -176,12 +189,14 @@ fn q14747(db: &'static So) -> String {
                 cs + c,
             )
         });
-    let us = whole(&db.user.id)
-        .select((&db.user.reputation).and(&db.user.last_access_date))
-        .fold((0i64, 0i64, i64::MIN), |(n, s, m), (r, la)| (n + 1, s + r, m.max(la)));
+    let users: HashIdx<(), Id<User>> = whole(db.user.iq()).collect();
+    let us = (&unit()).select((&users).select((&db.user.reputation).and(&db.user.last_access_date)).opt()).fold((0i64, 0i64, i64::MIN), |(n, s, m), u| match u {
+        Some((r, la)) => (n + 1, s + r, m.max(la)),
+        None => (n, s, m),
+    });
     let vs = db.vote.group_by(&db.vote.vote_type_id).fold(0i64, |n, _| n + 1);
     let mut out = Vec::new();
-    (&ps).cross(&us).cross(&vs).drive(|((t, ()), vt), (((n, s, vn, vsum, an, asum, cs), (un, rs, la)), vn2)| {
+    (&ps).cross(&us).cross(&vs).drive(|((t, _), vt), (((n, s, vn, vsum, an, asum, cs), (un, rs, la)), vn2)| {
         out.push(row(vec![
             V::I(t),
             V::I(n),
@@ -191,7 +206,7 @@ fn q14747(db: &'static So) -> String {
             avg(cs, n),
             V::I(un),
             avg(rs, un),
-            V::T(la),
+            tmax(la),
             V::I(vt),
             V::I(vn2),
         ]))
@@ -233,12 +248,14 @@ fn q10056(db: &'static So) -> String {
         Some(sc) => (n + 1, s + sc),
         None => (n, s),
     });
-    let cp = whole(db.post.with(&db.post.closed_date))
-        .select(&db.post.score)
-        .fold((0i64, 0i64), |(n, s), sc| (n + 1, s + sc));
+    let closed: HashIdx<(), Id<Post>> = whole(db.post.with(&db.post.closed_date)).collect();
+    let cp = (&unit()).select((&closed).select(&db.post.score).opt()).fold((0i64, 0i64), |(n, s), sc| match sc {
+        Some(sc) => (n + 1, s + sc),
+        None => (n, s),
+    });
     let User { display_name, reputation, .. } = &db.user;
     let mut out = Vec::new();
-    (&tu).cross(&tpt).cross(&cp).drive(|((u, t), ()), (((n, a, b), (tn, ts)), (cn, cs))| {
+    (&tu).cross(&tpt).cross(&cp).drive(|((u, t), _), (((n, a, b), (tn, ts)), (cn, cs))| {
         out.push(row(vec![
             V::S(display_name.get(u).unwrap()),
             V::I(reputation.get(u).unwrap()),

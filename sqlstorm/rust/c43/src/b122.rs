@@ -532,9 +532,9 @@ fn q13223(db: &'static So) -> String {
     let p = db.post.select(&db.post.post_type_id).fold_flat([0i64; 4], |a, t| [a[0] + 1, a[1] + (t == 1) as i64, a[2] + (t == 2) as i64, a[3] + matches!(t, 4 | 5) as i64]);
     let (un, act) = db.user.select(&db.user.reputation).fold_flat((0i64, 0i64), |(n, a), r| (n + 1, a + (r > 1000) as i64));
     let x = db.vote.select(&db.vote.vote_type_id).fold_flat([0i64; 3], |a, t| [a[0] + 1, a[1] + (t == 2) as i64, a[2] + (t == 3) as i64]);
-    let mut f = ints(&p);
-    f.extend([V::I(un), V::I(act), V::I(count(db.comment.iq()))]);
-    f.extend(ints(&x));
+    let mut f = vec![V::I(p[0]), nullable(p[1], p[0]), nullable(p[2], p[0]), nullable(p[3], p[0])];
+    f.extend([V::I(un), nullable(act, un), V::I(count(db.comment.iq()))]);
+    f.extend([V::I(x[0]), nullable(x[1], x[0]), nullable(x[2], x[0])]);
     row(f)
 }
 
@@ -1540,8 +1540,8 @@ fn q13327(db: &'static So) -> String {
 fn q13334(db: &'static So) -> String {
     let p = db.post.select(&db.post.post_type_id).fold_flat([0i64; 3], |a, t| [a[0] + 1, a[1] + (t == 1) as i64, a[2] + (t == 2) as i64]);
     let (un, act) = db.user.select(&db.user.reputation).fold_flat((0i64, 0i64), |(n, a), r| (n + 1, a + (r > 0) as i64));
-    let mut f = ints(&p);
-    f.extend([V::I(count(db.comment.iq())), V::I(un), V::I(act)]);
+    let mut f = vec![V::I(p[0]), nullable(p[1], p[0]), nullable(p[2], p[0])];
+    f.extend([V::I(count(db.comment.iq())), V::I(un), nullable(act, un)]);
     row(f)
 }
 
@@ -2170,9 +2170,9 @@ fn q13414(db: &'static So) -> String {
     let p = db.post.select(&db.post.post_type_id).fold_flat([0i64; 4], |a, t| [a[0] + 1, a[1] + (t == 1) as i64, a[2] + (t == 2) as i64, a[3] + matches!(t, 4 | 5) as i64]);
     let x = db.vote.select(&db.vote.vote_type_id).fold_flat([0i64; 3], |a, t| [a[0] + 1, a[1] + matches!(t, 2 | 3) as i64, a[2] + (t == 3) as i64]);
     let (un, rs) = db.user.select(&db.user.reputation).fold_flat((0i64, 0i64), |(n, s), r| (n + 1, s + r));
-    let mut f = ints(&p);
+    let mut f = vec![V::I(p[0]), nullable(p[1], p[0]), nullable(p[2], p[0]), nullable(p[3], p[0])];
     f.push(V::I(count(db.comment.iq())));
-    f.extend(ints(&x));
+    f.extend([V::I(x[0]), nullable(x[1], x[0]), nullable(x[2], x[0])]);
     f.extend([V::I(un), avg(rs, un), V::I(count(db.badge.iq()))]);
     row(f)
 }
@@ -2252,7 +2252,7 @@ fn q13415(db: &'static So) -> String {
         .select((&db.post.view_count).opt().and(&db.post.score).and(votes_of_type(db, 2)).and(votes_of_type(db, 3)).and(comments_per_post(db)).and(typed_answers_per_post(db)))
         .fold_flat([0i64; 8], |a, (((((w, s), u), d), c), an)| [a[0] + 1, a[1] + w.is_some() as i64, a[2] + w.unwrap_or(0), a[3] + s, a[4] + u, a[5] + d, a[6] + c, a[7] + an]);
     let mut f = vec![V::I(a[0]), avg(a[2], a[1])];
-    f.extend(ints(&a[3..]));
+    f.extend(a[3..].iter().map(|&x| nullable(x, a[0])));
     row(f)
 }
 
@@ -2652,10 +2652,14 @@ fn q13443(db: &'static So) -> String {
     let ps = db.post.select((&db.post.post_type_id).and(comments_of(db).opt())).fold_flat([0i64; 4], |a, (t, c)| [a[0] + 1, a[1] + (t == 1) as i64, a[2] + (t == 2) as i64, a[3] + c.is_some() as i64]);
     let (un, rs) = db.user.select(&db.user.reputation).fold_flat((0i64, 0i64), |(n, s), r| (n + 1, s + r));
     let pc = g(db).select(posts_of(db).opt()).fold(0i64, |a, p| a + p.is_some() as i64);
-    let (n, s) = (&pc).fold_flat((0i64, 0i64), |(n, s), x| (n + 1, s + x));
-    let mut f = ints(&ps);
-    f.extend([avg(rs, un), V::I(n), V::I(s), avg(s, n)]);
-    row(f)
+    let upc = whole(&pc).select(&pc).fold((0i64, 0i64), |(n, s), x| (n + 1, s + x));
+    let mut out = Vec::new();
+    (&upc).drive(|_, (n, s)| {
+        let mut f = vec![V::I(ps[0]), nullable(ps[1], ps[0]), nullable(ps[2], ps[0]), V::I(ps[3])];
+        f.extend([avg(rs, un), V::I(n), V::I(s), avg(s, n)]);
+        out.push(row(f))
+    });
+    rows(out)
 }
 
 // WITH PostSummary AS (

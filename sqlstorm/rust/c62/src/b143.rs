@@ -275,10 +275,19 @@ fn q12369(db: &'static So) -> String {
         .group_by(Ident::<User>::new())
         .select(up_votes.and(reputation).and(badges_of(db).opt()))
         .fold((0i64, 0i64, 0i64), |(b, u, _), ((up, r), x)| (b + x.is_some() as i64, u + up, r));
-    let tot = whole(&um).select(&um).fold([0i64; 4], |a, (b, u, r)| [a[0] + b, a[1] + u, a[2] + r, a[3] + 1]);
+    fn mean(s: i64, n: i64) -> Option<u64> {
+        if n == 0 { None } else { Some((s as f64 / n as f64).to_bits()) }
+    }
+    fn fb(x: Option<u64>) -> V {
+        x.map_or(V::Null, |b| V::F(f64::from_bits(b)))
+    }
+    type T = (Id<PostType>, [i64; 9]);
+    let key = Same::<T>::new().map(|(t, _): T| t).select(&db.post_type.name).and(Same::<T>::new().map(|(_, a): T| (a[0], a[1], mean(a[3], a[2]), mean(a[5], a[4]), mean(a[6], a[0]), mean(a[8], a[7]))));
+    let umx: HashIdx<(), (i64, i64, i64)> = whole(&um).select(&um).collect();
+    let g = whole(&pm).select(Same::new().and(&pm)).group_by(key).select(Same::<T>::new().map(|_| ()).select(&umx)).fold([0i64; 4], |a, (b, u, r)| [a[0] + b, a[1] + u, a[2] + r, a[3] + 1]);
     let mut out = Vec::new();
-    (&pm).cross(&tot).drive(|(t, _), (a, tot)| {
-        out.push(row(vec![tname(db, t), V::I(a[0]), V::I(a[1]), avg(a[3], a[2]), avg(a[5], a[4]), avg(a[6], a[0]), avg(a[8], a[7]), V::I(tot[0]), V::I(tot[1]), avg(tot[2], tot[3])]))
+    (&g).drive(|(name, (n, q, v, an, c, f)), tot| {
+        out.push(row(vec![V::S(name), V::I(n), V::I(q), fb(v), fb(an), fb(c), fb(f), V::I(tot[0]), V::I(tot[1]), avg(tot[2], tot[3])]))
     });
     rows(out)
 }
@@ -3306,8 +3315,8 @@ fn q27620(db: &'static So) -> String {
         .with(post_history_type_id.eq(10))
         .group_by(comment.map(|c| c.trim().parse::<i64>().unwrap()).select(&crids))
         .fold(0i64, |n, _| n + 1);
-    let wiki: HashIdx<Id<Post>, Id<Tag>> = (&db.tag.wiki_post).inv().collect();
-    let ta = db.post_link.group_by((&db.post_link.related_post).select(&wiki).select(&db.tag.tag_name)).select(&db.post_link.post_id).count_distinct();
+    let wiki: HashIdx<i64, Id<Tag>> = (&db.tag.wiki_post_id).inv().collect();
+    let ta = db.post_link.group_by((&db.post_link.related_post_id).select(&wiki).select(&db.tag.tag_name)).select(&db.post_link.post_id).count_distinct();
     let c: HashIdx<(), (Id<CloseReasonType>, i64)> = (&cra).map(|_| ()).inv().select(Ident::<CloseReasonType>::new().and(&cra)).collect();
     let t: HashIdx<(), (Str, i64)> = (&ta).map(|_| ()).inv().select(Same::<Str>::new().and(&ta)).collect();
     let p1: HashIdx<(), i64> = whole(&ptc).with(Same::new().eq(1)).select(&ptc).collect();
