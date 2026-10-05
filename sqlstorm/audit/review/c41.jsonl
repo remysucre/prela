@@ -22,7 +22,7 @@
 {"id": "12646", "fn": "q12646", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.168, "t_after": null, "verified": true}
 {"id": "12647", "fn": "q12647", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.058, "t_after": null, "verified": true}
 {"id": "12653", "fn": "q12653", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.006, "t_after": null, "verified": true}
-{"id": "12659", "fn": "q12659", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 3.6, "t_after": null, "verified": true}
+{"id": "12659", "fn": "q12659", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 3.6, "t_after": 0.085, "verified": true}
 {"id": "12660", "fn": "q12660", "sanity": "ok", "idiomatic": false, "trick": false, "issues": "joined user recovered in host with uid.get(origid.get(p)) for output; now carried through the join as Ident::<User>", "action": "rewritten", "cannot_why": "", "t_before": 0.339, "t_after": 0.272, "verified": true}
 {"id": "12668", "fn": "q12668", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.004, "t_after": null, "verified": true}
 {"id": "12675", "fn": "q12675", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.734, "t_after": null, "verified": true}

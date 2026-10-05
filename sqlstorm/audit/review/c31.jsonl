@@ -11,15 +11,15 @@
 {"id": "10718", "fn": "q10718", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.292, "t_after": null, "verified": true}
 {"id": "14874", "fn": "q14874", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.1, "t_after": null, "verified": true}
 {"id": "14286", "fn": "q14286", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 5.435, "t_after": null, "verified": true}
-{"id": "13603", "fn": "q13603", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 44.136, "t_after": null, "verified": true}
-{"id": "12149", "fn": "q12149", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 43.701, "t_after": null, "verified": true}
+{"id": "13603", "fn": "q13603", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 44.136, "t_after": 1.391, "verified": true}
+{"id": "12149", "fn": "q12149", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 43.701, "t_after": 1.389, "verified": true}
 {"id": "14991", "fn": "q14991", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.228, "t_after": null, "verified": true}
 {"id": "13098", "fn": "q13098", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 5.782, "t_after": null, "verified": true}
 {"id": "10023", "fn": "q10023", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.311, "t_after": null, "verified": true}
 {"id": "13043", "fn": "q13043", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.016, "t_after": null, "verified": true}
 {"id": "10994", "fn": "q10994", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.134, "t_after": null, "verified": true}
 {"id": "19314", "fn": "q19314", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.143, "t_after": null, "verified": true}
-{"id": "11784", "fn": "q11784", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.482, "t_after": null, "verified": true}
+{"id": "11784", "fn": "q11784", "sanity": "suspect", "idiomatic": true, "trick": false, "issues": "sweep (raw-id): Badges ON p.OwnerUserId = b.UserId went through stats_fold \"cvb\" (owner edge) and badges_distinct (owner_user edge); now local cvb_raw fold and badge-distinct over a Badges-by-user_id index probed with raw owner_user_id", "action": "rewritten", "cannot_why": "", "t_before": 0.482, "t_after": 0.371, "verified": true}
 {"id": "12503", "fn": "q12503", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.276, "t_after": null, "verified": true}
 {"id": "13659", "fn": "q13659", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.174, "t_after": null, "verified": true}
 {"id": "11869", "fn": "q11869", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.019, "t_after": null, "verified": true}
@@ -33,7 +33,7 @@
 {"id": "14328", "fn": "q14328", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.27, "t_after": null, "verified": true}
 {"id": "13174", "fn": "q13174", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.334, "t_after": null, "verified": true}
 {"id": "14319", "fn": "q14319", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.029, "t_after": null, "verified": true}
-{"id": "11011", "fn": "q11011", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.709, "t_after": null, "verified": true}
+{"id": "11011", "fn": "q11011", "sanity": "suspect", "idiomatic": true, "trick": false, "issues": "sweep (raw-id): same as 11784", "action": "rewritten", "cannot_why": "", "t_before": 0.709, "t_after": 0.324, "verified": true}
 {"id": "11253", "fn": "q11253", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.046, "t_after": null, "verified": true}
 {"id": "12685", "fn": "q12685", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.273, "t_after": null, "verified": true}
 {"id": "12366", "fn": "q12366", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.764, "t_after": null, "verified": true}
@@ -54,6 +54,6 @@
 {"id": "14223", "fn": "q14223", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.04, "t_after": null, "verified": true}
 {"id": "14511", "fn": "q14511", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.002, "t_after": null, "verified": true}
 {"id": "9214", "fn": "q9214", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.039, "t_after": null, "verified": true}
-{"id": "14226", "fn": "q14226", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.011, "t_after": null, "verified": true}
+{"id": "14226", "fn": "q14226", "sanity": "suspect", "idiomatic": true, "trick": false, "issues": "sweep (raw-id): Badges ON p.OwnerUserId = b.UserId via owner_user.select(badges_of); now raw owner_user_id into a Badges-by-user_id index (fold and COUNT(DISTINCT b.Id))", "action": "rewritten", "cannot_why": "", "t_before": 0.011, "t_after": 0.025, "verified": true}
 {"id": "11058", "fn": "q11058", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.086, "t_after": null, "verified": true}
 {"id": "11045", "fn": "q11045", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.0, "t_after": null, "verified": true}

@@ -1,4 +1,4 @@
-{"id": "28124", "fn": "q28124", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.128, "t_after": null, "verified": true}
+{"id": "28124", "fn": "q28124", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "sweep: PopularTags GROUP BY t.TagName HAVING COUNT > 10 (and the LIKE join on pt.TagName) done by tag id; now counted and joined by tag_name", "action": "rewritten", "cannot_why": "", "t_before": 0.128, "t_after": 0.224, "verified": true}
 {"id": "30013", "fn": "q30013", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.079, "t_after": null, "verified": true}
 {"id": "8671", "fn": "q8671", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.042, "t_after": null, "verified": true}
 {"id": "8948", "fn": "q8948", "sanity": "suspect", "idiomatic": true, "trick": false, "issues": "AVG(ViewCount) scalar not NULL-safe when no views (printed NaN, comparison not NULL)", "action": "rewritten", "cannot_why": "", "t_before": 0.005, "t_after": 0.005, "verified": true}

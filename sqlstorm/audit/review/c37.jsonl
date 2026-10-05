@@ -20,7 +20,7 @@
 {"id": "11220", "fn": "q11220", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.039, "t_after": null, "verified": true}
 {"id": "11221", "fn": "q11221", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.028, "t_after": null, "verified": true}
 {"id": "11224", "fn": "q11224", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 3.279, "t_after": null, "verified": true}
-{"id": "11225", "fn": "q11225", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 2.772, "t_after": null, "verified": true}
+{"id": "11225", "fn": "q11225", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 2.772, "t_after": 0.148, "verified": true}
 {"id": "11226", "fn": "q11226", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.052, "t_after": null, "verified": true}
 {"id": "11240", "fn": "q11240", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.019, "t_after": null, "verified": true}
 {"id": "11242", "fn": "q11242", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.008, "t_after": null, "verified": true}

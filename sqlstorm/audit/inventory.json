@@ -1243,7 +1243,7 @@
 },
 {
 "id": "10296",
-"fn": "count_avgscore_sumviews",
+"fn": "q10296",
 "crate": "c01",
 "file": "rust/c01/src/b13.rs",
 "oracle": true,
@@ -1324,7 +1324,7 @@
 },
 {
 "id": "12022",
-"fn": "count_avgscore_avgviews",
+"fn": "q12022",
 "crate": "c01",
 "file": "rust/c01/src/b14.rs",
 "oracle": true,
@@ -1342,7 +1342,7 @@
 },
 {
 "id": "12376",
-"fn": "count_avgscore_avgviews",
+"fn": "q12376",
 "crate": "c01",
 "file": "rust/c01/src/b14.rs",
 "oracle": true,
@@ -2512,7 +2512,7 @@
 },
 {
 "id": "11911",
-"fn": "count_avgscore_distinctusers",
+"fn": "q11911",
 "crate": "c02",
 "file": "rust/c02/src/b25.rs",
 "oracle": true,
@@ -2530,7 +2530,7 @@
 },
 {
 "id": "14915",
-"fn": "count_avgscore_distinctusers",
+"fn": "q14915",
 "crate": "c02",
 "file": "rust/c02/src/b25.rs",
 "oracle": true,
@@ -13955,7 +13955,7 @@
 "crate": "c105",
 "file": "rust/c105/src/b186.rs",
 "oracle": true,
-"rewrite": false,
+"rewrite": true,
 "pg": false
 },
 {
@@ -15341,7 +15341,7 @@
 "crate": "c107",
 "file": "rust/c107/src/b188.rs",
 "oracle": true,
-"rewrite": false,
+"rewrite": true,
 "pg": false
 },
 {
@@ -38309,7 +38309,7 @@
 "crate": "c40",
 "file": "rust/c40/src/b119.rs",
 "oracle": true,
-"rewrite": false,
+"rewrite": true,
 "pg": false
 },
 {
@@ -41657,7 +41657,7 @@
 "crate": "c47",
 "file": "rust/c47/src/b126.rs",
 "oracle": true,
-"rewrite": false,
+"rewrite": true,
 "pg": false
 },
 {
@@ -60125,7 +60125,7 @@
 "crate": "c74",
 "file": "rust/c74/src/b155.rs",
 "oracle": true,
-"rewrite": false,
+"rewrite": true,
 "pg": false
 },
 {
@@ -61106,7 +61106,7 @@
 "crate": "c75",
 "file": "rust/c75/src/b156.rs",
 "oracle": true,
-"rewrite": false,
+"rewrite": true,
 "pg": false
 },
 {
@@ -61304,7 +61304,7 @@
 "crate": "c75",
 "file": "rust/c75/src/b156.rs",
 "oracle": true,
-"rewrite": false,
+"rewrite": true,
 "pg": false
 },
 {
@@ -61430,7 +61430,7 @@
 "crate": "c75",
 "file": "rust/c75/src/b156.rs",
 "oracle": true,
-"rewrite": false,
+"rewrite": true,
 "pg": false
 },
 {
@@ -63779,7 +63779,7 @@
 "crate": "c78",
 "file": "rust/c78/src/b159.rs",
 "oracle": true,
-"rewrite": false,
+"rewrite": true,
 "pg": false
 },
 {
@@ -82049,7 +82049,7 @@
 "crate": "c99",
 "file": "rust/c99/src/b180.rs",
 "oracle": true,
-"rewrite": false,
+"rewrite": true,
 "pg": false
 },
 {

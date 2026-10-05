@@ -1,7 +1,7 @@
 {"id": "12807", "fn": "q12807", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.004, "t_after": null, "verified": true}
 {"id": "12815", "fn": "q12815", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.015, "t_after": null, "verified": true}
 {"id": "12818", "fn": "q12818", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.538, "t_after": null, "verified": true}
-{"id": "12826", "fn": "q12826", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 2.864, "t_after": null, "verified": true}
+{"id": "12826", "fn": "q12826", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 2.864, "t_after": 0.217, "verified": true}
 {"id": "12827", "fn": "q12827", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.005, "t_after": null, "verified": true}
 {"id": "12850", "fn": "q12850", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.557, "t_after": null, "verified": true}
 {"id": "12875", "fn": "q12875", "sanity": "suspect", "idiomatic": true, "trick": false, "issues": "BadgeStats BS ON PS.OwnerAccountId = BS.UserId (raw to raw) went account_id -> Users origid index -> badge.user edge, dropping badges whose UserId has no user; now badges grouped by raw badge.user_id probed with account_id", "action": "rewritten", "cannot_why": "", "t_before": 0.057, "t_after": 0.048, "verified": true}
@@ -19,7 +19,7 @@
 {"id": "12957", "fn": "q12957", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.036, "t_after": null, "verified": true}
 {"id": "12961", "fn": "q12961", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.003, "t_after": null, "verified": true}
 {"id": "12965", "fn": "q12965", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.283, "t_after": null, "verified": true}
-{"id": "12969", "fn": "q12969", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "AVG over users of per-user AVG(p.Score) summed as f64 (average of averages); matches oracle", "action": "none", "cannot_why": "", "t_before": 0.496, "t_after": null, "verified": true}
+{"id": "12969", "fn": "q12969", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "AVG over users of per-user AVG(p.Score) summed as f64 (average of averages); matches oracle", "action": "none", "cannot_why": "", "t_before": 0.496, "t_after": 0.138, "verified": true}
 {"id": "12972", "fn": "q12972", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.027, "t_after": null, "verified": true}
 {"id": "12980", "fn": "q12980", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.06, "t_after": null, "verified": true}
 {"id": "12983", "fn": "q12983", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.165, "t_after": null, "verified": true}

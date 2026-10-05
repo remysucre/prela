@@ -22,7 +22,7 @@
 {"id": "14161", "fn": "q14161", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.311, "t_after": null, "verified": true}
 {"id": "13362", "fn": "q13362", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.317, "t_after": null, "verified": true}
 {"id": "12489", "fn": "q12489", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.001, "t_after": null, "verified": true}
-{"id": "8272", "fn": "q8272", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 3.204, "t_after": null, "verified": true}
+{"id": "8272", "fn": "q8272", "sanity": "suspect", "idiomatic": true, "trick": false, "issues": "sweep (raw-id): Badges ON p.OwnerUserId = b.UserId went through stats_fold \"cvhbl\" (owner edge); now a local product fold with raw owner_user_id into a Badges-by-user_id index", "action": "rewritten", "cannot_why": "", "t_before": 3.204, "t_after": 0.702, "verified": true}
 {"id": "13051", "fn": "q13051", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.386, "t_after": null, "verified": true}
 {"id": "11938", "fn": "q11938", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.001, "t_after": null, "verified": true}
 {"id": "10572", "fn": "q10572", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.609, "t_after": null, "verified": true}
@@ -37,7 +37,7 @@
 {"id": "14402", "fn": "q14402", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.185, "t_after": null, "verified": true}
 {"id": "12120", "fn": "q12120", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.171, "t_after": null, "verified": true}
 {"id": "13055", "fn": "q13055", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 1.786, "t_after": null, "verified": true}
-{"id": "10217", "fn": "q10217", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.481, "t_after": null, "verified": true}
+{"id": "10217", "fn": "q10217", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.481, "t_after": 0.097, "verified": true}
 {"id": "10865", "fn": "q10865", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.4, "t_after": null, "verified": true}
 {"id": "12029", "fn": "q12029", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.197, "t_after": null, "verified": true}
 {"id": "13766", "fn": "q13766", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.269, "t_after": null, "verified": true}

@@ -182,3 +182,10 @@ single constant gives rows, say so.
   yields NO row when its input is empty — wrong. Drive a one-row relation
   and join the fold with `.and(fold.opt())` (NULL aggregates, COUNT 0), as
   in c31/c33.
+* Picking candidates with a host-computed threshold (e.g. "the tenth-highest
+  reputation", `top_n(..).last()`) counts as a trick even when sound: use a
+  window rank (`RANK() <= N` on the leading key) instead. Shell note: `cp` is
+  aliased to `cp -i`; use `/bin/cp -f`.
+* Keep every foreground command under ~5 minutes (a 600 s no-progress
+  watchdog kills agents): `timeout 240` on DuckDB relaxed checks; if a relaxed
+  query is too slow, record that and move on.

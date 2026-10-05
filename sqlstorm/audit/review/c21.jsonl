@@ -13,7 +13,7 @@
 {"id": "13587", "fn": "q13587", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.001, "t_after": null, "verified": true}
 {"id": "11077", "fn": "q11077", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.001, "t_after": null, "verified": true}
 {"id": "11782", "fn": "q11782", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.001, "t_after": null, "verified": true}
-{"id": "12713", "fn": "q12713", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.0, "t_after": null, "verified": true}
+{"id": "12713", "fn": "q12713", "sanity": "suspect", "idiomatic": true, "trick": false, "issues": "sweep(ungrouped-agg): ungrouped aggregate over empty input printed 0 for SUM(CASE..) and i64 sentinels for MAX/MIN; now nullable/tmax/tmin", "action": "rewritten", "cannot_why": "", "t_before": 0.0, "t_after": 0.0, "verified": true, "relaxed": "CreationDate cutoff 2024 -> 2034, 1 row (all NULL), match"}
 {"id": "12088", "fn": "q12088", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.06, "t_after": null, "verified": true}
 {"id": "11965", "fn": "q11965", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.325, "t_after": null, "verified": true}
 {"id": "14523", "fn": "q14523", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.272, "t_after": null, "verified": true}
@@ -54,7 +54,7 @@
 {"id": "15203", "fn": "q15203", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.17, "t_after": null, "verified": true}
 {"id": "19936", "fn": "q19936", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.354, "t_after": null, "verified": true}
 {"id": "19938", "fn": "q19938", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.224, "t_after": null, "verified": true}
-{"id": "14582", "fn": "q14582", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.51, "t_after": null, "verified": true}
+{"id": "14582", "fn": "q14582", "sanity": "suspect", "idiomatic": true, "trick": false, "issues": "sweep(raw-id): LEFT JOIN Badges b ON p.OwnerUserId = b.UserId went through the owner_user edge (post_stats 'cvb'); now raw owner_user_id probed into a Badges-by-user_id index in a local fold", "action": "rewritten", "cannot_why": "", "t_before": 0.51, "t_after": 0.12, "verified": true}
 {"id": "11823", "fn": "q11823", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.136, "t_after": null, "verified": true}
 {"id": "10896", "fn": "q10896", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.013, "t_after": null, "verified": true}
 {"id": "16296", "fn": "q16296", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.127, "t_after": null, "verified": true}

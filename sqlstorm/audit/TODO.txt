@@ -15,3 +15,18 @@ SWEEP: ungrouped aggregate as ()-keyed fold + .cross gives 0 rows on empty input
 ties (match only via our tie-break; need rewrites/): c75 1946, 7191, 9543, 9340; c74 2023 (STRING_AGG no ORDER BY)
 LIKE '%'||TagName||'%' ported as substring test everywhere (tag_mentions + locals): exact only because no TagName contains _ or % — data assumption; note in doc (fix = LIKE matcher UDF)
 ties: c78 20337, 55, 29615, 34974; c79 20777, 2736, 31177, 32058 (match via our tie-break)
+ties: c83 2719 (CommentScore from tied comments)
+ties c88: 4387 5347 9572 3274 30459 5024 4262 33954 32139 21878 4507 9713 5320 33006 23160 31256; c89: 9952 769 4965 3967 4466 1616 26933 4579 31356 32086 6179 1274 310 1585 31093 3942 7073 31938 26534 6034 32773 6710 523 (verify which are in real oracles vs relaxed only)
+c95 8817,5097,9321,29984: host-threshold pre-cuts kept (other crates rewrote these as tricks) — rewrite to window rank
+tie: c99 8009 (real oracle depends on tie at rank-10 cut; needs rewrites/)
+CURRENT_DATE drift: c104 22180 DIFF (fresh DuckDB matches port). tie: c105 4776
+tie: c107 26105
+--- STATUS 2026-10-05 (usage limit) ---
+First-pass audit done: c00-c107, c113. Running at cutoff: c108-c109, c110-c112 audits; sweeps c81-c97, c98-c105 (check review files / diff vs audit/orig before resuming).
+Sweeps done: c00-c20, c21-c40, c41-c64, c65-c80+c113. Still needed: sweep c106-c112.
+NEXT: (1) harness tag_mentions: exact LIKE for names with <,>,%,_ (pattern: c65 b146.rs `bracketed`); dedupe local `like` helpers into kit.
+(2) [CANCELLED by user 2026-10-05: altered-data pass out of scope; data left in sqlstorm_data/perturb]
+(3) ties: write rewrites/<id>.sql for confirmed real-oracle ties (14653, 8009, 4776, 26105, 12331, c74/c75/c78/c79/c83 lists; c88/c89 being verified), regen oracles, align ports.
+(4) speed: fresh-process prela per id (SQLSTORM_ONLY, load 0.03s) vs DuckDB (audit/time_duck.py, threads=8 and 1) with nothing else running; optimize slow ones; record.
+(5) remove now-unused kit host helpers; write audit doc (notes/audit.md) + regenerate CURRENT_DATE oracles note.
+harness tag_list slices bytes 1..len-1 (assumes Tags wrapped in <>; holds on data, 0 malformed) — known limitation for doc. Local like_tags/bracketed/like copies now redundant with fixed harness tag_mentions + kit::like (could dedupe).

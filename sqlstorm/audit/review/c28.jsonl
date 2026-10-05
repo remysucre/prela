@@ -23,7 +23,7 @@
 {"id": "14378", "fn": "q14378", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 1.129, "t_after": null, "verified": true}
 {"id": "11765", "fn": "q11765", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.027, "t_after": null, "verified": true}
 {"id": "14687", "fn": "q14687", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.015, "t_after": null, "verified": true}
-{"id": "12919", "fn": "q12919", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.222, "t_after": null, "verified": true}
+{"id": "12919", "fn": "q12919", "sanity": "suspect", "idiomatic": true, "trick": false, "issues": "sweep(ungrouped-agg): outer SUM(CommentCount)/SUM(VoteCount) over an empty CTE printed 0; now NULL (nullable)", "action": "rewritten", "cannot_why": "", "t_before": 0.222, "t_after": 0.297, "verified": true, "relaxed": "no WHERE to relax (whole-table aggregate); not relaxed"}
 {"id": "14423", "fn": "q14423", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.003, "t_after": null, "verified": true}
 {"id": "14935", "fn": "q14935", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.001, "t_after": null, "verified": true}
 {"id": "12811", "fn": "q12811", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.005, "t_after": null, "verified": true}
@@ -35,7 +35,7 @@
 {"id": "13834", "fn": "q13834", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "GROUP BY ph.CreationDate: groups a materialised (post, history) MatSet, per notes/limitations.md", "action": "none", "cannot_why": "", "t_before": 0.505, "t_after": null, "verified": true}
 {"id": "13736", "fn": "q13736", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "GROUP BY ph.CreationDate: groups a materialised (post, history) MatSet, per notes/limitations.md", "action": "none", "cannot_why": "", "t_before": 0.46, "t_after": null, "verified": true}
 {"id": "11325", "fn": "q11325", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "GROUP BY ph columns over a materialised (post, history) MatSet", "action": "none", "cannot_why": "", "t_before": 1.643, "t_after": null, "verified": true}
-{"id": "13988", "fn": "q13988", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "Tags ON pl.RelatedPostId = t.ExcerptPostId via related_post edge; equivalent here (0 dangling excerpt ids), noted only", "action": "none", "cannot_why": "", "t_before": 0.343, "t_after": null, "verified": true}
+{"id": "13988", "fn": "q13988", "sanity": "suspect", "idiomatic": true, "trick": false, "issues": "sweep(raw-id): Tags ON pl.RelatedPostId = t.ExcerptPostId went through the related_post edge and an excerpt_post index; now raw related_post_id probed into a Tags-by-excerpt_post_id index", "action": "rewritten", "cannot_why": "", "t_before": 0.343, "t_after": 0.387, "verified": true}
 {"id": "11180", "fn": "q11180", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.277, "t_after": null, "verified": true}
 {"id": "14729", "fn": "q14729", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.568, "t_after": null, "verified": true}
 {"id": "14113", "fn": "q14113", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 2.149, "t_after": null, "verified": true}
@@ -44,7 +44,7 @@
 {"id": "11427", "fn": "q11427", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.793, "t_after": null, "verified": true}
 {"id": "11969", "fn": "q11969", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.852, "t_after": null, "verified": true}
 {"id": "14079", "fn": "q14079", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.04, "t_after": null, "verified": true}
-{"id": "10962", "fn": "q10962", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 44.911, "t_after": null, "verified": true}
+{"id": "10962", "fn": "q10962", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 44.911, "t_after": 1.344, "verified": true}
 {"id": "13978", "fn": "q13978", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.526, "t_after": null, "verified": true}
 {"id": "14520", "fn": "q14520", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.468, "t_after": null, "verified": true}
 {"id": "11434", "fn": "q11434", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 46.888, "t_after": null, "verified": true}

@@ -16,7 +16,7 @@
 {"id": "10895", "fn": "q10895", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.106, "t_after": null, "verified": true}
 {"id": "14907", "fn": "q14907", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.508, "t_after": null, "verified": true}
 {"id": "11255", "fn": "q11255", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 13.172, "t_after": null, "verified": true}
-{"id": "12665", "fn": "q12665", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 0.011, "t_after": null, "verified": true}
+{"id": "12665", "fn": "q12665", "sanity": "suspect", "idiomatic": true, "trick": false, "issues": "sweep(raw-id): LEFT JOIN Badges b ON p.OwnerUserId = b.UserId went through the owner_user edge (stats_with cvb); now a local c x v x b fold with raw owner_user_id probed into a Badges-by-user_id index", "action": "rewritten", "cannot_why": "", "t_before": 0.011, "t_after": 0.053, "verified": true}
 {"id": "10377", "fn": "q10377", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 2.838, "t_after": null, "verified": true}
 {"id": "14517", "fn": "q14517", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 2.968, "t_after": null, "verified": true}
 {"id": "14645", "fn": "q14645", "sanity": "ok", "idiomatic": true, "trick": false, "issues": "", "action": "none", "cannot_why": "", "t_before": 3.05, "t_after": null, "verified": true}
