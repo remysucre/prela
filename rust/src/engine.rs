@@ -1039,6 +1039,41 @@ impl<Q: Probe> Probe for Opt<Q> {
     }
 }
 
+// ===== Reach ===================
+
+pub struct Reach<B, E> {
+    pub base: B,
+    pub step: E,
+    pub max: usize,
+}
+
+impl<B: Query, E: Query<D = B::R, R = B::R>> Query for Reach<B, E>
+where
+    B::R: Eq + Hash,
+{
+    type D = B::R;
+    type R = usize;
+}
+impl<B: Drive, E: Probe<D = B::R, R = B::R>> Drive for Reach<B, E>
+where
+    B::R: Eq + Hash,
+{
+    fn drive<K: FnMut(B::R, usize)>(&self, mut k: K) {
+        let mut frontier = Vec::new();
+        self.base.drive(|_, x| frontier.push(x));
+        let mut level = 0;
+        while !frontier.is_empty() && level <= self.max {
+            let mut next = Vec::new();
+            for &x in &frontier {
+                k(x, level);
+                self.step.probe(x, |y| next.push(y));
+            }
+            frontier = next;
+            level += 1;
+        }
+    }
+}
+
 // ===== InvStream — `q'` in drive position =========
 
 pub struct InvStream<Q> {
@@ -1918,6 +1953,15 @@ pub trait QueryExt: IntoQuery + Sized {
         Opt { q: self.iq() }
     }
 
+    #[inline(always)]
+    fn reach<E: IntoQuery>(self, step: E, max: usize) -> Reach<Self::Q, E::Q> {
+        Reach {
+            base: self.iq(),
+            step: step.iq(),
+            max,
+        }
+    }
+
     /// Sum.
     /// Currently only supports membership tests:
     /// `x` is a key in `a.or(b)` iff `x` is a key in either `a` or `b`.
@@ -2577,6 +2621,22 @@ mod tests {
         assert_eq!(got, vec![20]);
         assert!(cast().probe_any(2, |_| true) && !cast().probe_any(1, |_| true));
         assert!(!f.probe_any(NO_ID, |_| true) && !f.probe_any(3, |_| true));
+    }
+
+    #[test]
+    fn reach() {
+        let kids: MultiRel<usize, usize> = MultiRel::from_pairs(6, [(0, 1), (0, 2), (1, 3), (2, 3), (3, 4)]);
+        let roots = MatSet { set: [0usize].into_iter().collect() };
+        assert_eq!(
+            drive_all(&(&roots).reach(&kids, usize::MAX)),
+            vec![(0, 0), (1, 1), (2, 1), (3, 2), (3, 2), (4, 3), (4, 3)]
+        );
+        assert_eq!(drive_all(&(&roots).reach(&kids, 1)), vec![(0, 0), (1, 1), (2, 1)]);
+        assert_eq!(drive_all(&(&roots).reach((&kids).filt(|y| y != 2), usize::MAX)), vec![(0, 0), (1, 1), (3, 2), (4, 3)]);
+        let none = MatSet { set: HashSet::<usize>::new() };
+        assert_eq!(drive_all(&(&none).reach(&kids, usize::MAX)), vec![]);
+        let u = Universe::new(2);
+        assert_eq!(drive_all(&u.reach(Same::<usize>::new(), 2)), vec![(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]);
     }
 
     #[test]
