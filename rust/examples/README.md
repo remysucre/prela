@@ -166,3 +166,76 @@ Summary:
 | `q_nation_two_children` | 1,625 | 74 | 0.046 | 6 | PASS |
 | `q_lineitem_germany` | 76,700 | 657 | 0.009 | 45 | PASS |
 | `q_partsupp_branching` | 10,130 | 72 | 0.007 | 1 | PASS |
+
+
+### Obtaining Testing Data 
+
+Run the following script to get a small duckDB dataset.
+
+```
+import duckdb
+
+OUT_DIR = "data/tpch/parquet"  # adjust path as needed relative to where you run this
+
+con = duckdb.connect()
+con.execute("INSTALL tpch")
+con.execute("LOAD tpch")
+con.execute("CALL dbgen(sf=0.01)")  # scale factor — 0.01 is a tiny/fast dataset
+
+# regen.rs wants DOUBLE for money and ISO yyyy-mm-dd VARCHAR for dates;
+# duckdb's tpch generator uses DECIMAL(15,2) and native DATE, so cast both.
+selects = {
+    "region": "SELECT * FROM region",
+    "nation": "SELECT * FROM nation",
+    "supplier": """
+        SELECT s_suppkey, s_name, s_address, s_nationkey, s_phone,
+               CAST(s_acctbal AS DOUBLE) AS s_acctbal, s_comment
+        FROM supplier
+    """,
+    "customer": """
+        SELECT c_custkey, c_name, c_address, c_nationkey, c_phone,
+               CAST(c_acctbal AS DOUBLE) AS c_acctbal, c_mktsegment, c_comment
+        FROM customer
+    """,
+    "part": """
+        SELECT p_partkey, p_name, p_mfgr, p_brand, p_type, p_size, p_container,
+               CAST(p_retailprice AS DOUBLE) AS p_retailprice, p_comment
+        FROM part
+    """,
+    "partsupp": """
+        SELECT CAST(row_number() OVER () AS BIGINT) AS ps_id,
+               ps_partkey, ps_suppkey, ps_availqty,
+               CAST(ps_supplycost AS DOUBLE) AS ps_supplycost, ps_comment
+        FROM partsupp
+    """,
+    "orders": """
+        SELECT o_orderkey, o_custkey, o_orderstatus,
+               CAST(o_totalprice AS DOUBLE) AS o_totalprice,
+               CAST(o_orderdate AS VARCHAR) AS o_orderdate,
+               o_orderpriority, o_clerk, o_shippriority, o_comment
+        FROM orders
+    """,
+    "lineitem": """
+        SELECT CAST(row_number() OVER () AS BIGINT) AS l_id,
+               l_orderkey, l_partkey, l_suppkey, l_linenumber,
+               CAST(l_quantity AS DOUBLE) AS l_quantity,
+               CAST(l_extendedprice AS DOUBLE) AS l_extendedprice,
+               CAST(l_discount AS DOUBLE) AS l_discount,
+               CAST(l_tax AS DOUBLE) AS l_tax,
+               l_returnflag, l_linestatus,
+               CAST(l_shipdate AS VARCHAR) AS l_shipdate,
+               CAST(l_commitdate AS VARCHAR) AS l_commitdate,
+               CAST(l_receiptdate AS VARCHAR) AS l_receiptdate,
+               l_shipinstruct, l_shipmode, l_comment
+        FROM lineitem
+    """,
+}
+
+for t, query in selects.items():
+    path = f"{OUT_DIR}/{t}.parquet"
+    con.execute(f"COPY ({query}) TO '{path}' (FORMAT PARQUET)")
+    n = con.execute(f"SELECT count(*) FROM ({query})").fetchone()[0]
+    print(f"{t}: {n} rows -> {path}")
+
+print("done.")
+```
