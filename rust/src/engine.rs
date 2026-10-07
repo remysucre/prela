@@ -39,6 +39,8 @@ pub trait IntoQuery {
     type Q: Query;
     fn iq(self) -> Self::Q;
 }
+
+/// TODO: check this
 /// `#[derive(IntoQuery)]` for a schema struct with a `#[primary_key]`
 /// field: implements the trait for `&Self` by returning it. Same name as
 /// the trait, so one `use` imports both — see `macros/src/lib.rs`.
@@ -604,7 +606,7 @@ impl<E: 'static> Probe for Ident<E> {
 
 // identity relation
 // Like `Ident`, but for an arbitrary col
-// currently used to include row infor in window function payload
+// currently used to include row info in window function payload
 pub struct Same<D>(pub PhantomData<D>);
 impl<D> Same<D> {
     #[inline(always)]
@@ -678,6 +680,7 @@ pub struct DictTable<E: 'static> {
     map: HashMap<Key<E>, Id<E>>,
 }
 impl<E: 'static> DictTable<E> {
+    // invert natural row -> key mapping
     pub fn from_keys(keys: &[u64]) -> Self {
         DictTable {
             map: keys
