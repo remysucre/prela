@@ -1,8 +1,0 @@
-[package]
-name = "mimic"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-prela = { workspace = true }
-harness = { workspace = true }
