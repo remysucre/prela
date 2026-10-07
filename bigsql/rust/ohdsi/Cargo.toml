@@ -1,0 +1,8 @@
+[package]
+name = "ohdsi"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+prela = { workspace = true }
+harness = { workspace = true }
