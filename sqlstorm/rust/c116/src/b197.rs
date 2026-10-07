@@ -1096,6 +1096,32 @@ fn q24220(db: &'static So) -> String {
     }))
 }
 
+// WITH RECURSIVE PostHierarchy AS (SELECT p.Id AS PostId, p.ParentId, p.Title, p.CreationDate, 0 AS Depth FROM Posts p WHERE p.PostTypeId = 1 UNION ALL SELECT p.Id AS
+//        PostId, p.ParentId, p.Title, p.CreationDate, ph.Depth + 1 FROM Posts p INNER JOIN PostHierarchy ph ON p.ParentId = ph.PostId) SELECT ph.PostId, ph.Title, ph.Depth,
+//        COUNT(c.Id) AS CommentCount, COALESCE(SUM(v.BountyAmount), 0) AS TotalBounty, MAX(ph.CreationDate) AS LatestActivity FROM PostHierarchy ph LEFT JOIN Comments c ON
+//        c.PostId = ph.PostId LEFT JOIN Votes v ON v.PostId = ph.PostId AND v.VoteTypeId = 8 LEFT JOIN Votes v2 ON v2.PostId = ph.PostId AND v2.VoteTypeId = 6 WHERE v2.Id IS NULL
+//        GROUP BY ph.PostId, ph.Title, ph.Depth, ph.CreationDate HAVING COUNT(c.Id) > 1 OR COALESCE(SUM(v.BountyAmount), 0) > 0 ORDER BY ph.Depth, TotalBounty DESC;
+//
+// The comment and bounty joins multiply each other, and both are multiplied by how many times the recursion reaches a (post, depth).
+fn q34189(db: &'static So) -> String {
+    let Post { post_type_id, creation_date, .. } = &db.post;
+    let Vote { vote_type_id, bounty_amount, .. } = &db.vote;
+    let kids: HashIdx<Id<Post>, Id<Post>> = (&db.post.parent).inv().collect();
+    let ph = db.post.with(post_type_id.eq(1)).reach(&kids, usize::MAX);
+    type X = (Id<Post>, usize);
+    let phv = rel(drain(&ph));
+    let m = (&phv).group_by(Same::<X>::new()).fold(0i64, |a, _| a + 1);
+    let b8 = db.vote.with(vote_type_id.eq(8)).select(&db.vote.post).inv().select(bounty_amount.opt()).dense_fold_outer(db.post.id.n, (0i64, 0i64), |(s, n), b| (s + b.unwrap_or(0), n + 1));
+    let v6 = votes_of_type(db, 6);
+    let st = Ident::<Post>::new().with((&v6).eq(0)).select(comments_per_post(db).and(&b8));
+    let g = (&m).and(Same::<X>::new().map(|x: X| x.0).select(&st)).map(|(m, (c, (s, n)))| (m * c * n.max(1), m * c.max(1) * s)).filt(|(c, s)| c > 1 || s > 0);
+    let v = drain(&g);
+    let v = top_n(v, |&((p, d), (_, s))| (d, Reverse(s), p), usize::MAX);
+    rows(v.into_iter().map(|((p, d), (c, s))| {
+        row(vec![post_fields(db, p, &["id"]).remove(0), title(db, p), V::I(d as i64), V::I(c), V::I(s), V::T(creation_date.get(p).unwrap())])
+    }))
+}
+
 pub static ENTRIES: &[harness::Entry] = &[
     ("13831", q13831),
     ("14857", q14857),
@@ -1125,4 +1151,5 @@ pub static ENTRIES: &[harness::Entry] = &[
     ("28022", q28022),
     ("29996", q29996),
     ("24220", q24220),
+    ("34189", q34189),
 ];

@@ -1,0 +1,29 @@
+load: 0.03s  (posts n=246673, users n=267193, votes n=926084)
+21364    ok      0.024s  0 rows
+23903    ok      0.016s  1 rows
+24602    ok      0.008s  0 rows
+2762     ok      0.029s  853 rows
+24520    ok      0.012s  0 rows
+24245    ok      0.043s  10 rows
+22350    ok      0.004s  10 rows
+21357    ok      0.009s  0 rows
+33457    ok      0.005s  100 rows
+22205    ok      0.050s  1 rows
+22279    ok      0.027s  72 rows
+22177    ok      0.000s  10 rows
+391      ok      0.009s  4114 rows
+22662    ok      0.070s  0 rows
+24081    ok      0.045s  0 rows
+23106    ok      0.076s  4 rows
+30175    ok      0.005s  100 rows
+4431     ok      0.001s  5 rows
+21391    ok      0.000s  100 rows
+23256    ok      0.003s  4 rows
+24637    ok      0.007s  20 rows
+24394    ok      0.001s  10 rows
+1930     ok      0.016s  4 rows
+21281    ok      0.000s  0 rows
+23306    ok      0.001s  10 rows
+24432    ok      0.039s  50 rows
+20057    ok      0.023s  0 rows
+27 ok, 0 diff, 0 skipped
