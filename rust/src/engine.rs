@@ -249,6 +249,28 @@ impl<D: Dense, R: Copy> Probe for VecRel<D, R> {
         self.v.get(x.idx()).is_some_and(|&r| k(r))
     }
 }
+impl<Q: Drive> FromQuery<Q> for VecRel<Q::D, Q::R>
+where
+    Q::D: Dense,
+{
+    fn from_rel(q: Q) -> Self {
+        let mut slots: Vec<Option<Q::R>> = Vec::new();
+        q.drive(|d, r| {
+            let i = d.idx();
+            if i >= slots.len() {
+                slots.resize(i + 1, None);
+            }
+            assert!(slots[i].is_none(), "collect::<VecRel>: duplicate key {i}");
+            slots[i] = Some(r);
+        });
+        let v = slots
+            .into_iter()
+            .enumerate()
+            .map(|(i, r)| r.unwrap_or_else(|| panic!("collect::<VecRel>: missing key {i}")))
+            .collect();
+        VecRel::new(v)
+    }
+}
 
 pub struct MultiRel<D: Dense, R: Copy + 'static> {
     pub _d: PhantomData<D>,
