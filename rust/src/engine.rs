@@ -373,7 +373,22 @@ impl<D: Dense, R: Copy> Probe for MultiRel<D, R> {
         self.row(x.idx()).iter().any(|&v| k(v))
     }
 }
-
+impl<Q: Drive> FromQuery<Q> for MultiRel<Q::D, Q::R>
+where
+    Q::D: Dense,
+    Q::R: 'static,
+{
+    fn from_rel(q: Q) -> Self {
+        let mut pairs: Vec<(usize, Q::R)> = Vec::new();
+        let mut n = 0;
+        q.drive(|d, r| {
+            let i = d.idx();
+            n = n.max(i + 1);
+            pairs.push((i, r));
+        });
+        MultiRel::from_owned_pairs(n, pairs)
+    }
+}
 // ===== DictRel / DictMultiRel — dictionary-encoded columns ================
 //
 // A column stored as `codes` (one per id, or CSR) plus a `table` (one value
