@@ -1,5 +1,6 @@
 use crate::db::{Db, Info, StateRow, Weapon};
-use crate::info::{Action, Pickup, AM_CLIP, AM_NONE, MAX_AMMO, PICKUP, WP_PISTOL};
+use crate::info::{wfact, Pickup, WOut, AM_CLIP, AM_NONE, MAX_AMMO, PICKUP, WP_PISTOL};
+use crate::rules::{bit, matching};
 use crate::mobj::Mobj;
 use crate::physics::{rnd, Cand, Clip, Shot};
 use crate::wad::{Sector, NONE};
@@ -149,22 +150,18 @@ pub fn walk(players: &VecRel<usize, Player>, clips: &HashIdx<usize, Clip>) -> Ve
 struct Psp {
     p: Player,
     pending: usize,
-    fired: Action,
+    pellets: usize,
 }
 
 fn can_fire(p: Player, w: Weapon) -> bool {
     w.ammo == AM_NONE || p.ammo[w.ammo] >= w.per_shot
 }
 
-fn enter(q: Psp, row: Option<StateRow>, w: Weapon, fire: bool) -> Psp {
-    let Some(r) = row else { return q };
-    if q.pending == NONE {
-        return q;
-    }
-    if matches!(r.action, Action::WeaponReady | Action::ReFire) && fire && !q.p.dead && can_fire(q.p, w) {
+fn enter(q: Psp, r: StateRow, w: Weapon, o: WOut) -> Psp {
+    if o.redirect {
         return Psp { pending: w.attack, ..q };
     }
-    let fires = matches!(r.action, Action::FirePistol | Action::FireShotgun | Action::FireCGun) && can_fire(q.p, w);
+    let fires = o.pellets > 0;
     let mut p = Player { wstate: q.pending, wtics: r.tics, ..q.p };
     if fires && w.ammo != AM_NONE {
         p.ammo[w.ammo] -= w.per_shot;
@@ -173,14 +170,25 @@ fn enter(q: Psp, row: Option<StateRow>, w: Weapon, fire: bool) -> Psp {
         p.flash = w.flash;
         p.flash_tics = -2;
     }
-    Psp { p, pending: if r.tics == 0 { r.next } else { NONE }, fired: if fires { r.action } else { q.fired } }
+    Psp { p, pending: if r.tics == 0 { r.next } else { NONE }, pellets: q.pellets.max(o.pellets) }
 }
 
 fn psp_stage(db: &Db, q: &VecRel<usize, Psp>, fire: bool) -> VecRel<usize, Psp> {
-    q.and(q.map(|q: Psp| q.pending).select(&db.t.states).opt())
+    let rows: HashIdx<usize, ((Psp, StateRow, Weapon), usize, u32)> = q
+        .and(q.map(|q: Psp| q.pending).select(&db.t.states))
         .and(q.map(|q: Psp| q.p.weapon).select(&db.t.weapons))
-        .map(move |((q, r), w): ((Psp, Option<StateRow>), Weapon)| enter(q, r, w, fire))
-        .collect()
+        .map(move |((q, r), w): ((Psp, StateRow), Weapon)| {
+            let facts = bit(fire, wfact::FIRE) | bit(!q.p.dead, wfact::ALIVE) | bit(can_fire(q.p, w), wfact::AMMO);
+            ((q, r, w), r.action as usize, facts)
+        })
+        .collect();
+    let chosen = matching(&rows, &db.t.weapon_rules, |_| PLAYER);
+    let entered = (&rows)
+        .and(chosen.opt())
+        .map(|(((q, r, w), _, _), o): (((Psp, StateRow, Weapon), usize, u32), Option<((Psp, StateRow, Weapon), WOut)>)| {
+            enter(q, r, w, o.map_or(WOut::default(), |(_, o)| o))
+        });
+    q.minus(&rows).union(entered).collect()
 }
 
 fn flash_stage(db: &Db, players: &VecRel<usize, Player>) -> VecRel<usize, Player> {
@@ -196,22 +204,23 @@ fn flash_stage(db: &Db, players: &VecRel<usize, Player>) -> VecRel<usize, Player
 }
 
 pub fn weapon(db: &Db, players: &VecRel<usize, Player>, inp: Input, tic: u64) -> (VecRel<usize, Player>, HashIdx<usize, Shot>) {
-    let switched: VecRel<usize, Psp> = players
+    let target = move |p: Player| inp.weapon.unwrap_or(p.wanted);
+    let rows = players
         .and(players.map(|p: Player| p.weapon).select(&db.t.weapons))
-        .and(players.map(move |p: Player| inp.weapon.unwrap_or(p.wanted)).select(&db.t.weapons).opt())
-        .and(players.map(|p: Player| p.wstate).select(&db.t.states))
-        .map(move |(((p, cur), new), row): (((Player, Weapon), Option<Weapon>), StateRow)| {
-            let target = inp.weapon.unwrap_or(p.wanted);
-            match new {
-                Some(w) if target != p.weapon && p.owned & (1 << target) != 0 && p.wstate == cur.ready => {
-                    Psp { p: Player { weapon: target, wanted: NONE, ..p }, pending: w.ready, fired: Action::None }
-                }
-                _ => {
-                    let wtics = p.wtics - 1;
-                    Psp { p: Player { wtics, ..p }, pending: if wtics <= 0 { row.next } else { NONE }, fired: Action::None }
-                }
-            }
+        .and(players.map(target).select(&db.t.weapons).opt())
+        .and(players.map(|p: Player| p.wstate).select(&db.t.states));
+    let switching = move |(((p, cur), new), _): (((Player, Weapon), Option<Weapon>), StateRow)| {
+        new.is_some() && target(p) != p.weapon && p.owned & (1 << target(p)) != 0 && p.wstate == cur.ready
+    };
+    let switched = (&rows)
+        .filt(switching)
+        .flat_map(move |(((p, _), new), _): (((Player, Weapon), Option<Weapon>), StateRow)| {
+            new.map(|w| Psp { p: Player { weapon: target(p), wanted: NONE, ..p }, pending: w.ready, pellets: 0 })
         })
+        .union((&rows).filt(move |r| !switching(r)).map(|(((p, _), _), row): (((Player, Weapon), Option<Weapon>), StateRow)| {
+            let wtics = p.wtics - 1;
+            Psp { p: Player { wtics, ..p }, pending: if wtics <= 0 { row.next } else { NONE }, pellets: 0 }
+        }))
         .collect();
     let mut q = switched;
     for _ in 0..4 {
@@ -220,13 +229,8 @@ pub fn weapon(db: &Db, players: &VecRel<usize, Player>, inp: Input, tic: u64) ->
     let fired: VecRel<usize, Psp> = q.map(|q: Psp| if q.pending != NONE { Psp { p: Player { wstate: q.pending, wtics: 1, ..q.p }, ..q } } else { q }).collect();
     let shots = (&fired)
         .flat_map(move |q: Psp| {
-            let pellets = match q.fired {
-                Action::FirePistol | Action::FireCGun => 1,
-                Action::FireShotgun => 7,
-                _ => 0,
-            };
             let p = q.p;
-            (0..pellets).map(move |k| {
+            (0..q.pellets).map(move |k| {
                 let spread = (rnd(tic, k, 1) - rnd(tic, k, 2)) as f64 * TAU / 16384.0;
                 Shot { id: (1 << 23) | k, from: PLAYER, x: p.x, y: p.y, z: p.z + 32.0, ang: p.ang + spread, range: 2048.0, damage: 5 * (rnd(tic, k, 3) % 3 + 1) }
             })

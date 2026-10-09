@@ -5,6 +5,7 @@ mod mobj;
 mod physics;
 mod player;
 mod render;
+mod rules;
 mod tic;
 mod wad;
 mod world;
@@ -66,6 +67,7 @@ fn main() {
         if std::env::var_os("DOOM_DEBUG").is_some() {
             let p = player(&state);
             (&state.mobjs).filt(move |m: mobj::Mobj| (m.x - p.x).hypot(m.y - p.y) < 400.0).drive(|_, m| eprintln!("{m:?}"));
+            (&state.movers).and(&state.sectors).filt(|(m, _): (world::Mover, wad::Sector)| m.kind != 0).drive(|k, v| eprintln!("mover {k} {v:?}"));
         }
         write_ppm(&args[i + 1], &buf);
         return;

@@ -1,5 +1,6 @@
 use crate::db::{Db, Info, StateRow};
-use crate::info::{Action, HANGING, MISSILE, MONSTER, NOGRAV, SHOOTABLE, SOLID};
+use crate::info::{fact, Action, AiOut, Attack, HANGING, KEEP, MISSILE, MONSTER, NOGRAV, SHOOTABLE, SOLID};
+use crate::rules::{bit, matching};
 use crate::physics::{locate, rnd, Body, Cand, Clip, Impact, Shot, Sight};
 use crate::player::{Player, HEIGHT, PLAYER, RADIUS};
 use crate::wad::{Sector, Thing, NONE};
@@ -161,14 +162,6 @@ pub fn sight_pairs(advanced: &HashIdx<usize, (Mobj, Action)>, players: &VecRel<u
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum Attack {
-    None,
-    Hitscan { pellets: usize, mult: i32, modulo: i32 },
-    Melee { damage: i32 },
-    Ball,
-}
-
-#[derive(Clone, Copy, Debug)]
 pub struct Decision {
     pub m: Mobj,
     pub goto: usize,
@@ -178,48 +171,73 @@ pub struct Decision {
     pub hit: usize,
 }
 
-fn decide(m: Mobj, act: Action, i: Info, p: Player, sees: bool, heard: bool, tic: u64) -> Decision {
-    let (dx, dy) = (p.x - m.x, p.y - m.y);
-    let dist = (dx * dx + dy * dy).sqrt();
-    let face = dy.atan2(dx);
-    let none = Decision { m, goto: NONE, go: None, attack: Attack::None, explode: false, hit: NONE };
-    let r = |salt| rnd(tic, m.id, salt);
-    let melee_range = dist < 64.0 - 20.0 + RADIUS;
-    match act {
-        Action::Look => {
-            let ahead = ((face - m.ang + PI).rem_euclid(TAU) - PI).abs() <= FRAC_PI_2;
-            if !p.dead && (heard || (sees && (ahead || dist < 64.0))) {
-                Decision { m: Mobj { awake: true, reaction: 8, ang: face, ..m }, goto: i.see, ..none }
-            } else {
-                none
-            }
-        }
-        Action::Chase if p.dead => Decision { goto: i.spawn, m: Mobj { awake: false, ..m }, ..none },
-        Action::Chase => {
-            let m = Mobj { reaction: (m.reaction - 1).max(0), ..m };
-            let mut d = dist - 64.0;
-            if i.melee == 0 {
-                d -= 128.0;
-            }
-            let shoot = i.missile != 0 && m.reaction == 0 && sees && r(1) as f64 >= d.clamp(0.0, 200.0);
-            if i.melee != 0 && melee_range {
-                Decision { m: Mobj { ang: face, ..m }, goto: i.melee, ..none }
-            } else if shoot {
-                Decision { m: Mobj { ang: face, ..m }, goto: i.missile, ..none }
-            } else {
-                Decision { m, go: Some(face), ..none }
-            }
-        }
-        Action::FaceTarget => Decision { m: Mobj { ang: face, ..m }, ..none },
-        Action::PosAttack => Decision { m: Mobj { ang: face, ..m }, attack: Attack::Hitscan { pellets: 1, mult: 3, modulo: 5 }, ..none },
-        Action::SPosAttack => Decision { m: Mobj { ang: face, ..m }, attack: Attack::Hitscan { pellets: 3, mult: 3, modulo: 5 }, ..none },
-        Action::TroopAttack if melee_range => Decision { attack: Attack::Melee { damage: 3 * (r(2) % 8 + 1) }, ..none },
-        Action::TroopAttack => Decision { m: Mobj { ang: face, ..m }, attack: Attack::Ball, ..none },
-        Action::SargAttack if melee_range => Decision { attack: Attack::Melee { damage: 4 * (r(2) % 10 + 1) }, ..none },
-        Action::Fall => Decision { m: Mobj { flags: m.flags & !SOLID, ..m }, ..none },
-        Action::Explode => Decision { explode: true, ..none },
-        _ => none,
+fn idle(m: Mobj) -> Decision {
+    Decision { m, goto: NONE, go: None, attack: Attack::None, explode: false, hit: NONE }
+}
+
+fn face(m: Mobj, p: Player) -> f64 {
+    (p.y - m.y).atan2(p.x - m.x)
+}
+
+fn ai_facts(m: Mobj, i: Info, p: Player, sees: bool, heard: bool, tic: u64) -> u32 {
+    use fact::*;
+    let dist = (p.x - m.x).hypot(p.y - m.y);
+    let ahead = ((face(m, p) - m.ang + PI).rem_euclid(TAU) - PI).abs() <= FRAC_PI_2;
+    let d = (dist - 64.0 - 128.0 * (i.melee == 0) as i32 as f64).clamp(0.0, 200.0);
+    bit(p.dead, DEAD)
+        | bit(sees, SEES)
+        | bit(heard, HEARD)
+        | bit(ahead, AHEAD)
+        | bit(dist < 64.0, CLOSE)
+        | bit(dist < 60.0, MELEE_RANGE)
+        | bit(i.melee != 0, HAS_MELEE)
+        | bit(i.missile != 0, HAS_MISSILE)
+        | bit(m.reaction <= 1, REACTION0)
+        | bit(rnd(tic, m.id, 1) as f64 >= d, ROLL)
+}
+
+#[derive(Clone, Copy)]
+struct Ctx {
+    d: Decision,
+    face: f64,
+    damage: i32,
+    clip: Option<Clip>,
+    hit: Option<usize>,
+}
+
+fn ctx(d: Decision) -> Ctx {
+    Ctx { d, face: d.m.ang, damage: 0, clip: None, hit: None }
+}
+
+fn apply(c: Ctx, o: AiOut, goto: Option<usize>) -> Decision {
+    let (d, m) = (c.d, c.d.m);
+    let (x, y) = c.clip.filter(|_| o.to_clip).map_or((m.x, m.y), |k| (k.c.x, k.c.y));
+    let ang = if o.face { c.face } else if o.face_move { (y - m.y).atan2(x - m.x) } else { m.ang };
+    let reaction = if o.reaction >= 0 { o.reaction } else { (m.reaction - o.reaction_dec as i32).max(0) };
+    let cleared = SOLID * o.clear_solid as u32 | SHOOTABLE * o.clear_shootable as u32 | MISSILE * o.stop as u32;
+    let flags = m.flags & !cleared | NOGRAV * o.stop as u32;
+    let (momx, momy) = if o.stop { (0.0, 0.0) } else { (m.momx, m.momy) };
+    let m = Mobj { x, y, ang, reaction, flags, momx, momy, health: m.health - c.damage, awake: if o.awake == 0 { m.awake } else { o.awake > 0 }, ..m };
+    Decision {
+        m,
+        goto: goto.unwrap_or(d.goto),
+        go: if o.reset { None } else if o.go { Some(c.face) } else { d.go },
+        attack: if o.reset { Attack::None } else if matches!(o.attack, Attack::None) { d.attack } else { o.attack },
+        explode: !o.reset && (d.explode || o.explode),
+        hit: if o.stop { c.hit.unwrap_or(NONE) } else { d.hit },
     }
+}
+
+fn run_rules<Q: Drive<R = (Ctx, usize, u32)>>(db: &Db, rows: Q) -> HashIdx<usize, Decision> {
+    let rows: HashIdx<usize, (Ctx, usize, u32)> = rows.key_by(|(c, _, _): (Ctx, usize, u32)| c.d.m.id).collect();
+    let chosen = matching(&rows, &db.t.ai_rules, |c: Ctx| c.d.m.id);
+    let applied = (&rows)
+        .and(chosen.opt())
+        .map(|((c, _, _), o): ((Ctx, usize, u32), Option<(Ctx, AiOut)>)| (c, o.map_or(KEEP, |(_, o)| o)))
+        .key_by(|(c, o): (Ctx, AiOut)| (c.d.m.kind, o.goto))
+        .and((&db.t.info_goto).opt())
+        .map(|((c, o), g): ((Ctx, AiOut), Option<usize>)| apply(c, o, g));
+    goto(db, applied)
 }
 
 pub fn think(
@@ -230,7 +248,7 @@ pub fn think(
     players: &VecRel<usize, Player>,
     tic: u64,
 ) -> HashIdx<usize, Decision> {
-    let decided = advanced
+    let rows = advanced
         .and(visible.opt())
         .key_by(|((m, _), _): ((Mobj, Action), Option<Sight>)| m.sector)
         .and(heard.opt())
@@ -239,9 +257,9 @@ pub fn think(
         .key_by(|_| PLAYER)
         .and(players)
         .map(move |(((((m, a), s), h), i), p): (((((Mobj, Action), Option<Sight>), Option<bool>), Info), Player)| {
-            decide(m, a, i, p, s.is_some(), h.is_some(), tic)
+            (Ctx { face: face(m, p), ..ctx(idle(m)) }, a as usize, ai_facts(m, i, p, s.is_some(), h.is_some(), tic))
         });
-    goto(db, decided)
+    run_rules(db, rows)
 }
 
 pub fn goto<Q: Drive<R = Decision>>(db: &Db, decided: Q) -> HashIdx<usize, Decision> {
@@ -282,6 +300,7 @@ pub fn move_cands(db: &Db, decided: &HashIdx<usize, Decision>) -> HashIdx<(usize
 }
 
 pub fn apply_moves(db: &Db, decided: &HashIdx<usize, Decision>, clips: &HashIdx<usize, Clip>, bodies: &HashIdx<usize, Body>) -> HashIdx<usize, Decision> {
+    use fact::*;
     let hits = decided
         .filt(|d: Decision| d.m.flags & MISSILE != 0 && (d.m.momx != 0.0 || d.m.momy != 0.0))
         .cross(bodies)
@@ -291,29 +310,16 @@ pub fn apply_moves(db: &Db, decided: &HashIdx<usize, Decision>, clips: &HashIdx<
         })
         .key_by(|(d, _): (Decision, Body)| d.m.id)
         .fold(NONE, |_, (_, b): (Decision, Body)| b.id);
-    let moved = decided
-        .and(clips.opt())
-        .and(hits.opt())
-        .key_by(|((d, _), _): ((Decision, Option<Clip>), Option<usize>)| d.m.kind)
-        .and(&db.t.infos)
-        .map(|(((d, k), hit), i): (((Decision, Option<Clip>), Option<usize>), Info)| {
-            let m = d.m;
-            let flying = m.flags & MISSILE != 0 && (m.momx != 0.0 || m.momy != 0.0);
-            match (flying, k, hit) {
-                (true, Some(k), None) => Decision { m: Mobj { x: k.c.x, y: k.c.y, ..m }, ..d },
-                (true, _, _) => Decision {
-                    m: Mobj { momx: 0.0, momy: 0.0, flags: m.flags & !MISSILE | NOGRAV, ..m },
-                    goto: i.death,
-                    hit: hit.unwrap_or(NONE),
-                    ..d
-                },
-                (false, Some(k), _) if d.go.is_some() && !k.c.stay => {
-                    Decision { m: Mobj { x: k.c.x, y: k.c.y, ang: (k.c.y - m.y).atan2(k.c.x - m.x), ..m }, ..d }
-                }
-                _ => d,
-            }
-        });
-    goto(db, moved)
+    let rows = decided.and(clips.opt()).and(hits.opt()).map(|((d, k), hit): ((Decision, Option<Clip>), Option<usize>)| {
+        let m = d.m;
+        let facts = bit(m.flags & MISSILE != 0 && (m.momx != 0.0 || m.momy != 0.0), FLYING)
+            | bit(k.is_some(), CLIP_OK)
+            | bit(hit.is_some(), HIT)
+            | bit(d.go.is_some(), GO)
+            | bit(k.is_some_and(|k| k.c.stay), STAY);
+        (Ctx { clip: k, hit, ..ctx(d) }, Action::Move as usize, facts)
+    });
+    run_rules(db, rows)
 }
 
 pub fn monster_shots(decided: &HashIdx<usize, Decision>, tic: u64) -> HashIdx<usize, Shot> {
@@ -340,8 +346,8 @@ pub fn monster_shots(decided: &HashIdx<usize, Decision>, tic: u64) -> HashIdx<us
 pub fn damage(impacts: &HashIdx<usize, Impact>, decided: &HashIdx<usize, Decision>, bodies: &HashIdx<usize, Body>, tic: u64) -> Fold<usize, i32> {
     let shots = impacts.filt(|i: Impact| i.target != NONE).map(|i: Impact| (i.target, i.shot.damage)).key_by(|(t, _)| t);
     let melee = decided
-        .flat_map(|d: Decision| match d.attack {
-            Attack::Melee { damage } => Some((PLAYER, damage)),
+        .flat_map(move |d: Decision| match d.attack {
+            Attack::Melee { mult, modulo } => Some((PLAYER, mult * (rnd(tic, d.m.id, 2) % modulo + 1))),
             _ => None,
         })
         .key_by(|(t, _)| t);
@@ -361,29 +367,19 @@ pub fn damage(impacts: &HashIdx<usize, Impact>, decided: &HashIdx<usize, Decisio
 }
 
 pub fn wound(db: &Db, decided: &HashIdx<usize, Decision>, dmg: &Fold<usize, i32>, tic: u64) -> HashIdx<usize, Decision> {
+    use fact::*;
     let hurt = decided
-        .and(dmg.opt())
-        .key_by(|(d, _): (Decision, Option<i32>)| d.m.kind)
+        .and(dmg)
+        .filt(|(d, h): (Decision, i32)| h > 0 && d.m.flags & SHOOTABLE != 0 && d.m.health > 0)
+        .key_by(|(d, _): (Decision, i32)| d.m.kind)
         .and(&db.t.infos)
-        .map(move |((d, h), i): ((Decision, Option<i32>), Info)| {
+        .map(move |((d, h), i): ((Decision, i32), Info)| {
             let m = d.m;
-            match h {
-                Some(h) if h > 0 && m.flags & SHOOTABLE != 0 && m.health > 0 => {
-                    let health = m.health - h;
-                    if health <= 0 {
-                        Decision { m: Mobj { health, flags: m.flags & !SHOOTABLE, ..m }, goto: i.death, go: None, attack: Attack::None, explode: false, hit: NONE }
-                    } else if rnd(tic, m.id, 77) < i.painchance {
-                        Decision { m: Mobj { health, awake: true, ..m }, goto: i.pain, ..d }
-                    } else if !m.awake && i.see != 0 {
-                        Decision { m: Mobj { health, awake: true, reaction: 0, ..m }, goto: i.see, ..d }
-                    } else {
-                        Decision { m: Mobj { health, awake: true, ..m }, ..d }
-                    }
-                }
-                _ => d,
-            }
+            let facts = bit(m.health - h <= 0, KILLED) | bit(rnd(tic, m.id, 77) < i.painchance, PAIN_ROLL) | bit(!m.awake, ASLEEP) | bit(i.see != 0, HAS_SEE);
+            (Ctx { damage: h, ..ctx(d) }, Action::Hurt as usize, facts)
         });
-    goto(db, hurt)
+    let hurt = run_rules(db, hurt);
+    decided.minus(&hurt).union(&hurt).collect()
 }
 
 pub fn drops(db: &Db, before: &HashIdx<usize, Decision>, after: &HashIdx<usize, Decision>, tic: u64) -> HashIdx<usize, Mobj> {

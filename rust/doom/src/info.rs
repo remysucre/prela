@@ -17,6 +17,8 @@ pub enum Action {
     FireShotgun,
     FireCGun,
     ReFire,
+    Hurt,
+    Move,
 }
 
 pub struct StateDef {
@@ -392,5 +394,245 @@ pub fn mobjs() -> Vec<MobjDef> {
         item(2025, "SUIT", None),
         item(2026, "PMAP", None),
         item(2045, "PVIS", None),
+    ]
+}
+
+pub mod fact {
+    pub const DEAD: u32 = 1;
+    pub const SEES: u32 = 1 << 1;
+    pub const HEARD: u32 = 1 << 2;
+    pub const AHEAD: u32 = 1 << 3;
+    pub const CLOSE: u32 = 1 << 4;
+    pub const MELEE_RANGE: u32 = 1 << 5;
+    pub const HAS_MELEE: u32 = 1 << 6;
+    pub const HAS_MISSILE: u32 = 1 << 7;
+    pub const REACTION0: u32 = 1 << 8;
+    pub const ROLL: u32 = 1 << 9;
+    pub const KILLED: u32 = 1 << 10;
+    pub const PAIN_ROLL: u32 = 1 << 11;
+    pub const ASLEEP: u32 = 1 << 12;
+    pub const HAS_SEE: u32 = 1 << 13;
+    pub const FLYING: u32 = 1 << 14;
+    pub const CLIP_OK: u32 = 1 << 15;
+    pub const HIT: u32 = 1 << 16;
+    pub const GO: u32 = 1 << 17;
+    pub const STAY: u32 = 1 << 18;
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Rule<O> {
+    pub prio: u8,
+    pub mask: u32,
+    pub want: u32,
+    pub out: O,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Attack {
+    None,
+    Hitscan { pellets: usize, mult: i32, modulo: i32 },
+    Melee { mult: i32, modulo: i32 },
+    Ball,
+}
+
+pub const G_NONE: u8 = 0;
+pub const G_SEE: u8 = 1;
+pub const G_SPAWN: u8 = 2;
+pub const G_MELEE: u8 = 3;
+pub const G_MISSILE: u8 = 4;
+pub const G_DEATH: u8 = 5;
+pub const G_PAIN: u8 = 6;
+
+#[derive(Clone, Copy, Debug)]
+pub struct AiOut {
+    pub goto: u8,
+    pub face: bool,
+    pub awake: i8,
+    pub reaction: i32,
+    pub reaction_dec: bool,
+    pub attack: Attack,
+    pub go: bool,
+    pub clear_solid: bool,
+    pub explode: bool,
+    pub clear_shootable: bool,
+    pub reset: bool,
+    pub to_clip: bool,
+    pub face_move: bool,
+    pub stop: bool,
+}
+
+pub const KEEP: AiOut = AiOut {
+    goto: G_NONE,
+    face: false,
+    awake: 0,
+    reaction: -1,
+    reaction_dec: false,
+    attack: Attack::None,
+    go: false,
+    clear_solid: false,
+    explode: false,
+    clear_shootable: false,
+    reset: false,
+    to_clip: false,
+    face_move: false,
+    stop: false,
+};
+
+pub fn ai_rules() -> Vec<(Action, Rule<AiOut>)> {
+    use fact::*;
+    use Action::*;
+    let r = |prio, mask, out| Rule { prio, mask, want: mask, out };
+    let wake = AiOut { goto: G_SEE, face: true, awake: 1, reaction: 8, ..KEEP };
+    let chase = AiOut { reaction_dec: true, ..KEEP };
+    vec![
+        (Look, r(0, DEAD, KEEP)),
+        (Look, r(1, HEARD, wake)),
+        (Look, r(2, SEES | AHEAD, wake)),
+        (Look, r(3, SEES | CLOSE, wake)),
+        (Chase, r(0, DEAD, AiOut { goto: G_SPAWN, awake: -1, ..KEEP })),
+        (Chase, r(1, HAS_MELEE | MELEE_RANGE, AiOut { goto: G_MELEE, face: true, ..chase })),
+        (Chase, r(2, HAS_MISSILE | REACTION0 | SEES | ROLL, AiOut { goto: G_MISSILE, face: true, ..chase })),
+        (Chase, r(3, 0, AiOut { go: true, ..chase })),
+        (FaceTarget, r(0, 0, AiOut { face: true, ..KEEP })),
+        (PosAttack, r(0, 0, AiOut { face: true, attack: Attack::Hitscan { pellets: 1, mult: 3, modulo: 5 }, ..KEEP })),
+        (SPosAttack, r(0, 0, AiOut { face: true, attack: Attack::Hitscan { pellets: 3, mult: 3, modulo: 5 }, ..KEEP })),
+        (TroopAttack, r(0, MELEE_RANGE, AiOut { attack: Attack::Melee { mult: 3, modulo: 8 }, ..KEEP })),
+        (TroopAttack, r(1, 0, AiOut { face: true, attack: Attack::Ball, ..KEEP })),
+        (SargAttack, r(0, MELEE_RANGE, AiOut { attack: Attack::Melee { mult: 4, modulo: 10 }, ..KEEP })),
+        (Fall, r(0, 0, AiOut { clear_solid: true, ..KEEP })),
+        (Explode, r(0, 0, AiOut { explode: true, ..KEEP })),
+        (Hurt, r(0, KILLED, AiOut { goto: G_DEATH, clear_shootable: true, reset: true, ..KEEP })),
+        (Hurt, r(1, PAIN_ROLL, AiOut { goto: G_PAIN, awake: 1, ..KEEP })),
+        (Hurt, r(2, ASLEEP | HAS_SEE, AiOut { goto: G_SEE, awake: 1, reaction: 0, ..KEEP })),
+        (Hurt, r(3, 0, AiOut { awake: 1, ..KEEP })),
+        (Move, Rule { prio: 0, mask: FLYING | CLIP_OK | HIT, want: FLYING | CLIP_OK, out: AiOut { to_clip: true, ..KEEP } }),
+        (Move, r(1, FLYING, AiOut { goto: G_DEATH, stop: true, ..KEEP })),
+        (Move, Rule { prio: 2, mask: GO | CLIP_OK | STAY, want: GO | CLIP_OK, out: AiOut { to_clip: true, face_move: true, ..KEEP } }),
+    ]
+}
+
+pub mod wfact {
+    pub const FIRE: u32 = 1;
+    pub const ALIVE: u32 = 1 << 1;
+    pub const AMMO: u32 = 1 << 2;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WOut {
+    pub redirect: bool,
+    pub pellets: usize,
+}
+
+pub fn weapon_rules() -> Vec<(Action, Rule<WOut>)> {
+    use wfact::*;
+    use Action::*;
+    let r = |mask, out| Rule { prio: 0, mask, want: mask, out };
+    let redirect = WOut { redirect: true, pellets: 0 };
+    vec![
+        (WeaponReady, r(FIRE | ALIVE | AMMO, redirect)),
+        (ReFire, r(FIRE | ALIVE | AMMO, redirect)),
+        (FirePistol, r(AMMO, WOut { redirect: false, pellets: 1 })),
+        (FireCGun, r(AMMO, WOut { redirect: false, pellets: 1 })),
+        (FireShotgun, r(AMMO, WOut { redirect: false, pellets: 7 })),
+    ]
+}
+
+pub const MV_IDLE: u8 = 0;
+pub const MV_DOOR: u8 = 1;
+pub const MV_DOOR_STAY: u8 = 2;
+pub const MV_LIFT: u8 = 3;
+pub const MV_FLOOR: u8 = 4;
+pub const MV_EXIT: u8 = 9;
+
+#[derive(Clone, Copy, Debug)]
+pub struct Special {
+    pub act: u8,
+    pub speed: f64,
+    pub tagged: bool,
+    pub key: u8,
+    pub walk: bool,
+    pub use_: bool,
+}
+
+pub fn specials() -> Vec<(i64, Special)> {
+    let s = |act, speed, tagged, key, walk| Special { act, speed, tagged, key, walk, use_: !walk };
+    vec![
+        (1, s(MV_DOOR, 2.0, false, 0, false)),
+        (26, s(MV_DOOR, 2.0, false, 1, false)),
+        (27, s(MV_DOOR, 2.0, false, 2, false)),
+        (28, s(MV_DOOR, 2.0, false, 4, false)),
+        (117, s(MV_DOOR, 8.0, false, 0, false)),
+        (2, s(MV_DOOR_STAY, 2.0, true, 0, true)),
+        (62, s(MV_LIFT, 4.0, true, 0, false)),
+        (88, s(MV_LIFT, 4.0, true, 0, true)),
+        (23, s(MV_FLOOR, 1.0, true, 0, false)),
+        (11, s(MV_EXIT, 0.0, false, 0, false)),
+    ]
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ActOut {
+    pub kind: u8,
+    pub dir: i8,
+    pub init: bool,
+    pub plane: u8,
+    pub up_lc: f64,
+    pub up_floor: f64,
+    pub down_floor: f64,
+    pub down_lowest: f64,
+}
+
+pub fn act_key(kind: u8, dir: i8, act: u8) -> usize {
+    kind as usize * 1000 + (dir + 1) as usize * 100 + act as usize
+}
+
+pub fn activations() -> Vec<(usize, ActOut)> {
+    let door = ActOut { kind: MV_DOOR, dir: 1, init: true, plane: 0, up_lc: 1.0, up_floor: 0.0, down_floor: 1.0, down_lowest: 0.0 };
+    let lift = ActOut { kind: MV_LIFT, dir: -1, init: true, plane: 1, up_lc: 0.0, up_floor: 1.0, down_floor: 0.0, down_lowest: 1.0 };
+    let reverse = |dir| ActOut { kind: MV_DOOR, dir, init: false, ..door };
+    vec![
+        (act_key(MV_IDLE, 0, MV_DOOR), door),
+        (act_key(MV_IDLE, 0, MV_DOOR_STAY), ActOut { kind: MV_DOOR_STAY, ..door }),
+        (act_key(MV_IDLE, 0, MV_LIFT), lift),
+        (act_key(MV_IDLE, 0, MV_FLOOR), ActOut { kind: MV_FLOOR, ..lift }),
+        (act_key(MV_DOOR, -1, MV_DOOR), reverse(1)),
+        (act_key(MV_DOOR, 0, MV_DOOR), reverse(-1)),
+        (act_key(MV_DOOR, 1, MV_DOOR), reverse(-1)),
+    ]
+}
+
+pub mod mfact {
+    pub const REACHED: u32 = 1;
+    pub const EXPIRED: u32 = 1 << 1;
+    pub const OCCUPIED: u32 = 1 << 2;
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct StepOut {
+    pub kind: u8,
+    pub dir: i8,
+    pub wait: i32,
+    pub wait_dec: bool,
+}
+
+pub fn step_key(kind: u8, dir: i8) -> usize {
+    kind as usize * 10 + (dir + 1) as usize
+}
+
+pub fn mover_rules() -> Vec<(usize, Rule<StepOut>)> {
+    use mfact::*;
+    let r = |prio, mask, kind, dir, wait, wait_dec| Rule { prio, mask, want: mask, out: StepOut { kind, dir, wait, wait_dec } };
+    vec![
+        (step_key(MV_DOOR, 1), r(0, REACHED, MV_DOOR, 0, 150, false)),
+        (step_key(MV_DOOR_STAY, 1), r(0, REACHED, MV_IDLE, 0, -1, false)),
+        (step_key(MV_DOOR, 0), r(0, EXPIRED, MV_DOOR, -1, -1, false)),
+        (step_key(MV_DOOR, 0), r(1, 0, MV_DOOR, 0, -1, true)),
+        (step_key(MV_DOOR, -1), r(0, OCCUPIED, MV_DOOR, 1, -1, false)),
+        (step_key(MV_DOOR, -1), r(1, REACHED, MV_IDLE, 0, -1, false)),
+        (step_key(MV_LIFT, -1), r(0, REACHED, MV_LIFT, 0, 105, false)),
+        (step_key(MV_LIFT, 0), r(0, EXPIRED, MV_LIFT, 1, -1, false)),
+        (step_key(MV_LIFT, 0), r(1, 0, MV_LIFT, 0, -1, true)),
+        (step_key(MV_LIFT, 1), r(0, REACHED, MV_IDLE, 0, -1, false)),
+        (step_key(MV_FLOOR, -1), r(0, REACHED, MV_IDLE, 0, -1, false)),
     ]
 }

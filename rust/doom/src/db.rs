@@ -1,4 +1,4 @@
-use crate::info::{self, Action, Pickup};
+use crate::info::{self, Action, ActOut, AiOut, Pickup, Rule, Special, StepOut, WOut, G_DEATH, G_MELEE, G_MISSILE, G_PAIN, G_SEE, G_SPAWN};
 use crate::wad::{Game, Linedef, Node, Sector, Seg, Sidedef, Thing, NONE};
 use prela::engine::*;
 use std::collections::HashMap;
@@ -48,6 +48,12 @@ pub struct Tables {
     pub sprite_frames: HashIdx<u64, (usize, bool)>,
     pub weapons: VecRel<usize, Weapon>,
     pub hud: VecRel<usize, usize>,
+    pub info_goto: HashIdx<(usize, u8), usize>,
+    pub ai_rules: MultiRel<usize, Rule<AiOut>>,
+    pub weapon_rules: MultiRel<usize, Rule<WOut>>,
+    pub specials: HashIdx<i64, Special>,
+    pub activations: HashIdx<usize, ActOut>,
+    pub mover_rules: MultiRel<usize, Rule<StepOut>>,
     pub puff: usize,
     pub blood: usize,
     pub ball: usize,
@@ -129,7 +135,38 @@ fn tables(gfx: &crate::wad::Graphics) -> Tables {
     let hud_names = ["STTNUM0", "STTNUM1", "STTNUM2", "STTNUM3", "STTNUM4", "STTNUM5", "STTNUM6", "STTNUM7", "STTNUM8", "STTNUM9", "STTPRCNT", "STKEYS0", "STKEYS1", "STKEYS2"];
     let hud = VecRel::new(hud_names.iter().map(|n| gfx.patch_names.get(*n).copied().unwrap_or(NONE)).collect());
     let kind = |n: &str| mdefs.iter().position(|m| m.name == n).unwrap();
-    Tables { states, infos, ednum_info, sprite_frames, weapons, hud, puff: kind("PUFF"), blood: kind("BLOOD"), ball: kind("TBALL") }
+    let info_goto = (&infos)
+        .and(Same::<usize>::new())
+        .flat_map(|(i, k): (Info, usize)| {
+            [(G_SEE, i.see), (G_SPAWN, i.spawn), (G_MELEE, i.melee), (G_MISSILE, i.missile), (G_DEATH, i.death), (G_PAIN, i.pain)].map(|(g, s)| (k, g, s))
+        })
+        .filt(|(_, _, s)| s != 0)
+        .key_by(|(k, g, _)| (k, g))
+        .map(|(_, _, s)| s)
+        .collect();
+    let by_action = |rules: Vec<(Action, Rule<AiOut>)>| VecRel::<usize, (Action, Rule<AiOut>)>::new(rules).key_by(|(a, _)| a as usize).map(|(_, r)| r).collect();
+    let ai_rules = by_action(info::ai_rules());
+    let weapon_rules = VecRel::<usize, (Action, Rule<WOut>)>::new(info::weapon_rules()).key_by(|(a, _)| a as usize).map(|(_, r)| r).collect();
+    let specials = VecRel::<usize, (i64, Special)>::new(info::specials()).key_by(|(k, _)| k).map(|(_, v)| v).collect();
+    let activations = VecRel::<usize, (usize, ActOut)>::new(info::activations()).key_by(|(k, _)| k).map(|(_, v)| v).collect();
+    let mover_rules = VecRel::<usize, (usize, Rule<StepOut>)>::new(info::mover_rules()).key_by(|(k, _)| k).map(|(_, v)| v).collect();
+    Tables {
+        states,
+        infos,
+        ednum_info,
+        sprite_frames,
+        weapons,
+        hud,
+        info_goto,
+        ai_rules,
+        weapon_rules,
+        specials,
+        activations,
+        mover_rules,
+        puff: kind("PUFF"),
+        blood: kind("BLOOD"),
+        ball: kind("TBALL"),
+    }
 }
 
 #[derive(Clone, Copy)]

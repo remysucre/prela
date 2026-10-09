@@ -35,7 +35,7 @@ pub fn initial(db: &Db, sectors: VecRel<usize, Sector>) -> State {
         .and((&player).map(|p: Player| p.sector).select(&sectors))
         .map(|(p, s): (Player, Sector)| Player { z: s.floor, ..p })
         .collect();
-    let movers = (&sectors).map(|_| Mover::Idle).collect();
+    let movers = (&sectors).map(|_| world::IDLE).collect();
     let mobjs = mobj::spawn_things(db, &sectors);
     State { tic: 0, player, sectors, movers, mobjs, heard: HashIdx { idx: Default::default() } }
 }

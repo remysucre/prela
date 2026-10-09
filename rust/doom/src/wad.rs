@@ -110,7 +110,7 @@ pub struct Node {
     pub child_is_leaf: [bool; 2],
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Sector {
     pub floor: f64,
     pub ceil: f64,
