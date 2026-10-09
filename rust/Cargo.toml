@@ -5,7 +5,7 @@ edition = "2024"
 default-run = "prela"
 
 [workspace]
-members = ["macros"]
+members = ["macros", "doom"]
 
 [dependencies]
 prela-macros = { path = "macros" }
