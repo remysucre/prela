@@ -2932,6 +2932,46 @@ mod tests {
     }
 
     #[test]
+    fn collect_vecrel_and_multirel() {
+        let a: VecRel<usize, i64> = VecRel::from_pairs(3, [(0, 10), (1, 20), (2, 30)]);
+        let doubled: VecRel<usize, i64> = (&a).map(|x| x * 2).collect();
+        assert_eq!(doubled.v, vec![20, 40, 60]);
+        assert_eq!(doubled.get(1), Some(40));
+
+        let m: MultiRel<usize, usize> = MultiRel::from_pairs(4, [(2, 7), (0, 5), (2, 8), (0, 6)]);
+        let c: MultiRel<usize, usize> = (&m).map(|x| x + 1).collect();
+        assert_eq!(drive_all(&c), vec![(0, 6), (0, 7), (2, 8), (2, 9)]);
+        assert!(!c.member(1) && !c.member(3) && c.member(2));
+    }
+
+    #[test]
+    #[should_panic(expected = "missing key 1")]
+    fn collect_vecrel_rejects_holes() {
+        let m: MultiRel<usize, i64> = MultiRel::from_pairs(3, [(0, 1), (2, 3)]);
+        let _: VecRel<usize, i64> = (&m).collect();
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate key 0")]
+    fn collect_vecrel_rejects_duplicates() {
+        let m: MultiRel<usize, i64> = MultiRel::from_pairs(1, [(0, 1), (0, 2)]);
+        let _: VecRel<usize, i64> = (&m).collect();
+    }
+
+    #[test]
+    fn window_preceding_frame() {
+        let v: VecRel<usize, (usize, i64)> =
+            VecRel::from_pairs(4, [(0, (0, 5)), (1, (0, 2)), (2, (0, 9)), (3, (1, 4))]);
+        let w = (&v)
+            .key_by(|(p, _)| p)
+            .window(preceding(0, |a: i64, (_, x)| a.max(x)), |(_, x)| x, |a: &i64, b: &i64| a.cmp(b));
+        let mut got: Vec<(usize, i64, i64)> = Vec::new();
+        w.drive(|p, ((_, x), s)| got.push((p, x, s)));
+        got.sort();
+        assert_eq!(got, vec![(0, 2, 0), (0, 5, 2), (0, 9, 5), (1, 4, 0)]);
+    }
+
+    #[test]
     fn window_ranks_within_partition() {
         let part: VecRel<usize, usize> =
             VecRel::from_pairs(5, [(0, 0), (1, 0), (2, 0), (3, 0), (4, 1)]);
