@@ -1,4 +1,4 @@
-use crate::db::Db;
+use crate::db::{consts, Db, Weapon};
 use crate::info::AmmoDef;
 use crate::mobj::{self, Decision, Mobj};
 use crate::physics::{clip_moves, hitscan, line_rows, locate, opening, visible, LineRow, Shot};
@@ -8,6 +8,7 @@ use crate::world::{self, Mover};
 use prela::engine::*;
 
 const ML_SOUNDBLOCK: i64 = 64;
+const PLAYER1_START: i64 = 1;
 
 // The whole game state; each tic builds a new one.
 pub struct State {
@@ -28,12 +29,15 @@ fn with_sector(db: &Db, players: &VecRel<usize, Player>) -> VecRel<usize, Player
 }
 
 // Starting state: player at the start thing, standing on its sector floor.
-pub fn initial(db: &Db, sectors: VecRel<usize, Sector>) -> State {
-    let pistol = db.t.weapons.get(crate::info::WP_PISTOL).unwrap().ready;
+pub fn initial(db: &Db) -> State {
+    let sectors: VecRel<usize, Sector> = (&db.sectors).map(|s: Sector| s).collect();
+    let k = consts(db);
     let start = (&db.things)
-        .filt(|t: Thing| t.kind == 1)
-        .map(move |t: Thing| Player::new(t.x, t.y, 0.0, t.angle.to_radians(), 0, pistol))
-        .key_by(|_| 0usize)
+        .filt(|t: Thing| t.kind == PLAYER1_START)
+        .key_by(move |_| k.start_weapon)
+        .and(&db.t.weapons)
+        .map(move |(t, w): (Thing, Weapon)| Player::new(t.x, t.y, t.angle.to_radians(), w.ready, k))
+        .key_by(|_| PLAYER)
         .collect();
     let player = with_sector(db, &start);
     let player = (&player)
@@ -60,12 +64,17 @@ pub fn place(db: &Db, s: State, x: f64, y: f64, ang: f64) -> State {
 
 // One game tic: old state + input -> new state.
 pub fn tic(db: &Db, s: &State, inp: Input) -> State {
+    // Dead or finished, and use freshly pressed: restart the level.
+    let restart = (&s.player).filt(move |p: Player| (p.dead || p.exited) && inp.use_ && !p.usedown).fold_flat(false, |_, _| true);
+    if restart {
+        return initial(db);
+    }
     let t = s.tic;
     let lines = line_rows(db, &s.sectors);
     let bodies = mobj::bodies(db, &s.player, &s.mobjs);
 
     // Player movement: apply input, try candidate moves, keep the first that fits.
-    let moved = player::moved(&s.player, inp);
+    let moved = player::moved(db, &s.player, inp);
     let walked = player::walk(db, &moved, &clip_moves(db, &s.sectors, &lines, &bodies, &player::cands(db, &moved)));
     let walked = with_sector(db, &walked);
 
@@ -105,16 +114,16 @@ pub fn tic(db: &Db, s: &State, inp: Input) -> State {
         .collect();
     // Monsters: advance animation, check sight, decide, then move.
     let advanced = mobj::advance(db, &s.mobjs);
-    let seen = visible(&lines, &mobj::sight_pairs(&advanced, &armed));
+    let seen = visible(&lines, &mobj::sight_pairs(db, &advanced, &armed));
     let decided = mobj::think(db, &advanced, &seen, &heard, &armed, t);
     let bodies = mobj::bodies(db, &armed, &(&decided).map(|d: Decision| d.m).collect());
     let clips = clip_moves(db, &sectors, &lines, &bodies, &mobj::move_cands(db, &decided));
     let moved = mobj::apply_moves(db, &decided, &clips, &bodies);
 
     // All bullets, their hits, and the resulting damage, deaths, drops and puffs.
-    let shots: HashIdx<usize, Shot> = (&player_shots).union(&mobj::monster_shots(&moved, t)).collect();
-    let impacts = hitscan(&lines, &bodies, &shots);
-    let dmg = mobj::damage(&impacts, &moved, &bodies, t);
+    let shots: HashIdx<usize, Shot> = (&player_shots).union(&mobj::monster_shots(db, &moved, t)).collect();
+    let impacts = hitscan(db, &lines, &bodies, &shots);
+    let dmg = mobj::damage(db, &impacts, &moved, &bodies, t);
     let wounded = mobj::wound(db, &moved, &dmg, t);
     let dropped = mobj::drops(db, &moved, &wounded, t);
     let fx = mobj::effects(db, &impacts, &wounded, &armed, t);

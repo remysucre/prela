@@ -36,15 +36,14 @@ fn main() {
     let wad = std::env::var("DOOM_WAD").unwrap_or("../data/doom/freedoom-0.13.0/freedoom1.wad".into());
     let t0 = Instant::now();
     // Load the WAD into relations and build the starting state.
-    let (db, sectors) = Db::new(wad::Game::load(&wad, "E1M1"));
-    let fresh = |sectors: &VecRel<usize, wad::Sector>| tic::initial(&db, sectors.map(|s| s).collect());
-    let mut state = fresh(&sectors);
+    let db = Db::new(wad::Game::load(&wad, "E1M1"));
+    let mut state = tic::initial(&db);
     // --at x y angle: start somewhere else.
     if let Some(i) = args.iter().position(|a| a == "--at") {
         let v: Vec<f64> = args[i + 1..i + 4].iter().map(|a| a.parse().unwrap()).collect();
         state = tic::place(&db, state, v[0], v[1], v[2].to_radians());
     }
-    eprintln!("loaded in {:?}, {} mobjs, start {:?}", t0.elapsed(), state.mobjs.idx.len(), render::pose(player(&state)));
+    eprintln!("loaded in {:?}, {} mobjs, start {:?}", t0.elapsed(), state.mobjs.idx.len(), render::pose(player(&state), db::consts(&db)));
     let mut buf = vec![0u32; W * H];
 
     // --shot out.ppm SCRIPT: run one tic per script letter, render one frame, write it, exit.
@@ -79,5 +78,5 @@ fn main() {
     }
 
     // Otherwise open the window and play.
-    app::run(&db, &sectors, state);
+    app::run(&db, state);
 }

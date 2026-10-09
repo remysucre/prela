@@ -1,9 +1,7 @@
 use crate::db::Db;
-use crate::player::{Input, Player};
+use crate::player::Input;
 use crate::render::{self, H, W};
 use crate::tic::{self, State};
-use crate::wad::Sector;
-use prela::engine::*;
 use std::collections::HashSet;
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -30,7 +28,6 @@ struct Stats {
 // Window, input state, and the current game state.
 struct App<'a> {
     db: &'a Db,
-    sectors: &'a VecRel<usize, Sector>,
     state: State,
     buf: Vec<u32>,
     window: Option<Rc<Window>>,
@@ -80,21 +77,12 @@ impl App<'_> {
         inp
     }
 
-    fn player(&self) -> Player {
-        self.state.player.get(0).unwrap()
-    }
-
-    // Runs as many 35 Hz tics as are due; use after death or exit restarts the level.
+    // Runs as many 35 Hz tics as are due.
     fn step(&mut self) {
         while Instant::now() >= self.next {
             let inp = self.input();
             let t = Instant::now();
-            let p = self.player();
-            self.state = if (p.dead || p.exited) && inp.use_ && !p.usedown {
-                tic::initial(self.db, self.sectors.map(|s| s).collect())
-            } else {
-                tic::tic(self.db, &self.state, inp)
-            };
+            self.state = tic::tic(self.db, &self.state, inp);
             self.stats.tic_time += t.elapsed();
             self.stats.tics += 1;
             self.next += TIC;
@@ -208,11 +196,10 @@ impl ApplicationHandler for App<'_> {
 }
 
 // Opens the window and runs the event loop.
-pub fn run(db: &Db, sectors: &VecRel<usize, Sector>, state: State) {
+pub fn run(db: &Db, state: State) {
     let sensitivity = std::env::var("DOOM_MOUSE").ok().and_then(|s| s.parse().ok()).unwrap_or(0.003);
     let mut app = App {
         db,
-        sectors,
         state,
         buf: vec![0; W * H],
         window: None,

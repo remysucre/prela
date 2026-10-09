@@ -27,3 +27,16 @@ where
         .flat_map(|a: Option<(T, Rule<O>)>| a.map(|(t, r)| (t, r.out)))
         .collect()
 }
+
+// Decision table: (key, facts) -> the best matching rule's output, for every combination of `bits` fact bits.
+pub fn decisions<O: Copy + 'static>(rules: &MultiRel<usize, Rule<O>>, bits: u32) -> HashIdx<(usize, usize), O> {
+    rules
+        .cross(Universe::<usize>::new(1 << bits))
+        .filt(|(r, f): (Rule<O>, usize)| f as u32 & r.mask == r.want)
+        .fold(None, |a: Option<Rule<O>>, (r, _): (Rule<O>, usize)| match a {
+            Some(b) if b.prio <= r.prio => Some(b),
+            _ => Some(r),
+        })
+        .flat_map(|a: Option<Rule<O>>| a.map(|r| r.out))
+        .collect()
+}

@@ -1,4 +1,5 @@
-use crate::info::{self, Action, ActOut, AiOut, AmmoDef, ChaseDir, FaceOut, NumberSlot, PickupDef, Rule, Slide, Special, StepOut, WOut, G_DEATH, G_MELEE, G_MISSILE, G_PAIN, G_SEE, G_SPAWN};
+use crate::info::{self, Action, ActOut, AiOut, AmmoDef, ArmorClass, Consts, ChaseDir, FaceOut, NumberSlot, PickupDef, Rule, Slide, Special, StepOut, WOut, G_DEATH, G_MELEE, G_MISSILE, G_PAIN, G_SEE, G_SPAWN};
+use crate::rules::decisions;
 use crate::wad::{Game, Linedef, Node, Sector, Seg, Sidedef, Thing, NONE};
 use prela::engine::*;
 use std::collections::HashMap;
@@ -29,6 +30,7 @@ pub struct Info {
     pub height: f64,
     pub health: i32,
     pub painchance: i32,
+    pub damage: i32,
     pub flags: u32,
     pub drop: usize,
 }
@@ -41,6 +43,11 @@ pub struct Weapon {
     pub ready: usize,
     pub attack: usize,
     pub flash: usize,
+    pub flash_tics: i32,
+    pub damage: i32,
+    pub damage_roll: i32,
+    pub range: f64,
+    pub spread_div: f64,
 }
 
 // All the game-rule tables from info.rs, loaded as Prela relations.
@@ -59,18 +66,25 @@ pub struct Tables {
     pub faces: HashIdx<(u8, usize, usize), usize>,
     pub info_goto: HashIdx<(usize, u8), usize>,
     pub ai_rules: MultiRel<usize, Rule<AiOut>>,
-    pub weapon_rules: MultiRel<usize, Rule<WOut>>,
+    pub weapon_choice: HashIdx<(usize, usize), WOut>,
     pub specials: HashIdx<i64, Special>,
     pub activations: HashIdx<usize, ActOut>,
     pub mover_rules: MultiRel<usize, Rule<StepOut>>,
     pub pickups: HashIdx<usize, PickupDef>,
     pub ammo_defs: VecRel<usize, AmmoDef>,
     pub sector_damage: HashIdx<i64, i32>,
+    pub armor_classes: VecRel<usize, ArmorClass>,
+    pub consts: VecRel<usize, Consts>,
     pub chase_dirs: VecRel<usize, ChaseDir>,
     pub slides: VecRel<usize, Slide>,
     pub puff: usize,
     pub blood: usize,
     pub ball: usize,
+}
+
+// The constants row, read once at the top of a function (like SQLDoom's doom_const()).
+pub fn consts(db: &Db) -> Consts {
+    db.t.consts.get(0).unwrap()
 }
 
 // Packs (sprite, frame, rotation) into one lookup key for sprite images.
@@ -119,6 +133,7 @@ fn tables(gfx: &crate::wad::Graphics) -> Tables {
                 height: m.height,
                 health: m.health,
                 painchance: m.painchance,
+                damage: m.damage,
                 flags: m.flags,
                 drop: by_ednum.get(&m.drop).copied().unwrap_or(NONE),
             })
@@ -146,12 +161,25 @@ fn tables(gfx: &crate::wad::Graphics) -> Tables {
     }
     let sprite_frames = VecRel::<usize, (u64, (usize, bool))>::new(frames).key_by(|(k, _)| k).map(|(_, v)| v).collect();
     // Weapons, with state names resolved.
-    let weapons = VecRel::new(
+    let weapons: VecRel<usize, Weapon> = VecRel::new(
         info::weapons()
             .iter()
-            .map(|w| Weapon { ammo: w.ammo, per_shot: w.per_shot, ready: id(w.ready), attack: id(w.attack), flash: id(w.flash) })
+            .map(|w| Weapon {
+                ammo: w.ammo,
+                per_shot: w.per_shot,
+                ready: id(w.ready),
+                attack: id(w.attack),
+                flash: id(w.flash),
+                flash_tics: 0,
+                damage: w.damage,
+                damage_roll: w.damage_roll,
+                range: w.range,
+                spread_div: w.spread_div,
+            })
             .collect(),
     );
+    // Fill in each weapon's flash duration from its flash state.
+    let weapons: VecRel<usize, Weapon> = (&weapons).and((&weapons).map(|w: Weapon| w.flash).select(&states)).map(|(w, r): (Weapon, StateRow)| Weapon { flash_tics: r.tics, ..w }).collect();
     // Status bar glyphs: digits 0-9, percent sign, three keys.
     // Status bar tables, with lump names resolved to image ids.
     let lump = |n: &str| gfx.patch_names.get(n).copied().unwrap_or(NONE);
@@ -174,7 +202,8 @@ fn tables(gfx: &crate::wad::Graphics) -> Tables {
     // Rule tables keyed by the action (or special/mover key) they apply to.
     let by_action = |rules: Vec<(Action, Rule<AiOut>)>| VecRel::<usize, (Action, Rule<AiOut>)>::new(rules).key_by(|(a, _)| a as usize).map(|(_, r)| r).collect();
     let ai_rules = by_action(info::ai_rules());
-    let weapon_rules = VecRel::<usize, (Action, Rule<WOut>)>::new(info::weapon_rules()).key_by(|(a, _)| a as usize).map(|(_, r)| r).collect();
+    let weapon_rules: MultiRel<usize, Rule<WOut>> = VecRel::<usize, (Action, Rule<WOut>)>::new(info::weapon_rules()).key_by(|(a, _)| a as usize).map(|(_, r)| r).collect();
+    let weapon_choice = decisions(&weapon_rules, 3);
     let specials = VecRel::<usize, (i64, Special)>::new(info::specials()).key_by(|(k, _)| k).map(|(_, v)| v).collect();
     let activations = VecRel::<usize, (usize, ActOut)>::new(info::activations()).key_by(|(k, _)| k).map(|(_, v)| v).collect();
     let mover_rules = VecRel::<usize, (usize, Rule<StepOut>)>::new(info::mover_rules()).key_by(|(k, _)| k).map(|(_, v)| v).collect();
@@ -196,13 +225,15 @@ fn tables(gfx: &crate::wad::Graphics) -> Tables {
         faces,
         info_goto,
         ai_rules,
-        weapon_rules,
+        weapon_choice,
         specials,
         activations,
         mover_rules,
         pickups,
         ammo_defs: VecRel::new(info::ammo_defs()),
         sector_damage,
+        armor_classes: VecRel::new(info::armor_classes()),
+        consts: VecRel::new(vec![info::consts()]),
         chase_dirs: VecRel::new(info::chase_dirs()),
         slides: VecRel::new(info::slides()),
         puff: kind("PUFF"),
@@ -259,6 +290,7 @@ pub struct Db {
     pub lines: VecRel<usize, Line>,
     pub neighbors: MultiRel<usize, usize>,
     pub tag_sectors: MultiRel<usize, usize>,
+    pub sectors: VecRel<usize, Sector>,
     pub vertices: VecRel<usize, (f64, f64)>,
     pub linedefs: VecRel<usize, Linedef>,
     pub sidedefs: VecRel<usize, Sidedef>,
@@ -280,7 +312,7 @@ pub struct Db {
 
 impl Db {
     // Builds the database from the parsed WAD. Also returns the starting sector heights (game state, not static).
-    pub fn new(g: Game) -> (Db, VecRel<usize, Sector>) {
+    pub fn new(g: Game) -> Db {
         let l = g.level;
         let n_nodes = l.nodes.len();
         let gfx = g.gfx;
@@ -296,19 +328,19 @@ impl Db {
                 })
                 .collect(),
         );
-        let ss = l.subsectors.clone();
-        // Subsector -> its segs.
-        let ss_segs = MultiRel::from_pairs(
-            ss.len(),
-            ss.iter().enumerate().flat_map(|(i, &(first, n))| (first..first + n).map(move |s| (i, s))),
-        );
-        // BSP node -> (side, child); leaves are numbered after the nodes.
-        let node_children = MultiRel::from_pairs(
-            n_nodes,
-            l.nodes.iter().enumerate().flat_map(|(i, n)| {
-                (0..2).map(move |s| (i, (s, if n.child_is_leaf[s] { n_nodes + n.child[s] } else { n.child[s] })))
-            }),
-        );
+        // Subsector -> its run of segs.
+        let ss_segs: MultiRel<usize, usize> = VecRel::<usize, (usize, usize)>::new(l.subsectors.clone())
+            .expand(|(first, n): (usize, usize)| (first, first + n))
+            .map(|(_, s): ((usize, usize), usize)| s)
+            .collect();
+        // Node -> (side, child); leaf children are numbered after the nodes.
+        let nodes: VecRel<usize, Node> = VecRel::new(l.nodes);
+        let node_children: MultiRel<usize, (usize, usize)> = (&nodes)
+            .and(Same::<usize>::new())
+            .cross(Universe::<usize>::new(2))
+            .key_by(|((_, i), _): ((Node, usize), usize)| i)
+            .map(move |((n, _), s): ((Node, usize), usize)| (s, if n.child_is_leaf[s] { n_nodes + n.child[s] } else { n.child[s] }))
+            .collect();
         let t = tables(&gfx);
         // First pass with placeholders; the derived tables below are filled in from it.
         let db = Db {
@@ -316,12 +348,13 @@ impl Db {
             lines: VecRel::new(vec![]),
             neighbors: MultiRel::from_pairs(0, []),
             tag_sectors: MultiRel::from_pairs(0, []),
+            sectors: VecRel::new(vec![]),
             vertices: VecRel::new(l.vertices),
             linedefs: VecRel::new(l.linedefs),
             sidedefs: VecRel::new(l.sidedefs),
             segs: VecRel::new(l.segs),
             ss_segs,
-            nodes: VecRel::new(l.nodes),
+            nodes,
             node_children,
             leaf_sector: MultiRel::from_pairs(0, []),
             bsp_root: n_nodes - 1,
@@ -351,7 +384,7 @@ impl Db {
             .key_by(|(s, _): (Sector, usize)| s.tag as usize)
             .map(|(_, id)| id)
             .collect();
-        (Db { leaf_sector, lines, neighbors, tag_sectors, ..db }, sectors)
+        Db { leaf_sector, lines, neighbors, tag_sectors, sectors, ..db }
     }
 
     // Joins each seg with its linedef, vertices, and front/back sidedefs.

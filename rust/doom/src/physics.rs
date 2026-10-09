@@ -1,4 +1,4 @@
-use crate::db::{Db, Line};
+use crate::db::{consts, Db, Line};
 use crate::render::point_side;
 use crate::wad::{Node, Sector, NONE};
 use prela::engine::*;
@@ -7,7 +7,6 @@ use std::hash::Hash;
 // Linedef flag bits and the max step-up height.
 pub const ML_BLOCKING: i64 = 1;
 pub const ML_BLOCKMONSTERS: i64 = 2;
-pub const STEP: f64 = 24.0;
 
 // A linedef joined with its front sector and optional back sector.
 pub type LineRow = ((Line, Sector), Option<Sector>);
@@ -128,7 +127,7 @@ fn merge(a: Clip, b: Clip) -> Clip {
 }
 
 // Can the mover stand at this candidate (height, step-up, drop-off rules)?
-fn fits(k: Clip) -> bool {
+fn fits(k: Clip, step: f64) -> bool {
     let c = k.c;
     c.stay
         || (!k.blocked
@@ -137,8 +136,8 @@ fn fits(k: Clip) -> bool {
             } else {
                 k.ceil - k.floor >= c.height
                     && k.ceil - c.z >= c.height
-                    && k.floor - c.z <= STEP
-                    && !(c.monster && c.z - k.floor > STEP)
+                    && k.floor - c.z <= step
+                    && !(c.monster && c.z - k.floor > step)
             })
 }
 
@@ -168,6 +167,7 @@ pub fn clip_moves(
     bodies: &HashIdx<usize, Body>,
     cands: &HashIdx<(usize, usize), Cand>,
 ) -> HashIdx<usize, Clip> {
+    let step = consts(db).max_step;
     let pts: HashIdx<(usize, usize), (f64, f64)> = cands.map(|c: Cand| (c.x, c.y)).collect();
     // Start from the floor/ceiling of the sector the candidate lands in.
     let base = locate(db, &pts)
@@ -196,7 +196,7 @@ pub fn clip_moves(
     base.union(walls)
         .union(things)
         .fold(init, merge)
-        .filt(fits)
+        .filt(move |k: Clip| fits(k, step))
         .key_by(|k: Clip| k.c.who)
         .fold(None, |a: Option<Clip>, k: Clip| match a {
             Some(a) if a.c.idx <= k.c.idx => Some(a),
@@ -254,11 +254,11 @@ pub struct Impact {
 }
 
 // Shot hitting a wall: crosses a line outside its opening.
-fn wall_impact(s: Shot, row: LineRow) -> Option<Impact> {
+fn wall_impact(s: Shot, row: LineRow, back: f64) -> Option<Impact> {
     let end = (s.x + s.range * s.ang.cos(), s.y + s.range * s.ang.sin());
     crossing(row.0.0, (s.x, s.y), end).and_then(|t| {
         let (lo, hi) = opening(row);
-        let d = (t * s.range - 4.0).max(0.0);
+        let d = (t * s.range - back).max(0.0);
         (s.z < lo || s.z > hi).then(|| Impact { shot: s, t: d, target: NONE, x: s.x + d * s.ang.cos(), y: s.y + d * s.ang.sin(), z: s.z })
     })
 }
@@ -276,10 +276,11 @@ fn body_impact(s: Shot, b: Body) -> Option<Impact> {
 }
 
 // For each shot, the nearest wall or body it hits.
-pub fn hitscan(lines: &VecRel<usize, LineRow>, bodies: &HashIdx<usize, Body>, shots: &HashIdx<usize, Shot>) -> HashIdx<usize, Impact> {
+pub fn hitscan(db: &Db, lines: &VecRel<usize, LineRow>, bodies: &HashIdx<usize, Body>, shots: &HashIdx<usize, Shot>) -> HashIdx<usize, Impact> {
+    let back = consts(db).puff_back;
     shots
         .cross(lines)
-        .flat_map(|(s, row): (Shot, LineRow)| wall_impact(s, row))
+        .flat_map(move |(s, row): (Shot, LineRow)| wall_impact(s, row, back))
         .key_by(|i: Impact| i.shot.id)
         .union(shots.cross(bodies).flat_map(|(s, b): (Shot, Body)| body_impact(s, b)).key_by(|i: Impact| i.shot.id))
         .fold(None, |a: Option<Impact>, i: Impact| match a {

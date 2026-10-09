@@ -114,6 +114,7 @@ pub struct MobjDef {
     pub height: f64,
     pub health: i32,
     pub painchance: i32,
+    pub damage: i32,
     pub flags: u32,
     pub pickup: Option<PickupDef>,
     pub drop: i64,
@@ -126,6 +127,10 @@ pub struct WeaponDef {
     pub ready: &'static str,
     pub attack: &'static str,
     pub flash: &'static str,
+    pub damage: i32,
+    pub damage_roll: i32,
+    pub range: f64,
+    pub spread_div: f64,
 }
 
 // Ammo kinds.
@@ -153,13 +158,14 @@ pub const WP_PISTOL: usize = 1;
 pub const WP_SHOTGUN: usize = 2;
 pub const WP_CHAINGUN: usize = 3;
 
-// Weapon table.
+// Weapon table: ammo use, states, and bullet damage (damage * (1..=damage_roll)), range, spread (angle units of TAU / spread_div).
 pub fn weapons() -> Vec<WeaponDef> {
+    let w = |ammo, per_shot, ready, attack, flash| WeaponDef { ammo, per_shot, ready, attack, flash, damage: 5, damage_roll: 3, range: 2048.0, spread_div: 16384.0 };
     vec![
-        WeaponDef { ammo: AM_NONE, per_shot: 0, ready: "PUNCH", attack: "PUNCH1", flash: "NULL" },
-        WeaponDef { ammo: AM_CLIP, per_shot: 1, ready: "PISTOL", attack: "PISTOL1", flash: "PISTOLFLASH" },
-        WeaponDef { ammo: AM_SHELL, per_shot: 1, ready: "SGUN", attack: "SGUN1", flash: "SGUNFLASH1" },
-        WeaponDef { ammo: AM_CLIP, per_shot: 1, ready: "CHAIN", attack: "CHAIN1", flash: "CHAINFLASH1" },
+        w(AM_NONE, 0, "PUNCH", "PUNCH1", "NULL"),
+        w(AM_CLIP, 1, "PISTOL", "PISTOL1", "PISTOLFLASH"),
+        w(AM_SHELL, 1, "SGUN", "SGUN1", "SGUNFLASH1"),
+        w(AM_CLIP, 1, "CHAIN", "CHAIN1", "CHAINFLASH1"),
     ]
 }
 
@@ -348,6 +354,7 @@ fn m(doomednum: i64, name: &'static str, spawn: &str, radius: f64, height: f64, 
         height,
         health: 1000,
         painchance: 0,
+        damage: 0,
         flags,
         pickup,
         drop: 0,
@@ -383,7 +390,7 @@ pub fn mobjs() -> Vec<MobjDef> {
         monster(3002, "SARG", "SARG", 10.0, 30.0, 150, 180, true, false, 0),
         monster(58, "SARG", "SARG", 10.0, 30.0, 150, 180, true, false, 0),
         MobjDef { death: "BEXP".into(), health: 20, ..m(2035, "BAR1", "BAR1", 10.0, 42.0, SOLID | SHOOTABLE | NOBLOOD, None) },
-        MobjDef { death: "TBALLX".into(), speed: 10.0, ..m(-1, "TBALL", "TBALL", 6.0, 8.0, MISSILE, None) },
+        MobjDef { death: "TBALLX".into(), speed: 10.0, damage: 3, ..m(-1, "TBALL", "TBALL", 6.0, 8.0, MISSILE, None) },
         m(-2, "PUFF", "PUFF", 1.0, 1.0, NOGRAV, None),
         m(-3, "BLOOD", "BLOOD", 1.0, 1.0, NOGRAV, None),
         deco(2028, "COLU", 16.0, true),
@@ -499,14 +506,32 @@ pub struct Rule<O> {
     pub out: O,
 }
 
-// Attack a monster performs this tic.
+// Attack a monster performs this tic: kind, bullets, and damage mult * (1..=modulo).
 #[derive(Clone, Copy, Debug)]
-pub enum Attack {
-    None,
-    Hitscan { pellets: usize, mult: i32, modulo: i32 },
-    Melee { mult: i32, modulo: i32 },
-    Ball,
+pub struct Attack {
+    pub kind: u8,
+    pub pellets: usize,
+    pub mult: i32,
+    pub modulo: i32,
 }
+
+// Attack kinds.
+pub const ATK_NONE: u8 = 0;
+pub const ATK_HITSCAN: u8 = 1;
+pub const ATK_MELEE: u8 = 2;
+pub const ATK_BALL: u8 = 3;
+
+pub const NO_ATTACK: Attack = Attack { kind: ATK_NONE, pellets: 0, mult: 0, modulo: 1 };
+
+fn hitscan(pellets: usize, mult: i32, modulo: i32) -> Attack {
+    Attack { kind: ATK_HITSCAN, pellets, mult, modulo }
+}
+
+fn melee(mult: i32, modulo: i32) -> Attack {
+    Attack { kind: ATK_MELEE, pellets: 0, mult, modulo }
+}
+
+const BALL: Attack = Attack { kind: ATK_BALL, ..NO_ATTACK };
 
 // Goto labels: which of the thing's states (Info.see, .pain, ...) to jump to.
 pub const G_NONE: u8 = 0;
@@ -543,7 +568,7 @@ pub const KEEP: AiOut = AiOut {
     awake: 0,
     reaction: -1,
     reaction_dec: false,
-    attack: Attack::None,
+    attack: NO_ATTACK,
     go: false,
     clear_solid: false,
     explode: false,
@@ -571,11 +596,11 @@ pub fn ai_rules() -> Vec<(Action, Rule<AiOut>)> {
         (Chase, r(2, HAS_MISSILE | REACTION0 | SEES | ROLL, AiOut { goto: G_MISSILE, face: true, ..chase })),
         (Chase, r(3, 0, AiOut { go: true, ..chase })),
         (FaceTarget, r(0, 0, AiOut { face: true, ..KEEP })),
-        (PosAttack, r(0, 0, AiOut { face: true, attack: Attack::Hitscan { pellets: 1, mult: 3, modulo: 5 }, ..KEEP })),
-        (SPosAttack, r(0, 0, AiOut { face: true, attack: Attack::Hitscan { pellets: 3, mult: 3, modulo: 5 }, ..KEEP })),
-        (TroopAttack, r(0, MELEE_RANGE, AiOut { attack: Attack::Melee { mult: 3, modulo: 8 }, ..KEEP })),
-        (TroopAttack, r(1, 0, AiOut { face: true, attack: Attack::Ball, ..KEEP })),
-        (SargAttack, r(0, MELEE_RANGE, AiOut { attack: Attack::Melee { mult: 4, modulo: 10 }, ..KEEP })),
+        (PosAttack, r(0, 0, AiOut { face: true, attack: hitscan(1, 3, 5), ..KEEP })),
+        (SPosAttack, r(0, 0, AiOut { face: true, attack: hitscan(3, 3, 5), ..KEEP })),
+        (TroopAttack, r(0, MELEE_RANGE, AiOut { attack: melee(3, 8), ..KEEP })),
+        (TroopAttack, r(1, 0, AiOut { face: true, attack: BALL, ..KEEP })),
+        (SargAttack, r(0, MELEE_RANGE, AiOut { attack: melee(4, 10), ..KEEP })),
         (Fall, r(0, 0, AiOut { clear_solid: true, ..KEEP })),
         (Explode, r(0, 0, AiOut { explode: true, ..KEEP })),
         (Hurt, r(0, KILLED, AiOut { goto: G_DEATH, clear_shootable: true, reset: true, ..KEEP })),
@@ -867,4 +892,96 @@ pub fn hud_lumps() -> Vec<String> {
     v.extend(hud_keys().into_iter().map(|(_, _, n)| n.to_string()));
     v.extend(faces().into_iter().map(|(_, n)| n));
     v
+}
+
+// Armor classes, indexed by class: the share of damage armor absorbs (num / den).
+#[derive(Clone, Copy, Debug)]
+pub struct ArmorClass {
+    pub num: i32,
+    pub den: i32,
+}
+
+// No armor, green (1/3), blue (1/2).
+pub fn armor_classes() -> Vec<ArmorClass> {
+    vec![ArmorClass { num: 0, den: 1 }, ArmorClass { num: 1, den: 3 }, ArmorClass { num: 1, den: 2 }]
+}
+
+// Doom's #defines and tuning numbers, as one table row (SQLDoom's doom_constants); code reads it with `consts(db)`.
+#[derive(Clone, Copy, Debug)]
+pub struct Consts {
+    pub friction: f64,
+    pub walk_thrust: f64,
+    pub run_thrust: f64,
+    pub strafe_scale: f64,
+    pub turn_walk: f64,
+    pub turn_run: f64,
+    pub gravity: f64,
+    pub player_radius: f64,
+    pub player_height: f64,
+    pub view_height: f64,
+    pub dead_view_height: f64,
+    pub max_step: f64,
+    pub use_range: f64,
+    pub door_gap: f64,
+    pub melee_range: f64,
+    pub close_range: f64,
+    pub missile_near: f64,
+    pub missile_no_melee: f64,
+    pub missile_far: f64,
+    pub sight_z: f64,
+    pub shot_z: f64,
+    pub attack_range: f64,
+    pub hitscan_spread_div: f64,
+    pub puff_back: f64,
+    pub blast_radius: f64,
+    pub missile_reach: f64,
+    pub missile_z_reach: f64,
+    pub pickup_z_reach: f64,
+    pub bonus_add: i32,
+    pub damage_cap: i32,
+    pub floor_damage_period: u64,
+    pub reaction: i32,
+    pub start_health: i32,
+    pub start_owned: u8,
+    pub start_weapon: usize,
+}
+
+pub fn consts() -> Consts {
+    Consts {
+        friction: 0.90625,
+        walk_thrust: 0.78125,
+        run_thrust: 1.5625,
+        strafe_scale: 0.96,
+        turn_walk: 0.0614,
+        turn_run: 0.1227,
+        gravity: 1.0,
+        player_radius: 16.0,
+        player_height: 56.0,
+        view_height: 41.0,
+        dead_view_height: 8.0,
+        max_step: 24.0,
+        use_range: 64.0,
+        door_gap: 4.0,
+        melee_range: 60.0,
+        close_range: 64.0,
+        missile_near: 64.0,
+        missile_no_melee: 128.0,
+        missile_far: 200.0,
+        sight_z: 40.0,
+        shot_z: 32.0,
+        attack_range: 2048.0,
+        hitscan_spread_div: 4096.0,
+        puff_back: 4.0,
+        blast_radius: 128.0,
+        missile_reach: 6.0,
+        missile_z_reach: 8.0,
+        pickup_z_reach: 16.0,
+        bonus_add: 6,
+        damage_cap: 100,
+        floor_damage_period: 32,
+        reaction: 8,
+        start_health: 100,
+        start_owned: 0b11,
+        start_weapon: WP_PISTOL,
+    }
 }

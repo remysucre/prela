@@ -1,5 +1,9 @@
 use std::collections::HashMap;
 
+// Thing flags in the map: appears on skill 3 (medium), multiplayer only.
+pub const MTF_MEDIUM: i64 = 2;
+pub const MTF_MULTI: i64 = 16;
+
 // Texel value for "no pixel"; NONE means "no id".
 pub const TRANSPARENT: u16 = u16::MAX;
 pub const NONE: usize = usize::MAX;

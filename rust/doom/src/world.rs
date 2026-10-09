@@ -1,4 +1,4 @@
-use crate::db::{Db, Line};
+use crate::db::{consts, Db, Line};
 use crate::info::{act_key, mfact, step_key, ActOut, Special, StepOut, MV_EXIT, MV_IDLE};
 use crate::physics::{crossing, side_of, LineRow};
 use crate::player::Player;
@@ -7,8 +7,6 @@ use crate::wad::Sector;
 use prela::engine::*;
 
 // How far the player can reach to press a switch or open a door.
-const USERANGE: f64 = 64.0;
-
 #[derive(Clone, Copy, Debug)]
 // State of a door/lift/floor in one sector.
 pub struct Mover {
@@ -25,7 +23,7 @@ pub struct Mover {
 pub const IDLE: Mover = Mover { kind: MV_IDLE, plane: 0, dir: 0, speed: 0.0, up: 0.0, down: 0.0, wait: 0 };
 
 // Start (or reverse) a mover from a triggered special; sets target heights.
-fn activate(m: Mover, a: Special, (lc, lf): (f64, f64), s: Sector, o: ActOut) -> Mover {
+fn activate(m: Mover, a: Special, (lc, lf): (f64, f64), s: Sector, o: ActOut, gap: f64) -> Mover {
     let lowest = lf.min(s.floor);
     Mover {
         kind: o.kind,
@@ -33,7 +31,7 @@ fn activate(m: Mover, a: Special, (lc, lf): (f64, f64), s: Sector, o: ActOut) ->
         wait: 0,
         speed: if o.init { a.speed } else { m.speed },
         plane: if o.init { o.plane } else { m.plane },
-        up: if o.init { o.up_lc * (lc - 4.0) + o.up_floor * s.floor } else { m.up },
+        up: if o.init { o.up_lc * (lc - gap) + o.up_floor * s.floor } else { m.up },
         down: if o.init { o.down_floor * s.floor + o.down_lowest * lowest } else { m.down },
     }
 }
@@ -73,8 +71,8 @@ struct Hit {
 }
 
 // Test the use ray against one line.
-fn use_hit(p: Player, (((l, f), b), sp): (LineRow, Option<Special>)) -> Option<Hit> {
-    let reach = (p.x + USERANGE * p.ang.cos(), p.y + USERANGE * p.ang.sin());
+fn use_hit(p: Player, (((l, f), b), sp): (LineRow, Option<Special>), range: f64) -> Option<Hit> {
+    let reach = (p.x + range * p.ang.cos(), p.y + range * p.ang.sin());
     let usable = sp.is_some_and(|sp| sp.use_ && p.keys & sp.key == sp.key);
     crossing(l, (p.x, p.y), reach).map(|t| Hit {
         t,
@@ -86,6 +84,7 @@ fn use_hit(p: Player, (((l, f), b), sp): (LineRow, Option<Special>)) -> Option<H
 
 // Specials triggered this tic: walk-over lines crossed and use lines pressed.
 pub fn line_events(db: &Db, lines: &VecRel<usize, LineRow>, old: &VecRel<usize, Player>, new: &VecRel<usize, Player>, use_: bool) -> MultiRel<usize, (Line, Special)> {
+    let range = consts(db).use_range;
     // Lines with a walk-over special.
     let walkable: MultiRel<usize, (Line, Special)> = (&db.lines)
         .key_by(|l: Line| l.special)
@@ -108,7 +107,7 @@ pub fn line_events(db: &Db, lines: &VecRel<usize, LineRow>, old: &VecRel<usize, 
         .and(old)
         .filt(move |(p, o): (Player, Player)| use_ && !o.usedown && !p.dead)
         .cross(with_special)
-        .flat_map(|((p, _), row): ((Player, Player), (LineRow, Option<Special>))| use_hit(p, row))
+        .flat_map(move |((p, _), row): ((Player, Player), (LineRow, Option<Special>))| use_hit(p, row, range))
         .filt(|h: Hit| h.special || h.closed)
         .key_by(|_| 0usize)
         .fold(None, |a: Option<Hit>, h: Hit| match a {
@@ -135,6 +134,7 @@ pub fn movers(
     events: &MultiRel<usize, (Line, Special)>,
     occupied: &Fold<usize, bool>,
 ) -> (VecRel<usize, Sector>, VecRel<usize, Mover>) {
+    let gap = consts(db).door_gap;
     // Which sectors each event activates (by tag, or the line's back sector).
     let acts = events
         .filt(|(_, sp): (Line, Special)| sp.tagged)
@@ -160,7 +160,7 @@ pub fn movers(
         .key_by(|(_, m, a, _, _): (usize, Mover, Option<Special>, (f64, f64), Sector)| a.map_or(usize::MAX, |a| act_key(m.kind, m.dir, a.act)))
         .and((&db.t.activations).opt())
         .map(|((id, m, a, low, s), o): ((usize, Mover, Option<Special>, (f64, f64), Sector), Option<ActOut>)| {
-            (id, a.zip(o).map_or(m, |(a, o)| activate(m, a, low, s, o)))
+            (id, a.zip(o).map_or(m, |(a, o)| activate(m, a, low, s, o, gap)))
         })
         .key_by(|(id, _)| id)
         .map(|(_, m)| m)

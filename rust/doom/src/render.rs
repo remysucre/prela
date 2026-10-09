@@ -1,10 +1,10 @@
-use crate::db::{frame_key, Db, StateRow, Tex, Wall, Weapon};
-use crate::info::{ffact, AmmoDef, FaceOut, NumberSlot, FONT_GREY, FONT_YELLOW, STAT_AMMO, STAT_AMMO0, STAT_ARMOR, STAT_HEALTH, STAT_MAX0};
+use crate::db::{consts, frame_key, Db, StateRow, Tex, Wall, Weapon};
+use crate::info::{ffact, AmmoDef, Consts, FaceOut, NumberSlot, FONT_GREY, FONT_YELLOW, STAT_AMMO, STAT_AMMO0, STAT_ARMOR, STAT_HEALTH, STAT_MAX0};
 use crate::physics::rnd;
 use crate::player::PLAYER;
 use crate::rules::{bit, matching};
 use crate::mobj::Mobj;
-use crate::player::{Player, VIEW};
+use crate::player::Player;
 use crate::tic::State;
 use crate::wad::{Node, Sector, NONE, TRANSPARENT};
 use std::f64::consts::{PI, TAU};
@@ -145,29 +145,17 @@ fn panel(pose: Pose, x: usize, t: f64, depth: f64, row_: PanelRow) -> Panel {
 // A wall with its front/back sectors and upper/middle/lower textures.
 type PanelRow = (Wall, Sector, Option<Sector>, Option<Tex>, Option<Tex>, Option<Tex>);
 
-// Split a panel's still-visible rows (top..bot) into ceiling/upper/middle/lower/floor spans.
-fn spans(pose: Pose, sky_flat: usize, (p, (top, bot)): (Panel, (i32, i32))) -> impl Iterator<Item = Span> {
-    let mut out = [None; 5];
-    let sp = |part, y0: i32, y1: i32| (y0 < y1).then_some(Span { p, part, y0, y1 });
-    if p.front.ceil > pose.z {
-        out[0] = sp(Part::Ceiling, top, bot.min(p.yc));
+// The rows of a panel's still-visible stretch (top..bot) that belong to one part, if any.
+fn span(pose: Pose, sky_flat: usize, (p, (top, bot)): (Panel, (i32, i32)), part: Part) -> Option<Span> {
+    let sp = |y0: i32, y1: i32| (y0 < y1).then_some(Span { p, part, y0, y1 });
+    match (part, p.back) {
+        (Part::Ceiling, _) if p.front.ceil > pose.z => sp(top, bot.min(p.yc)),
+        (Part::Floor, _) if p.front.floor < pose.z => sp(top.max(p.yf), bot),
+        (Part::Middle, None) => sp(top.max(p.yc), bot.min(p.yf)),
+        (Part::Upper, Some(b)) if b.ceil < p.front.ceil && !(p.front.ceilpic == sky_flat && b.ceilpic == sky_flat) => sp(top.max(p.yc), bot.min(p.ybc)),
+        (Part::Lower, Some(b)) if b.floor > p.front.floor => sp(top.max(p.ybf), bot.min(p.yf)),
+        _ => None,
     }
-    if p.front.floor < pose.z {
-        out[4] = sp(Part::Floor, top.max(p.yf), bot);
-    }
-    match p.back {
-        None => out[2] = sp(Part::Middle, top.max(p.yc), bot.min(p.yf)),
-        Some(b) => {
-            let both_sky = p.front.ceilpic == sky_flat && b.ceilpic == sky_flat;
-            if b.ceil < p.front.ceil && !both_sky {
-                out[1] = sp(Part::Upper, top.max(p.yc), bot.min(p.ybc));
-            }
-            if b.floor > p.front.floor {
-                out[3] = sp(Part::Lower, top.max(p.ybf), bot.min(p.yf));
-            }
-        }
-    }
-    out.into_iter().flatten()
 }
 
 // Sector light level -> colormap index (higher = darker).
@@ -222,8 +210,8 @@ fn frag(pose: Pose, sky: usize, sky_flat: usize, s: Span, y: i32) -> Option<Frag
 }
 
 // Camera at the player's eye height.
-pub fn pose(p: Player) -> Pose {
-    Pose { x: p.x, y: p.y, z: p.z + if p.dead { 8.0 } else { VIEW }, ang: p.ang }
+pub fn pose(p: Player, k: Consts) -> Pose {
+    Pose { x: p.x, y: p.y, z: p.z + if p.dead { k.dead_view_height } else { k.view_height }, ang: p.ang }
 }
 
 // Which of 8 sprite rotations faces the camera.
@@ -232,8 +220,25 @@ fn rotation(pose: Pose, m: Mobj) -> usize {
     (((a - m.ang + PI * 9.0 / 8.0).rem_euclid(TAU) / (PI / 4.0)) as usize).min(7) + 1
 }
 
-// Fragments for a scaled thing sprite.
-fn sprite_frags(pose: Pose, m: Mobj, row: StateRow, (gfx, flip): (usize, bool), t: Tex, sec: Sector) -> impl Iterator<Item = Frag> {
+// A thing sprite projected to the screen: image placement, scale, light, and the screen rectangle it covers.
+#[derive(Clone, Copy)]
+struct Billboard {
+    gfx: usize,
+    flip: bool,
+    t: Tex,
+    x0: f64,
+    y0: f64,
+    scale: f64,
+    depth: f32,
+    cm: i64,
+    xa: i32,
+    xb: i32,
+    ya: i32,
+    yb: i32,
+}
+
+// Project a thing sprite.
+fn billboard(pose: Pose, m: Mobj, row: StateRow, (gfx, flip): (usize, bool), t: Tex, sec: Sector) -> Billboard {
     let (f, l) = pose.view(m.x, m.y);
     let scale = FOCAL / f.max(NEAR);
     let x0 = CX - l * scale - t.left as f64 * scale;
@@ -245,25 +250,44 @@ fn sprite_frags(pose: Pose, m: Mobj, row: StateRow, (gfx, flip): (usize, bool), 
     };
     let (xa, xb) = span(x0, t.w, W);
     let (ya, yb) = span(y0, t.h, VIEW_H);
-    (xa..xb).flat_map(move |x| {
-        (ya..yb).map(move |y| {
-            let u = (((x as f64 + 0.5 - x0) / scale) as i64).clamp(0, t.w as i64 - 1);
-            let v = (((y as f64 + 0.5 - y0) / scale) as i64).clamp(0, t.h as i64 - 1);
-            let u = if flip { t.w as i64 - 1 - u } else { u };
-            Frag { pix: y as usize * W + x as usize, gfx, u, v, cm, depth: f as f32 }
-        })
-    })
+    Billboard { gfx, flip, t, x0, y0, scale, depth: f as f32, cm, xa, xb, ya, yb }
 }
 
-// Fragments for an unscaled screen-space graphic (weapon, HUD).
-fn patch_frags(x0: f64, y0: f64, gfx: usize, t: Tex, cm: i64, depth: f32) -> impl Iterator<Item = Frag> {
-    let x0 = (x0 - t.left as f64) as i64;
-    let y0 = (y0 - t.top as f64) as i64;
-    (0..t.w as i64).flat_map(move |u| {
-        (0..t.h as i64)
-            .filter(move |v| (0..W as i64).contains(&(x0 + u)) && (0..H as i64).contains(&(y0 + v)))
-            .map(move |v| Frag { pix: (y0 + v) as usize * W + (x0 + u) as usize, gfx, u, v, cm, depth })
-    })
+// The sprite texel at screen pixel (x, y).
+fn sprite_frag(b: Billboard, x: i32, y: i32) -> Frag {
+    let t = b.t;
+    let u = (((x as f64 + 0.5 - b.x0) / b.scale) as i64).clamp(0, t.w as i64 - 1);
+    let v = (((y as f64 + 0.5 - b.y0) / b.scale) as i64).clamp(0, t.h as i64 - 1);
+    let u = if b.flip { t.w as i64 - 1 - u } else { u };
+    Frag { pix: y as usize * W + x as usize, gfx: b.gfx, u, v, cm: b.cm, depth: b.depth }
+}
+
+// An unscaled screen-space graphic (weapon, HUD): top-left corner after offsets, light, depth.
+#[derive(Clone, Copy)]
+struct Stamp {
+    gfx: usize,
+    t: Tex,
+    x0: i64,
+    y0: i64,
+    cm: i64,
+    depth: f32,
+}
+
+fn stamp(x0: f64, y0: f64, gfx: usize, t: Tex, cm: i64, depth: f32) -> Stamp {
+    Stamp { gfx, t, x0: (x0 - t.left as f64) as i64, y0: (y0 - t.top as f64) as i64, cm, depth }
+}
+
+// Image columns / rows of a stamp that land on screen.
+fn stamp_cols(s: Stamp) -> (i64, i64) {
+    ((-s.x0).max(0), (s.t.w as i64).min(W as i64 - s.x0))
+}
+
+fn stamp_rows(s: Stamp) -> (i64, i64) {
+    ((-s.y0).max(0), (s.t.h as i64).min(H as i64 - s.y0))
+}
+
+fn stamp_frag(s: Stamp, u: i64, v: i64) -> Frag {
+    Frag { pix: (s.y0 + v) as usize * W + (s.x0 + u) as usize, gfx: s.gfx, u, v, cm: s.cm, depth: s.depth }
 }
 
 // Facts the face rules match on.
@@ -292,7 +316,8 @@ fn tint(p: Player) -> usize {
 // Draw one frame into `out` as a single query.
 pub fn render(db: &Db, s: &State, out: &mut [u32]) {
     let sectors = &s.sectors;
-    let pose = (&s.player).fold_flat(Pose { x: 0.0, y: 0.0, z: 0.0, ang: 0.0 }, |_, p: Player| pose(p));
+    let k = consts(db);
+    let pose = (&s.player).fold_flat(Pose { x: 0.0, y: 0.0, z: 0.0, ang: 0.0 }, |_, p: Player| pose(p, k));
     let (sky, sky_flat) = (db.sky, db.sky_flat);
     let tex_of = |f: fn(Wall) -> usize| (&db.walls).map(f).select(&db.tex).opt();
     // Every wall joined with its sectors and textures.
@@ -318,8 +343,11 @@ pub fn render(db: &Db, s: &State, out: &mut [u32]) {
             |a: &f64, b: &f64| a.total_cmp(b),
         );
     // Wall, floor, ceiling and sky fragments.
+    // Every column splits into these pieces, top to bottom.
+    let parts: VecRel<usize, Part> = VecRel::new(vec![Part::Ceiling, Part::Upper, Part::Middle, Part::Lower, Part::Floor]);
     let world = (&panels)
-        .flat_map(move |pc| spans(pose, sky_flat, pc))
+        .cross(&parts)
+        .flat_map(move |(pc, part): ((Panel, (i32, i32)), Part)| span(pose, sky_flat, pc, part))
         .expand(|s: Span| (s.y0, s.y1))
         .flat_map(move |(s, y): (Span, i32)| frag(pose, sky, sky_flat, s, y))
         .key_by(|f: Frag| f.pix);
@@ -336,11 +364,16 @@ pub fn render(db: &Db, s: &State, out: &mut [u32]) {
         .and(&db.tex)
         .key_by(|((m, _, _), _): ((Mobj, StateRow, (usize, bool)), Tex)| m.sector)
         .and(sectors)
-        .flat_map(move |(((m, r, g), t), sec): (((Mobj, StateRow, (usize, bool)), Tex), Sector)| sprite_frags(pose, m, r, g, t, sec))
+        .map(move |(((m, r, g), t), sec): (((Mobj, StateRow, (usize, bool)), Tex), Sector)| billboard(pose, m, r, g, t, sec))
+        .expand(|b: Billboard| (b.xa, b.xb))
+        .expand(|(b, _): (Billboard, i32)| (b.ya, b.yb))
+        .map(|((b, x), y): ((Billboard, i32), i32)| sprite_frag(b, x, y))
         .key_by(|f: Frag| f.pix);
     // Weapon and muzzle flash overlay.
     let weapon = (&s.player)
-        .flat_map(|p: Player| [(p.wstate, 0.5f32), (p.flash, 0.25f32)].into_iter().filter(|&(st, _)| st != 0).map(move |(st, d)| (p, st, d)))
+        .filt(|p: Player| p.wstate != 0)
+        .map(|p: Player| (p, p.wstate, 0.5f32))
+        .union((&s.player).filt(|p: Player| p.flash != 0).map(|p: Player| (p, p.flash, 0.25f32)))
         .key_by(|(_, st, _)| st)
         .and(&db.t.states)
         .key_by(|((_, _, _), r): ((Player, usize, f32), StateRow)| frame_key(r.sprite, r.frame, 0))
@@ -349,10 +382,13 @@ pub fn render(db: &Db, s: &State, out: &mut [u32]) {
         .and(&db.tex)
         .key_by(|((((p, _, _), _), _), _): ((((Player, usize, f32), StateRow), (usize, bool)), Tex)| p.sector)
         .and(sectors)
-        .flat_map(|(((((_, _, d), r), (g, _)), t), sec): (((((Player, usize, f32), StateRow), (usize, bool)), Tex), Sector)| {
+        .map(|(((((_, _, d), r), (g, _)), t), sec): (((((Player, usize, f32), StateRow), (usize, bool)), Tex), Sector)| {
             let cm = if r.bright { 0 } else { (light(sec.light, 0) - 23).clamp(0, 31) };
-            patch_frags(1.0, 31.5 - (100.0 - CY), g, t, cm, d)
+            stamp(1.0, 31.5 - (100.0 - CY), g, t, cm, d)
         })
+        .expand(stamp_cols)
+        .expand(|(s, _): (Stamp, i64)| stamp_rows(s))
+        .map(|((s, u), v): ((Stamp, i64), i64)| stamp_frag(s, u, v))
         .key_by(|f: Frag| f.pix);
     // Status bar: values for the number widgets.
     let player = &s.player;
@@ -428,7 +464,10 @@ pub fn render(db: &Db, s: &State, out: &mut [u32]) {
         .union(face.key_by(|_| 0usize))
         .key_by(|(g, _, _, _)| g)
         .and(&db.tex)
-        .flat_map(|((g, x, y, d), t): ((usize, f64, f64, f32), Tex)| patch_frags(x, y, g, t, 0, d))
+        .map(|((g, x, y, d), t): ((usize, f64, f64, f32), Tex)| stamp(x, y, g, t, 0, d))
+        .expand(stamp_cols)
+        .expand(|(s, _): (Stamp, i64)| stamp_rows(s))
+        .map(|((s, u), v): ((Stamp, i64), i64)| stamp_frag(s, u, v))
         .key_by(|f: Frag| f.pix);
     // Composite: texel -> palette index, drop transparent, apply light, keep nearest per pixel, apply tint, -> RGB.
     let image = world
