@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::ops::Range;
 
 /// Default inline capacity for the probe-index buckets.
 type SVec<T> = SmallVec<[T; 4]>;
@@ -1892,6 +1893,66 @@ where
     }
 }
 
+/// Range expansion (SQL's `generate_series`): each row `r` becomes `(r, i)` for every
+/// `i` in `f(r).0 .. f(r).1`, under the same key.
+pub struct Expand<Q, F, T> {
+    pub q: Q,
+    pub f: F,
+    _phantom: PhantomData<T>,
+}
+
+impl<Q: Query, F: Fn(Q::R) -> (T, T), T: Copy> Query for Expand<Q, F, T>
+where
+    Range<T>: Iterator<Item = T>,
+{
+    type D = Q::D;
+    type R = (Q::R, T);
+}
+impl<Q: Drive, F: Fn(Q::R) -> (T, T), T: Copy> Drive for Expand<Q, F, T>
+where
+    Range<T>: Iterator<Item = T>,
+{
+    #[inline(always)]
+    fn drive<K: FnMut(Q::D, (Q::R, T))>(&self, mut k: K) {
+        self.q.drive(|d, v| {
+            let (lo, hi) = (self.f)(v);
+            for i in lo..hi {
+                k(d, (v, i))
+            }
+        });
+    }
+}
+impl<Q: Probe, F: Fn(Q::R) -> (T, T), T: Copy> Member for Expand<Q, F, T>
+where
+    Range<T>: Iterator<Item = T>,
+{
+    #[inline(always)]
+    fn member(&self, x: Q::D) -> bool {
+        self.probe_any(x, |_| true)
+    }
+}
+impl<Q: Probe, F: Fn(Q::R) -> (T, T), T: Copy> Probe for Expand<Q, F, T>
+where
+    Range<T>: Iterator<Item = T>,
+{
+    #[inline(always)]
+    fn probe<K: FnMut((Q::R, T))>(&self, x: Q::D, mut k: K) {
+        self.q.probe(x, |v| {
+            let (lo, hi) = (self.f)(v);
+            for i in lo..hi {
+                k((v, i))
+            }
+        });
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut((Q::R, T)) -> bool>(&self, x: Q::D, mut k: K) -> bool {
+        self.q.probe_any(x, |v| {
+            let (lo, hi) = (self.f)(v);
+            (lo..hi).any(|i| k((v, i)))
+        })
+    }
+}
+
 pub struct KeyBy<Q, F, K> {
     pub q: Q,
     pub f: F,
@@ -2675,6 +2736,32 @@ pub trait QueryExt: IntoQuery + Sized {
         }
     }
 
+    /// Range expansion (SQL's `generate_series`).
+    /// For each `(x, r)`, produces `(x, (r, i))` for every `i` in `lo..hi`, where `(lo, hi) = f(r)`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use prela::engine::*;
+    ///
+    /// // a = {(0, 2), (1, 0)}: row id → length
+    /// let a: VecRel<usize, usize> = VecRel::from_pairs(2, [(0, 2), (1, 0)]);
+    /// let mut out = Vec::new();
+    /// (&a).expand(|n: usize| (0, n)).drive(|d, r| out.push((d, r)));
+    /// assert_eq!(out, vec![(0, (2, 0)), (0, (2, 1))]);
+    /// ```
+    #[inline(always)]
+    fn expand<F: Fn(ROf<Self>) -> (T, T), T: Copy>(self, f: F) -> Expand<Self::Q, F, T>
+    where
+        Range<T>: Iterator<Item = T>,
+    {
+        Expand {
+            q: self.iq(),
+            f,
+            _phantom: PhantomData,
+        }
+    }
+
     #[inline(always)]
     fn flat_map<F: Fn(ROf<Self>) -> I, I: IntoIterator>(self, f: F) -> FlatMap<Self::Q, F, I>
     where
@@ -2831,6 +2918,15 @@ mod tests {
         assert!(!(&lo).select_gt(&s).probe_any(1, |v| v < 300));
         let empty = VecRel::from_pairs(1, [(0, 3)]);
         assert!(!(&empty).select_gt(&s).member(0));
+    }
+
+    #[test]
+    fn expand_emits_each_index() {
+        let spans: VecRel<usize, (i32, i32)> = VecRel::from_pairs(3, [(0, (2, 4)), (1, (5, 5)), (2, (-1, 1))]);
+        let e = (&spans).expand(|(lo, hi): (i32, i32)| (lo, hi)).map(|(_, i)| i);
+        assert_eq!(drive_all(&e), vec![(0, 2), (0, 3), (2, -1), (2, 0)]);
+        assert!(e.member(0) && !e.member(1));
+        assert!(e.probe_any(2, |i| i == 0) && !e.probe_any(0, |i| i == 4));
     }
 
     #[test]
