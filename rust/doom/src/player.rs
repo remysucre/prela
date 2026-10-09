@@ -16,6 +16,7 @@ pub struct Input {
     pub forward: f64,
     pub strafe: f64,
     pub turn: f64,
+    pub look: f64,
     pub use_: bool,
     pub fire: bool,
     pub run: bool,
@@ -87,7 +88,7 @@ fn thrust(p: Player, inp: Input) -> Player {
     if p.dead {
         return Player { momx: p.momx * 0.90625, momy: p.momy * 0.90625, ..p };
     }
-    let ang = p.ang + inp.turn * if inp.run { 0.1227 } else { 0.0614 };
+    let ang = p.ang + inp.turn * if inp.run { 0.1227 } else { 0.0614 } + inp.look;
     let (s, c) = ang.sin_cos();
     let k = if inp.run { 1.5625 } else { 0.78125 };
     let fwd = inp.forward * k;
