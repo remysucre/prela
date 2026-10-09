@@ -230,7 +230,7 @@ impl<'a> Loader<'a> {
     }
 }
 
-/// A CSR relation over zero keys. `MultiRel` borrows `&'static` slices (in
+/// A CSR relation over zero keys. `MultiRel` can borrow `&'static` slices (in
 /// production they point into the leaked mmap); an empty slice literal is
 /// already `'static` for any element type, so probe mode allocates nothing.
 fn empty_csr<D: Dense, R: Copy + 'static>() -> MultiRel<D, R> {

@@ -1,6 +1,7 @@
 use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use regex::Regex;
 use smallvec::SmallVec;
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -107,9 +108,8 @@ impl<T: Member + ?Sized> Member for &T {
 // `Default`: 0 / 0.0 / "".)
 // `MultiRel<usize, R>` — multi-valued / partial; CSR over the dense domain:
 // row i = `v[offsets[i]..offsets[i+1]]`, empty range for a domain element
-// with no rows. The slices are `&'static` — in production they point into the
-// leaked cache mmap (zero-copy); `from_pairs` (tests, examples) leaks two small
-// Vecs to the same effect.
+// with no rows. The slices are `Cow<'static>` — in production they borrow the
+// leaked cache mmap (zero-copy); `from_pairs` and `collect` own their Vecs.
 
 pub const NO_ID: usize = usize::MAX;
 
@@ -274,8 +274,8 @@ where
 
 pub struct MultiRel<D: Dense, R: Copy + 'static> {
     pub _d: PhantomData<D>,
-    pub offsets: &'static [u32],
-    pub v: &'static [R],
+    pub offsets: Cow<'static, [u32]>,
+    pub v: Cow<'static, [R]>,
 }
 
 impl<D: Dense, R: Copy + Default> VecRel<D, R> {
@@ -295,8 +295,8 @@ impl<D: Dense, R: Copy + 'static> MultiRel<D, R> {
         assert!(!offsets.is_empty(), "CSR offsets must have length n+1");
         assert_eq!(*offsets.last().unwrap() as usize, values.len());
         MultiRel {
-            offsets,
-            v: values,
+            offsets: Cow::Borrowed(offsets),
+            v: Cow::Borrowed(values),
             _d: PhantomData,
         }
     }
@@ -308,31 +308,36 @@ impl<D: Dense, R: Copy + 'static> MultiRel<D, R> {
     }
 
     /// Build from explicit `(id, value)` pairs over the domain `0..n`;
-    /// an id may appear any number of times. Leaks the two backing Vecs
-    /// to obtain the `&'static` slices — for tests and examples only.
+    /// an id may appear any number of times. For tests and examples only.
     pub fn from_pairs(n: usize, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
-        let mut buckets: Vec<Vec<R>> = (0..n).map(|_| Vec::new()).collect();
-        for (k, v) in pairs {
-            if k < n {
-                buckets[k].push(v);
-            }
+        let pairs: Vec<(usize, R)> = pairs.into_iter().filter(|&(k, _)| k < n).collect();
+        Self::from_owned_pairs(n, pairs)
+    }
+
+    fn from_owned_pairs(n: usize, pairs: Vec<(usize, R)>) -> Self {
+        let mut offsets = vec![0u32; n + 1];
+        for &(k, _) in &pairs {
+            offsets[k + 1] += 1;
         }
-        let mut offsets = Vec::with_capacity(n + 1);
-        let mut values = Vec::new();
-        offsets.push(0u32);
-        for b in &buckets {
-            values.extend_from_slice(b);
-            offsets.push(values.len() as u32);
+        for i in 0..n {
+            offsets[i + 1] += offsets[i];
         }
+        let mut cursor: Vec<u32> = offsets[..n].to_vec();
+        let mut perm = vec![0usize; pairs.len()];
+        for (j, &(k, _)) in pairs.iter().enumerate() {
+            perm[cursor[k] as usize] = j;
+            cursor[k] += 1;
+        }
+        let values: Vec<R> = perm.iter().map(|&j| pairs[j].1).collect();
         MultiRel {
-            offsets: Vec::leak(offsets),
-            v: Vec::leak(values),
+            offsets: Cow::Owned(offsets),
+            v: Cow::Owned(values),
             _d: PhantomData,
         }
     }
 
     #[inline(always)]
-    fn row(&self, x: usize) -> &'static [R] {
+    fn row(&self, x: usize) -> &[R] {
         if x < self.offsets.len() - 1 {
             &self.v[self.offsets[x] as usize..self.offsets[x + 1] as usize]
         } else {
@@ -1114,6 +1119,48 @@ where
     }
 }
 
+pub struct ReachSet<B, E> {
+    pub base: B,
+    pub step: E,
+    pub max: usize,
+}
+
+impl<B: Query, E: Query<D = B::R, R = B::R>> Query for ReachSet<B, E>
+where
+    B::R: Eq + Hash,
+{
+    type D = B::R;
+    type R = usize;
+}
+impl<B: Drive, E: Probe<D = B::R, R = B::R>> Drive for ReachSet<B, E>
+where
+    B::R: Eq + Hash,
+{
+    fn drive<K: FnMut(B::R, usize)>(&self, mut k: K) {
+        let mut seen = HashSet::new();
+        let mut frontier = Vec::new();
+        self.base.drive(|_, x| {
+            if seen.insert(x) {
+                frontier.push(x);
+            }
+        });
+        let mut level = 0;
+        while !frontier.is_empty() && level <= self.max {
+            let mut next = Vec::new();
+            for &x in &frontier {
+                k(x, level);
+                self.step.probe(x, |y| {
+                    if seen.insert(y) {
+                        next.push(y);
+                    }
+                });
+            }
+            frontier = next;
+            level += 1;
+        }
+    }
+}
+
 // ===== InvStream — `q'` in drive position =========
 
 pub struct InvStream<Q> {
@@ -1647,6 +1694,19 @@ pub fn lead<O: Copy, R>(g: &[(O, R)], out: &mut Vec<Option<O>>) {
     }
 }
 
+pub fn preceding<O, R: Copy, S: Copy>(
+    init: S,
+    op: impl Fn(S, R) -> S,
+) -> impl Fn(&[(O, R)], &mut Vec<S>) {
+    move |g, out| {
+        let mut acc = init;
+        for &(_, r) in g {
+            out.push(acc);
+            acc = op(acc, r);
+        }
+    }
+}
+
 // ===== DenseFold ==================
 //
 // Drop-in replacement for `Fold` when `D = usize` and the key range is a
@@ -1832,6 +1892,23 @@ where
     }
 }
 
+pub struct KeyBy<Q, F, K> {
+    pub q: Q,
+    pub f: F,
+    _phantom: PhantomData<K>,
+}
+
+impl<Q: Query, F: Fn(Q::R) -> K, K: Copy + Eq + Hash> Query for KeyBy<Q, F, K> {
+    type D = K;
+    type R = Q::R;
+}
+impl<Q: Drive, F: Fn(Q::R) -> K, K: Copy + Eq + Hash> Drive for KeyBy<Q, F, K> {
+    #[inline(always)]
+    fn drive<C: FnMut(K, Q::R)>(&self, mut k: C) {
+        self.q.drive(|_, v| k((self.f)(v), v));
+    }
+}
+
 pub struct Scan<X, S, P> {
     pub s: S,
     pub p: P,
@@ -1996,6 +2073,15 @@ pub trait QueryExt: IntoQuery + Sized {
     #[inline(always)]
     fn reach<E: IntoQuery>(self, step: E, max: usize) -> Reach<Self::Q, E::Q> {
         Reach {
+            base: self.iq(),
+            step: step.iq(),
+            max,
+        }
+    }
+
+    #[inline(always)]
+    fn reach_set<E: IntoQuery>(self, step: E, max: usize) -> ReachSet<Self::Q, E::Q> {
+        ReachSet {
             base: self.iq(),
             step: step.iq(),
             max,
@@ -2581,6 +2667,15 @@ pub trait QueryExt: IntoQuery + Sized {
     }
 
     #[inline(always)]
+    fn key_by<F: Fn(ROf<Self>) -> K, K: Copy + Eq + Hash>(self, f: F) -> KeyBy<Self::Q, F, K> {
+        KeyBy {
+            q: self.iq(),
+            f,
+            _phantom: PhantomData,
+        }
+    }
+
+    #[inline(always)]
     fn flat_map<F: Fn(ROf<Self>) -> I, I: IntoIterator>(self, f: F) -> FlatMap<Self::Q, F, I>
     where
         I::Item: Copy,
@@ -2686,6 +2781,15 @@ mod tests {
             set: HashSet::<usize>::new(),
         };
         assert_eq!(drive_all(&(&none).reach(&kids, usize::MAX)), vec![]);
+        assert_eq!(
+            drive_all(&(&roots).reach_set(&kids, usize::MAX)),
+            vec![(0, 0), (1, 1), (2, 1), (3, 2), (4, 3)]
+        );
+        let ring: MultiRel<usize, usize> = MultiRel::from_pairs(3, [(0, 1), (1, 2), (2, 0)]);
+        assert_eq!(
+            drive_all(&(&roots).reach_set(&ring, usize::MAX)),
+            vec![(0, 0), (1, 1), (2, 2)]
+        );
         let u = Universe::new(2);
         assert_eq!(
             drive_all(&u.reach(Same::<usize>::new(), 2)),
