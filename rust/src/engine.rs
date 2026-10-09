@@ -2665,18 +2665,32 @@ mod tests {
 
     #[test]
     fn reach() {
-        let kids: MultiRel<usize, usize> = MultiRel::from_pairs(6, [(0, 1), (0, 2), (1, 3), (2, 3), (3, 4)]);
-        let roots = MatSet { set: [0usize].into_iter().collect() };
+        let kids: MultiRel<usize, usize> =
+            MultiRel::from_pairs(6, [(0, 1), (0, 2), (1, 3), (2, 3), (3, 4)]);
+        let roots = MatSet {
+            set: [0usize].into_iter().collect(),
+        };
         assert_eq!(
             drive_all(&(&roots).reach(&kids, usize::MAX)),
             vec![(0, 0), (1, 1), (2, 1), (3, 2), (3, 2), (4, 3), (4, 3)]
         );
-        assert_eq!(drive_all(&(&roots).reach(&kids, 1)), vec![(0, 0), (1, 1), (2, 1)]);
-        assert_eq!(drive_all(&(&roots).reach((&kids).filt(|y| y != 2), usize::MAX)), vec![(0, 0), (1, 1), (3, 2), (4, 3)]);
-        let none = MatSet { set: HashSet::<usize>::new() };
+        assert_eq!(
+            drive_all(&(&roots).reach(&kids, 1)),
+            vec![(0, 0), (1, 1), (2, 1)]
+        );
+        assert_eq!(
+            drive_all(&(&roots).reach((&kids).filt(|y| y != 2), usize::MAX)),
+            vec![(0, 0), (1, 1), (3, 2), (4, 3)]
+        );
+        let none = MatSet {
+            set: HashSet::<usize>::new(),
+        };
         assert_eq!(drive_all(&(&none).reach(&kids, usize::MAX)), vec![]);
         let u = Universe::new(2);
-        assert_eq!(drive_all(&u.reach(Same::<usize>::new(), 2)), vec![(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]);
+        assert_eq!(
+            drive_all(&u.reach(Same::<usize>::new(), 2)),
+            vec![(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]
+        );
     }
 
     #[test]
