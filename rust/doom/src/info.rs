@@ -1,3 +1,4 @@
+// What a state does when entered; rule tables are keyed by this.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Action {
     None,
@@ -21,6 +22,7 @@ pub enum Action {
     Move,
 }
 
+// A state as written in the tables below, using names; db.rs resolves them to ids.
 pub struct StateDef {
     pub name: String,
     pub sprite: &'static str,
@@ -31,6 +33,7 @@ pub struct StateDef {
     pub next: String,
 }
 
+// Thing flags.
 pub const SOLID: u32 = 1;
 pub const SHOOTABLE: u32 = 2;
 pub const MONSTER: u32 = 4;
@@ -40,17 +43,63 @@ pub const NOBLOOD: u32 = 32;
 pub const HANGING: u32 = 64;
 pub const NOGRAV: u32 = 128;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Pickup {
-    None,
-    Health { amount: i32, max: i32 },
-    Armor { amount: i32, class: i32, bonus: bool },
-    Ammo { kind: usize, amount: i32 },
-    Weapon { weapon: usize, kind: usize, amount: i32 },
-    Key(u8),
-    Backpack,
+// What touching an item gives the player; unused columns stay zero.
+#[derive(Clone, Copy, Debug)]
+pub struct PickupDef {
+    pub health: i32,
+    pub health_max: i32,
+    pub armor: i32,
+    pub armor_max: i32,
+    pub class_set: i32,
+    pub class_min: i32,
+    pub ammo_kind: usize,
+    pub ammo: i32,
+    pub weapon: usize,
+    pub weapon_bit: u8,
+    pub key: u8,
+    pub always: bool,
 }
 
+// Constructors for pickup rows; `always` items are taken even when they change nothing.
+mod pickup {
+    use super::*;
+
+    pub const NOTHING: PickupDef = PickupDef {
+        health: 0,
+        health_max: 0,
+        armor: 0,
+        armor_max: 0,
+        class_set: 0,
+        class_min: 0,
+        ammo_kind: AM_NONE,
+        ammo: 0,
+        weapon: 0,
+        weapon_bit: 0,
+        key: 0,
+        always: false,
+    };
+    pub const POWERUP: PickupDef = PickupDef { always: true, ..NOTHING };
+    pub const BACKPACK: PickupDef = PickupDef { ammo_kind: AM_CLIP, ammo: 10, always: true, ..NOTHING };
+    pub const BONUS_ARMOR: PickupDef = PickupDef { armor: 1, armor_max: 200, class_min: 1, ..NOTHING };
+
+    pub fn health(amount: i32, max: i32) -> PickupDef {
+        PickupDef { health: amount, health_max: max, ..NOTHING }
+    }
+    pub fn armor(amount: i32, class: i32) -> PickupDef {
+        PickupDef { armor: amount, armor_max: amount, class_set: class, ..NOTHING }
+    }
+    pub fn ammo(kind: usize, amount: i32) -> PickupDef {
+        PickupDef { ammo_kind: kind, ammo: amount, ..NOTHING }
+    }
+    pub fn weapon(weapon: usize, kind: usize, amount: i32) -> PickupDef {
+        PickupDef { ammo_kind: kind, ammo: amount, weapon, weapon_bit: 1 << weapon, always: true, ..NOTHING }
+    }
+    pub fn key(k: u8) -> PickupDef {
+        PickupDef { key: k, always: true, ..NOTHING }
+    }
+}
+
+// A thing kind as written below, using state names.
 pub struct MobjDef {
     pub doomednum: i64,
     pub name: &'static str,
@@ -66,10 +115,11 @@ pub struct MobjDef {
     pub health: i32,
     pub painchance: i32,
     pub flags: u32,
-    pub pickup: Pickup,
+    pub pickup: Option<PickupDef>,
     pub drop: i64,
 }
 
+// A weapon as written below, using state names.
 pub struct WeaponDef {
     pub ammo: usize,
     pub per_shot: i32,
@@ -78,18 +128,32 @@ pub struct WeaponDef {
     pub flash: &'static str,
 }
 
+// Ammo kinds.
 pub const AM_CLIP: usize = 0;
 pub const AM_SHELL: usize = 1;
 pub const AM_ROCKET: usize = 2;
 pub const AM_CELL: usize = 3;
 pub const AM_NONE: usize = 4;
-pub const MAX_AMMO: [i32; 5] = [200, 50, 50, 300, 0];
 
-pub const WP_FIST: usize = 0;
+// One ammo kind: carrying cap and starting amount.
+#[derive(Clone, Copy, Debug)]
+pub struct AmmoDef {
+    pub cap: i32,
+    pub start: i32,
+}
+
+// Ammo table, indexed by kind; AM_NONE (fists) has cap 0.
+pub fn ammo_defs() -> Vec<AmmoDef> {
+    let a = |cap, start| AmmoDef { cap, start };
+    vec![a(200, 50), a(50, 0), a(50, 0), a(300, 0), a(0, 0)]
+}
+
+// Weapon slots (0 is fists).
 pub const WP_PISTOL: usize = 1;
 pub const WP_SHOTGUN: usize = 2;
 pub const WP_CHAINGUN: usize = 3;
 
+// Weapon table.
 pub fn weapons() -> Vec<WeaponDef> {
     vec![
         WeaponDef { ammo: AM_NONE, per_shot: 0, ready: "PUNCH", attack: "PUNCH1", flash: "NULL" },
@@ -99,6 +163,7 @@ pub fn weapons() -> Vec<WeaponDef> {
     ]
 }
 
+// Helper for writing the state table: s = one state, anim = looping frames, seq = a chain ending in `last`.
 struct B(Vec<StateDef>);
 
 impl B {
@@ -125,6 +190,7 @@ impl B {
     }
 }
 
+// The animation state table (Doom's info.c states), trimmed to what E1M1 uses.
 pub fn states() -> Vec<StateDef> {
     use Action::*;
     let mut b = B(vec![]);
@@ -190,6 +256,7 @@ pub fn states() -> Vec<StateDef> {
     b.0
 }
 
+// Decorations and items that just loop frames: (name, sprite, frames, tics).
 const DECOR_ANIMS: &[(&str, &str, &str, i32)] = &[
     ("COLU", "COLU", "a", 0),
     ("SMIT", "SMIT", "A", 0),
@@ -265,7 +332,8 @@ const DECOR_ANIMS: &[(&str, &str, &str, i32)] = &[
     ("PVIS", "PVIS", "Ab", 6),
 ];
 
-fn m(doomednum: i64, name: &'static str, spawn: &str, radius: f64, height: f64, flags: u32, pickup: Pickup) -> MobjDef {
+// Default thing-kind row; monster() and the closures in mobjs() fill in the rest.
+fn m(doomednum: i64, name: &'static str, spawn: &str, radius: f64, height: f64, flags: u32, pickup: Option<PickupDef>) -> MobjDef {
     MobjDef {
         doomednum,
         name,
@@ -286,6 +354,7 @@ fn m(doomednum: i64, name: &'static str, spawn: &str, radius: f64, height: f64, 
     }
 }
 
+// Monster row; its states follow the naming pattern <p>_STND/_RUN/_ATK/_PAIN/_DIE.
 fn monster(doomednum: i64, name: &'static str, p: &str, speed: f64, radius: f64, health: i32, painchance: i32, melee: bool, missile: bool, drop: i64) -> MobjDef {
     MobjDef {
         see: format!("{p}_RUN"),
@@ -297,15 +366,16 @@ fn monster(doomednum: i64, name: &'static str, p: &str, speed: f64, radius: f64,
         health,
         painchance,
         drop,
-        ..m(doomednum, name, &format!("{p}_STND"), radius, 56.0, SOLID | SHOOTABLE | MONSTER, Pickup::None)
+        ..m(doomednum, name, &format!("{p}_STND"), radius, 56.0, SOLID | SHOOTABLE | MONSTER, None)
     }
 }
 
+// Thing-kind table (Doom's mobjinfo), trimmed to what E1M1 uses.
 pub fn mobjs() -> Vec<MobjDef> {
-    use Pickup::*;
+    use pickup::*;
     let deco = |n, s, r, solid: bool| m(n, s, s, r, 16.0, if solid { SOLID } else { 0 }, None);
     let hang = |n, s| m(n, s, s, 16.0, 68.0, SOLID | HANGING, None);
-    let item = |n, s, p| m(n, s, s, 20.0, 16.0, PICKUP, p);
+    let item = |n, s, p| m(n, s, s, 20.0, 16.0, PICKUP, Some(p));
     vec![
         monster(3004, "POSS", "POSS", 8.0, 20.0, 20, 200, false, true, 2007),
         monster(9, "SPOS", "SPOS", 8.0, 20.0, 30, 170, false, true, 2001),
@@ -360,43 +430,44 @@ pub fn mobjs() -> Vec<MobjDef> {
         deco(55, "SMBT", 16.0, true),
         deco(56, "SMGT", 16.0, true),
         deco(57, "SMRT", 16.0, true),
-        item(2014, "BON1", Health { amount: 1, max: 200 }),
-        item(2015, "BON2", Armor { amount: 1, class: 1, bonus: true }),
-        item(2011, "STIM", Health { amount: 10, max: 100 }),
-        item(2012, "MEDI", Health { amount: 25, max: 100 }),
-        item(2013, "SOUL", Health { amount: 100, max: 200 }),
-        item(2007, "CLIP", Ammo { kind: AM_CLIP, amount: 10 }),
-        item(2048, "AMMO", Ammo { kind: AM_CLIP, amount: 50 }),
-        item(2008, "SHEL", Ammo { kind: AM_SHELL, amount: 4 }),
-        item(2049, "SBOX", Ammo { kind: AM_SHELL, amount: 20 }),
-        item(2010, "ROCK", Ammo { kind: AM_ROCKET, amount: 1 }),
-        item(2046, "BROK", Ammo { kind: AM_ROCKET, amount: 5 }),
-        item(2047, "CELL", Ammo { kind: AM_CELL, amount: 20 }),
-        item(17, "CELP", Ammo { kind: AM_CELL, amount: 100 }),
-        item(2001, "SHOT", Weapon { weapon: WP_SHOTGUN, kind: AM_SHELL, amount: 8 }),
-        item(2002, "MGUN", Weapon { weapon: WP_CHAINGUN, kind: AM_CLIP, amount: 20 }),
-        item(2003, "LAUN", Ammo { kind: AM_ROCKET, amount: 2 }),
-        item(2004, "PLAS", Ammo { kind: AM_CELL, amount: 40 }),
-        item(2005, "CSAW", None),
-        item(2006, "BFUG", Ammo { kind: AM_CELL, amount: 40 }),
-        item(2018, "ARM1", Armor { amount: 100, class: 1, bonus: false }),
-        item(2019, "ARM2", Armor { amount: 200, class: 2, bonus: false }),
-        item(5, "BKEY", Key(1)),
-        item(6, "YKEY", Key(2)),
-        item(13, "RKEY", Key(4)),
-        item(40, "BSKU", Key(1)),
-        item(39, "YSKU", Key(2)),
-        item(38, "RSKU", Key(4)),
-        item(8, "BPAK", Backpack),
-        item(2023, "PSTR", Health { amount: 100, max: 100 }),
-        item(2022, "PINV", None),
-        item(2024, "PINS", None),
-        item(2025, "SUIT", None),
-        item(2026, "PMAP", None),
-        item(2045, "PVIS", None),
+        item(2014, "BON1", health(1, 200)),
+        item(2015, "BON2", BONUS_ARMOR),
+        item(2011, "STIM", health(10, 100)),
+        item(2012, "MEDI", health(25, 100)),
+        item(2013, "SOUL", health(100, 200)),
+        item(2007, "CLIP", ammo(AM_CLIP, 10)),
+        item(2048, "AMMO", ammo(AM_CLIP, 50)),
+        item(2008, "SHEL", ammo(AM_SHELL, 4)),
+        item(2049, "SBOX", ammo(AM_SHELL, 20)),
+        item(2010, "ROCK", ammo(AM_ROCKET, 1)),
+        item(2046, "BROK", ammo(AM_ROCKET, 5)),
+        item(2047, "CELL", ammo(AM_CELL, 20)),
+        item(17, "CELP", ammo(AM_CELL, 100)),
+        item(2001, "SHOT", weapon(WP_SHOTGUN, AM_SHELL, 8)),
+        item(2002, "MGUN", weapon(WP_CHAINGUN, AM_CLIP, 20)),
+        item(2003, "LAUN", ammo(AM_ROCKET, 2)),
+        item(2004, "PLAS", ammo(AM_CELL, 40)),
+        item(2005, "CSAW", POWERUP),
+        item(2006, "BFUG", ammo(AM_CELL, 40)),
+        item(2018, "ARM1", armor(100, 1)),
+        item(2019, "ARM2", armor(200, 2)),
+        item(5, "BKEY", key(1)),
+        item(6, "YKEY", key(2)),
+        item(13, "RKEY", key(4)),
+        item(40, "BSKU", key(1)),
+        item(39, "YSKU", key(2)),
+        item(38, "RSKU", key(4)),
+        item(8, "BPAK", BACKPACK),
+        item(2023, "PSTR", health(100, 100)),
+        item(2022, "PINV", POWERUP),
+        item(2024, "PINS", POWERUP),
+        item(2025, "SUIT", POWERUP),
+        item(2026, "PMAP", POWERUP),
+        item(2045, "PVIS", POWERUP),
     ]
 }
 
+// Monster facts, one bit each; an AI rule matches when (facts & mask) == want.
 pub mod fact {
     pub const DEAD: u32 = 1;
     pub const SEES: u32 = 1 << 1;
@@ -419,6 +490,7 @@ pub mod fact {
     pub const STAY: u32 = 1 << 18;
 }
 
+// One rule row: if (facts & mask) == want, output `out`; the lowest prio wins.
 #[derive(Clone, Copy, Debug)]
 pub struct Rule<O> {
     pub prio: u8,
@@ -427,6 +499,7 @@ pub struct Rule<O> {
     pub out: O,
 }
 
+// Attack a monster performs this tic.
 #[derive(Clone, Copy, Debug)]
 pub enum Attack {
     None,
@@ -435,6 +508,7 @@ pub enum Attack {
     Ball,
 }
 
+// Goto labels: which of the thing's states (Info.see, .pain, ...) to jump to.
 pub const G_NONE: u8 = 0;
 pub const G_SEE: u8 = 1;
 pub const G_SPAWN: u8 = 2;
@@ -443,6 +517,7 @@ pub const G_MISSILE: u8 = 4;
 pub const G_DEATH: u8 = 5;
 pub const G_PAIN: u8 = 6;
 
+// What a matched AI rule does to the monster.
 #[derive(Clone, Copy, Debug)]
 pub struct AiOut {
     pub goto: u8,
@@ -461,6 +536,7 @@ pub struct AiOut {
     pub stop: bool,
 }
 
+// Do nothing; rules override fields of this.
 pub const KEEP: AiOut = AiOut {
     goto: G_NONE,
     face: false,
@@ -478,6 +554,7 @@ pub const KEEP: AiOut = AiOut {
     stop: false,
 };
 
+// Monster AI as rules, keyed by the current state's action (replaces A_Look, A_Chase, etc.).
 pub fn ai_rules() -> Vec<(Action, Rule<AiOut>)> {
     use fact::*;
     use Action::*;
@@ -511,18 +588,21 @@ pub fn ai_rules() -> Vec<(Action, Rule<AiOut>)> {
     ]
 }
 
+// Weapon facts for the weapon rules.
 pub mod wfact {
     pub const FIRE: u32 = 1;
     pub const ALIVE: u32 = 1 << 1;
     pub const AMMO: u32 = 1 << 2;
 }
 
+// What a matched weapon rule does: jump to the attack state, or fire n pellets.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WOut {
     pub redirect: bool,
     pub pellets: usize,
 }
 
+// Weapon behaviour as rules, keyed by the weapon state's action.
 pub fn weapon_rules() -> Vec<(Action, Rule<WOut>)> {
     use wfact::*;
     use Action::*;
@@ -537,6 +617,7 @@ pub fn weapon_rules() -> Vec<(Action, Rule<WOut>)> {
     ]
 }
 
+// Sector mover kinds (doors, lifts, floors) and the exit special.
 pub const MV_IDLE: u8 = 0;
 pub const MV_DOOR: u8 = 1;
 pub const MV_DOOR_STAY: u8 = 2;
@@ -544,6 +625,7 @@ pub const MV_LIFT: u8 = 3;
 pub const MV_FLOOR: u8 = 4;
 pub const MV_EXIT: u8 = 9;
 
+// What a line special does: which mover, speed, whether it moves tagged sectors or the sector behind it, key needed, walk vs use.
 #[derive(Clone, Copy, Debug)]
 pub struct Special {
     pub act: u8,
@@ -554,6 +636,7 @@ pub struct Special {
     pub use_: bool,
 }
 
+// Line special number -> what it does.
 pub fn specials() -> Vec<(i64, Special)> {
     let s = |act, speed, tagged, key, walk| Special { act, speed, tagged, key, walk, use_: !walk };
     vec![
@@ -570,6 +653,7 @@ pub fn specials() -> Vec<(i64, Special)> {
     ]
 }
 
+// What happens to a sector's mover when a special hits it; heights are weighted sums of ceiling/floor values.
 #[derive(Clone, Copy, Debug)]
 pub struct ActOut {
     pub kind: u8,
@@ -582,10 +666,12 @@ pub struct ActOut {
     pub down_lowest: f64,
 }
 
+// Key for (current mover kind, direction, incoming special).
 pub fn act_key(kind: u8, dir: i8, act: u8) -> usize {
     kind as usize * 1000 + (dir + 1) as usize * 100 + act as usize
 }
 
+// Mover activation table: starting a door/lift, or reversing a moving door.
 pub fn activations() -> Vec<(usize, ActOut)> {
     let door = ActOut { kind: MV_DOOR, dir: 1, init: true, plane: 0, up_lc: 1.0, up_floor: 0.0, down_floor: 1.0, down_lowest: 0.0 };
     let lift = ActOut { kind: MV_LIFT, dir: -1, init: true, plane: 1, up_lc: 0.0, up_floor: 1.0, down_floor: 0.0, down_lowest: 1.0 };
@@ -601,12 +687,14 @@ pub fn activations() -> Vec<(usize, ActOut)> {
     ]
 }
 
+// Mover facts for the mover rules.
 pub mod mfact {
     pub const REACHED: u32 = 1;
     pub const EXPIRED: u32 = 1 << 1;
     pub const OCCUPIED: u32 = 1 << 2;
 }
 
+// What a matched mover rule does: new kind, direction, and wait timer.
 #[derive(Clone, Copy, Debug)]
 pub struct StepOut {
     pub kind: u8,
@@ -615,10 +703,12 @@ pub struct StepOut {
     pub wait_dec: bool,
 }
 
+// Key for (mover kind, direction).
 pub fn step_key(kind: u8, dir: i8) -> usize {
     kind as usize * 10 + (dir + 1) as usize
 }
 
+// Per-tic mover behaviour: stop at the top, wait, go back down, reopen if blocked.
 pub fn mover_rules() -> Vec<(usize, Rule<StepOut>)> {
     use mfact::*;
     let r = |prio, mask, kind, dir, wait, wait_dec| Rule { prio, mask, want: mask, out: StepOut { kind, dir, wait, wait_dec } };
@@ -635,4 +725,146 @@ pub fn mover_rules() -> Vec<(usize, Rule<StepOut>)> {
         (step_key(MV_LIFT, 1), r(0, REACHED, MV_IDLE, 0, -1, false)),
         (step_key(MV_FLOOR, -1), r(0, REACHED, MV_IDLE, 0, -1, false)),
     ]
+}
+
+// Damaging floors: sector special -> damage every 32 tics.
+pub fn sector_damage() -> Vec<(i64, i32)> {
+    vec![(5, 10), (7, 5), (4, 20), (16, 20)]
+}
+
+// One direction a chasing monster tries: turn from its heading, and 0 step to stand still.
+#[derive(Clone, Copy, Debug)]
+pub struct ChaseDir {
+    pub turn: f64,
+    pub step: f64,
+    pub stay: bool,
+}
+
+// Chase directions in preference order: straight, 45° either way, 90° either way, stay put.
+pub fn chase_dirs() -> Vec<ChaseDir> {
+    use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
+    let d = |turn, step| ChaseDir { turn, step, stay: step == 0.0 };
+    vec![d(0.0, 1.0), d(FRAC_PI_4, 1.0), d(-FRAC_PI_4, 1.0), d(FRAC_PI_2, 1.0), d(-FRAC_PI_2, 1.0), d(0.0, 0.0)]
+}
+
+// One player move attempt: which momentum axes it keeps.
+#[derive(Clone, Copy, Debug)]
+pub struct Slide {
+    pub keep_x: f64,
+    pub keep_y: f64,
+    pub stay: bool,
+}
+
+// Player move attempts in preference order: full move, x only, y only, stay (gives wall sliding).
+pub fn slides() -> Vec<Slide> {
+    let s = |keep_x, keep_y| Slide { keep_x, keep_y, stay: keep_x == 0.0 && keep_y == 0.0 };
+    vec![s(1.0, 1.0), s(1.0, 0.0), s(0.0, 1.0), s(0.0, 0.0)]
+}
+
+// Status bar fonts; glyph 10 of the big font is the percent sign.
+pub const FONT_BIG: usize = 0;
+pub const FONT_YELLOW: usize = 1;
+pub const FONT_GREY: usize = 2;
+
+// Font table: (font, glyph) -> lump name.
+pub fn hud_fonts() -> Vec<((usize, usize), String)> {
+    let mut v: Vec<((usize, usize), String)> = vec![((FONT_BIG, 10), "STTPRCNT".into())];
+    for d in 0..10 {
+        v.push(((FONT_BIG, d), format!("STTNUM{d}")));
+        v.push(((FONT_YELLOW, d), format!("STYSNUM{d}")));
+        v.push(((FONT_GREY, d), format!("STGNUM{d}")));
+    }
+    v
+}
+
+// Fixed status bar images: lump, x, y, depth (lower draws on top).
+pub fn hud_patches() -> Vec<(&'static str, f64, f64, f32)> {
+    vec![("STBAR", 0.0, 168.0, 0.2), ("STARMS", 104.0, 168.0, 0.1)]
+}
+
+// Stats shown as numbers; STAT_AMMO0 + kind and STAT_MAX0 + kind for the ammo tallies.
+pub const STAT_AMMO: usize = 0;
+pub const STAT_HEALTH: usize = 1;
+pub const STAT_ARMOR: usize = 2;
+pub const STAT_AMMO0: usize = 3;
+pub const STAT_MAX0: usize = 7;
+
+// Where one stat is drawn: right edge, top, font, max digits, trailing percent sign.
+#[derive(Clone, Copy, Debug)]
+pub struct NumberSlot {
+    pub x: f64,
+    pub y: f64,
+    pub font: usize,
+    pub digits: usize,
+    pub percent: bool,
+}
+
+// Number widgets, indexed by stat.
+pub fn hud_numbers() -> Vec<NumberSlot> {
+    let n = |x, y, font, percent| NumberSlot { x, y, font, digits: 3, percent };
+    let ys = [173.0, 179.0, 185.0, 191.0];
+    let mut v = vec![n(44.0, 171.0, FONT_BIG, false), n(90.0, 171.0, FONT_BIG, true), n(221.0, 171.0, FONT_BIG, true)];
+    v.extend(ys.map(|y| n(288.0, y, FONT_YELLOW, false)));
+    v.extend(ys.map(|y| n(314.0, y, FONT_YELLOW, false)));
+    v
+}
+
+// Arms panel: weapon slot -> (x, y, digit shown); yellow when owned, grey otherwise.
+pub fn hud_arms() -> Vec<(usize, f64, f64, usize)> {
+    (1..7).map(|w| (w, 111.0 + ((w - 1) % 3) as f64 * 12.0, 172.0 + ((w - 1) / 3) as f64 * 10.0, w + 1)).collect()
+}
+
+// Key cards, indexed by key bit: x, y, lump.
+pub fn hud_keys() -> Vec<(f64, f64, &'static str)> {
+    vec![(239.0, 171.0, "STKEYS0"), (239.0, 181.0, "STKEYS1"), (239.0, 191.0, "STKEYS2")]
+}
+
+// Face facts, one bit each.
+pub mod ffact {
+    pub const DEAD: u32 = 1;
+    pub const HURT: u32 = 1 << 1;
+    pub const GRIN: u32 = 1 << 2;
+}
+
+// Face kinds.
+pub const FACE_LOOK: u8 = 0;
+pub const FACE_KILL: u8 = 1;
+pub const FACE_EVIL: u8 = 2;
+pub const FACE_DEAD: u8 = 3;
+
+// Which face to show, and whether its image depends on the pain level and the look direction.
+#[derive(Clone, Copy, Debug)]
+pub struct FaceOut {
+    pub kind: u8,
+    pub by_pain: bool,
+    pub by_look: bool,
+}
+
+// Face rules: dead, else evil grin on a new weapon, else grimace when hurt, else look around.
+pub fn face_rules() -> Vec<Rule<FaceOut>> {
+    use ffact::*;
+    let r = |prio, mask, kind, by_pain, by_look| Rule { prio, mask, want: mask, out: FaceOut { kind, by_pain, by_look } };
+    vec![r(0, DEAD, FACE_DEAD, false, false), r(1, GRIN, FACE_EVIL, true, false), r(2, HURT, FACE_KILL, true, false), r(3, 0, FACE_LOOK, true, true)]
+}
+
+// Face images: (kind, pain level 0-4, look 0-2) -> lump.
+pub fn faces() -> Vec<((u8, usize, usize), String)> {
+    let mut v = vec![((FACE_DEAD, 0, 0), "STFDEAD0".to_string())];
+    for p in 0..5 {
+        for l in 0..3 {
+            v.push(((FACE_LOOK, p, l), format!("STFST{p}{l}")));
+        }
+        v.push(((FACE_KILL, p, 0), format!("STFKILL{p}")));
+        v.push(((FACE_EVIL, p, 0), format!("STFEVL{p}")));
+    }
+    v
+}
+
+// Every status bar lump the WAD loader should read.
+pub fn hud_lumps() -> Vec<String> {
+    let mut v: Vec<String> = hud_fonts().into_iter().map(|(_, n)| n).collect();
+    v.extend(hud_patches().into_iter().map(|(n, _, _, _)| n.to_string()));
+    v.extend(hud_keys().into_iter().map(|(_, _, n)| n.to_string()));
+    v.extend(faces().into_iter().map(|(_, n)| n));
+    v
 }

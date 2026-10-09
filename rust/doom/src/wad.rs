@@ -1,13 +1,16 @@
 use std::collections::HashMap;
 
+// Texel value for "no pixel"; NONE means "no id".
 pub const TRANSPARENT: u16 = u16::MAX;
 pub const NONE: usize = usize::MAX;
 
+// A WAD file: raw bytes plus the lump directory (name, offset, size).
 pub struct Wad {
     data: Vec<u8>,
     lumps: Vec<(String, usize, usize)>,
 }
 
+// Little-endian readers for WAD records.
 fn i16_at(b: &[u8], o: usize) -> i16 {
     i16::from_le_bytes([b[o], b[o + 1]])
 }
@@ -22,11 +25,13 @@ fn name_at(b: &[u8], o: usize) -> String {
     let end = raw.iter().position(|&c| c == 0).unwrap_or(8);
     String::from_utf8_lossy(&raw[..end]).to_ascii_uppercase()
 }
+// 0xFFFF in the WAD means "none".
 fn id16(v: u16) -> usize {
     if v == u16::MAX { NONE } else { v as usize }
 }
 
 impl Wad {
+    // Reads the file and its lump directory.
     pub fn open(path: &str) -> Wad {
         let data = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
         assert!(&data[0..4] == b"IWAD" || &data[0..4] == b"PWAD", "{path}: not a WAD");
@@ -54,6 +59,7 @@ impl Wad {
         self.lump_at(self.index(name).unwrap_or_else(|| panic!("missing lump {name}")))
     }
 
+    // Lumps between two marker lumps, e.g. F_START..F_END.
     fn between(&self, start: &str, end: &str) -> Vec<(String, &[u8])> {
         let (a, b) = (self.index(start).unwrap(), self.index(end).unwrap());
         (a + 1..b)
@@ -62,6 +68,7 @@ impl Wad {
             .collect()
     }
 
+    // A lump belonging to a map, e.g. E1M1's LINEDEFS.
     fn map_lump(&self, map: &str, name: &str) -> &[u8] {
         let m = self.index(map).unwrap_or_else(|| panic!("missing map {map}"));
         let i = (m + 1..m + 12).find(|&i| self.lumps[i].0 == name).unwrap();
@@ -69,6 +76,7 @@ impl Wad {
     }
 }
 
+// Raw map records, as stored in the WAD.
 #[derive(Clone, Copy)]
 pub struct Linedef {
     pub v1: usize,
@@ -105,7 +113,6 @@ pub struct Node {
     pub y: f64,
     pub dx: f64,
     pub dy: f64,
-    pub bbox: [[f64; 4]; 2],
     pub child: [usize; 2],
     pub child_is_leaf: [bool; 2],
 }
@@ -130,6 +137,7 @@ pub struct Thing {
     pub flags: i64,
 }
 
+// All images packed into one texel array; each image has a base offset and size. Name maps let the level resolve texture names.
 pub struct Graphics {
     pub names: HashMap<String, usize>,
     pub flat_names: HashMap<String, usize>,
@@ -144,6 +152,7 @@ pub struct Graphics {
 }
 
 impl Graphics {
+    // Appends one image (column-major) and returns its id.
     fn push(&mut self, w: usize, h: usize, left: i64, top: i64, cols: Vec<u16>) -> usize {
         let id = self.base.len();
         self.base.push(self.texels.len());
@@ -156,6 +165,7 @@ impl Graphics {
     }
 }
 
+// One map's raw records.
 pub struct Level {
     pub vertices: Vec<(f64, f64)>,
     pub linedefs: Vec<Linedef>,
@@ -165,9 +175,9 @@ pub struct Level {
     pub nodes: Vec<Node>,
     pub sectors: Vec<Sector>,
     pub things: Vec<Thing>,
-    pub reject: Vec<u8>,
 }
 
+// Everything loaded from the WAD.
 pub struct Game {
     pub level: Level,
     pub gfx: Graphics,
@@ -177,6 +187,7 @@ pub struct Game {
     pub sky_flat: usize,
 }
 
+// Decodes a standalone patch (sprite or HUD glyph) into an image.
 fn patch_columns(p: &[u8]) -> (usize, usize, i64, i64, Vec<u16>) {
     let w = u16_at(p, 0) as usize;
     let h = u16_at(p, 2) as usize;
@@ -185,6 +196,7 @@ fn patch_columns(p: &[u8]) -> (usize, usize, i64, i64, Vec<u16>) {
     (w, h, i16_at(p, 4) as i64, i16_at(p, 6) as i64, out)
 }
 
+// Draws a patch's column posts into an image at (ox, oy).
 fn draw_patch(p: &[u8], out: &mut [u16], w: usize, h: usize, ox: i64, oy: i64) {
     let pw = u16_at(p, 0) as i64;
     for c in 0..pw {
@@ -208,6 +220,7 @@ fn draw_patch(p: &[u8], out: &mut [u16], w: usize, h: usize, ox: i64, oy: i64) {
 }
 
 impl Game {
+    // Loads graphics, the map, the 14 palettes, and the 34 light-level colormaps.
     pub fn load(path: &str, map: &str) -> Game {
         let wad = Wad::open(path);
         let gfx = Self::graphics(&wad);
@@ -222,6 +235,7 @@ impl Game {
         Game { level, gfx, palette, colormap, sky, sky_flat }
     }
 
+    // Builds every image: wall textures (composed from patches), flats, sprites, HUD glyphs.
     fn graphics(wad: &Wad) -> Graphics {
         let mut g = Graphics {
             names: HashMap::new(),
@@ -235,10 +249,12 @@ impl Game {
             top: vec![],
             texels: vec![],
         };
+        // Patch index -> patch lump.
         let pn = wad.lump("PNAMES");
         let patches: Vec<Option<&[u8]>> = (0..i32_at(pn, 0) as usize)
             .map(|i| wad.index(&name_at(pn, 4 + 8 * i)).map(|j| wad.lump_at(j)))
             .collect();
+        // Wall textures: draw each texture's patches into one image.
         for tl in ["TEXTURE1", "TEXTURE2"] {
             let Some(ti) = wad.index(tl) else { continue };
             let t = wad.lump_at(ti);
@@ -259,6 +275,7 @@ impl Game {
                 g.names.entry(name).or_insert(id);
             }
         }
+        // Flats: 64x64, transposed to column-major.
         for (name, f) in wad.between("F_START", "F_END") {
             if f.len() < 4096 {
                 continue;
@@ -267,13 +284,14 @@ impl Game {
             let id = g.push(64, 64, 0, 0, cols);
             g.flat_names.insert(name, id);
         }
+        // Sprites.
         for (name, p) in wad.between("S_START", "S_END") {
             let (w, h, l, t, cols) = patch_columns(p);
             let id = g.push(w, h, l, t, cols);
             g.sprite_names.insert(name, id);
         }
-        let hud = (0..10).map(|i| format!("STTNUM{i}")).chain(["STTPRCNT", "STKEYS0", "STKEYS1", "STKEYS2"].map(String::from));
-        for name in hud {
+        // Status bar glyphs.
+        for name in crate::info::hud_lumps() {
             if let Some(i) = wad.index(&name) {
                 let (w, h, l, t, cols) = patch_columns(wad.lump_at(i));
                 let id = g.push(w, h, l, t, cols);
@@ -283,6 +301,7 @@ impl Game {
         g
     }
 
+    // Parses one map's lumps into records, resolving texture and flat names to image ids.
     fn level(wad: &Wad, map: &str, gfx: &Graphics) -> Level {
         let l = |n| wad.map_lump(map, n);
         let tex = |b: &[u8], o| {
@@ -338,7 +357,6 @@ impl Game {
                     y: f(1),
                     dx: f(2),
                     dy: f(3),
-                    bbox: [[f(4), f(5), f(6), f(7)], [f(8), f(9), f(10), f(11)]],
                     child: [(c(0) & 0x7FFF) as usize, (c(1) & 0x7FFF) as usize],
                     child_is_leaf: [c(0) & 0x8000 != 0, c(1) & 0x8000 != 0],
                 }
@@ -375,7 +393,6 @@ impl Game {
             nodes,
             sectors,
             things,
-            reject: l("REJECT").to_vec(),
         }
     }
 }

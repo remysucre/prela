@@ -4,12 +4,15 @@ use crate::wad::{Node, Sector, NONE};
 use prela::engine::*;
 use std::hash::Hash;
 
+// Linedef flag bits and the max step-up height.
 pub const ML_BLOCKING: i64 = 1;
 pub const ML_BLOCKMONSTERS: i64 = 2;
 pub const STEP: f64 = 24.0;
 
+// A linedef joined with its front sector and optional back sector.
 pub type LineRow = ((Line, Sector), Option<Sector>);
 
+// Deterministic pseudo-random byte (0..255) from tic, object id and a salt.
 pub fn rnd(tic: u64, id: usize, salt: u64) -> i32 {
     let mut z = tic.wrapping_mul(0x9E3779B97F4A7C15) ^ (id as u64).wrapping_mul(0xBF58476D1CE4E5B9) ^ salt.wrapping_mul(0x94D049BB133111EB);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
@@ -17,6 +20,7 @@ pub fn rnd(tic: u64, id: usize, salt: u64) -> i32 {
     ((z ^ (z >> 31)) & 0xFF) as i32
 }
 
+// Which sector each point is in: walk the BSP tree from the root with `reach`.
 pub fn locate<'a, K, Q>(db: &'a Db, pts: &'a Q) -> impl Drive<D = K, R = usize> + 'a
 where
     K: Copy + Eq + Hash + 'a,
@@ -24,10 +28,12 @@ where
 {
     let root = db.bsp_root;
     let keyed = || pts.and(Same::<K>::new());
+    // One BSP step: from a node, go to the child on the point's side.
     let step = keyed()
         .cross((&db.node_children).and(&db.nodes))
         .filt(|((p, _), ((side, _), n)): (((f64, f64), K), ((usize, usize), Node))| side == point_side(n, p.0, p.1))
         .map(|((_, k), ((_, child), _)): (((f64, f64), K), ((usize, usize), Node))| (k, child));
+    // Start every point at the root, walk down, keep the leaf, map leaf to sector.
     keyed()
         .map(move |(_, k)| (k, root))
         .reach(step, 64)
@@ -38,6 +44,7 @@ where
         .map(|(_, sec)| sec)
 }
 
+// Join each line with its current front/back sectors (heights change with doors).
 pub fn line_rows(db: &Db, sectors: &VecRel<usize, Sector>) -> VecRel<usize, LineRow> {
     (&db.lines)
         .and((&db.lines).map(|l: Line| l.fsec).select(sectors))
@@ -45,16 +52,19 @@ pub fn line_rows(db: &Db, sectors: &VecRel<usize, Sector>) -> VecRel<usize, Line
         .collect()
 }
 
+// Signed side of a point relative to a line (sign tells which side).
 pub fn side_of(l: Line, x: f64, y: f64) -> f64 {
     (l.x2 - l.x1) * (y - l.y1) - (l.y2 - l.y1) * (x - l.x1)
 }
 
+// Does a box of half-size r at (x, y) straddle the line?
 pub fn touches(l: Line, x: f64, y: f64, r: f64) -> bool {
     let overlap = l.x1.min(l.x2) < x + r && l.x1.max(l.x2) > x - r && l.y1.min(l.y2) < y + r && l.y1.max(l.y2) > y - r;
     let s = [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)].map(|(dx, dy)| side_of(l, x + dx * r, y + dy * r) > 0.0);
     overlap && s.iter().any(|&b| b != s[0])
 }
 
+// Where segment a->b crosses the line, as a fraction t along a->b.
 pub fn crossing(l: Line, (ax, ay): (f64, f64), (bx, by): (f64, f64)) -> Option<f64> {
     let (dx, dy) = (bx - ax, by - ay);
     let (ex, ey) = (l.x2 - l.x1, l.y2 - l.y1);
@@ -67,6 +77,7 @@ pub fn crossing(l: Line, (ax, ay): (f64, f64), (bx, by): (f64, f64)) -> Option<f
     (t > 0.0 && t <= 1.0 && (0.0..=1.0).contains(&u)).then_some(t)
 }
 
+// Vertical gap (floor, ceiling) through a two-sided line; one-sided lines are closed.
 pub fn opening(((_, f), b): LineRow) -> (f64, f64) {
     match b {
         None => (f64::MAX, f64::MIN),
@@ -75,6 +86,7 @@ pub fn opening(((_, f), b): LineRow) -> (f64, f64) {
 }
 
 #[derive(Clone, Copy, Debug)]
+// Something solid or shootable: the player or a mobj.
 pub struct Body {
     pub id: usize,
     pub x: f64,
@@ -87,6 +99,7 @@ pub struct Body {
 }
 
 #[derive(Clone, Copy, Debug)]
+// A candidate position to try moving to (several per mover, tried in idx order).
 pub struct Cand {
     pub who: usize,
     pub idx: usize,
@@ -101,6 +114,7 @@ pub struct Cand {
 }
 
 #[derive(Clone, Copy, Debug)]
+// Result of testing a candidate: tightest floor/ceiling and whether it's blocked.
 pub struct Clip {
     pub c: Cand,
     pub floor: f64,
@@ -108,10 +122,12 @@ pub struct Clip {
     pub blocked: bool,
 }
 
+// Combine two clip results: highest floor, lowest ceiling, blocked if either is.
 fn merge(a: Clip, b: Clip) -> Clip {
     Clip { c: b.c, floor: a.floor.max(b.floor), ceil: a.ceil.min(b.ceil), blocked: a.blocked || b.blocked }
 }
 
+// Can the mover stand at this candidate (height, step-up, drop-off rules)?
 fn fits(k: Clip) -> bool {
     let c = k.c;
     c.stay
@@ -126,6 +142,7 @@ fn fits(k: Clip) -> bool {
             })
 }
 
+// Clip a candidate against one line it touches.
 fn line_clip(c: Cand, ((l, f), b): LineRow) -> Clip {
     match b {
         None => Clip { c, floor: f64::MIN, ceil: f64::MAX, blocked: true },
@@ -138,10 +155,12 @@ fn line_clip(c: Cand, ((l, f), b): LineRow) -> Clip {
     }
 }
 
+// Does a candidate overlap another solid body?
 fn overlaps(c: Cand, b: Body) -> bool {
     b.solid && b.id != c.who && !c.stay && !c.missile && (c.x - b.x).abs() < c.radius + b.radius && (c.y - b.y).abs() < c.radius + b.radius
 }
 
+// For each mover, the first candidate move that fits.
 pub fn clip_moves(
     db: &Db,
     sectors: &VecRel<usize, Sector>,
@@ -150,15 +169,18 @@ pub fn clip_moves(
     cands: &HashIdx<(usize, usize), Cand>,
 ) -> HashIdx<usize, Clip> {
     let pts: HashIdx<(usize, usize), (f64, f64)> = cands.map(|c: Cand| (c.x, c.y)).collect();
+    // Start from the floor/ceiling of the sector the candidate lands in.
     let base = locate(db, &pts)
         .select(sectors)
         .and(cands)
         .map(|(s, c): (Sector, Cand)| Clip { c, floor: s.floor, ceil: s.ceil, blocked: false });
+    // Lines the candidate touches.
     let walls = cands
         .cross(lines)
         .filt(|(c, ((l, _), _)): (Cand, LineRow)| touches(l, c.x, c.y, c.radius))
         .map(|(c, row): (Cand, LineRow)| line_clip(c, row))
         .key_by(|k: Clip| (k.c.who, k.c.idx));
+    // Bodies the candidate bumps into.
     let things = cands
         .cross(bodies)
         .filt(|(c, b): (Cand, Body)| overlaps(c, b))
@@ -170,6 +192,7 @@ pub fn clip_moves(
         ceil: f64::MAX,
         blocked: false,
     };
+    // Merge all constraints per candidate, keep those that fit, pick lowest idx per mover.
     base.union(walls)
         .union(things)
         .fold(init, merge)
@@ -183,8 +206,10 @@ pub fn clip_moves(
         .collect()
 }
 
+// A sight line: eye position to target position.
 pub type Sight = ((f64, f64, f64), (f64, f64, f64));
 
+// Does this line block the sight line (crossing point outside its opening)?
 fn blocks_sight(((ax, ay, az), (bx, by, bz)): Sight, row: LineRow) -> bool {
     crossing(row.0.0, (ax, ay), (bx, by)).is_some_and(|t| {
         let z = az + t * (bz - az);
@@ -193,6 +218,7 @@ fn blocks_sight(((ax, ay, az), (bx, by, bz)): Sight, row: LineRow) -> bool {
     })
 }
 
+// Sight pairs not blocked by any line.
 pub fn visible(lines: &VecRel<usize, LineRow>, pairs: &HashIdx<usize, Sight>) -> HashIdx<usize, Sight> {
     let blocked = pairs
         .and(Same::<usize>::new())
@@ -204,6 +230,7 @@ pub fn visible(lines: &VecRel<usize, LineRow>, pairs: &HashIdx<usize, Sight>) ->
 }
 
 #[derive(Clone, Copy, Debug)]
+// An instant-hit bullet ray.
 pub struct Shot {
     pub id: usize,
     pub from: usize,
@@ -216,6 +243,7 @@ pub struct Shot {
 }
 
 #[derive(Clone, Copy, Debug)]
+// Where a shot hit: a wall (target NONE) or a body.
 pub struct Impact {
     pub shot: Shot,
     pub t: f64,
@@ -225,6 +253,7 @@ pub struct Impact {
     pub z: f64,
 }
 
+// Shot hitting a wall: crosses a line outside its opening.
 fn wall_impact(s: Shot, row: LineRow) -> Option<Impact> {
     let end = (s.x + s.range * s.ang.cos(), s.y + s.range * s.ang.sin());
     crossing(row.0.0, (s.x, s.y), end).and_then(|t| {
@@ -234,6 +263,7 @@ fn wall_impact(s: Shot, row: LineRow) -> Option<Impact> {
     })
 }
 
+// Shot hitting a body: ray passes within its radius.
 fn body_impact(s: Shot, b: Body) -> Option<Impact> {
     let (dx, dy) = (b.x - s.x, b.y - s.y);
     let (sn, cs) = s.ang.sin_cos();
@@ -245,6 +275,7 @@ fn body_impact(s: Shot, b: Body) -> Option<Impact> {
     })
 }
 
+// For each shot, the nearest wall or body it hits.
 pub fn hitscan(lines: &VecRel<usize, LineRow>, bodies: &HashIdx<usize, Body>, shots: &HashIdx<usize, Shot>) -> HashIdx<usize, Impact> {
     shots
         .cross(lines)

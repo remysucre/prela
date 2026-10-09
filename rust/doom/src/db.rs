@@ -1,8 +1,9 @@
-use crate::info::{self, Action, ActOut, AiOut, Pickup, Rule, Special, StepOut, WOut, G_DEATH, G_MELEE, G_MISSILE, G_PAIN, G_SEE, G_SPAWN};
+use crate::info::{self, Action, ActOut, AiOut, AmmoDef, ChaseDir, FaceOut, NumberSlot, PickupDef, Rule, Slide, Special, StepOut, WOut, G_DEATH, G_MELEE, G_MISSILE, G_PAIN, G_SEE, G_SPAWN};
 use crate::wad::{Game, Linedef, Node, Sector, Seg, Sidedef, Thing, NONE};
 use prela::engine::*;
 use std::collections::HashMap;
 
+// One animation/AI state: sprite frame to show, how long, what action to run, and the next state.
 #[derive(Clone, Copy, Debug)]
 pub struct StateRow {
     pub sprite: usize,
@@ -13,6 +14,7 @@ pub struct StateRow {
     pub next: usize,
 }
 
+// Static stats for one kind of thing (monster, item, decoration): states to jump to, size, health, flags.
 #[derive(Clone, Copy, Debug)]
 pub struct Info {
     pub ednum: i64,
@@ -28,10 +30,10 @@ pub struct Info {
     pub health: i32,
     pub painchance: i32,
     pub flags: u32,
-    pub pickup: Pickup,
     pub drop: usize,
 }
 
+// One weapon: which ammo it uses and its ready/attack/flash states.
 #[derive(Clone, Copy, Debug)]
 pub struct Weapon {
     pub ammo: usize,
@@ -41,29 +43,44 @@ pub struct Weapon {
     pub flash: usize,
 }
 
+// All the game-rule tables from info.rs, loaded as Prela relations.
 pub struct Tables {
     pub states: VecRel<usize, StateRow>,
     pub infos: VecRel<usize, Info>,
     pub ednum_info: HashIdx<i64, usize>,
     pub sprite_frames: HashIdx<u64, (usize, bool)>,
     pub weapons: VecRel<usize, Weapon>,
-    pub hud: VecRel<usize, usize>,
+    pub hud_fonts: HashIdx<(usize, usize), usize>,
+    pub hud_patches: VecRel<usize, (usize, f64, f64, f32)>,
+    pub hud_numbers: VecRel<usize, NumberSlot>,
+    pub hud_arms: VecRel<usize, (usize, f64, f64, usize)>,
+    pub hud_keys: VecRel<usize, (f64, f64, usize)>,
+    pub face_rules: MultiRel<usize, Rule<FaceOut>>,
+    pub faces: HashIdx<(u8, usize, usize), usize>,
     pub info_goto: HashIdx<(usize, u8), usize>,
     pub ai_rules: MultiRel<usize, Rule<AiOut>>,
     pub weapon_rules: MultiRel<usize, Rule<WOut>>,
     pub specials: HashIdx<i64, Special>,
     pub activations: HashIdx<usize, ActOut>,
     pub mover_rules: MultiRel<usize, Rule<StepOut>>,
+    pub pickups: HashIdx<usize, PickupDef>,
+    pub ammo_defs: VecRel<usize, AmmoDef>,
+    pub sector_damage: HashIdx<i64, i32>,
+    pub chase_dirs: VecRel<usize, ChaseDir>,
+    pub slides: VecRel<usize, Slide>,
     pub puff: usize,
     pub blood: usize,
     pub ball: usize,
 }
 
+// Packs (sprite, frame, rotation) into one lookup key for sprite images.
 pub fn frame_key(sprite: usize, frame: usize, rot: usize) -> u64 {
     (sprite * 1000 + frame * 10 + rot) as u64
 }
 
+// Turns the Rust-literal tables in info.rs into relations, resolving state names to ids.
 fn tables(gfx: &crate::wad::Graphics) -> Tables {
+    // Animation states, with names and sprites replaced by ids.
     let defs = info::states();
     let ids: HashMap<String, usize> = defs.iter().enumerate().map(|(i, d)| (d.name.clone(), i)).collect();
     let id = |n: &str| *ids.get(n).unwrap_or_else(|| panic!("unknown state {n}"));
@@ -83,6 +100,7 @@ fn tables(gfx: &crate::wad::Graphics) -> Tables {
             })
             .collect(),
     );
+    // Thing kinds, with state names and drop items resolved to ids.
     let mdefs = info::mobjs();
     let by_ednum: HashMap<i64, usize> = mdefs.iter().enumerate().rev().map(|(i, m)| (m.doomednum, i)).collect();
     let infos: VecRel<usize, Info> = VecRel::new(
@@ -102,17 +120,18 @@ fn tables(gfx: &crate::wad::Graphics) -> Tables {
                 health: m.health,
                 painchance: m.painchance,
                 flags: m.flags,
-                pickup: m.pickup,
                 drop: by_ednum.get(&m.drop).copied().unwrap_or(NONE),
             })
             .collect(),
     );
+    // Map editor number -> thing kind, for spawning map things.
     let ednum_info = (&infos)
         .and(Same::<usize>::new())
         .filt(|(i, _): (Info, usize)| i.ednum > 0)
         .key_by(|(i, _): (Info, usize)| i.ednum)
         .map(|(_, k)| k)
         .collect();
+    // Sprite lump names like TROOA2A8 -> (sprite, frame, rotation) -> image id; the second half is the mirrored rotation.
     let mut frames = Vec::new();
     for (name, &gid) in &gfx.sprite_names {
         let b = name.as_bytes();
@@ -126,15 +145,23 @@ fn tables(gfx: &crate::wad::Graphics) -> Tables {
         }
     }
     let sprite_frames = VecRel::<usize, (u64, (usize, bool))>::new(frames).key_by(|(k, _)| k).map(|(_, v)| v).collect();
+    // Weapons, with state names resolved.
     let weapons = VecRel::new(
         info::weapons()
             .iter()
             .map(|w| Weapon { ammo: w.ammo, per_shot: w.per_shot, ready: id(w.ready), attack: id(w.attack), flash: id(w.flash) })
             .collect(),
     );
-    let hud_names = ["STTNUM0", "STTNUM1", "STTNUM2", "STTNUM3", "STTNUM4", "STTNUM5", "STTNUM6", "STTNUM7", "STTNUM8", "STTNUM9", "STTPRCNT", "STKEYS0", "STKEYS1", "STKEYS2"];
-    let hud = VecRel::new(hud_names.iter().map(|n| gfx.patch_names.get(*n).copied().unwrap_or(NONE)).collect());
+    // Status bar glyphs: digits 0-9, percent sign, three keys.
+    // Status bar tables, with lump names resolved to image ids.
+    let lump = |n: &str| gfx.patch_names.get(n).copied().unwrap_or(NONE);
+    let hud_fonts = VecRel::<usize, ((usize, usize), usize)>::new(info::hud_fonts().iter().map(|(k, n)| (*k, lump(n))).collect()).key_by(|(k, _)| k).map(|(_, g)| g).collect();
+    let hud_patches = VecRel::new(info::hud_patches().iter().map(|&(n, x, y, d)| (lump(n), x, y, d)).collect());
+    let hud_keys = VecRel::new(info::hud_keys().iter().map(|&(x, y, n)| (x, y, lump(n))).collect());
+    let faces = VecRel::<usize, ((u8, usize, usize), usize)>::new(info::faces().iter().map(|(k, n)| (*k, lump(n))).collect()).key_by(|(k, _)| k).map(|(_, g)| g).collect();
+    let face_rules = VecRel::<usize, Rule<FaceOut>>::new(info::face_rules()).key_by(|_| 0usize).collect();
     let kind = |n: &str| mdefs.iter().position(|m| m.name == n).unwrap();
+    // (thing kind, goto label) -> state id, so rules can say "go to SEE" and get the right state per monster.
     let info_goto = (&infos)
         .and(Same::<usize>::new())
         .flat_map(|(i, k): (Info, usize)| {
@@ -144,31 +171,47 @@ fn tables(gfx: &crate::wad::Graphics) -> Tables {
         .key_by(|(k, g, _)| (k, g))
         .map(|(_, _, s)| s)
         .collect();
+    // Rule tables keyed by the action (or special/mover key) they apply to.
     let by_action = |rules: Vec<(Action, Rule<AiOut>)>| VecRel::<usize, (Action, Rule<AiOut>)>::new(rules).key_by(|(a, _)| a as usize).map(|(_, r)| r).collect();
     let ai_rules = by_action(info::ai_rules());
     let weapon_rules = VecRel::<usize, (Action, Rule<WOut>)>::new(info::weapon_rules()).key_by(|(a, _)| a as usize).map(|(_, r)| r).collect();
     let specials = VecRel::<usize, (i64, Special)>::new(info::specials()).key_by(|(k, _)| k).map(|(_, v)| v).collect();
     let activations = VecRel::<usize, (usize, ActOut)>::new(info::activations()).key_by(|(k, _)| k).map(|(_, v)| v).collect();
     let mover_rules = VecRel::<usize, (usize, Rule<StepOut>)>::new(info::mover_rules()).key_by(|(k, _)| k).map(|(_, v)| v).collect();
+    // Thing kind -> what picking it up gives.
+    let pickups = VecRel::<usize, Option<PickupDef>>::new(mdefs.iter().map(|m| m.pickup).collect()).flat_map(|p| p).collect();
+    let sector_damage = VecRel::<usize, (i64, i32)>::new(info::sector_damage()).key_by(|(k, _)| k).map(|(_, v)| v).collect();
     Tables {
         states,
         infos,
         ednum_info,
         sprite_frames,
         weapons,
-        hud,
+        hud_fonts,
+        hud_patches,
+        hud_numbers: VecRel::new(info::hud_numbers()),
+        hud_arms: VecRel::new(info::hud_arms()),
+        hud_keys,
+        face_rules,
+        faces,
         info_goto,
         ai_rules,
         weapon_rules,
         specials,
         activations,
         mover_rules,
+        pickups,
+        ammo_defs: VecRel::new(info::ammo_defs()),
+        sector_damage,
+        chase_dirs: VecRel::new(info::chase_dirs()),
+        slides: VecRel::new(info::slides()),
         puff: kind("PUFF"),
         blood: kind("BLOOD"),
         ball: kind("TBALL"),
     }
 }
 
+// Where an image's texels start in the texel table, plus its size and draw offset.
 #[derive(Clone, Copy)]
 pub struct Tex {
     pub base: usize,
@@ -178,6 +221,7 @@ pub struct Tex {
     pub top: i64,
 }
 
+// A seg joined with its line, vertices, and sidedefs: everything the renderer needs per wall piece.
 #[derive(Clone, Copy)]
 pub struct Wall {
     pub x1: f64,
@@ -193,9 +237,9 @@ pub struct Wall {
     pub middle: usize,
     pub flags: i64,
     pub light_delta: i64,
-    pub line: usize,
 }
 
+// A linedef joined with its vertices and sectors: what collision and triggers need.
 #[derive(Clone, Copy)]
 pub struct Line {
     pub x1: f64,
@@ -209,6 +253,7 @@ pub struct Line {
     pub bsec: usize,
 }
 
+// Everything static about the level and graphics, as relations.
 pub struct Db {
     pub t: Tables,
     pub lines: VecRel<usize, Line>,
@@ -234,10 +279,12 @@ pub struct Db {
 }
 
 impl Db {
+    // Builds the database from the parsed WAD. Also returns the starting sector heights (game state, not static).
     pub fn new(g: Game) -> (Db, VecRel<usize, Sector>) {
         let l = g.level;
         let n_nodes = l.nodes.len();
         let gfx = g.gfx;
+        // Image metadata, one row per texture/flat/sprite/HUD glyph.
         let tex = VecRel::new(
             (0..gfx.base.len())
                 .map(|i| Tex {
@@ -250,10 +297,12 @@ impl Db {
                 .collect(),
         );
         let ss = l.subsectors.clone();
+        // Subsector -> its segs.
         let ss_segs = MultiRel::from_pairs(
             ss.len(),
             ss.iter().enumerate().flat_map(|(i, &(first, n))| (first..first + n).map(move |s| (i, s))),
         );
+        // BSP node -> (side, child); leaves are numbered after the nodes.
         let node_children = MultiRel::from_pairs(
             n_nodes,
             l.nodes.iter().enumerate().flat_map(|(i, n)| {
@@ -261,6 +310,7 @@ impl Db {
             }),
         );
         let t = tables(&gfx);
+        // First pass with placeholders; the derived tables below are filled in from it.
         let db = Db {
             t,
             lines: VecRel::new(vec![]),
@@ -287,6 +337,7 @@ impl Db {
         let db = Db { walls: db.derive_walls(), ..db };
         let leaf_sector = db.derive_leaf_sector(n_nodes);
         let lines = db.derive_lines();
+        // Sector -> sectors that share a two-sided line with it.
         let neighbors = (&lines)
             .filt(|l: Line| l.bsec != NONE)
             .flat_map(|l: Line| [(l.fsec, l.bsec), (l.bsec, l.fsec)])
@@ -294,6 +345,7 @@ impl Db {
             .map(|(_, b)| b)
             .collect();
         let sectors = VecRel::new(l.sectors);
+        // Tag -> sectors with that tag, for switches that move tagged sectors.
         let tag_sectors = (&sectors)
             .and(Same::<usize>::new())
             .key_by(|(s, _): (Sector, usize)| s.tag as usize)
@@ -302,6 +354,7 @@ impl Db {
         (Db { leaf_sector, lines, neighbors, tag_sectors, ..db }, sectors)
     }
 
+    // Joins each seg with its linedef, vertices, and front/back sidedefs.
     fn derive_walls(&self) -> VecRel<usize, Wall> {
         let line = (&self.segs).map(|s: Seg| s.line).select(&self.linedefs);
         let p1 = (&self.segs).map(|s: Seg| s.v1).select(&self.vertices);
@@ -333,11 +386,11 @@ impl Db {
                 middle: f.middle,
                 flags: l.flags,
                 light_delta: if a.1 == b.1 { -1 } else if a.0 == b.0 { 1 } else { 0 },
-                line: s.line,
             })
             .collect()
     }
 
+    // Joins each linedef with its vertices and front/back sidedefs.
     fn derive_lines(&self) -> VecRel<usize, Line> {
         let p1 = (&self.linedefs).map(|l: Linedef| l.v1).select(&self.vertices);
         let p2 = (&self.linedefs).map(|l: Linedef| l.v2).select(&self.vertices);
@@ -360,6 +413,7 @@ impl Db {
             .collect()
     }
 
+    // BSP leaf -> sector, taken from the leaf's first seg.
     fn derive_leaf_sector(&self, n_nodes: usize) -> MultiRel<usize, usize> {
         let first_seg = (&self.ss_segs).fold(NONE, |a: usize, s: usize| a.min(s));
         let sector = (&first_seg).select(&self.walls).map(|w: Wall| w.fsec);

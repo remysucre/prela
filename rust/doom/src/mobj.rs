@@ -1,13 +1,14 @@
 use crate::db::{Db, Info, StateRow};
-use crate::info::{fact, Action, AiOut, Attack, HANGING, KEEP, MISSILE, MONSTER, NOGRAV, SHOOTABLE, SOLID};
+use crate::info::{fact, Action, AiOut, Attack, ChaseDir, HANGING, KEEP, MISSILE, MONSTER, NOGRAV, SHOOTABLE, SOLID};
 use crate::rules::{bit, matching};
 use crate::physics::{locate, rnd, Body, Cand, Clip, Impact, Shot, Sight};
 use crate::player::{Player, HEIGHT, PLAYER, RADIUS};
 use crate::wad::{Sector, Thing, NONE};
 use prela::engine::*;
-use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
+use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 #[derive(Clone, Copy, Debug)]
+// A live map object (monster, item, decoration, projectile, effect) and its per-tic state.
 pub struct Mobj {
     pub id: usize,
     pub kind: usize,
@@ -28,6 +29,7 @@ pub struct Mobj {
 }
 
 #[derive(Clone, Copy, Debug)]
+// A request to create a new mobj.
 pub struct Spawn {
     pub id: usize,
     pub kind: usize,
@@ -39,6 +41,7 @@ pub struct Spawn {
     pub source: usize,
 }
 
+// Turns spawn requests into mobjs in their type's spawn state.
 pub fn spawn<Q: Drive<R = Spawn>>(db: &Db, reqs: Q) -> HashIdx<usize, Mobj> {
     reqs.key_by(|s: Spawn| s.kind)
         .and(&db.t.infos)
@@ -66,6 +69,7 @@ pub fn spawn<Q: Drive<R = Spawn>>(db: &Db, reqs: Q) -> HashIdx<usize, Mobj> {
         .collect()
 }
 
+// Spawns the map's THINGS that appear on this skill level and aren't multiplayer-only.
 pub fn spawn_things(db: &Db, sectors: &VecRel<usize, Sector>) -> HashIdx<usize, Mobj> {
     let reqs = (&db.things)
         .and(Same::<usize>::new())
@@ -85,6 +89,7 @@ pub fn spawn_things(db: &Db, sectors: &VecRel<usize, Sector>) -> HashIdx<usize, 
     relocate(db, sectors, &spawn(db, reqs))
 }
 
+// Finds each mobj's sector and sets its z (floor, ceiling for hanging things, unchanged for flyers).
 pub fn relocate(db: &Db, sectors: &VecRel<usize, Sector>, mobjs: &HashIdx<usize, Mobj>) -> HashIdx<usize, Mobj> {
     let pts: HashIdx<usize, (f64, f64)> = mobjs.map(|m: Mobj| (m.x, m.y)).collect();
     locate(db, &pts)
@@ -106,6 +111,7 @@ pub fn relocate(db: &Db, sectors: &VecRel<usize, Sector>, mobjs: &HashIdx<usize,
         .collect()
 }
 
+// Collision/hit boxes for solid or shootable mobjs, plus the player.
 pub fn bodies(db: &Db, players: &VecRel<usize, Player>, mobjs: &HashIdx<usize, Mobj>) -> HashIdx<usize, Body> {
     mobjs
         .filt(|m: Mobj| m.flags & (SOLID | SHOOTABLE) != 0)
@@ -130,6 +136,7 @@ pub fn bodies(db: &Db, players: &VecRel<usize, Player>, mobjs: &HashIdx<usize, M
         .collect()
 }
 
+// Counts down each mobj's state timer, steps to the next state when it runs out, and returns that state's action.
 pub fn advance(db: &Db, mobjs: &HashIdx<usize, Mobj>) -> HashIdx<usize, (Mobj, Action)> {
     mobjs
         .key_by(|m: Mobj| m.state)
@@ -150,6 +157,7 @@ pub fn advance(db: &Db, mobjs: &HashIdx<usize, Mobj>) -> HashIdx<usize, (Mobj, A
         .collect()
 }
 
+// Eye-to-eye segments from each looking/chasing monster to the player, for the line-of-sight check.
 pub fn sight_pairs(advanced: &HashIdx<usize, (Mobj, Action)>, players: &VecRel<usize, Player>) -> HashIdx<usize, Sight> {
     advanced
         .filt(|(_, a): (Mobj, Action)| matches!(a, Action::Look | Action::Chase))
@@ -162,6 +170,7 @@ pub fn sight_pairs(advanced: &HashIdx<usize, (Mobj, Action)>, players: &VecRel<u
 }
 
 #[derive(Clone, Copy, Debug)]
+// A mobj plus what it decided this tic: state to jump to, direction to walk, attack, explosion, projectile hit.
 pub struct Decision {
     pub m: Mobj,
     pub goto: usize,
@@ -171,14 +180,17 @@ pub struct Decision {
     pub hit: usize,
 }
 
+// A decision that changes nothing.
 fn idle(m: Mobj) -> Decision {
     Decision { m, goto: NONE, go: None, attack: Attack::None, explode: false, hit: NONE }
 }
 
+// Angle from the mobj to the player.
 fn face(m: Mobj, p: Player) -> f64 {
     (p.y - m.y).atan2(p.x - m.x)
 }
 
+// Packs the conditions the AI rules test (sees player, in range, random roll...) into a bitmask.
 fn ai_facts(m: Mobj, i: Info, p: Player, sees: bool, heard: bool, tic: u64) -> u32 {
     use fact::*;
     let dist = (p.x - m.x).hypot(p.y - m.y);
@@ -197,6 +209,7 @@ fn ai_facts(m: Mobj, i: Info, p: Player, sees: bool, heard: bool, tic: u64) -> u
 }
 
 #[derive(Clone, Copy)]
+// Working row for rule matching: the decision so far plus inputs the chosen rule may use.
 struct Ctx {
     d: Decision,
     face: f64,
@@ -205,10 +218,12 @@ struct Ctx {
     hit: Option<usize>,
 }
 
+// Starts a Ctx from a decision with no extra inputs.
 fn ctx(d: Decision) -> Ctx {
     Ctx { d, face: d.m.ang, damage: 0, clip: None, hit: None }
 }
 
+// Applies a chosen rule's output to the mobj and its decision.
 fn apply(c: Ctx, o: AiOut, goto: Option<usize>) -> Decision {
     let (d, m) = (c.d, c.d.m);
     let (x, y) = c.clip.filter(|_| o.to_clip).map_or((m.x, m.y), |k| (k.c.x, k.c.y));
@@ -228,9 +243,12 @@ fn apply(c: Ctx, o: AiOut, goto: Option<usize>) -> Decision {
     }
 }
 
+// Picks the best matching AI rule per mobj, applies it, and resolves its state jump.
 fn run_rules<Q: Drive<R = (Ctx, usize, u32)>>(db: &Db, rows: Q) -> HashIdx<usize, Decision> {
     let rows: HashIdx<usize, (Ctx, usize, u32)> = rows.key_by(|(c, _, _): (Ctx, usize, u32)| c.d.m.id).collect();
+    // Best rule per mobj, looked up by action and fact bits.
     let chosen = matching(&rows, &db.t.ai_rules, |c: Ctx| c.d.m.id);
+    // Apply it (KEEP if none matched) and look up the target state for this mobj type.
     let applied = (&rows)
         .and(chosen.opt())
         .map(|((c, _, _), o): ((Ctx, usize, u32), Option<(Ctx, AiOut)>)| (c, o.map_or(KEEP, |(_, o)| o)))
@@ -240,6 +258,7 @@ fn run_rules<Q: Drive<R = (Ctx, usize, u32)>>(db: &Db, rows: Q) -> HashIdx<usize
     goto(db, applied)
 }
 
+// Monster AI for this tic: look for the player, chase, choose attacks.
 pub fn think(
     db: &Db,
     advanced: &HashIdx<usize, (Mobj, Action)>,
@@ -248,6 +267,7 @@ pub fn think(
     players: &VecRel<usize, Player>,
     tic: u64,
 ) -> HashIdx<usize, Decision> {
+    // Join each mobj with its sight/hearing result, type info and the player, then compute its fact bits.
     let rows = advanced
         .and(visible.opt())
         .key_by(|((m, _), _): ((Mobj, Action), Option<Sight>)| m.sector)
@@ -262,6 +282,7 @@ pub fn think(
     run_rules(db, rows)
 }
 
+// Puts decisions that requested a state jump into that state.
 pub fn goto<Q: Drive<R = Decision>>(db: &Db, decided: Q) -> HashIdx<usize, Decision> {
     decided
         .key_by(|d: Decision| d.goto)
@@ -274,33 +295,32 @@ pub fn goto<Q: Drive<R = Decision>>(db: &Db, decided: Q) -> HashIdx<usize, Decis
         .collect()
 }
 
+// Candidate positions: one per chase direction (the last is stay put), or a projectile's next step.
 pub fn move_cands(db: &Db, decided: &HashIdx<usize, Decision>) -> HashIdx<(usize, usize), Cand> {
-    decided
-        .key_by(|d: Decision| d.m.kind)
-        .and(&db.t.infos)
-        .flat_map(|(d, i): (Decision, Info)| {
-            let m = d.m;
-            let chase = d.go.map(|a| [0.0, FRAC_PI_4, -FRAC_PI_4, FRAC_PI_2, -FRAC_PI_2, 0.0].map(|o| a + o));
-            let fly = (m.flags & MISSILE != 0 && (m.momx != 0.0 || m.momy != 0.0)).then_some(m.ang);
-            let base = Cand { who: m.id, idx: 0, x: m.x, y: m.y, z: m.z, radius: i.radius, height: i.height, monster: m.flags & MONSTER != 0, missile: false, stay: false };
-            let chase = chase.into_iter().flat_map(move |angs| {
-                angs.into_iter().enumerate().map(move |(k, a)| Cand {
-                    idx: k,
-                    x: m.x + if k == 5 { 0.0 } else { i.speed * a.cos() },
-                    y: m.y + if k == 5 { 0.0 } else { i.speed * a.sin() },
-                    stay: k == 5,
-                    ..base
-                })
-            });
-            let fly = fly.into_iter().map(move |_| Cand { x: m.x + m.momx, y: m.y + m.momy, missile: true, ..base });
-            chase.chain(fly)
-        })
-        .key_by(|c: Cand| (c.who, c.idx))
-        .collect()
+    let base = |m: Mobj, i: Info| Cand { who: m.id, idx: 0, x: m.x, y: m.y, z: m.z, radius: i.radius, height: i.height, monster: m.flags & MONSTER != 0, missile: false, stay: false };
+    let infos = || decided.key_by(|d: Decision| d.m.kind).and(&db.t.infos);
+    let chase = infos()
+        .flat_map(|(d, i): (Decision, Info)| d.go.map(|a| (d.m, i, a)))
+        .key_by(|(m, _, _): (Mobj, Info, f64)| m.id)
+        .cross(&db.t.chase_dirs)
+        .and(Same::<(usize, usize)>::new())
+        .map(move |(((m, i, a), c), (_, idx)): (((Mobj, Info, f64), ChaseDir), (usize, usize))| Cand {
+            idx,
+            x: m.x + c.step * i.speed * (a + c.turn).cos(),
+            y: m.y + c.step * i.speed * (a + c.turn).sin(),
+            stay: c.stay,
+            ..base(m, i)
+        });
+    let fly = infos()
+        .filt(|(d, _): (Decision, Info)| d.m.flags & MISSILE != 0 && (d.m.momx != 0.0 || d.m.momy != 0.0))
+        .map(move |(d, i): (Decision, Info)| Cand { x: d.m.x + d.m.momx, y: d.m.y + d.m.momy, missile: true, ..base(d.m, i) });
+    chase.key_by(|c: Cand| (c.who, c.idx)).union(fly.key_by(|c: Cand| (c.who, c.idx))).collect()
 }
 
+// Applies collision results: moves monsters and projectiles, detonates projectiles that hit something.
 pub fn apply_moves(db: &Db, decided: &HashIdx<usize, Decision>, clips: &HashIdx<usize, Clip>, bodies: &HashIdx<usize, Body>) -> HashIdx<usize, Decision> {
     use fact::*;
+    // Projectiles whose next step overlaps a shootable body.
     let hits = decided
         .filt(|d: Decision| d.m.flags & MISSILE != 0 && (d.m.momx != 0.0 || d.m.momy != 0.0))
         .cross(bodies)
@@ -310,6 +330,7 @@ pub fn apply_moves(db: &Db, decided: &HashIdx<usize, Decision>, clips: &HashIdx<
         })
         .key_by(|(d, _): (Decision, Body)| d.m.id)
         .fold(NONE, |_, (_, b): (Decision, Body)| b.id);
+    // Fact bits for the Move rules: flying, found a clear spot, hit, wants to walk, stayed put.
     let rows = decided.and(clips.opt()).and(hits.opt()).map(|((d, k), hit): ((Decision, Option<Clip>), Option<usize>)| {
         let m = d.m;
         let facts = bit(m.flags & MISSILE != 0 && (m.momx != 0.0 || m.momy != 0.0), FLYING)
@@ -322,6 +343,7 @@ pub fn apply_moves(db: &Db, decided: &HashIdx<usize, Decision>, clips: &HashIdx<
     run_rules(db, rows)
 }
 
+// Hitscan bullets fired by monsters this tic, with random spread and damage.
 pub fn monster_shots(decided: &HashIdx<usize, Decision>, tic: u64) -> HashIdx<usize, Shot> {
     decided
         .flat_map(move |d: Decision| {
@@ -343,18 +365,23 @@ pub fn monster_shots(decided: &HashIdx<usize, Decision>, tic: u64) -> HashIdx<us
         .collect()
 }
 
+// Total damage per target this tic from bullets, melee, projectile hits and explosions.
 pub fn damage(impacts: &HashIdx<usize, Impact>, decided: &HashIdx<usize, Decision>, bodies: &HashIdx<usize, Body>, tic: u64) -> Fold<usize, i32> {
+    // Bullets that hit a body.
     let shots = impacts.filt(|i: Impact| i.target != NONE).map(|i: Impact| (i.target, i.shot.damage)).key_by(|(t, _)| t);
+    // Monster melee attacks (always on the player).
     let melee = decided
         .flat_map(move |d: Decision| match d.attack {
             Attack::Melee { mult, modulo } => Some((PLAYER, mult * (rnd(tic, d.m.id, 2) % modulo + 1))),
             _ => None,
         })
         .key_by(|(t, _)| t);
+    // Projectile direct hits.
     let missiles = decided
         .filt(|d: Decision| d.hit != NONE)
         .map(move |d: Decision| (d.hit, 3 * (rnd(tic, d.m.id, 9) % 8 + 1)))
         .key_by(|(t, _)| t);
+    // Explosion splash, falling off with distance up to 128.
     let blast = decided
         .filt(|d: Decision| d.explode)
         .cross(bodies)
@@ -363,9 +390,11 @@ pub fn damage(impacts: &HashIdx<usize, Impact>, decided: &HashIdx<usize, Decisio
             (b.shootable && b.id != d.m.id && dist < 128.0).then_some((b.id, (128.0 - dist) as i32))
         })
         .key_by(|(t, _)| t);
+    // Sum per target.
     shots.union(melee).union(missiles).union(blast).map(|(_, d)| d).fold(0, |a: i32, d: i32| a + d)
 }
 
+// Applies damage to mobjs and runs the Hurt rules (die, pain, wake up).
 pub fn wound(db: &Db, decided: &HashIdx<usize, Decision>, dmg: &Fold<usize, i32>, tic: u64) -> HashIdx<usize, Decision> {
     use fact::*;
     let hurt = decided
@@ -379,9 +408,11 @@ pub fn wound(db: &Db, decided: &HashIdx<usize, Decision>, dmg: &Fold<usize, i32>
             (Ctx { damage: h, ..ctx(d) }, Action::Hurt as usize, facts)
         });
     let hurt = run_rules(db, hurt);
+    // Replace hurt mobjs, keep the rest.
     decided.minus(&hurt).union(&hurt).collect()
 }
 
+// Spawns items dropped by monsters that died this tic.
 pub fn drops(db: &Db, before: &HashIdx<usize, Decision>, after: &HashIdx<usize, Decision>, tic: u64) -> HashIdx<usize, Mobj> {
     let base = (tic as usize + 1) << 24;
     let reqs = before
@@ -405,9 +436,11 @@ pub fn drops(db: &Db, before: &HashIdx<usize, Decision>, after: &HashIdx<usize, 
     spawn(db, reqs)
 }
 
+// Spawns bullet puffs/blood at impacts and imp fireballs.
 pub fn effects(db: &Db, impacts: &HashIdx<usize, Impact>, decided: &HashIdx<usize, Decision>, players: &VecRel<usize, Player>, tic: u64) -> HashIdx<usize, Mobj> {
     let base = (tic as usize + 1) << 24;
     let (puff, blood, ball) = (db.t.puff, db.t.blood, db.t.ball);
+    // Puff on walls, blood on bodies.
     let puffs = impacts.map(move |i: Impact| Spawn {
         id: base + i.shot.id,
         kind: if i.target == NONE { puff } else { blood },
@@ -418,6 +451,7 @@ pub fn effects(db: &Db, impacts: &HashIdx<usize, Impact>, decided: &HashIdx<usiz
         speed: 0.0,
         source: NONE,
     });
+    // Imp fireballs aimed at the player.
     let balls = decided
         .filt(|d: Decision| matches!(d.attack, Attack::Ball))
         .key_by(|_| PLAYER)
@@ -435,6 +469,7 @@ pub fn effects(db: &Db, impacts: &HashIdx<usize, Impact>, decided: &HashIdx<usiz
     spawn(db, puffs.key_by(|_| 0usize).union(balls.key_by(|_| 0usize)))
 }
 
+// Next tic's mobjs: removed and picked-up ones dropped, new drops and effects added.
 pub fn survivors(decided: &HashIdx<usize, Decision>, taken: &Fold<usize, bool>, dropped: &HashIdx<usize, Mobj>, effects: &HashIdx<usize, Mobj>) -> HashIdx<usize, Mobj> {
     decided.map(|d: Decision| d.m).filt(|m: Mobj| m.state != 0).minus(taken).union(dropped).union(effects).collect()
 }

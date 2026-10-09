@@ -6,9 +6,11 @@ use crate::rules::{bit, matching};
 use crate::wad::Sector;
 use prela::engine::*;
 
+// How far the player can reach to press a switch or open a door.
 const USERANGE: f64 = 64.0;
 
 #[derive(Clone, Copy, Debug)]
+// State of a door/lift/floor in one sector.
 pub struct Mover {
     pub kind: u8,
     pub plane: u8,
@@ -19,8 +21,10 @@ pub struct Mover {
     pub wait: i32,
 }
 
+// A sector with nothing moving.
 pub const IDLE: Mover = Mover { kind: MV_IDLE, plane: 0, dir: 0, speed: 0.0, up: 0.0, down: 0.0, wait: 0 };
 
+// Start (or reverse) a mover from a triggered special; sets target heights.
 fn activate(m: Mover, a: Special, (lc, lf): (f64, f64), s: Sector, o: ActOut) -> Mover {
     let lowest = lf.min(s.floor);
     Mover {
@@ -35,12 +39,14 @@ fn activate(m: Mover, a: Special, (lc, lf): (f64, f64), s: Sector, o: ActOut) ->
 }
 
 #[derive(Clone, Copy)]
+// A mover after one tic of travel, with its updated sector.
 struct Moved {
     id: usize,
     m: Mover,
     s: Sector,
 }
 
+// Move the plane one step toward its target; return facts for the rule lookup.
 fn travel(id: usize, m: Mover, s: Sector, occupied: bool) -> (Moved, usize, u32) {
     let p = m.plane as f64;
     let h = s.ceil * (1.0 - p) + s.floor * p;
@@ -51,12 +57,14 @@ fn travel(id: usize, m: Mover, s: Sector, occupied: bool) -> (Moved, usize, u32)
     (Moved { id, m, s }, step_key(m.kind, m.dir), facts)
 }
 
+// Apply the chosen mover rule: new kind/direction and wait timer.
 fn settle(v: Moved, o: StepOut) -> Moved {
     let wait = if o.wait >= 0 { o.wait } else { v.m.wait - o.wait_dec as i32 };
     Moved { m: Mover { kind: o.kind, dir: o.dir, wait, ..v.m }, ..v }
 }
 
 #[derive(Clone, Copy)]
+// A line hit by the player's use ray.
 struct Hit {
     t: f64,
     line: Line,
@@ -64,6 +72,7 @@ struct Hit {
     closed: bool,
 }
 
+// Test the use ray against one line.
 fn use_hit(p: Player, (((l, f), b), sp): (LineRow, Option<Special>)) -> Option<Hit> {
     let reach = (p.x + USERANGE * p.ang.cos(), p.y + USERANGE * p.ang.sin());
     let usable = sp.is_some_and(|sp| sp.use_ && p.keys & sp.key == sp.key);
@@ -75,13 +84,16 @@ fn use_hit(p: Player, (((l, f), b), sp): (LineRow, Option<Special>)) -> Option<H
     })
 }
 
+// Specials triggered this tic: walk-over lines crossed and use lines pressed.
 pub fn line_events(db: &Db, lines: &VecRel<usize, LineRow>, old: &VecRel<usize, Player>, new: &VecRel<usize, Player>, use_: bool) -> MultiRel<usize, (Line, Special)> {
+    // Lines with a walk-over special.
     let walkable: MultiRel<usize, (Line, Special)> = (&db.lines)
         .key_by(|l: Line| l.special)
         .and(&db.t.specials)
         .filt(|(_, sp): (Line, Special)| sp.walk)
         .key_by(|_| 0usize)
         .collect();
+    // Walk lines the player crossed between old and new position.
     let crossed = new
         .and(old)
         .filt(|(p, _): (Player, Player)| !p.dead)
@@ -89,7 +101,9 @@ pub fn line_events(db: &Db, lines: &VecRel<usize, LineRow>, old: &VecRel<usize, 
         .filt(|((n, o), (l, _)): ((Player, Player), (Line, Special))| crossing(l, (o.x, o.y), (n.x, n.y)).is_some())
         .map(|(_, ls)| ls)
         .key_by(|_| 0usize);
+    // All lines with their special, if any.
     let with_special = lines.and(lines.map(|((l, _), _): LineRow| l.special).select(&db.t.specials).opt());
+    // Nearest line hit by the use ray; fires only if it has a use special.
     let used = new
         .and(old)
         .filt(move |(p, o): (Player, Player)| use_ && !o.usedown && !p.dead)
@@ -108,10 +122,12 @@ pub fn line_events(db: &Db, lines: &VecRel<usize, LineRow>, old: &VecRel<usize, 
     crossed.union(used).collect()
 }
 
+// Did any event trigger the level exit?
 pub fn exited(events: &MultiRel<usize, (Line, Special)>) -> bool {
     events.fold_flat(false, |e, (_, sp): (Line, Special)| e || sp.act == MV_EXIT)
 }
 
+// Advance doors/lifts one tic: activate from events, move, then apply mover rules.
 pub fn movers(
     db: &Db,
     sectors: &VecRel<usize, Sector>,
@@ -119,6 +135,7 @@ pub fn movers(
     events: &MultiRel<usize, (Line, Special)>,
     occupied: &Fold<usize, bool>,
 ) -> (VecRel<usize, Sector>, VecRel<usize, Mover>) {
+    // Which sectors each event activates (by tag, or the line's back sector).
     let acts = events
         .filt(|(_, sp): (Line, Special)| sp.tagged)
         .key_by(|(l, _)| l.tag as usize)
@@ -127,9 +144,11 @@ pub fn movers(
         .map(|((_, sp), _): ((Line, Special), usize)| sp)
         .union(events.filt(|(_, sp): (Line, Special)| !sp.tagged).key_by(|(l, _)| l.bsec).map(|(_, sp): (Line, Special)| sp))
         .fold(None, |_, sp: Special| Some(sp));
+    // Lowest neighboring ceiling/floor per sector (lift and door targets).
     let lowest = (&db.neighbors)
         .select(sectors)
         .fold((f64::MAX, f64::MAX), |(c, f): (f64, f64), s: Sector| (c.min(s.ceil), f.min(s.floor)));
+    // Start or reverse movers that got an activation.
     let activated: VecRel<usize, Mover> = movers
         .and(acts.opt())
         .and(lowest.opt())
@@ -146,6 +165,7 @@ pub fn movers(
         .key_by(|(id, _)| id)
         .map(|(_, m)| m)
         .collect();
+    // Move each plane one step and compute facts.
     let rows: HashIdx<usize, (Moved, usize, u32)> = (&activated)
         .and(sectors)
         .and(occupied.opt())
@@ -153,6 +173,7 @@ pub fn movers(
         .map(|(((m, s), occ), id): (((Mover, Sector), Option<bool>), usize)| travel(id, m, s, occ.is_some()))
         .key_by(|(v, _, _): (Moved, usize, u32)| v.id)
         .collect();
+    // Pick the mover rule for each sector and apply it.
     let chosen = matching(&rows, &db.t.mover_rules, |v: Moved| v.id);
     let settled: VecRel<usize, Moved> = (&rows)
         .and(chosen.opt())

@@ -15,8 +15,10 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
+// Doom runs game logic at 35 tics per second.
 const TIC: Duration = Duration::from_nanos(1_000_000_000 / 35);
 
+// Timing shown in the window title.
 struct Stats {
     frames: u32,
     tics: u32,
@@ -25,6 +27,7 @@ struct Stats {
     since: Instant,
 }
 
+// Window, input state, and the current game state.
 struct App<'a> {
     db: &'a Db,
     sectors: &'a VecRel<usize, Sector>,
@@ -43,6 +46,7 @@ struct App<'a> {
 }
 
 impl App<'_> {
+    // Locks/hides the mouse cursor for mouselook.
     fn grab(&mut self, on: bool) {
         let Some(w) = &self.window else { return };
         let ok = !on
@@ -55,6 +59,7 @@ impl App<'_> {
         self.grabbed = on && ok;
     }
 
+    // Turns held keys and mouse movement into this tic's Input.
     fn input(&mut self) -> Input {
         let down = |ks: &[KeyCode]| ks.iter().any(|k| self.keys.contains(k));
         let axis = |pos: &[KeyCode], neg: &[KeyCode]| down(pos) as i32 as f64 - down(neg) as i32 as f64;
@@ -79,6 +84,7 @@ impl App<'_> {
         self.state.player.get(0).unwrap()
     }
 
+    // Runs as many 35 Hz tics as are due; use after death or exit restarts the level.
     fn step(&mut self) {
         while Instant::now() >= self.next {
             let inp = self.input();
@@ -95,6 +101,7 @@ impl App<'_> {
         }
     }
 
+    // Renders a frame and scales it to the window (nearest neighbour).
     fn draw(&mut self) {
         let (Some(w), Some(surface)) = (&self.window, &mut self.surface) else { return };
         let t = Instant::now();
@@ -140,6 +147,7 @@ impl ApplicationHandler for App<'_> {
         self.next = Instant::now();
     }
 
+    // Keyboard, mouse buttons, focus, and redraw.
     fn window_event(&mut self, el: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => el.exit(),
@@ -183,6 +191,7 @@ impl ApplicationHandler for App<'_> {
         }
     }
 
+    // Raw mouse motion for turning.
     fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
         if let DeviceEvent::MouseMotion { delta: (dx, _) } = event {
             if self.grabbed {
@@ -198,6 +207,7 @@ impl ApplicationHandler for App<'_> {
     }
 }
 
+// Opens the window and runs the event loop.
 pub fn run(db: &Db, sectors: &VecRel<usize, Sector>, state: State) {
     let sensitivity = std::env::var("DOOM_MOUSE").ok().and_then(|s| s.parse().ok()).unwrap_or(0.003);
     let mut app = App {
