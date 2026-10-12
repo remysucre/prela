@@ -5,24 +5,24 @@
 use crate::engine::*;
 
 /// An output-row shape: scalar columns and nested `Prod` tuples thereof.
-pub trait Row: Copy {
+pub trait OutRow: Copy {
     /// Column-wise minimum of two rows.
     fn col_min(self, other: Self) -> Self;
     /// Append each column, formatted, to `cols`.
     fn push_cols(self, cols: &mut Vec<String>);
 }
 
-impl Row for &'static str {
+impl OutRow for &'static str {
     fn col_min(self, other: Self) -> Self { if self <= other { self } else { other } }
     fn push_cols(self, cols: &mut Vec<String>) { cols.push(self.to_string()); }
 }
 
-impl Row for i64 {
+impl OutRow for i64 {
     fn col_min(self, other: Self) -> Self { self.min(other) }
     fn push_cols(self, cols: &mut Vec<String>) { cols.push(self.to_string()); }
 }
 
-impl<A: Row, B: Row> Row for (A, B) {
+impl<A: OutRow, B: OutRow> OutRow for (A, B) {
     fn col_min(self, other: Self) -> Self {
         (self.0.col_min(other.0), self.1.col_min(other.1))
     }
@@ -33,7 +33,7 @@ impl<A: Row, B: Row> Row for (A, B) {
 }
 
 /// Drive `q`, accumulate per-column minima, render `min0 || min1 || …`.
-pub fn min_row<Q: Drive>(q: Q) -> String where Q::R: Row {
+pub fn min_row<Q: Drive>(q: Q) -> String where Q::R: OutRow {
     let mut m: Option<Q::R> = None;
     q.drive(|_, v| m = Some(match m { Some(acc) => acc.col_min(v), None => v }));
     match m {

@@ -9,7 +9,7 @@
 // carry no lifetime.
 
 use crate::engine::*;
-use crate::job_queries::helpers::{Row, min_row};
+use crate::job_queries::helpers::{OutRow, min_row};
 use crate::job_queries::Entry;
 use crate::job_queries::sets::{
     genre6, horror2, kw7, kw8, kw10, link3, murder4, nordic8, nordic9, nordic10, voice3, voice4, writer5,
@@ -1319,7 +1319,7 @@ pub fn entries(db: &'static Job) -> Vec<Entry> {
 //   .minus   value-bearing difference (key-based member test)
 //   .with    restriction — keep rows whose value is a member
 //   .eq / .ne / .gt / .lt / .ge / .le / .is_in / .rx / .nrx  predicates
-pub fn q6a_methods(db: &'static Job) -> impl Drive<R: Row> {
+pub fn q6a_methods(db: &'static Job) -> impl Drive<R: OutRow> {
     let Movie { title, production_year, keyword, cast, .. } = &db.movie;
     let Cast { person, .. } = &db.cast;
     let Person { name, .. } = &db.person;
