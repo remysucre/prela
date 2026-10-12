@@ -1,8 +1,8 @@
 use crate::info::Action;
 pub use prela::engine::Row;
 use prela::engine::{Drive, IntoQuery, QueryExt};
-use std::rc::Rc;
 use prela::loader::{Col, Rows, Set};
+use std::rc::Rc;
 
 // Static map entities. wad.rs fills the columns read from the WAD; columns marked
 // "derived" start empty and are computed by db.rs with queries over the others.
@@ -462,7 +462,7 @@ pub fn rc<E: 'static, T: Copy, Q: Drive<D = Row<E>, R = T>>(q: Q) -> C<E, T> {
     Rc::new(q.collect())
 }
 
-// The player (one row).
+/// player is a single-row entity
 #[derive(IntoQuery, Clone)]
 pub struct Player {
     #[primary_key]

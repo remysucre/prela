@@ -123,13 +123,20 @@ fn closes((_, _, _, _, (yc, yf, ybc, ybf), (_, _, _, back, _)): Panel) -> (i32, 
 
 // The rows of a panel's still-visible stretch (top..bot) that belong to one part, if any.
 fn span(pose: Pose, sky_flat: Row<Image>, (p, (top, bot)): (Panel, (i32, i32)), part: Part) -> Option<Span> {
-    let (_, _, _, _, (yc, yf, ybc, ybf), (_, _, (floor, ceil, _, ceilpic, _), back, _)) = p;
+    let (_, _, scale, _, (yc, yf, ybc, ybf), (_, (_, yoff, flags, _), (floor, ceil, _, ceilpic, _), back, (_, middle, _))) = p;
     let sp = |y0: i32, y1: i32| (y0 < y1).then_some((p, part, y0, y1));
-    // Ceiling above the wall, floor below it; middle only on one-sided walls; upper/lower where the back sector steps.
+    let y = |h: f64| row(CY - (h - pose.2) * scale);
+    // Ceiling above the wall, floor below it; middle on one-sided walls, and once (untiled) in the opening of two-sided ones;
+    // upper/lower where the back sector steps.
     match (part, back) {
         (Part::Ceiling, _) if ceil > pose.2 => sp(top, bot.min(yc)),
         (Part::Floor, _) if floor < pose.2 => sp(top.max(yf), bot),
         (Part::Middle, None) => sp(top.max(yc), bot.min(yf)),
+        (Part::Middle, Some((bf, bc, _))) => middle.and_then(|(_, th)| {
+            let (lo, hi) = (floor.max(bf), ceil.min(bc));
+            let tex_top = yoff + if flags & DONTPEGBOTTOM != 0 { lo + th } else { hi };
+            sp(top.max(yc.max(ybc)).max(y(tex_top.min(hi))), bot.min(yf.min(ybf)).min(y((tex_top - th).max(lo))))
+        }),
         (Part::Upper, Some((_, bc, bpic))) if bc < ceil && !(ceilpic == sky_flat && bpic == sky_flat) => sp(top.max(yc), bot.min(ybc)),
         (Part::Lower, Some((bf, _, _))) if bf > floor => sp(top.max(ybf), bot.min(yf)),
         _ => None,
@@ -176,7 +183,7 @@ fn frag(pose: Pose, sky: Row<Image>, sky_flat: Row<Image>, (p, part, _, _): Span
     match part {
         Part::Ceiling => Some(plane(ceil, ceilpic)),
         Part::Floor => Some(plane(floor, floorpic)),
-        Part::Middle => wall(middle, if flags & DONTPEGBOTTOM != 0 { floor + th(middle) } else { ceil }),
+        Part::Middle => wall(middle, if flags & DONTPEGBOTTOM != 0 { floor.max(bfloor) + th(middle) } else { ceil.min(bceil) }),
         Part::Upper => wall(upper, if flags & DONTPEGTOP != 0 { ceil } else { bceil + th(upper) }),
         Part::Lower => wall(lower, if flags & DONTPEGBOTTOM != 0 { ceil } else { bfloor }),
     }

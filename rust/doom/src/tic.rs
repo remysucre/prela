@@ -29,7 +29,7 @@ fn konst<T: Copy + 'static>(id: &Rows<Player>, v: T) -> C<Player, T> {
     rc(id.map(move |_| v))
 }
 
-/// set player's current sector using physics::locate
+/// update player's current sector using physics::locate
 fn with_sector(db: &Db, p: Player) -> Player {
     let here = (&*p.x).and(&*p.y);
     Player {
@@ -46,7 +46,8 @@ fn on_floor(s: &SectorState, p: Player) -> Player {
     }
 }
 
-/// Starting state: player at the start thing, standing on its sector floor; nothing moving.
+/// set initial state
+/// player at the start position, on the floor, nothing moving
 pub fn initial(db: &Db) -> State {
     let fill = |v| rc((&db.sector).map(move |_| v));
     let sector = SectorState {
@@ -61,16 +62,18 @@ pub fn initial(db: &Db) -> State {
         wait: rc((&db.sector).map(|_| 0i32)),
         heard: rc((&db.sector).map(|_| false)),
     };
+    // `k` is the Konstant entity; essentially a dict of constants but in entity form
     let (k, th) = (&db.t.k, &db.thing);
     let weapon = one(&k.start_weapon);
-    // The player 1 start thing, as the player's row.
+    // player start position as playerID -> (x, y, angle)
     let start: VecRel<Row<Player>, ((f64, f64), f64)> = (&th.kind)
         .filt(|kind: usize| kind == PLAYER1_START)
         .and((&th.x).and(&th.y).and(&th.angle))
-        .key_by(|_| Row::<Player>::new(0))
-        .map(|(_, p): (usize, ((f64, f64), f64))| p)
+        .key_by(|_| Row::<Player>::new(0)) // re-key by player id
+        .map(|(_, p): (usize, ((f64, f64), f64))| p) // toss kind
         .collect();
     let id = Universe::new(1);
+    // initialize player attributes
     let player = Player {
         x: rc((&start).map(|((x, _), _): ((f64, f64), f64)| x)),
         y: rc((&start).map(|((_, y), _): ((f64, f64), f64)| y)),
@@ -109,7 +112,7 @@ pub fn initial(db: &Db) -> State {
     }
 }
 
-// Teleport the player (debug `--at`).
+/// teleport the player (for debugging with `--at`).
 pub fn place(db: &Db, s: State, x: f64, y: f64, ang: f64) -> State {
     let p = &s.player;
     let moved = Player {
@@ -122,10 +125,10 @@ pub fn place(db: &Db, s: State, x: f64, y: f64, ang: f64) -> State {
     State { player, ..s }
 }
 
-// One game tic: old state + input -> new state.
+/// One game tic: old state + input -> new state.
 pub fn tic(db: &Db, s: &State, inp: Input) -> State {
     let p = &s.player;
-    // Dead or finished, and use freshly pressed: restart the level.
+    // restart level if dead/finished and pressed "use"
     // `usedown` is last tic's use key, so holding use doesn't restart twice.
     let restart = (&*p.dead)
         .and(&*p.exited)
@@ -174,7 +177,7 @@ pub fn tic(db: &Db, s: &State, inp: Input) -> State {
     let sound: MultiRel<Row<Sector>, Row<Sector>> = (&lines.lo)
         .and(&lines.hi)
         .and(&l.flags)
-        .filt(|((lo, hi), flags): ((f64, f64), i64)| hi > lo && flags & ML_SOUNDBLOCK == 0)
+        .filt(|((lo, hi), flags): ((f64, f64), i64)| lo < hi && flags & ML_SOUNDBLOCK == 0)
         .and((&l.fsec).and(&l.bsec))
         .flat_map(|(_, (f, b)): (((f64, f64), i64), (Row<Sector>, Row<Sector>))| [(f, b), (b, f)])
         .key_by(|(a, _)| a)
