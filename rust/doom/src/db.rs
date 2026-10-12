@@ -3,7 +3,7 @@ use crate::rules::{by_key, decisions};
 use crate::schema::*;
 use crate::wad::{Game, NONE};
 use prela::engine::*;
-use prela::loader::{Col, Key};
+use prela::loader::{Col, Rows};
 use std::collections::HashMap;
 
 // The game-rule entities from info.rs, plus the lookup indexes over them.
@@ -28,29 +28,29 @@ pub struct Tables {
     pub hud_key: HudKey,
     pub k: Konst,
     // Map editor number -> thing type.
-    pub ednum_type: MultiRel<usize, Id<ThingType>>,
+    pub ednum_type: MultiRel<usize, Row<ThingType>>,
     // goto_key(thing type, goto label) -> state, so rules can say "go to SEE".
-    pub goto: MultiRel<usize, Id<AnimState>>,
+    pub goto: MultiRel<usize, Row<AnimState>>,
     // frame_key(sprite, frame, rotation) -> image and whether to mirror it.
-    pub sprite_frames: MultiRel<usize, (Id<Image>, bool)>,
+    pub sprite_frames: MultiRel<usize, (Row<Image>, bool)>,
     // Line special number -> special.
-    pub special_num: MultiRel<usize, Id<LineSpecial>>,
+    pub special_num: MultiRel<usize, Row<LineSpecial>>,
     // act_key(kind, dir, act) -> activation.
-    pub activation_key: MultiRel<usize, Id<Activation>>,
+    pub activation_key: MultiRel<usize, Row<Activation>>,
     // Rule key -> rules, per rule table.
-    pub ai_by_key: MultiRel<usize, Id<AiRule>>,
-    pub mover_by_key: MultiRel<usize, Id<MoverRule>>,
-    pub face_by_key: MultiRel<usize, Id<FaceRule>>,
+    pub ai_by_key: MultiRel<usize, Row<AiRule>>,
+    pub mover_by_key: MultiRel<usize, Row<MoverRule>>,
+    pub face_by_key: MultiRel<usize, Row<FaceRule>>,
     // choice_key(weapon state action, weapon facts) -> the weapon rule that applies.
-    pub weapon_choice: MultiRel<usize, Id<WeaponRule>>,
+    pub weapon_choice: MultiRel<usize, Row<WeaponRule>>,
     // Sector special -> floor damage.
     pub sector_damage: MultiRel<usize, i32>,
     // glyph_key(font, glyph) -> image; face_key(face kind, pain, look) -> image.
-    pub hud_fonts: MultiRel<usize, Id<Image>>,
-    pub faces: MultiRel<usize, Id<Image>>,
-    pub puff: Id<ThingType>,
-    pub blood: Id<ThingType>,
-    pub ball: Id<ThingType>,
+    pub hud_fonts: MultiRel<usize, Row<Image>>,
+    pub faces: MultiRel<usize, Row<Image>>,
+    pub puff: Row<ThingType>,
+    pub blood: Row<ThingType>,
+    pub ball: Row<ThingType>,
 }
 
 // Lookup indexes are dense, keyed by small integers packed from the lookup's parts.
@@ -61,7 +61,7 @@ pub fn frame_key(sprite: usize, frame: usize, rot: usize) -> usize {
 }
 
 // (thing type, goto label) -> goto key.
-pub fn goto_key(t: Id<ThingType>, label: u8) -> usize {
+pub fn goto_key(t: Row<ThingType>, label: u8) -> usize {
     t.0 * 8 + label as usize
 }
 
@@ -75,7 +75,7 @@ pub fn face_key(kind: u8, pain: usize, look: usize) -> usize {
     kind as usize * 16 + pain * 3 + look
 }
 
-fn key<E>(n: usize) -> Key<E> {
+fn key<E>(n: usize) -> Rows<E> {
     Universe::new(n)
 }
 
@@ -94,7 +94,7 @@ fn tables(sprite_names: &HashMap<String, usize>, patch_names: &HashMap<String, u
     // Animation states, with names and sprites replaced by ids.
     let defs = info::states();
     let ids: HashMap<String, usize> = defs.iter().enumerate().map(|(i, d)| (d.name.clone(), i)).collect();
-    let sid = |n: &str| Id::<AnimState>::new(*ids.get(n).unwrap_or_else(|| panic!("unknown state {n}")));
+    let sid = |n: &str| Row::<AnimState>::new(*ids.get(n).unwrap_or_else(|| panic!("unknown state {n}")));
     // Sprite id = index in the sorted list of 4-letter sprite names.
     let mut sprites: Vec<&str> = defs.iter().map(|d| d.sprite).collect();
     sprites.sort();
@@ -129,8 +129,8 @@ fn tables(sprite_names: &HashMap<String, usize>, patch_names: &HashMap<String, u
         painchance: col(&mdefs, |m| m.painchance),
         damage: col(&mdefs, |m| m.damage),
         flags: col(&mdefs, |m| m.flags),
-        drop: col(&mdefs, |m| Id::new(by_ednum.get(&m.drop).copied().unwrap_or(NONE))),
-        pickup: MultiRel::from_pairs(mdefs.len(), pdefs.iter().enumerate().map(|(p, &(t, _))| (t, Id::new(p)))),
+        drop: col(&mdefs, |m| Row::new(by_ednum.get(&m.drop).copied().unwrap_or(NONE))),
+        pickup: MultiRel::from_pairs(mdefs.len(), pdefs.iter().enumerate().map(|(p, &(t, _))| (t, Row::new(p)))),
     };
     let pickup = Pickup {
         id: key(pdefs.len()),
@@ -140,16 +140,16 @@ fn tables(sprite_names: &HashMap<String, usize>, patch_names: &HashMap<String, u
         armor_max: col(&pdefs, |p| p.1.armor_max),
         class_set: col(&pdefs, |p| p.1.class_set),
         class_min: col(&pdefs, |p| p.1.class_min),
-        ammo_kind: col(&pdefs, |p| Id::new(p.1.ammo_kind)),
+        ammo_kind: col(&pdefs, |p| Row::new(p.1.ammo_kind)),
         ammo: col(&pdefs, |p| p.1.ammo),
-        weapon: col(&pdefs, |p| Id::new(p.1.weapon)),
+        weapon: col(&pdefs, |p| Row::new(p.1.weapon)),
         weapon_bit: col(&pdefs, |p| p.1.weapon_bit),
         key: col(&pdefs, |p| p.1.key),
         always: col(&pdefs, |p| p.1.always),
     };
     // Map editor number -> thing type, for spawning map things.
     let ednum_type = (&ttype.ednum).filt(|e: i64| e > 0).map(|e| e as usize).inv().collect();
-    let kind = |n: &str| Id::new(mdefs.iter().position(|m| m.name == n).unwrap());
+    let kind = |n: &str| Row::new(mdefs.iter().position(|m| m.name == n).unwrap());
     // (thing type, goto label) -> state id, for each label the type has.
     let goto = (&ttype.see)
         .map(|s| (G_SEE, s))
@@ -158,9 +158,9 @@ fn tables(sprite_names: &HashMap<String, usize>, patch_names: &HashMap<String, u
         .union((&ttype.missile).map(|s| (G_MISSILE, s)))
         .union((&ttype.death).map(|s| (G_DEATH, s)))
         .union((&ttype.pain).map(|s| (G_PAIN, s)))
-        .filt(|(_, s): (u8, Id<AnimState>)| s.0 != 0)
-        .and(Same::<Id<ThingType>>::new())
-        .key_by(|((g, _), t): ((u8, Id<AnimState>), Id<ThingType>)| goto_key(t, g))
+        .filt(|(_, s): (u8, Row<AnimState>)| s.0 != 0)
+        .and(Same::<Row<ThingType>>::new())
+        .key_by(|((g, _), t): ((u8, Row<AnimState>), Row<ThingType>)| goto_key(t, g))
         .map(|((_, s), _)| s)
         .collect();
     // Sprite lump names like TROOA2A8 -> (sprite, frame, rotation) -> image id; the second half is the mirrored rotation.
@@ -171,15 +171,15 @@ fn tables(sprite_names: &HashMap<String, usize>, patch_names: &HashMap<String, u
             continue;
         }
         let Some(sp) = sprites.iter().position(|&s| s.as_bytes() == &b[..4]) else { continue };
-        frames.push((frame_key(sp, (b[4] - b'A') as usize, (b[5] - b'0') as usize), (Id::new(gid), false)));
+        frames.push((frame_key(sp, (b[4] - b'A') as usize, (b[5] - b'0') as usize), (Row::new(gid), false)));
         if b.len() >= 8 {
-            frames.push((frame_key(sp, (b[6] - b'A') as usize, (b[7] - b'0') as usize), (Id::new(gid), true)));
+            frames.push((frame_key(sp, (b[6] - b'A') as usize, (b[7] - b'0') as usize), (Row::new(gid), true)));
         }
     }
     let wdefs = info::weapons();
     let weapon = Weapon {
         id: key(wdefs.len()),
-        ammo: col(&wdefs, |w| Id::new(w.ammo)),
+        ammo: col(&wdefs, |w| Row::new(w.ammo)),
         per_shot: col(&wdefs, |w| w.per_shot),
         ready: col(&wdefs, |w| sid(w.ready)),
         attack: col(&wdefs, |w| sid(w.attack)),
@@ -279,7 +279,7 @@ fn tables(sprite_names: &HashMap<String, usize>, patch_names: &HashMap<String, u
     let ai_by_key = by_key(&ai_rule.key);
     let weapon_choice = decisions(&weapon_rule, &by_key(&weapon_rule.key), 3);
     // Status bar tables, with lump names resolved to image ids.
-    let lump = |n: &str| Id::<Image>::new(patch_names.get(n).copied().unwrap_or(NONE));
+    let lump = |n: &str| Row::<Image>::new(patch_names.get(n).copied().unwrap_or(NONE));
     let hp = info::hud_patches();
     let hud_patch = HudPatch { id: key(hp.len()), image: col(&hp, |p| lump(p.0)), x: col(&hp, |p| p.1), y: col(&hp, |p| p.2), depth: col(&hp, |p| p.3) };
     let hn = info::hud_numbers();
@@ -332,7 +332,7 @@ fn tables(sprite_names: &HashMap<String, usize>, patch_names: &HashMap<String, u
         reaction: col(&c, |c| c.reaction),
         start_health: col(&c, |c| c.start_health),
         start_owned: col(&c, |c| c.start_owned),
-        start_weapon: col(&c, |c| Id::new(c.start_weapon)),
+        start_weapon: col(&c, |c| Row::new(c.start_weapon)),
     };
     Tables {
         mover_by_key: by_key(&mover_rule.key),
@@ -378,16 +378,16 @@ pub struct Db {
     pub linedef: Linedef,
     pub seg: Seg,
     pub bsp: Bsp,
-    pub bsp_root: Id<Bsp>,
+    pub bsp_root: Row<Bsp>,
     pub sector: Sector,
-    pub tag_sectors: MultiRel<usize, Id<Sector>>,
+    pub tag_sectors: MultiRel<usize, Row<Sector>>,
     pub thing: Thing,
     pub image: Image,
     pub texels: VecRel<usize, u16>,
     pub colormap: VecRel<usize, u8>,
     pub palette: VecRel<usize, u32>,
-    pub sky: Id<Image>,
-    pub sky_flat: Id<Image>,
+    pub sky: Row<Image>,
+    pub sky_flat: Row<Image>,
 }
 
 impl Db {
@@ -395,17 +395,17 @@ impl Db {
     pub fn new(g: Game) -> Db {
         let t = tables(&g.sprite_names, &g.patch_names);
         // The root is the last split node.
-        let bsp_root = Id::new((&g.bsp.x).fold_flat(0, |n: usize, _| n + 1) - 1);
+        let bsp_root = Row::new((&g.bsp.x).fold_flat(0, |n: usize, _| n + 1) - 1);
         let linedef = derive_linedef(g.linedef, &g.vertex, &g.sidedef);
         let seg = derive_seg(g.seg, &g.vertex, &linedef, &g.sidedef);
         // A leaf's sector: the front sector of its first seg.
-        let leaf_sector = (&g.bsp.segs).dense_fold(g.bsp.id.n, Id::new(NONE), |a: Id<Seg>, s: Id<Seg>| a.min(s)).select(&seg.fsec).collect();
+        let leaf_sector = (&g.bsp.segs).dense_fold(g.bsp.id.n, Row::new(NONE), |a: Row<Seg>, s: Row<Seg>| a.min(s)).select(&seg.fsec).collect();
         let bsp = Bsp { sector: leaf_sector, ..g.bsp };
         // Sectors sharing a two-sided line, both ways.
         let neighbors = (&linedef.fsec)
             .and(&linedef.bsec)
-            .filt(|(_, b): (Id<Sector>, Id<Sector>)| b.0 != NONE)
-            .flat_map(|(f, b): (Id<Sector>, Id<Sector>)| [(f, b), (b, f)])
+            .filt(|(_, b): (Row<Sector>, Row<Sector>)| b.0 != NONE)
+            .flat_map(|(f, b): (Row<Sector>, Row<Sector>)| [(f, b), (b, f)])
             .key_by(|(a, _)| a)
             .map(|(_, b)| b)
             .collect();
@@ -432,8 +432,8 @@ impl Db {
 }
 
 // Missing ids become NONE so the column stays total.
-fn or_none<E: 'static>(o: Option<Id<E>>) -> Id<E> {
-    o.unwrap_or(Id::new(NONE))
+fn or_none<E: 'static>(o: Option<Row<E>>) -> Row<E> {
+    o.unwrap_or(Row::new(NONE))
 }
 
 // Linedef endpoints and the sector on each side.
@@ -451,12 +451,12 @@ fn derive_linedef(l: Linedef, v: &Vertex, sd: &Sidedef) -> Linedef {
 fn derive_seg(s: Seg, v: &Vertex, l: &Linedef, sd: &Sidedef) -> Seg {
     // The sidedef facing this seg (side 0 = the line's front) and the one behind it.
     let sides = (&s.side).and((&s.line).select(&l.front)).and((&s.line).select(&l.back));
-    let front: VecRel<Id<Seg>, Id<Sidedef>> = (&sides).map(|((side, f), b): ((usize, Id<Sidedef>), Id<Sidedef>)| if side == 0 { f } else { b }).collect();
-    let back: VecRel<Id<Seg>, Id<Sidedef>> = (&sides).map(|((side, f), b): ((usize, Id<Sidedef>), Id<Sidedef>)| if side == 0 { b } else { f }).collect();
-    let x1: VecRel<Id<Seg>, f64> = (&s.v1).select(&v.x).collect();
-    let y1: VecRel<Id<Seg>, f64> = (&s.v1).select(&v.y).collect();
-    let x2: VecRel<Id<Seg>, f64> = (&s.v2).select(&v.x).collect();
-    let y2: VecRel<Id<Seg>, f64> = (&s.v2).select(&v.y).collect();
+    let front: VecRel<Row<Seg>, Row<Sidedef>> = (&sides).map(|((side, f), b): ((usize, Row<Sidedef>), Row<Sidedef>)| if side == 0 { f } else { b }).collect();
+    let back: VecRel<Row<Seg>, Row<Sidedef>> = (&sides).map(|((side, f), b): ((usize, Row<Sidedef>), Row<Sidedef>)| if side == 0 { b } else { f }).collect();
+    let x1: VecRel<Row<Seg>, f64> = (&s.v1).select(&v.x).collect();
+    let y1: VecRel<Row<Seg>, f64> = (&s.v1).select(&v.y).collect();
+    let x2: VecRel<Row<Seg>, f64> = (&s.v2).select(&v.x).collect();
+    let y2: VecRel<Row<Seg>, f64> = (&s.v2).select(&v.y).collect();
     // Doom's fake contrast: horizontal walls darker, vertical walls lighter.
     let light_delta = (&x1)
         .and(&y1)

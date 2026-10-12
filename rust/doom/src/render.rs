@@ -28,11 +28,11 @@ const DONTPEGBOTTOM: i64 = 16;
 // Camera: x, y, eye z, facing angle.
 pub type Pose = (f64, f64, f64, f64);
 // A wall's front sector: floor, ceiling, floor flat, ceiling flat, light.
-type Front = (f64, f64, Id<Image>, Id<Image>, i64);
+type Front = (f64, f64, Row<Image>, Row<Image>, i64);
 // A wall's back sector: floor, ceiling, ceiling flat.
-type Back = (f64, f64, Id<Image>);
+type Back = (f64, f64, Row<Image>);
 // A wall texture slot: the image and its height, if the slot has one.
-type TexRef = Option<(Id<Image>, f64)>;
+type TexRef = Option<(Row<Image>, f64)>;
 // Everything drawn for one seg: segment, (u offset, v offset, line flags, light delta),
 // front and back sectors, and the upper, middle and lower textures.
 type WallRow = (Geom, (f64, f64, i64, i64), Front, Option<Back>, (TexRef, TexRef, TexRef));
@@ -42,14 +42,14 @@ type Panel = (usize, f64, f64, f64, (i32, i32, i32, i32), WallRow);
 // Rows y0..y1 of one part of a panel's column.
 type Span = (Panel, Part, i32, i32);
 // One candidate pixel: pixel index, image, texel column and row, colormap level, depth.
-type Frag = (usize, Id<Image>, i64, i64, i64, f32);
+type Frag = (usize, Row<Image>, i64, i64, i64, f32);
 // An image's width, height and drawing offsets.
 type Img = (usize, usize, i64, i64);
 // A projected sprite: image, mirrored, size, screen corner, scale, depth, colormap level,
 // and the screen rectangle it covers (x range, y range).
-type Billboard = (Id<Image>, bool, Img, f64, f64, f64, f32, i64, (i32, i32, i32, i32));
+type Billboard = (Row<Image>, bool, Img, f64, f64, f64, f32, i64, (i32, i32, i32, i32));
 // An unscaled screen graphic (weapon, HUD): image, size, top-left corner, colormap level, depth.
-type Stamp = (Id<Image>, Img, i64, i64, i64, f32);
+type Stamp = (Row<Image>, Img, i64, i64, i64, f32);
 
 // Which piece of a column a span is.
 #[derive(Clone, Copy)]
@@ -122,7 +122,7 @@ fn closes((_, _, _, _, (yc, yf, ybc, ybf), (_, _, _, back, _)): Panel) -> (i32, 
 }
 
 // The rows of a panel's still-visible stretch (top..bot) that belong to one part, if any.
-fn span(pose: Pose, sky_flat: Id<Image>, (p, (top, bot)): (Panel, (i32, i32)), part: Part) -> Option<Span> {
+fn span(pose: Pose, sky_flat: Row<Image>, (p, (top, bot)): (Panel, (i32, i32)), part: Part) -> Option<Span> {
     let (_, _, _, _, (yc, yf, ybc, ybf), (_, _, (floor, ceil, _, ceilpic, _), back, _)) = p;
     let sp = |y0: i32, y1: i32| (y0 < y1).then_some((p, part, y0, y1));
     // Ceiling above the wall, floor below it; middle only on one-sided walls; upper/lower where the back sector steps.
@@ -142,12 +142,12 @@ fn light(level: i64, delta: i64) -> i64 {
 }
 
 // The fragment for screen row y of a span: wall texel, floor/ceiling texel, or sky (None for an untextured wall).
-fn frag(pose: Pose, sky: Id<Image>, sky_flat: Id<Image>, (p, part, _, _): Span, y: i32) -> Option<Frag> {
+fn frag(pose: Pose, sky: Row<Image>, sky_flat: Row<Image>, (p, part, _, _): Span, y: i32) -> Option<Frag> {
     let (x, depth, scale, u, _, (_, (_, yoff, flags, delta), (floor, ceil, floorpic, ceilpic, lev), back, (upper, middle, lower))) = p;
     let (px, py, pz, ang) = pose;
     let pix = y as usize * W + x;
     let ry = y as f64 + 0.5 - CY;
-    let plane = |h: f64, pic: Id<Image>| {
+    let plane = |h: f64, pic: Row<Image>| {
         // Sky: texture column from the view angle, row = screen row, drawn behind everything.
         if pic == sky_flat {
             let a = ang + ((CX - (x as f64 + 0.5)) / FOCAL).atan();
@@ -200,7 +200,7 @@ fn rotation((px, py, _, _): Pose, (x, y, _, ang): (f64, f64, f64, f64)) -> usize
 }
 
 // Project a thing sprite.
-fn billboard(pose: Pose, (x, y, z, _): (f64, f64, f64, f64), bright: bool, (gfx, flip): (Id<Image>, bool), t: Img, lev: i64) -> Billboard {
+fn billboard(pose: Pose, (x, y, z, _): (f64, f64, f64, f64), bright: bool, (gfx, flip): (Row<Image>, bool), t: Img, lev: i64) -> Billboard {
     let (w, h, left, top) = t;
     let (f, l) = view(pose, x, y);
     let scale = FOCAL / f.max(NEAR);
@@ -226,7 +226,7 @@ fn sprite_frag((gfx, flip, (w, h, _, _), x0, y0, scale, depth, cm, _): Billboard
 }
 
 // Place an image at (x0, y0) minus its offsets.
-fn stamp(x0: f64, y0: f64, gfx: Id<Image>, t: Img, cm: i64, depth: f32) -> Stamp {
+fn stamp(x0: f64, y0: f64, gfx: Row<Image>, t: Img, cm: i64, depth: f32) -> Stamp {
     (gfx, t, (x0 - t.2 as f64) as i64, (y0 - t.3 as f64) as i64, cm, depth)
 }
 
@@ -245,7 +245,7 @@ fn stamp_frag((gfx, _, x0, y0, cm, depth): Stamp, u: i64, v: i64) -> Frag {
 }
 
 // Facts the face rules match on: dead, hurt, grinning at a new weapon.
-fn face_facts(dead: bool, damagecount: i32, bonuscount: i32, wanted: Id<Weapon>) -> u32 {
+fn face_facts(dead: bool, damagecount: i32, bonuscount: i32, wanted: Row<Weapon>) -> u32 {
     bit(dead, ffact::DEAD) | bit(damagecount > 0, ffact::HURT) | bit(bonuscount > 0 && wanted.0 != NONE, ffact::GRIN)
 }
 
@@ -268,14 +268,14 @@ fn tint((damagecount, bonuscount): (i32, i32)) -> usize {
 }
 
 // Each image's size and offsets.
-fn img(db: &Db) -> impl Probe<D = Id<Image>, R = Img> + '_ {
+fn img(db: &Db) -> impl Probe<D = Row<Image>, R = Img> + '_ {
     let i = &db.image;
     (&i.w).and(&i.h).and(&i.left).and(&i.top).map(|(((w, h), l), t): (((usize, usize), i64), i64)| (w, h, l, t))
 }
 
 // seg -> Some((texture, height)) for one of its texture slots, None for "-".
-fn tex<'a>(db: &'a Db, c: &'a Col<Seg, Id<Image>>) -> impl Probe<D = Id<Seg>, R = TexRef> + 'a {
-    c.select((&db.image.h).and(Same::<Id<Image>>::new()).map(|(h, i): (usize, Id<Image>)| (i, h as f64))).opt()
+fn tex<'a>(db: &'a Db, c: &'a Col<Seg, Row<Image>>) -> impl Probe<D = Row<Seg>, R = TexRef> + 'a {
+    c.select((&db.image.h).and(Same::<Row<Image>>::new()).map(|(h, i): (usize, Row<Image>)| (i, h as f64))).opt()
 }
 
 // Draw one frame into `out` as a single query.
@@ -288,8 +288,8 @@ pub fn render(db: &Db, s: &State, out: &mut [u32]) {
     let line = (&g.xoff).and(&g.yoff).and(&g.flags).and(&g.light_delta).map(|(((xo, yo), f), d): (((f64, f64), i64), i64)| (xo, yo, f, d));
     let front = (&g.fsec)
         .select((&*hs.floor).and(&*hs.ceil).and(&sec.floorpic).and(&sec.ceilpic).and(&sec.light))
-        .map(|((((f, c), fp), cp), l): ((((f64, f64), Id<Image>), Id<Image>), i64)| (f, c, fp, cp, l));
-    let back = (&g.bsec).select((&*hs.floor).and(&*hs.ceil).and(&sec.ceilpic)).map(|((f, c), cp): ((f64, f64), Id<Image>)| (f, c, cp)).opt();
+        .map(|((((f, c), fp), cp), l): ((((f64, f64), Row<Image>), Row<Image>), i64)| (f, c, fp, cp, l));
+    let back = (&g.bsec).select((&*hs.floor).and(&*hs.ceil).and(&sec.ceilpic)).map(|((f, c), cp): ((f64, f64), Row<Image>)| (f, c, cp)).opt();
     let tex = |c| tex(db, c);
     let rows = geom
         .and(line)
@@ -337,12 +337,12 @@ pub fn render(db: &Db, s: &State, out: &mut [u32]) {
         // Try the rotation facing the camera, and rotation 0 (all-angle sprites); prefer the first.
         .key_by(move |((((sp, fr), _), at), _): ((((usize, usize), bool), (f64, f64, f64, f64)), i64)| frame_key(sp, fr, rotation(pose, at)))
         .and((&db.t.sprite_frames).opt())
-        .key_by(|(((((sp, fr), _), _), _), _): (((((usize, usize), bool), (f64, f64, f64, f64)), i64), Option<(Id<Image>, bool)>)| frame_key(sp, fr, 0))
+        .key_by(|(((((sp, fr), _), _), _), _): (((((usize, usize), bool), (f64, f64, f64, f64)), i64), Option<(Row<Image>, bool)>)| frame_key(sp, fr, 0))
         .and((&db.t.sprite_frames).opt())
-        .flat_map(|((r, a), b): ((((((usize, usize), bool), (f64, f64, f64, f64)), i64), Option<(Id<Image>, bool)>), Option<(Id<Image>, bool)>)| a.or(b).map(|g| (r, g)))
+        .flat_map(|((r, a), b): ((((((usize, usize), bool), (f64, f64, f64, f64)), i64), Option<(Row<Image>, bool)>), Option<(Row<Image>, bool)>)| a.or(b).map(|g| (r, g)))
         .key_by(|(_, (g, _))| g)
         .and(img(db))
-        .map(move |((((((_, _), bright), at), lev), g), t): ((((((usize, usize), bool), (f64, f64, f64, f64)), i64), (Id<Image>, bool)), Img)| billboard(pose, at, bright, g, t, lev))
+        .map(move |((((((_, _), bright), at), lev), g), t): ((((((usize, usize), bool), (f64, f64, f64, f64)), i64), (Row<Image>, bool)), Img)| billboard(pose, at, bright, g, t, lev))
         // Every screen pixel in the sprite's rectangle.
         .expand(|b: Billboard| (b.8.0, b.8.1))
         .expand(|(b, _): (Billboard, i32)| (b.8.2, b.8.3))
@@ -350,17 +350,17 @@ pub fn render(db: &Db, s: &State, out: &mut [u32]) {
         .key_by(|f: Frag| f.0);
     // Weapon and muzzle flash overlay; depth 0.5 / 0.25 puts them in front of the world, flash over weapon.
     let weapon = (&*p.wstate)
-        .filt(|w: Id<AnimState>| w.0 != 0)
+        .filt(|w: Row<AnimState>| w.0 != 0)
         .map(|w| (w, 0.5f32))
-        .union((&*p.flash).filt(|f: Id<AnimState>| f.0 != 0).map(|f| (f, 0.25f32)))
+        .union((&*p.flash).filt(|f: Row<AnimState>| f.0 != 0).map(|f| (f, 0.25f32)))
         .and((&*p.sector).select(&sec.light))
-        .key_by(|((w, _), _): ((Id<AnimState>, f32), i64)| w)
+        .key_by(|((w, _), _): ((Row<AnimState>, f32), i64)| w)
         .and(frame())
-        .key_by(|(_, ((sp, fr), _)): (((Id<AnimState>, f32), i64), ((usize, usize), bool))| frame_key(sp, fr, 0))
+        .key_by(|(_, ((sp, fr), _)): (((Row<AnimState>, f32), i64), ((usize, usize), bool))| frame_key(sp, fr, 0))
         .and(&db.t.sprite_frames)
-        .key_by(|(_, (g, _)): ((((Id<AnimState>, f32), i64), ((usize, usize), bool)), (Id<Image>, bool))| g)
+        .key_by(|(_, (g, _)): ((((Row<AnimState>, f32), i64), ((usize, usize), bool)), (Row<Image>, bool))| g)
         .and(img(db))
-        .map(|(((((_, d), lev), (_, bright)), (g, _)), t): (((((Id<AnimState>, f32), i64), ((usize, usize), bool)), (Id<Image>, bool)), Img)| {
+        .map(|(((((_, d), lev), (_, bright)), (g, _)), t): (((((Row<AnimState>, f32), i64), ((usize, usize), bool)), (Row<Image>, bool)), Img)| {
             let cm = if bright { 0 } else { (light(lev, 0) - 23).clamp(0, 31) };
             stamp(1.0, 31.5 - (100.0 - CY), g, t, cm, d)
         })
@@ -370,7 +370,7 @@ pub fn render(db: &Db, s: &State, out: &mut [u32]) {
         .key_by(|f: Frag| f.0);
     // Status bar: values for the number widgets.
     let (am, hn) = (&db.t.ammo, &db.t.hud_number);
-    let slot = |i: usize| Id::<NumberSlot>::new(i);
+    let slot = |i: usize| Row::<NumberSlot>::new(i);
     // stat slot -> value: current weapon's ammo, health, armor, each ammo count, each ammo cap.
     let stats = (&*p.weapon)
         .select(&db.t.weapon.ammo)
@@ -383,15 +383,15 @@ pub fn render(db: &Db, s: &State, out: &mut [u32]) {
         .union(
             (&*s.ammo)
                 .and(&am.cap)
-                .and(Same::<Id<AmmoKind>>::new())
-                .filt(|((_, cap), _): ((i32, i32), Id<AmmoKind>)| cap > 0)
+                .and(Same::<Row<AmmoKind>>::new())
+                .filt(|((_, cap), _): ((i32, i32), Row<AmmoKind>)| cap > 0)
                 .key_by(move |(_, kind)| slot(STAT_AMMO0 + kind.0))
                 .map(|((a, _), _)| a),
         )
         .union(
             (&am.cap)
-                .and(Same::<Id<AmmoKind>>::new())
-                .filt(|(cap, _): (i32, Id<AmmoKind>)| cap > 0)
+                .and(Same::<Row<AmmoKind>>::new())
+                .filt(|(cap, _): (i32, Row<AmmoKind>)| cap > 0)
                 .key_by(move |(_, kind)| slot(STAT_MAX0 + kind.0))
                 .map(|(cap, _)| cap),
         );
@@ -405,7 +405,7 @@ pub fn render(db: &Db, s: &State, out: &mut [u32]) {
         .and(&db.t.hud_fonts)
         .key_by(|(_, g)| g)
         .and(&db.image.w)
-        .map(|(((v, n), _), w): (((i32, Slot), Id<Image>), usize)| (v.max(0), n, w as f64))
+        .map(|(((v, n), _), w): (((i32, Slot), Row<Image>), usize)| (v.max(0), n, w as f64))
         // place 0 = ones, 1 = tens, ...; glyph = (font, digit), x steps left one glyph width per place.
         .expand(|(_, n, _): (i32, Slot, f64)| (0, n.3 as u32))
         .filt(|((v, _, _), place): ((i32, Slot, f64), u32)| place == 0 || v >= 10i32.pow(place))
@@ -429,27 +429,27 @@ pub fn render(db: &Db, s: &State, out: &mut [u32]) {
         .union(arms.key_by(|_| 0usize))
         .key_by(|((font, glyph), _, _): ((usize, usize), f64, f64)| glyph_key(font, glyph))
         .and(&db.t.hud_fonts)
-        .map(|((_, x, y), g): (((usize, usize), f64, f64), Id<Image>)| (g, x, y, 0.0f32));
+        .map(|((_, x, y), g): (((usize, usize), f64, f64), Row<Image>)| (g, x, y, 0.0f32));
     // Keys held, and the face picked by the face rules.
     let hk = &db.t.hud_key;
     let keys = (&hk.x)
         .and(&hk.y)
         .and(&hk.image)
-        .and(Same::<Id<HudKey>>::new())
+        .and(Same::<Row<HudKey>>::new())
         .cross(&*p.keys)
-        .filt(|((_, k), keys): ((((f64, f64), Id<Image>), Id<HudKey>), u8)| keys & (1 << k.0) != 0)
-        .map(|((((x, y), g), _), _): ((((f64, f64), Id<Image>), Id<HudKey>), u8)| (g, x, y, 0.0f32));
+        .filt(|((_, k), keys): ((((f64, f64), Row<Image>), Row<HudKey>), u8)| keys & (1 << k.0) != 0)
+        .map(|((((x, y), g), _), _): ((((f64, f64), Row<Image>), Row<HudKey>), u8)| (g, x, y, 0.0f32));
     let tic = s.tic;
     let fr = &db.t.face_rule;
-    let face_rows: MultiRel<Id<Player>, (Id<Player>, usize, u32)> = (&*p.dead)
+    let face_rows: MultiRel<Row<Player>, (Row<Player>, usize, u32)> = (&*p.dead)
         .and(&*p.damagecount)
         .and(&*p.bonuscount)
         .and(&*p.wanted)
-        .and(Same::<Id<Player>>::new())
-        .map(|((((d, dc), bc), w), id): ((((bool, i32), i32), Id<Weapon>), Id<Player>)| (id, 0usize, face_facts(d, dc, bc, w)))
+        .and(Same::<Row<Player>>::new())
+        .map(|((((d, dc), bc), w), id): ((((bool, i32), i32), Row<Weapon>), Row<Player>)| (id, 0usize, face_facts(d, dc, bc, w)))
         .collect();
-    let face = matching(&face_rows, fr, &db.t.face_by_key, |id: Id<Player>| id, 1)
-        .map(|(_, r): (Id<Player>, Id<FaceRule>)| r)
+    let face = matching(&face_rows, fr, &db.t.face_by_key, |id: Row<Player>| id, 1)
+        .map(|(_, r): (Row<Player>, Row<FaceRule>)| r)
         .select((&fr.kind).and(&fr.by_pain).and(&fr.by_look))
         .and(&*p.health)
         .map(move |(o, h): (((u8, bool), bool), i32)| face_key(h, o, tic))
@@ -461,14 +461,14 @@ pub fn render(db: &Db, s: &State, out: &mut [u32]) {
         .and(&hp.x)
         .and(&hp.y)
         .and(&hp.depth)
-        .map(|(((g, x), y), d): (((Id<Image>, f64), f64), f32)| (g, x, y, d))
+        .map(|(((g, x), y), d): (((Row<Image>, f64), f64), f32)| (g, x, y, d))
         .key_by(|_| 0usize)
         .union(glyphs.key_by(|_| 0usize))
         .union(keys.key_by(|_| 0usize))
         .union(face.key_by(|_| 0usize))
         .key_by(|(g, _, _, _)| g)
         .and(img(db))
-        .map(|((g, x, y, d), t): ((Id<Image>, f64, f64, f32), Img)| stamp(x, y, g, t, 0, d))
+        .map(|((g, x, y, d), t): ((Row<Image>, f64, f64, f32), Img)| stamp(x, y, g, t, 0, d))
         .expand(stamp_cols)
         .expand(|(s, _): (Stamp, i64)| stamp_rows(s))
         .map(|((s, u), v): ((Stamp, i64), i64)| stamp_frag(s, u, v))

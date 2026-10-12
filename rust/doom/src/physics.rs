@@ -36,7 +36,7 @@ pub fn point_side((((x, y), dx), dy): (((f64, f64), f64), f64), px: f64, py: f64
 }
 
 // Which sector each point is in: walk the BSP tree from the root with `reach`.
-pub fn locate<'a, K, Q>(db: &'a Db, pts: &'a Q) -> impl Drive<D = K, R = Id<Sector>> + 'a
+pub fn locate<'a, K, Q>(db: &'a Db, pts: &'a Q) -> impl Drive<D = K, R = Row<Sector>> + 'a
 where
     K: Copy + Eq + Hash + 'a,
     Q: Drive<D = K, R = (f64, f64)> + Probe,
@@ -47,7 +47,7 @@ where
     // Node -> (split line, front child, back child).
     let split = (&b.x).and(&b.y).and(&b.dx).and(&b.dy).and(&b.child0).and(&b.child1);
     // One BSP step (key, node) -> (key, child on the point's side); `cross` makes the key (point key, node).
-    let step = keyed().cross(split).map(|((p, k), ((line, c0), c1)): (((f64, f64), K), (((((f64, f64), f64), f64), Id<Bsp>), Id<Bsp>))| {
+    let step = keyed().cross(split).map(|((p, k), ((line, c0), c1)): (((f64, f64), K), (((((f64, f64), f64), f64), Row<Bsp>), Row<Bsp>))| {
         (k, if point_side(line, p.0, p.1) == 0 { c0 } else { c1 })
     });
     // Start every point at the root, walk down, keep the leaf, map leaf to sector.
@@ -55,7 +55,7 @@ where
         .map(move |(_, k)| (k, root))
         // Every (key, node) visited on the way down, with its depth.
         .reach(step, 64)
-        .and(Same::<(K, Id<Bsp>)>::new())
+        .and(Same::<(K, Row<Bsp>)>::new())
         // Only leaves have a sector, so this join keeps just the last node.
         .key_by(|(_, (_, n))| n)
         .and(&b.sector)
@@ -64,13 +64,13 @@ where
 }
 
 // Each line's segment.
-pub fn geom(db: &Db) -> impl Drive<D = Id<Linedef>, R = Geom> + Probe + '_ {
+pub fn geom(db: &Db) -> impl Drive<D = Row<Linedef>, R = Geom> + Probe + '_ {
     let l = &db.linedef;
     (&l.x1).and(&l.y1).and(&l.x2).and(&l.y2).map(|(((x1, y1), x2), y2): (((f64, f64), f64), f64)| (x1, y1, x2, y2))
 }
 
 // Each line's segment and current gap.
-pub fn view<'a>(db: &'a Db, lines: &'a Lines) -> impl Drive<D = Id<Linedef>, R = (Geom, Gap)> + Probe + 'a {
+pub fn view<'a>(db: &'a Db, lines: &'a Lines) -> impl Drive<D = Row<Linedef>, R = (Geom, Gap)> + Probe + 'a {
     geom(db).and((&lines.lo).and(&lines.hi))
 }
 
@@ -183,7 +183,7 @@ pub fn clip_moves(db: &Db, h: &SectorState, lines: &Lines, bodies: &MultiRel<usi
         .and(cands)
         .map(|((floor, ceil), c): ((f64, f64), Cand)| (c, floor, ceil, false));
     // Lines the candidate touches.
-    let two_sided = (&db.linedef.bsec).map(|b: Id<Sector>| b.0 != NONE);
+    let two_sided = (&db.linedef.bsec).map(|b: Row<Sector>| b.0 != NONE);
     let walls = cands
         .cross(view(db, lines).and(&db.linedef.flags).and(two_sided))
         .filt(|(c, (((g, _), _), _)): (Cand, (((Geom, Gap), i64), bool))| touches(g, c.2, c.3, c.5))

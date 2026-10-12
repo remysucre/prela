@@ -2,7 +2,7 @@
 //
 // A schema is a set of plain Rust structs whose fields hold the relations
 // themselves (src/job_schema.rs, src/tpch_schema.rs). An entity struct
-// reads like a SQL table: `#[primary_key] id: Key<Self>` is the identity
+// reads like a SQL table: `#[primary_key] id: Rows<Self>` is the identity
 // column over its ids, the rest are its columns with `Self` as domain, and
 // `#[derive(IntoQuery)]` makes `&Entity` a query over the primary key.
 // Filling one in is a struct literal, one call per field:
@@ -30,7 +30,7 @@
 // alongside it.
 
 use crate::cache;
-use crate::engine::{Bitset, Dense, DictMultiRel, DictRel, Id, MultiRel, SparseUniverse, Universe, VecRel};
+use crate::engine::{Bitset, Dense, DictMultiRel, DictRel, Row, MultiRel, SparseUniverse, Universe, VecRel};
 use crate::format::{KIND_CSR_STR, KIND_CSR_WORDS, KIND_DENSE_F64, KIND_DENSE_I64, KIND_DENSE_STR};
 use std::path::Path;
 
@@ -40,20 +40,20 @@ use std::path::Path;
 pub type Str = &'static str;
 
 /// A scalar column of entity `E`. Spelled entity-first so a field reads
-/// `Col<Lineitem, i64>` rather than the bare `VecRel<Id<Lineitem>, i64>`.
-pub type Col<E, T> = VecRel<Id<E>, T>;
+/// `Col<Lineitem, i64>` rather than the bare `VecRel<Row<Lineitem>, i64>`.
+pub type Col<E, T> = VecRel<Row<E>, T>;
 /// A set-valued (CSR) column of entity `E`.
-pub type Set<E, T> = MultiRel<Id<E>, T>;
+pub type Set<E, T> = MultiRel<Row<E>, T>;
 /// The primary key of a densely-addressed entity `E`: its ids, `0..n`.
-pub type Key<E> = Universe<Id<E>>;
+pub type Rows<E> = Universe<Row<E>>;
 /// The primary key of an entity whose id range has holes.
-pub type SparseKey<E> = SparseUniverse<Id<E>>;
+pub type SparseRows<E> = SparseUniverse<Row<E>>;
 /// A dictionary-encoded column of entity `E`: what SQL normalises into a
 /// lookup table (`kind_type`) is here just a `T`-valued column, stored as
 /// codes plus a table.
-pub type Dict<E, T> = DictRel<Id<E>, T>;
+pub type Dict<E, T> = DictRel<Row<E>, T>;
 /// A set-valued dictionary-encoded column of entity `E`.
-pub type DictSet<E, T> = DictMultiRel<Id<E>, T>;
+pub type DictSet<E, T> = DictMultiRel<Row<E>, T>;
 
 /// A dense payload type the cache can hold, with its physical kind and
 /// reader. This is what lets `l.dict(..)` pick the table reader from the
@@ -127,11 +127,11 @@ impl<'a> Loader<'a> {
 
     // ===== the entity's primary key =====================================
 
-    /// The primary key of a dense entity: `Key<E>` sized by
+    /// The primary key of a dense entity: `Rows<E>` sized by
     /// the domain of column `name` — any dense column of `E` will do; by
     /// convention its value column. Only the header is read, and nothing is
     /// recorded: the column is already in the manifest under its own load.
-    pub fn key<E: 'static>(&self, name: &str) -> Key<E> {
+    pub fn key<E: 'static>(&self, name: &str) -> Rows<E> {
         match self.dir {
             Some(dir) => Universe::new(cache::n_dom_in(dir, name)),
             None => Universe::new(0),
@@ -161,15 +161,15 @@ impl<'a> Loader<'a> {
         }
     }
 
-    /// A foreign key into `T`. The cache words are 0-based `Id<T>` with
-    /// `NO_ID` in the holes, bulk-reinterpreted through `Id`'s
+    /// A foreign key into `T`. The cache words are 0-based `Row<T>` with
+    /// `NO_ID` in the holes, bulk-reinterpreted through `Row`'s
     /// `repr(transparent)` layout — no per-element conversion.
     ///
     /// Every entity in both suites is densely addressed, so an FK column
     /// composes straight onto any column of `T`: it is a
-    /// `Query<D = Id<E>, R = Id<T>>` and `T`'s columns are keyed by
-    /// `Id<T>`. There is no table hop to insert and none to spell.
-    pub fn ids<T: 'static, E: 'static>(&mut self, name: &str) -> Col<E, Id<T>> {
+    /// `Query<D = Row<E>, R = Row<T>>` and `T`'s columns are keyed by
+    /// `Row<T>`. There is no table hop to insert and none to spell.
+    pub fn ids<T: 'static, E: 'static>(&mut self, name: &str) -> Col<E, Row<T>> {
         match self.note(name, KIND_DENSE_I64) {
             Some(dir) => cache::load_ids_in(dir, name),
             None => VecRel::new(Vec::new()),
@@ -208,7 +208,7 @@ impl<'a> Loader<'a> {
 
     // ===== set-valued (CSR) columns =====================================
 
-    pub fn multi_ids<T: 'static, E: 'static>(&mut self, name: &str) -> Set<E, Id<T>> {
+    pub fn multi_ids<T: 'static, E: 'static>(&mut self, name: &str) -> Set<E, Row<T>> {
         match self.note(name, KIND_CSR_WORDS) {
             Some(dir) => cache::load_multi_ids_in(dir, name),
             None => empty_csr(),
@@ -246,12 +246,12 @@ fn empty_csr<D: Dense, R: Copy + 'static>() -> MultiRel<D, R> {
 /// type built over it. Callers cache it in a `OnceLock` so it is built
 /// once per process.
 /// The primary key of an entity whose id range has holes:
-/// `SparseKey<E>` over the slots `0..fk.n_dom()`, masked to those
+/// `SparseRows<E>` over the slots `0..fk.n_dom()`, masked to those
 /// whose foreign key `fk` is a real target (`NO_ID` marks a hole). One pass
 /// over `fk` at load; the mask is leaked because `SparseUniverse` holds
 /// `&'static Bitset` (the same reason `MultiRel` holds `&'static` slices).
-pub fn sparse_key<E: 'static, T: Dense>(fk: &VecRel<Id<E>, T>) -> SparseKey<E> {
-    let mask: &'static Bitset<Id<E>> = Box::leak(Box::new(Bitset::validity(&fk.v)));
+pub fn sparse_key<E: 'static, T: Dense>(fk: &VecRel<Row<E>, T>) -> SparseRows<E> {
+    let mask: &'static Bitset<Row<E>> = Box::leak(Box::new(Bitset::validity(&fk.v)));
     SparseUniverse::new(fk.n_dom(), mask)
 }
 
@@ -278,25 +278,25 @@ mod tests {
     #[derive(IntoQuery)]
     pub struct Film {
         #[primary_key]
-        pub id: Key<Self>,
+        pub id: Rows<Self>,
         pub ftitle: Col<Self, Str>,
         pub year: Col<Self, i64>,
-        pub genre: Col<Self, Id<Genre>>,
-        pub tags: Set<Self, Id<Tag>>,
+        pub genre: Col<Self, Row<Genre>>,
+        pub tags: Set<Self, Row<Tag>>,
     }
     #[derive(IntoQuery)]
     pub struct Genre {
         #[primary_key]
-        pub id: Key<Self>,
+        pub id: Rows<Self>,
         pub gname: Col<Self, Str>,
         pub ty: Col<Self, Str>,
     }
     #[derive(IntoQuery)]
     pub struct Tag {
         #[primary_key]
-        pub id: Key<Self>,
+        pub id: Rows<Self>,
         pub tag: Col<Self, Str>,
-        pub films: Set<Self, Id<Film>>,
+        pub films: Set<Self, Row<Film>>,
     }
     pub struct Toy {
         pub film: Film,

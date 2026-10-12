@@ -1,31 +1,31 @@
-use crate::engine::{Id, IntoQuery};
-use crate::loader::{Col, Dict, DictSet, Key, Loader, Set, Str};
+use crate::engine::{Row, IntoQuery};
+use crate::loader::{Col, Dict, DictSet, Rows, Loader, Set, Str};
 use std::path::Path;
 
 #[derive(IntoQuery)]
 pub struct Movie {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub title: Col<Self, Str>,
     pub kind: Dict<Self, Str>,
     pub production_year: Set<Self, i64>,
     pub episode_nr: Set<Self, i64>,
     pub keyword: DictSet<Self, Str>,
-    pub company: Set<Self, Id<Company>>,
-    pub cast: Set<Self, Id<Cast>>,
-    pub info: Set<Self, Id<Info>>,
-    pub data: Set<Self, Id<Data>>,
-    pub complete_cast: Set<Self, Id<CompleteCast>>,
-    pub link: Set<Self, Id<MovieLink>>,
-    pub linked_by: Set<Self, Id<MovieLink>>,
+    pub company: Set<Self, Row<Company>>,
+    pub cast: Set<Self, Row<Cast>>,
+    pub info: Set<Self, Row<Info>>,
+    pub data: Set<Self, Row<Data>>,
+    pub complete_cast: Set<Self, Row<CompleteCast>>,
+    pub link: Set<Self, Row<MovieLink>>,
+    pub linked_by: Set<Self, Row<MovieLink>>,
     pub aka: DictSet<Self, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct Cast {
     #[primary_key]
-    pub id: Key<Self>,
-    pub person: Col<Self, Id<Person>>,
+    pub id: Rows<Self>,
+    pub person: Col<Self, Row<Person>>,
     pub role: Dict<Self, Str>,
     pub note: Set<Self, Str>,
     pub character: DictSet<Self, Str>,
@@ -34,18 +34,18 @@ pub struct Cast {
 #[derive(IntoQuery)]
 pub struct Person {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub name: Col<Self, Str>,
     pub gender: Set<Self, Str>,
     pub alias: DictSet<Self, Str>,
-    pub bio: Set<Self, Id<PersonInfo>>,
+    pub bio: Set<Self, Row<PersonInfo>>,
     pub name_pcode_cf: Set<Self, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct Company {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub name: Col<Self, Str>,
     pub country: Set<Self, Str>,
     pub note: Set<Self, Str>,
@@ -55,7 +55,7 @@ pub struct Company {
 #[derive(IntoQuery)]
 pub struct Info {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub info: Col<Self, Str>,
     pub ty: Dict<Self, Str>,
     pub note: Set<Self, Str>,
@@ -64,7 +64,7 @@ pub struct Info {
 #[derive(IntoQuery)]
 pub struct Data {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub text: Col<Self, Str>,
     pub ty: Dict<Self, Str>,
 }
@@ -72,7 +72,7 @@ pub struct Data {
 #[derive(IntoQuery)]
 pub struct PersonInfo {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub info: Col<Self, Str>,
     pub ty: Dict<Self, Str>,
     pub note: Set<Self, Str>,
@@ -81,15 +81,15 @@ pub struct PersonInfo {
 #[derive(IntoQuery)]
 pub struct MovieLink {
     #[primary_key]
-    pub id: Key<Self>,
-    pub target: Col<Self, Id<Movie>>,
+    pub id: Rows<Self>,
+    pub target: Col<Self, Row<Movie>>,
     pub ty: Dict<Self, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct CompleteCast {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub status: Dict<Self, Str>,
     pub subject: Dict<Self, Str>,
 }
@@ -224,7 +224,7 @@ mod tests {
         let table = load_strs("Kind_text");
         for i in 0..1000.min(codes.n_dom()) {
             let mut got = None;
-            (&db.movie.kind).probe(Id::new(i), |s| got = Some(s));
+            (&db.movie.kind).probe(Row::new(i), |s| got = Some(s));
             assert_eq!(got, Some(table.v[codes.v[i]]));
         }
 

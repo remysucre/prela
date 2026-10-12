@@ -1,17 +1,17 @@
 use crate::info::Action;
-pub use prela::engine::Id;
+pub use prela::engine::Row;
 use prela::engine::{Drive, IntoQuery, QueryExt};
 use std::rc::Rc;
-use prela::loader::{Col, Key, Set};
+use prela::loader::{Col, Rows, Set};
 
 // Static map entities. wad.rs fills the columns read from the WAD; columns marked
 // "derived" start empty and are computed by db.rs with queries over the others.
-// Missing references (no back side, no texture) hold Id NONE and probe to nothing.
+// Missing references (no back side, no texture) hold Row NONE and probe to nothing.
 
 #[derive(IntoQuery)]
 pub struct Vertex {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub x: Col<Self, f64>,
     pub y: Col<Self, f64>,
 }
@@ -19,43 +19,43 @@ pub struct Vertex {
 #[derive(IntoQuery)]
 pub struct Sidedef {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub xoff: Col<Self, f64>,
     pub yoff: Col<Self, f64>,
-    pub upper: Col<Self, Id<Image>>,
-    pub lower: Col<Self, Id<Image>>,
-    pub middle: Col<Self, Id<Image>>,
-    pub sector: Col<Self, Id<Sector>>,
+    pub upper: Col<Self, Row<Image>>,
+    pub lower: Col<Self, Row<Image>>,
+    pub middle: Col<Self, Row<Image>>,
+    pub sector: Col<Self, Row<Sector>>,
 }
 
 #[derive(IntoQuery)]
 pub struct Linedef {
     #[primary_key]
-    pub id: Key<Self>,
-    pub v1: Col<Self, Id<Vertex>>,
-    pub v2: Col<Self, Id<Vertex>>,
+    pub id: Rows<Self>,
+    pub v1: Col<Self, Row<Vertex>>,
+    pub v2: Col<Self, Row<Vertex>>,
     pub flags: Col<Self, i64>,
     pub special: Col<Self, usize>,
     pub tag: Col<Self, usize>,
-    pub front: Col<Self, Id<Sidedef>>,
-    pub back: Col<Self, Id<Sidedef>>,
+    pub front: Col<Self, Row<Sidedef>>,
+    pub back: Col<Self, Row<Sidedef>>,
     // Derived: endpoints, and the sectors on each side.
     pub x1: Col<Self, f64>,
     pub y1: Col<Self, f64>,
     pub x2: Col<Self, f64>,
     pub y2: Col<Self, f64>,
-    pub fsec: Col<Self, Id<Sector>>,
-    pub bsec: Col<Self, Id<Sector>>,
+    pub fsec: Col<Self, Row<Sector>>,
+    pub bsec: Col<Self, Row<Sector>>,
 }
 
 // A piece of a linedef bounding one BSP leaf; the renderer draws segs.
 #[derive(IntoQuery)]
 pub struct Seg {
     #[primary_key]
-    pub id: Key<Self>,
-    pub v1: Col<Self, Id<Vertex>>,
-    pub v2: Col<Self, Id<Vertex>>,
-    pub line: Col<Self, Id<Linedef>>,
+    pub id: Rows<Self>,
+    pub v1: Col<Self, Row<Vertex>>,
+    pub v2: Col<Self, Row<Vertex>>,
+    pub line: Col<Self, Row<Linedef>>,
     pub side: Col<Self, usize>,
     pub offset: Col<Self, f64>,
     // Derived: endpoints, texture offsets, sectors and textures as seen from this seg's side,
@@ -66,11 +66,11 @@ pub struct Seg {
     pub y2: Col<Self, f64>,
     pub xoff: Col<Self, f64>,
     pub yoff: Col<Self, f64>,
-    pub fsec: Col<Self, Id<Sector>>,
-    pub bsec: Col<Self, Id<Sector>>,
-    pub upper: Col<Self, Id<Image>>,
-    pub middle: Col<Self, Id<Image>>,
-    pub lower: Col<Self, Id<Image>>,
+    pub fsec: Col<Self, Row<Sector>>,
+    pub bsec: Col<Self, Row<Sector>>,
+    pub upper: Col<Self, Row<Image>>,
+    pub middle: Col<Self, Row<Image>>,
+    pub lower: Col<Self, Row<Image>>,
     pub flags: Col<Self, i64>,
     pub light_delta: Col<Self, i64>,
 }
@@ -80,39 +80,39 @@ pub struct Seg {
 #[derive(IntoQuery)]
 pub struct Bsp {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub x: Set<Self, f64>,
     pub y: Set<Self, f64>,
     pub dx: Set<Self, f64>,
     pub dy: Set<Self, f64>,
-    pub child0: Set<Self, Id<Bsp>>,
-    pub child1: Set<Self, Id<Bsp>>,
-    pub segs: Set<Self, Id<Seg>>,
+    pub child0: Set<Self, Row<Bsp>>,
+    pub child1: Set<Self, Row<Bsp>>,
+    pub segs: Set<Self, Row<Seg>>,
     // Derived: a leaf's sector.
-    pub sector: Set<Self, Id<Sector>>,
+    pub sector: Set<Self, Row<Sector>>,
 }
 
 // Starting sector values; live floor/ceiling heights are tic state.
 #[derive(IntoQuery)]
 pub struct Sector {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub floor: Col<Self, f64>,
     pub ceil: Col<Self, f64>,
-    pub floorpic: Col<Self, Id<Image>>,
-    pub ceilpic: Col<Self, Id<Image>>,
+    pub floorpic: Col<Self, Row<Image>>,
+    pub ceilpic: Col<Self, Row<Image>>,
     pub light: Col<Self, i64>,
     pub special: Col<Self, usize>,
     pub tag: Col<Self, usize>,
     // Derived: sectors sharing a two-sided line.
-    pub neighbors: Set<Self, Id<Sector>>,
+    pub neighbors: Set<Self, Row<Sector>>,
 }
 
 // A map THINGS entry: kind is the editor number.
 #[derive(IntoQuery)]
 pub struct Thing {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub x: Col<Self, f64>,
     pub y: Col<Self, f64>,
     pub angle: Col<Self, f64>,
@@ -125,7 +125,7 @@ pub struct Thing {
 #[derive(IntoQuery)]
 pub struct Image {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub base: Col<Self, usize>,
     pub w: Col<Self, usize>,
     pub h: Col<Self, usize>,
@@ -139,27 +139,27 @@ pub struct Image {
 #[derive(IntoQuery)]
 pub struct AnimState {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub sprite: Col<Self, usize>,
     pub frame: Col<Self, usize>,
     pub bright: Col<Self, bool>,
     pub tics: Col<Self, i32>,
     pub action: Col<Self, Action>,
-    pub next: Col<Self, Id<AnimState>>,
+    pub next: Col<Self, Row<AnimState>>,
 }
 
 // A kind of thing (Doom's mobjinfo): its states, size, health and flags.
 #[derive(IntoQuery)]
 pub struct ThingType {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub ednum: Col<Self, i64>,
-    pub spawn: Col<Self, Id<AnimState>>,
-    pub see: Col<Self, Id<AnimState>>,
-    pub pain: Col<Self, Id<AnimState>>,
-    pub melee: Col<Self, Id<AnimState>>,
-    pub missile: Col<Self, Id<AnimState>>,
-    pub death: Col<Self, Id<AnimState>>,
+    pub spawn: Col<Self, Row<AnimState>>,
+    pub see: Col<Self, Row<AnimState>>,
+    pub pain: Col<Self, Row<AnimState>>,
+    pub melee: Col<Self, Row<AnimState>>,
+    pub missile: Col<Self, Row<AnimState>>,
+    pub death: Col<Self, Row<AnimState>>,
     pub speed: Col<Self, f64>,
     pub radius: Col<Self, f64>,
     pub height: Col<Self, f64>,
@@ -168,25 +168,25 @@ pub struct ThingType {
     pub damage: Col<Self, i32>,
     pub flags: Col<Self, u32>,
     // The item a monster drops when killed (NONE for most).
-    pub drop: Col<Self, Id<ThingType>>,
+    pub drop: Col<Self, Row<ThingType>>,
     // What picking it up gives (items only).
-    pub pickup: Set<Self, Id<Pickup>>,
+    pub pickup: Set<Self, Row<Pickup>>,
 }
 
 // What touching an item gives the player.
 #[derive(IntoQuery)]
 pub struct Pickup {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub health: Col<Self, i32>,
     pub health_max: Col<Self, i32>,
     pub armor: Col<Self, i32>,
     pub armor_max: Col<Self, i32>,
     pub class_set: Col<Self, i32>,
     pub class_min: Col<Self, i32>,
-    pub ammo_kind: Col<Self, Id<AmmoKind>>,
+    pub ammo_kind: Col<Self, Row<AmmoKind>>,
     pub ammo: Col<Self, i32>,
-    pub weapon: Col<Self, Id<Weapon>>,
+    pub weapon: Col<Self, Row<Weapon>>,
     pub weapon_bit: Col<Self, u8>,
     pub key: Col<Self, u8>,
     // Taken even when it changes nothing.
@@ -197,12 +197,12 @@ pub struct Pickup {
 #[derive(IntoQuery)]
 pub struct Weapon {
     #[primary_key]
-    pub id: Key<Self>,
-    pub ammo: Col<Self, Id<AmmoKind>>,
+    pub id: Rows<Self>,
+    pub ammo: Col<Self, Row<AmmoKind>>,
     pub per_shot: Col<Self, i32>,
-    pub ready: Col<Self, Id<AnimState>>,
-    pub attack: Col<Self, Id<AnimState>>,
-    pub flash: Col<Self, Id<AnimState>>,
+    pub ready: Col<Self, Row<AnimState>>,
+    pub attack: Col<Self, Row<AnimState>>,
+    pub flash: Col<Self, Row<AnimState>>,
     pub flash_tics: Col<Self, i32>,
     pub damage: Col<Self, i32>,
     pub damage_roll: Col<Self, i32>,
@@ -214,7 +214,7 @@ pub struct Weapon {
 #[derive(IntoQuery)]
 pub struct AmmoKind {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub cap: Col<Self, i32>,
     pub start: Col<Self, i32>,
 }
@@ -223,7 +223,7 @@ pub struct AmmoKind {
 #[derive(IntoQuery)]
 pub struct ArmorClass {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub num: Col<Self, i32>,
     pub den: Col<Self, i32>,
 }
@@ -232,7 +232,7 @@ pub struct ArmorClass {
 #[derive(IntoQuery)]
 pub struct ChaseDir {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub turn: Col<Self, f64>,
     pub step: Col<Self, f64>,
     pub stay: Col<Self, bool>,
@@ -242,7 +242,7 @@ pub struct ChaseDir {
 #[derive(IntoQuery)]
 pub struct Slide {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub keep_x: Col<Self, f64>,
     pub keep_y: Col<Self, f64>,
     pub stay: Col<Self, bool>,
@@ -252,7 +252,7 @@ pub struct Slide {
 #[derive(IntoQuery)]
 pub struct LineSpecial {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub num: Col<Self, usize>,
     pub act: Col<Self, u8>,
     pub speed: Col<Self, f64>,
@@ -267,7 +267,7 @@ pub struct LineSpecial {
 #[derive(IntoQuery)]
 pub struct Activation {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub key: Col<Self, usize>,
     pub kind: Col<Self, u8>,
     pub dir: Col<Self, i8>,
@@ -286,7 +286,7 @@ pub struct Activation {
 #[derive(IntoQuery)]
 pub struct AiRule {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub key: Col<Self, usize>,
     pub prio: Col<Self, u8>,
     pub mask: Col<Self, u32>,
@@ -308,7 +308,7 @@ pub struct AiRule {
 #[derive(IntoQuery)]
 pub struct WeaponRule {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub key: Col<Self, usize>,
     pub prio: Col<Self, u8>,
     pub mask: Col<Self, u32>,
@@ -323,7 +323,7 @@ pub struct WeaponRule {
 #[derive(IntoQuery)]
 pub struct MoverRule {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub key: Col<Self, usize>,
     pub prio: Col<Self, u8>,
     pub mask: Col<Self, u32>,
@@ -338,7 +338,7 @@ pub struct MoverRule {
 #[derive(IntoQuery)]
 pub struct FaceRule {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub key: Col<Self, usize>,
     pub prio: Col<Self, u8>,
     pub mask: Col<Self, u32>,
@@ -366,8 +366,8 @@ pub mod eff {
 #[derive(IntoQuery)]
 pub struct HudPatch {
     #[primary_key]
-    pub id: Key<Self>,
-    pub image: Col<Self, Id<Image>>,
+    pub id: Rows<Self>,
+    pub image: Col<Self, Row<Image>>,
     pub x: Col<Self, f64>,
     pub y: Col<Self, f64>,
     pub depth: Col<Self, f32>,
@@ -377,7 +377,7 @@ pub struct HudPatch {
 #[derive(IntoQuery)]
 pub struct NumberSlot {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub x: Col<Self, f64>,
     pub y: Col<Self, f64>,
     pub font: Col<Self, usize>,
@@ -389,7 +389,7 @@ pub struct NumberSlot {
 #[derive(IntoQuery)]
 pub struct HudArm {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub weapon: Col<Self, usize>,
     pub x: Col<Self, f64>,
     pub y: Col<Self, f64>,
@@ -400,17 +400,17 @@ pub struct HudArm {
 #[derive(IntoQuery)]
 pub struct HudKey {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub x: Col<Self, f64>,
     pub y: Col<Self, f64>,
-    pub image: Col<Self, Id<Image>>,
+    pub image: Col<Self, Row<Image>>,
 }
 
 // Doom's tuning numbers, as one row (SQLDoom's doom_constants). Read with `one(&k.field)`.
 #[derive(IntoQuery)]
 pub struct Konst {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub friction: Col<Self, f64>,
     pub walk_thrust: Col<Self, f64>,
     pub run_thrust: Col<Self, f64>,
@@ -445,7 +445,7 @@ pub struct Konst {
     pub reaction: Col<Self, i32>,
     pub start_health: Col<Self, i32>,
     pub start_owned: Col<Self, u8>,
-    pub start_weapon: Col<Self, Id<Weapon>>,
+    pub start_weapon: Col<Self, Row<Weapon>>,
 }
 
 // The value of a one-row column.
@@ -458,7 +458,7 @@ pub fn one<E: 'static, T: Copy>(c: &Col<E, T>) -> T {
 pub type C<E, T> = Rc<Col<E, T>>;
 
 // Materialize a query as a shared column.
-pub fn rc<E: 'static, T: Copy, Q: Drive<D = Id<E>, R = T>>(q: Q) -> C<E, T> {
+pub fn rc<E: 'static, T: Copy, Q: Drive<D = Row<E>, R = T>>(q: Q) -> C<E, T> {
     Rc::new(q.collect())
 }
 
@@ -466,7 +466,7 @@ pub fn rc<E: 'static, T: Copy, Q: Drive<D = Id<E>, R = T>>(q: Q) -> C<E, T> {
 #[derive(IntoQuery, Clone)]
 pub struct Player {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub x: C<Self, f64>,
     pub y: C<Self, f64>,
     pub z: C<Self, f64>,
@@ -474,24 +474,24 @@ pub struct Player {
     pub momx: C<Self, f64>,
     pub momy: C<Self, f64>,
     pub momz: C<Self, f64>,
-    pub sector: C<Self, Id<Sector>>,
+    pub sector: C<Self, Row<Sector>>,
     // Use key held last tic, level exit reached, dead.
     pub usedown: C<Self, bool>,
     pub exited: C<Self, bool>,
     pub dead: C<Self, bool>,
     pub health: C<Self, i32>,
     pub armor: C<Self, i32>,
-    pub armor_class: C<Self, Id<ArmorClass>>,
+    pub armor_class: C<Self, Row<ArmorClass>>,
     // Owned weapons and keys, one bit each.
     pub owned: C<Self, u8>,
     pub keys: C<Self, u8>,
     // Current weapon, and one asked for but not switched to yet (NONE if none).
-    pub weapon: C<Self, Id<Weapon>>,
-    pub wanted: C<Self, Id<Weapon>>,
+    pub weapon: C<Self, Row<Weapon>>,
+    pub wanted: C<Self, Row<Weapon>>,
     // Weapon sprite state and its timer; muzzle flash state (0 = none) and its timer.
-    pub wstate: C<Self, Id<AnimState>>,
+    pub wstate: C<Self, Row<AnimState>>,
     pub wtics: C<Self, i32>,
-    pub flash: C<Self, Id<AnimState>>,
+    pub flash: C<Self, Row<AnimState>>,
     pub flash_tics: C<Self, i32>,
     // Screen tint timers: red after damage, gold after a pickup.
     pub damagecount: C<Self, i32>,
@@ -503,22 +503,22 @@ pub struct Player {
 #[derive(IntoQuery, Clone)]
 pub struct Mobj {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub uid: C<Self, usize>,
-    pub kind: C<Self, Id<ThingType>>,
+    pub kind: C<Self, Row<ThingType>>,
     pub x: C<Self, f64>,
     pub y: C<Self, f64>,
     pub z: C<Self, f64>,
     pub ang: C<Self, f64>,
     pub momx: C<Self, f64>,
     pub momy: C<Self, f64>,
-    pub state: C<Self, Id<AnimState>>,
+    pub state: C<Self, Row<AnimState>>,
     pub tics: C<Self, i32>,
     pub health: C<Self, i32>,
     pub flags: C<Self, u32>,
     pub awake: C<Self, bool>,
     pub reaction: C<Self, i32>,
-    pub sector: C<Self, Id<Sector>>,
+    pub sector: C<Self, Row<Sector>>,
     // uid of whoever fired this projectile (NONE otherwise).
     pub source: C<Self, usize>,
 }

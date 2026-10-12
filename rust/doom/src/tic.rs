@@ -7,7 +7,7 @@ use crate::schema::{one, rc, AmmoKind, Mobj, Player, Sector, SectorState, C};
 use crate::wad::NONE;
 use crate::world;
 use prela::engine::*;
-use prela::loader::Key;
+use prela::loader::Rows;
 
 // Linedef flag: sound stops here. Thing type of the player 1 start.
 const ML_SOUNDBLOCK: i64 = 64;
@@ -23,7 +23,7 @@ pub struct State {
 }
 
 // A one-row player column holding v.
-fn konst<T: Copy + 'static>(id: &Key<Player>, v: T) -> C<Player, T> {
+fn konst<T: Copy + 'static>(id: &Rows<Player>, v: T) -> C<Player, T> {
     rc(id.map(move |_| v))
 }
 
@@ -57,10 +57,10 @@ pub fn initial(db: &Db) -> State {
     let (k, th) = (&db.t.k, &db.thing);
     let weapon = one(&k.start_weapon);
     // The player 1 start thing, as the player's row.
-    let start: VecRel<Id<Player>, ((f64, f64), f64)> = (&th.kind)
+    let start: VecRel<Row<Player>, ((f64, f64), f64)> = (&th.kind)
         .filt(|kind: usize| kind == PLAYER1_START)
         .and((&th.x).and(&th.y).and(&th.angle))
-        .key_by(|_| Id::<Player>::new(0))
+        .key_by(|_| Row::<Player>::new(0))
         .map(|(_, p): (usize, ((f64, f64), f64))| p)
         .collect();
     let id = Universe::new(1);
@@ -72,20 +72,20 @@ pub fn initial(db: &Db) -> State {
         momx: konst(&id, 0.0),
         momy: konst(&id, 0.0),
         momz: konst(&id, 0.0),
-        sector: rc((&id).map(|_| Id::<Sector>::new(0))),
+        sector: rc((&id).map(|_| Row::<Sector>::new(0))),
         usedown: konst(&id, false),
         exited: konst(&id, false),
         dead: konst(&id, false),
         health: konst(&id, one(&k.start_health)),
         armor: konst(&id, 0),
-        armor_class: rc((&id).map(|_| Id::new(0))),
+        armor_class: rc((&id).map(|_| Row::new(0))),
         owned: konst(&id, one(&k.start_owned)),
         keys: konst(&id, 0),
         weapon: rc((&id).map(move |_| weapon)),
-        wanted: rc((&id).map(|_| Id::new(NONE))),
+        wanted: rc((&id).map(|_| Row::new(NONE))),
         wstate: rc((&id).map(move |_| weapon).select(&db.t.weapon.ready)),
         wtics: konst(&id, 1),
-        flash: rc((&id).map(|_| Id::new(0))),
+        flash: rc((&id).map(|_| Row::new(0))),
         flash_tics: konst(&id, 0),
         damagecount: konst(&id, 0),
         bonuscount: konst(&id, 0),
@@ -142,21 +142,21 @@ pub fn tic(db: &Db, s: &State, inp: Input) -> State {
     // Sector adjacency that sound can travel through.
     // Sound passes lines with an open gap and no sound-block flag; edges go both ways.
     let l = &db.linedef;
-    let sound: MultiRel<Id<Sector>, Id<Sector>> = (&lines.lo)
+    let sound: MultiRel<Row<Sector>, Row<Sector>> = (&lines.lo)
         .and(&lines.hi)
         .and(&l.flags)
         .filt(|((lo, hi), flags): ((f64, f64), i64)| hi > lo && flags & ML_SOUNDBLOCK == 0)
         .and((&l.fsec).and(&l.bsec))
-        .flat_map(|(_, (f, b)): (((f64, f64), i64), (Id<Sector>, Id<Sector>))| [(f, b), (b, f)])
+        .flat_map(|(_, (f, b)): (((f64, f64), i64), (Row<Sector>, Row<Sector>))| [(f, b), (b, f)])
         .key_by(|(a, _)| a)
         .map(|(_, b)| b)
         .collect();
     // Sectors that have heard the player fire (sticky across tics).
-    let reached: MultiRel<Id<Sector>, usize> = (&player_shots)
+    let reached: MultiRel<Row<Sector>, usize> = (&player_shots)
         // Player's sector, once per bullet fired (none if no shot).
-        .key_by(|_| Id::<Player>::new(0))
+        .key_by(|_| Row::<Player>::new(0))
         .and(&*armed.sector)
-        .map(|(_, sec): (Shot, Id<Sector>)| sec)
+        .map(|(_, sec): (Shot, Row<Sector>)| sec)
         // Flood out through the sound graph: sector -> depth.
         .reach_set(&sound, usize::MAX)
         .collect();

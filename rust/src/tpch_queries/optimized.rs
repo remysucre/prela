@@ -107,7 +107,7 @@ fn q2(db: &'static Tpch) -> String {
     } = &db.nation;
     let Region { name: r_name, .. } = &db.region;
 
-    let mut rows: Vec<(f64, &str, &str, Id<Part>, &str, &str, &str, &str)> = Vec::new();
+    let mut rows: Vec<(f64, &str, &str, Row<Part>, &str, &str, &str, &str)> = Vec::new();
 
     let eu = || {
         ps_supplier
@@ -416,7 +416,7 @@ fn q18(db: &'static Tpch) -> String {
     } = &db.order;
     let Customer { name: c_name, .. } = &db.customer;
 
-    let mut rows: Vec<(Id<Order>, (f64, ((f64, i64), (&str, Id<Customer>))))> = Vec::new();
+    let mut rows: Vec<(Row<Order>, (f64, ((f64, i64), (&str, Row<Customer>))))> = Vec::new();
 
     db.lineitem
         .group_by(l_order)
@@ -452,13 +452,13 @@ fn q18(db: &'static Tpch) -> String {
 // hold `supplier id + 1` (0 = "no supplier seen yet"), the top bit is the
 // "more than one distinct supplier" flag. Two of these are all q21 needs per
 // order, so its `dense_fold` state is 8 bytes rather than the 48 that the
-// natural `((Option<Id<Supplier>>, bool), (Option<Id<Supplier>>, bool))`
+// natural `((Option<Row<Supplier>>, bool), (Option<Row<Supplier>>, bool))`
 // tuple occupies.
 const Q21_MULTI: u32 = 1 << 31;
 const Q21_ID: u32 = !Q21_MULTI;
 
 #[inline(always)]
-fn q21_note(slot: u32, s: Id<Supplier>) -> u32 {
+fn q21_note(slot: u32, s: Row<Supplier>) -> u32 {
     debug_assert!(
         s.0 + 1 < Q21_MULTI as usize,
         "supplier id needs the flag bit"
@@ -508,7 +508,7 @@ fn q21(db: &'static Tpch) -> String {
     let mut rows: Vec<(&str, i64)> = Vec::new();
 
     // track overall suppliers and late suppliers
-    let track = |(all, late): (u32, u32), ((s, c), r): ((Id<Supplier>, i64), i64)| {
+    let track = |(all, late): (u32, u32), ((s, c), r): ((Row<Supplier>, i64), i64)| {
         // if the line is late, update the late-supplier state too
         (
             q21_note(all, s),

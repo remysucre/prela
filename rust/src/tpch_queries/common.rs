@@ -266,7 +266,7 @@ fn q3(db: &'static Tpch) -> String {
         )
         .select(extendedprice.and(discount))
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
-    let mut rows: Vec<(((Id<Order>, i64), i64), f64)> = Vec::new();
+    let mut rows: Vec<(((Row<Order>, i64), i64), f64)> = Vec::new();
     revenue.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|(((_, da), _), ra), (((_, db_), _), rb)| {
         rb.partial_cmp(ra)
@@ -609,7 +609,7 @@ fn q10(db: &'static Tpch) -> String {
                 .and(c_comment),
         );
     let mut rows: Vec<(
-        Id<Customer>,
+        Row<Customer>,
         (f64, (((((&str, f64), &str), &str), &str), &str)),
     )> = Vec::new();
     revenue.drive(|k, v| rows.push((k, v)));
@@ -655,7 +655,7 @@ fn q11(db: &'static Tpch) -> String {
         .select(supplycost.and(availqty))
         .fold(0.0, |a, (c, q)| a + c * (q as f64));
     let threshold = 0.0001 * (&value_per_part).fold_flat(0.0, |a, v| a + v);
-    let mut rows: Vec<(Id<Part>, f64)> = Vec::new();
+    let mut rows: Vec<(Row<Part>, f64)> = Vec::new();
     value_per_part.gt(threshold).drive(|k, v| rows.push((k, v)));
     rows.sort_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap());
     // natural partkey = internal id + 1
@@ -755,7 +755,7 @@ fn q15(db: &'static Tpch) -> String {
         .fold(0.0_f64, |a, (e, dc)| a + e * (1.0 - dc));
     let max_rev = (&revenue).fold_flat(0.0, f64::max);
     let result = revenue.eq(max_rev).and(s_name.and(s_address).and(s_phone));
-    let mut rows: Vec<(Id<Supplier>, (f64, ((&str, &str), &str)))> = Vec::new();
+    let mut rows: Vec<(Row<Supplier>, (f64, ((&str, &str), &str)))> = Vec::new();
     result.drive(|k, v| rows.push((k, v)));
     rows.sort_by_key(|r| r.0);
     join_lines(rows.iter().map(|(k, (rev, ((name, addr), phone)))| {
@@ -878,7 +878,7 @@ fn q18(db: &'static Tpch) -> String {
                 .and(o_date)
                 .and(o_customer.select(c_name).and(o_customer)),
         );
-    let mut rows: Vec<(Id<Order>, (f64, ((f64, i64), (&str, Id<Customer>))))> = Vec::new();
+    let mut rows: Vec<(Row<Order>, (f64, ((f64, i64), (&str, Row<Customer>))))> = Vec::new();
     result.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|(_, (_, ((tp1, dt1), _))), (_, (_, ((tp2, dt2), _)))| {
         tp2.partial_cmp(tp1).unwrap().then(dt1.cmp(dt2))
@@ -1073,7 +1073,7 @@ fn q21(db: &'static Tpch) -> String {
         .group_by(l_supplier)
         .fold(0_i64, |a, _| a + 1)
         .and(s_name);
-    let mut rows: Vec<(Id<Supplier>, (i64, &str))> = Vec::new();
+    let mut rows: Vec<(Row<Supplier>, (i64, &str))> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|(_, (c1, n1)), (_, (c2, n2))| c2.cmp(c1).then(n1.cmp(n2)));
     rows.truncate(100);
@@ -1170,7 +1170,7 @@ fn q2(db: &'static Tpch) -> String {
         .fold(f64::INFINITY, |a, c| if c < a { c } else { a });
     // Project per PS row → (acct, sname, nname, pkey, mfgr, addr, phone, comm)
     // by navigation; flatten the tuple as it's collected.
-    let mut rows: Vec<(f64, &str, &str, Id<Part>, &str, &str, &str, &str)> = Vec::new();
+    let mut rows: Vec<(f64, &str, &str, Row<Part>, &str, &str, &str, &str)> = Vec::new();
     (&eu_ps)
         .with(
             ps_part

@@ -9,7 +9,7 @@ use prela::engine::*;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 // A request to create a mobj: uid, type, x, y, z, angle, speed, source uid.
-pub type Spawn = (usize, Id<ThingType>, f64, f64, f64, f64, f64, usize);
+pub type Spawn = (usize, Row<ThingType>, f64, f64, f64, f64, f64, usize);
 
 // What each mobj decided this tic, beside its updated columns. Columns cover every id;
 // `live` marks the mobjs still in play.
@@ -18,7 +18,7 @@ pub struct Plan {
     pub m: Mobj,
     pub live: C<Mobj, bool>,
     // State asked for this tic (NONE = none), re-applied whenever rules run.
-    pub goto: C<Mobj, Id<AnimState>>,
+    pub goto: C<Mobj, Row<AnimState>>,
     // Direction to walk this tic.
     pub go: C<Mobj, Option<f64>>,
     // Attack this tic: kind (ATK_*), bullets, damage mult * (1..=modulo).
@@ -32,7 +32,7 @@ pub struct Plan {
 }
 
 // Ids of live mobjs.
-fn alive(live: &C<Mobj, bool>) -> impl Drive<D = Id<Mobj>, R = bool> + Probe + '_ {
+fn alive(live: &C<Mobj, bool>) -> impl Drive<D = Row<Mobj>, R = bool> + Probe + '_ {
     (&**live).filt(|l: bool| l)
 }
 
@@ -42,19 +42,19 @@ fn fill<T: Copy + 'static>(m: &Mobj, v: T) -> C<Mobj, T> {
 }
 
 // Replace some rows of a column.
-fn upd<T: Copy + 'static, Q: Drive<D = Id<Mobj>, R = T> + Probe>(old: &C<Mobj, T>, new: Q) -> C<Mobj, T> {
+fn upd<T: Copy + 'static, Q: Drive<D = Row<Mobj>, R = T> + Probe>(old: &C<Mobj, T>, new: Q) -> C<Mobj, T> {
     rc((&**old).minus(&new).union(&new))
 }
 
 // Each mobj's body id.
-fn bid(m: &Mobj) -> impl Drive<D = Id<Mobj>, R = usize> + Probe + '_ {
-    (&m.id).map(|i: Id<Mobj>| body_of(i.0))
+fn bid(m: &Mobj) -> impl Drive<D = Row<Mobj>, R = usize> + Probe + '_ {
+    (&m.id).map(|i: Row<Mobj>| body_of(i.0))
 }
 
 // One column of the next tic's mobjs. Rows are the kept old ids, then spawn key k at row
 // `base + k`; `rank` gives each placed row its new id.
-fn carry<T: Copy + 'static, Q: Drive<D = usize, R = T>>(keep: &MultiRel<Id<Mobj>, bool>, base: usize, rank: &MultiRel<usize, Id<Mobj>>, old: &C<Mobj, T>, new: Q) -> C<Mobj, T> {
-    let kept = keep.and(&**old).and(Same::<Id<Mobj>>::new()).key_by(|(_, i): ((bool, T), Id<Mobj>)| i.0).map(|((_, v), _)| v);
+fn carry<T: Copy + 'static, Q: Drive<D = usize, R = T>>(keep: &MultiRel<Row<Mobj>, bool>, base: usize, rank: &MultiRel<usize, Row<Mobj>>, old: &C<Mobj, T>, new: Q) -> C<Mobj, T> {
+    let kept = keep.and(&**old).and(Same::<Row<Mobj>>::new()).key_by(|(_, i): ((bool, T), Row<Mobj>)| i.0).map(|((_, v), _)| v);
     let spawned = new.and(Same::<usize>::new()).key_by(move |(_, k): (T, usize)| base + k).map(|(v, _)| v);
     rc(kept.union(spawned).and(rank).key_by(|(_, i)| i).map(|(v, _)| v))
 }
@@ -62,56 +62,56 @@ fn carry<T: Copy + 'static, Q: Drive<D = usize, R = T>>(keep: &MultiRel<Id<Mobj>
 // The next tic's mobjs: kept rows of `m` plus new spawns (by spawn key), each placed in its
 // sector at its floor (or ceiling, or flying height), renumbered 0..n in uid order. Mobjs
 // outside the map drop out.
-fn assemble(db: &Db, s: &SectorState, m: Option<&Mobj>, keep: &MultiRel<Id<Mobj>, bool>, spawns: &MultiRel<usize, Spawn>) -> Mobj {
+fn assemble(db: &Db, s: &SectorState, m: Option<&Mobj>, keep: &MultiRel<Row<Mobj>, bool>, spawns: &MultiRel<usize, Spawn>) -> Mobj {
     let (tt, st) = (&db.t.ttype, &db.t.state);
     let reaction = one(&db.t.k.reaction);
     let none = Mobj {
         id: Universe::new(0),
-        uid: rc(VecRel::<Id<Mobj>, usize>::new(vec![])),
-        kind: rc(VecRel::<Id<Mobj>, Id<ThingType>>::new(vec![])),
-        x: rc(VecRel::<Id<Mobj>, f64>::new(vec![])),
-        y: rc(VecRel::<Id<Mobj>, f64>::new(vec![])),
-        z: rc(VecRel::<Id<Mobj>, f64>::new(vec![])),
-        ang: rc(VecRel::<Id<Mobj>, f64>::new(vec![])),
-        momx: rc(VecRel::<Id<Mobj>, f64>::new(vec![])),
-        momy: rc(VecRel::<Id<Mobj>, f64>::new(vec![])),
-        state: rc(VecRel::<Id<Mobj>, Id<AnimState>>::new(vec![])),
-        tics: rc(VecRel::<Id<Mobj>, i32>::new(vec![])),
-        health: rc(VecRel::<Id<Mobj>, i32>::new(vec![])),
-        flags: rc(VecRel::<Id<Mobj>, u32>::new(vec![])),
-        awake: rc(VecRel::<Id<Mobj>, bool>::new(vec![])),
-        reaction: rc(VecRel::<Id<Mobj>, i32>::new(vec![])),
-        sector: rc(VecRel::<Id<Mobj>, Id<Sector>>::new(vec![])),
-        source: rc(VecRel::<Id<Mobj>, usize>::new(vec![])),
+        uid: rc(VecRel::<Row<Mobj>, usize>::new(vec![])),
+        kind: rc(VecRel::<Row<Mobj>, Row<ThingType>>::new(vec![])),
+        x: rc(VecRel::<Row<Mobj>, f64>::new(vec![])),
+        y: rc(VecRel::<Row<Mobj>, f64>::new(vec![])),
+        z: rc(VecRel::<Row<Mobj>, f64>::new(vec![])),
+        ang: rc(VecRel::<Row<Mobj>, f64>::new(vec![])),
+        momx: rc(VecRel::<Row<Mobj>, f64>::new(vec![])),
+        momy: rc(VecRel::<Row<Mobj>, f64>::new(vec![])),
+        state: rc(VecRel::<Row<Mobj>, Row<AnimState>>::new(vec![])),
+        tics: rc(VecRel::<Row<Mobj>, i32>::new(vec![])),
+        health: rc(VecRel::<Row<Mobj>, i32>::new(vec![])),
+        flags: rc(VecRel::<Row<Mobj>, u32>::new(vec![])),
+        awake: rc(VecRel::<Row<Mobj>, bool>::new(vec![])),
+        reaction: rc(VecRel::<Row<Mobj>, i32>::new(vec![])),
+        sector: rc(VecRel::<Row<Mobj>, Row<Sector>>::new(vec![])),
+        source: rc(VecRel::<Row<Mobj>, usize>::new(vec![])),
     };
     let m = m.unwrap_or(&none);
     let base = m.id.n;
     // A per-row value from the kept rows' column and the spawns.
     let rows = |old: &C<Mobj, (f64, f64)>, new: fn(Spawn) -> (f64, f64)| -> MultiRel<usize, (f64, f64)> {
         keep.and(&**old)
-            .and(Same::<Id<Mobj>>::new())
-            .key_by(|(_, i): ((bool, (f64, f64)), Id<Mobj>)| i.0)
+            .and(Same::<Row<Mobj>>::new())
+            .key_by(|(_, i): ((bool, (f64, f64)), Row<Mobj>)| i.0)
             .map(|((_, v), _)| v)
             .union(spawns.map(new).and(Same::<usize>::new()).key_by(move |(_, k): ((f64, f64), usize)| base + k).map(|(v, _)| v))
             .collect()
     };
     // Where each row is, then its sector.
     let pts = rows(&rc((&*m.x).and(&*m.y)), |s| (s.2, s.3));
-    let sector: MultiRel<usize, Id<Sector>> = locate(db, &pts).collect();
+    let sector: MultiRel<usize, Row<Sector>> = locate(db, &pts).collect();
     // Each row's uid, the order the placed rows are numbered in.
     let uid: MultiRel<usize, usize> = keep
         .and(&*m.uid)
-        .and(Same::<Id<Mobj>>::new())
-        .key_by(|(_, i): ((bool, usize), Id<Mobj>)| i.0)
+        .and(Same::<Row<Mobj>>::new())
+        .key_by(|(_, i): ((bool, usize), Row<Mobj>)| i.0)
         .map(|((_, u), _)| u)
         .union(spawns.map(|s: Spawn| s.0).and(Same::<usize>::new()).key_by(move |(_, k): (usize, usize)| base + k).map(|(u, _)| u))
         .collect();
-    let rank: MultiRel<usize, Id<Mobj>> = (&sector)
+    let rank: MultiRel<usize, Row<Mobj>> = (&sector)
         .and(Same::<usize>::new())
         .key_by(|_| 0usize)
         .map(|(_, r)| r)
         .window(row_number, &uid, asc)
-        .map(|n: i64| Id::<Mobj>::new(n as usize - 1))
+        .map(|n: i64| Row::<Mobj>::new(n as usize - 1))
         .collect();
     let n = (&rank).fold_flat(0, |n: usize, _| n + 1);
     let sp = |f: fn(Spawn) -> f64| spawns.map(f);
@@ -156,8 +156,8 @@ pub fn spawn_things(db: &Db, s: &SectorState) -> Mobj {
         .and((&th.x).and(&th.y).and(&th.angle))
         // Editor number -> thing type; unknown numbers drop out here.
         .and((&th.kind).select(&db.t.ednum_type))
-        .and(Same::<Id<Thing>>::new())
-        .map(|(((_, ((x, y), a)), kind), t): (((i64, ((f64, f64), f64)), Id<ThingType>), Id<Thing>)| (t.0, (t.0 + 1, kind, x, y, 0.0, a.to_radians(), 0.0, NONE)))
+        .and(Same::<Row<Thing>>::new())
+        .map(|(((_, ((x, y), a)), kind), t): (((i64, ((f64, f64), f64)), Row<ThingType>), Row<Thing>)| (t.0, (t.0 + 1, kind, x, y, 0.0, a.to_radians(), 0.0, NONE)))
         .key_by(|(t, _)| t)
         .map(|(_, s)| s)
         .collect();
@@ -192,33 +192,33 @@ pub fn bodies(db: &Db, p: &Player, m: &Mobj, live: &C<Mobj, bool>) -> MultiRel<u
 pub fn advance(db: &Db, m: &Mobj) -> (Mobj, C<Mobj, Action>, C<Mobj, bool>) {
     let st = &db.t.state;
     // -1 tics = stay forever; otherwise count down, and at 1 take the next state.
-    let next = || (&*m.tics).and((&*m.state).select(&st.next)).map(|(t, n): (i32, Id<AnimState>)| if t == -1 || t > 1 { Id::new(NONE) } else { n });
-    let t: VecRel<Id<Mobj>, (Id<AnimState>, i32, Action)> = (&*m.state)
+    let next = || (&*m.tics).and((&*m.state).select(&st.next)).map(|(t, n): (i32, Row<AnimState>)| if t == -1 || t > 1 { Row::new(NONE) } else { n });
+    let t: VecRel<Row<Mobj>, (Row<AnimState>, i32, Action)> = (&*m.state)
         .and(&*m.tics)
         .and(next())
         .and(next().select((&st.tics).and(&st.action)).opt())
-        .map(|(((s, t), n), e): (((Id<AnimState>, i32), Id<AnimState>), Option<(i32, Action)>)| match e {
+        .map(|(((s, t), n), e): (((Row<AnimState>, i32), Row<AnimState>), Option<(i32, Action)>)| match e {
             Some((nt, a)) => (n, nt, a),
             None => (s, if t > 1 { t - 1 } else { t }, Action::None),
         })
         .collect();
-    type T = (Id<AnimState>, i32, Action);
+    type T = (Row<AnimState>, i32, Action);
     let m = Mobj { state: rc((&t).map(|v: T| v.0)), tics: rc((&t).map(|v: T| v.1)), ..m.clone() };
     (m, rc((&t).map(|v: T| v.2)), rc((&t).map(|v: T| v.0.0 != 0)))
 }
 
 // Eye-to-eye segments from each looking/chasing monster to the player, for the line-of-sight check.
-pub fn sight_pairs(db: &Db, m: &Mobj, action: &C<Mobj, Action>, live: &C<Mobj, bool>, p: &Player) -> MultiRel<Id<Mobj>, Sight> {
+pub fn sight_pairs(db: &Db, m: &Mobj, action: &C<Mobj, Action>, live: &C<Mobj, bool>, p: &Player) -> MultiRel<Row<Mobj>, Sight> {
     let z = one(&db.t.k.sight_z);
     let pp = (&*p.x).and(&*p.y).and(&*p.z);
     alive(live)
         .and(&**action)
         .filt(|(_, a): (bool, Action)| matches!(a, Action::Look | Action::Chase))
         .and((&*m.x).and(&*m.y).and(&*m.z))
-        .and(Same::<Id<Mobj>>::new())
-        .key_by(|_| Id::<Player>::new(0))
+        .and(Same::<Row<Mobj>>::new())
+        .key_by(|_| Row::<Player>::new(0))
         .and(pp)
-        .map(move |(((_, ((mx, my), mz)), id), ((px, py), pz)) : ((((bool, Action), ((f64, f64), f64)), Id<Mobj>), ((f64, f64), f64))| (id, ((mx, my, mz + z), (px, py, pz + z))))
+        .map(move |(((_, ((mx, my), mz)), id), ((px, py), pz)) : ((((bool, Action), ((f64, f64), f64)), Row<Mobj>), ((f64, f64), f64))| (id, ((mx, my, mz + z), (px, py, pz + z))))
         .key_by(|(id, _)| id)
         .map(|(_, s)| s)
         .collect()
@@ -254,7 +254,7 @@ fn ai_facts((uid, x, y, ang, reaction): (usize, f64, f64, f64, i32), (melee, mis
 // The mobj fields rules change: x, y, ang, reaction, flags, momx, momy, health, awake.
 type Body9 = (f64, f64, f64, i32, u32, f64, f64, i32, bool);
 // The decision fields: goto, go, attack (kind, pellets, mult, modulo), explode, hit.
-type Dec = (Id<AnimState>, Option<f64>, (u8, usize, i32, i32), bool, usize);
+type Dec = (Row<AnimState>, Option<f64>, (u8, usize, i32, i32), bool, usize);
 // Extra inputs a rule may use: facing toward the target, damage taken, the chosen move, the body hit.
 type Ctx = (f64, i32, Option<(f64, f64)>, Option<usize>);
 // A rule's outputs: wake, reaction, attack, effects (eff::* bits).
@@ -264,7 +264,7 @@ const NO_ATTACK: (u8, usize, i32, i32) = (ATK_NONE, 0, 0, 1);
 const KEEP: Out = (0, -1, NO_ATTACK, 0);
 
 // Applies a chosen rule's output to the mobj and its decision; `goto` = the rule's target state, if any.
-fn apply(m: Body9, d: Dec, (face, damage, clip, hit): Ctx, (awake_o, reaction_o, attack_o, e): Out, goto: Option<Id<AnimState>>) -> (Body9, Dec) {
+fn apply(m: Body9, d: Dec, (face, damage, clip, hit): Ctx, (awake_o, reaction_o, attack_o, e): Out, goto: Option<Row<AnimState>>) -> (Body9, Dec) {
     let (x0, y0, ang, reaction, flags, momx, momy, health, awake) = m;
     let on = |b: u32| e & b != 0;
     let (x, y) = clip.filter(|_| on(eff::TO_CLIP)).unwrap_or((x0, y0));
@@ -291,16 +291,16 @@ fn apply(m: Body9, d: Dec, (face, damage, clip, hit): Ctx, (awake_o, reaction_o,
 
 // Picks the best matching AI rule for each row (key, facts), applies it with the row's context,
 // and enters any state it jumps to. Rows not listed keep their values.
-fn run_rules(db: &Db, plan: &Plan, rows: &MultiRel<Id<Mobj>, (usize, u32)>, ctx: &MultiRel<Id<Mobj>, Ctx>) -> Plan {
+fn run_rules(db: &Db, plan: &Plan, rows: &MultiRel<Row<Mobj>, (usize, u32)>, ctx: &MultiRel<Row<Mobj>, Ctx>) -> Plan {
     let (m, r, st) = (&plan.m, &db.t.ai_rule, &db.t.state);
     // Best rule per mobj, looked up by key and fact bits.
-    let chosen: MultiRel<Id<Mobj>, Id<AiRule>> =
-        matching(rows.and(Same::<Id<Mobj>>::new()).map(|((k, f), id)| (id, k, f)), r, &db.t.ai_by_key, |id: Id<Mobj>| id, m.id.n).map(|(_, rule)| rule).collect();
+    let chosen: MultiRel<Row<Mobj>, Row<AiRule>> =
+        matching(rows.and(Same::<Row<Mobj>>::new()).map(|((k, f), id)| (id, k, f)), r, &db.t.ai_by_key, |id: Row<Mobj>| id, m.id.n).map(|(_, rule)| rule).collect();
     let out = (&chosen)
         .select((&r.awake).and(&r.reaction).and((&r.attack).and(&r.pellets).and(&r.mult).and(&r.modulo)).and(&r.effects))
         .map(|(((a, re), (((k, p), mu), mo)), e): (((i8, i32), (((u8, usize), i32), i32)), u32)| -> Out { (a, re, (k, p, mu, mo), e) });
     // The rule's goto label -> this type's state (e.g. SEE -> TROO_RUN).
-    let goto = (&*m.kind).and((&chosen).select(&r.goto).opt()).map(|(k, l): (Id<ThingType>, Option<u8>)| goto_key(k, l.unwrap_or(G_NONE))).select(&db.t.goto).opt();
+    let goto = (&*m.kind).and((&chosen).select(&r.goto).opt()).map(|(k, l): (Row<ThingType>, Option<u8>)| goto_key(k, l.unwrap_or(G_NONE))).select(&db.t.goto).opt();
     let body = (&*m.x)
         .and(&*m.y)
         .and(&*m.ang)
@@ -316,14 +316,14 @@ fn run_rules(db: &Db, plan: &Plan, rows: &MultiRel<Id<Mobj>, (usize, u32)>, ctx:
         .and((&*plan.atk).and(&*plan.pellets).and(&*plan.mult).and(&*plan.modulo))
         .and(&*plan.explode)
         .and(&*plan.hit)
-        .map(|((((g, go), (((k, p), mu), mo)), ex), h): ((((Id<AnimState>, Option<f64>), (((u8, usize), i32), i32)), bool), usize)| -> Dec { (g, go, (k, p, mu, mo), ex, h) });
-    let applied: MultiRel<Id<Mobj>, (Body9, Dec)> = rows
+        .map(|((((g, go), (((k, p), mu), mo)), ex), h): ((((Row<AnimState>, Option<f64>), (((u8, usize), i32), i32)), bool), usize)| -> Dec { (g, go, (k, p, mu, mo), ex, h) });
+    let applied: MultiRel<Row<Mobj>, (Body9, Dec)> = rows
         .and(body)
         .and(dec)
         .and(ctx)
         .and(out.opt())
         .and(goto)
-        .map(|(((((_, b), d), c), o), g): (((((( usize, u32), Body9), Dec), Ctx), Option<Out>), Option<Id<AnimState>>)| apply(b, d, c, o.unwrap_or(KEEP), g))
+        .map(|(((((_, b), d), c), o), g): (((((( usize, u32), Body9), Dec), Ctx), Option<Out>), Option<Row<AnimState>>)| apply(b, d, c, o.unwrap_or(KEEP), g))
         .collect();
     // Enter the requested state, restarting its timer.
     let entered = (&applied).map(|(_, d): (Body9, Dec)| d.0).and((&applied).map(|(_, d): (Body9, Dec)| d.0).select(&st.tics));
@@ -339,8 +339,8 @@ fn run_rules(db: &Db, plan: &Plan, rows: &MultiRel<Id<Mobj>, (usize, u32)>, ctx:
             momy: upd(&m.momy, b(|v| v.0.6)),
             health: upd(&m.health, (&applied).map(|v: (Body9, Dec)| v.0.7)),
             awake: upd(&m.awake, (&applied).map(|v: (Body9, Dec)| v.0.8)),
-            state: upd(&m.state, (&entered).map(|(s, _): (Id<AnimState>, i32)| s)),
-            tics: upd(&m.tics, (&entered).map(|(_, t): (Id<AnimState>, i32)| t)),
+            state: upd(&m.state, (&entered).map(|(s, _): (Row<AnimState>, i32)| s)),
+            tics: upd(&m.tics, (&entered).map(|(_, t): (Row<AnimState>, i32)| t)),
             ..m.clone()
         },
         goto: upd(&plan.goto, (&applied).map(|v: (Body9, Dec)| v.1.0)),
@@ -357,12 +357,12 @@ fn run_rules(db: &Db, plan: &Plan, rows: &MultiRel<Id<Mobj>, (usize, u32)>, ctx:
 
 // Monster AI for this tic: look for the player, chase, choose attacks.
 #[allow(clippy::too_many_arguments)]
-pub fn think(db: &Db, m: &Mobj, action: &C<Mobj, Action>, live: &C<Mobj, bool>, seen: &MultiRel<Id<Mobj>, Sight>, s: &SectorState, p: &Player, tic: u64) -> Plan {
+pub fn think(db: &Db, m: &Mobj, action: &C<Mobj, Action>, live: &C<Mobj, bool>, seen: &MultiRel<Row<Mobj>, Sight>, s: &SectorState, p: &Player, tic: u64) -> Plan {
     let (k, tt) = (&db.t.k, &db.t.ttype);
     let ranges = (one(&k.close_range), one(&k.melee_range), one(&k.missile_near), one(&k.missile_no_melee), one(&k.missile_far));
     let plan = Plan {
         live: live.clone(),
-        goto: fill(m, Id::new(NONE)),
+        goto: fill(m, Row::new(NONE)),
         go: fill(m, None),
         atk: fill(m, ATK_NONE),
         pellets: fill(m, 0),
@@ -374,18 +374,18 @@ pub fn think(db: &Db, m: &Mobj, action: &C<Mobj, Action>, live: &C<Mobj, bool>, 
     };
     let pp = (&*p.x).and(&*p.y).and(&*p.dead);
     // Each live mobj with its action, sight and hearing, type, and the player: (facts, facing toward the player).
-    let t: MultiRel<Id<Mobj>, ((usize, u32), Ctx)> = alive(live)
+    let t: MultiRel<Row<Mobj>, ((usize, u32), Ctx)> = alive(live)
         .and(&**action)
         .and((&*m.uid).and(&*m.x).and(&*m.y).and(&*m.ang).and(&*m.reaction))
         .and(seen.opt())
         .and((&*m.sector).select(&*s.heard))
         .and((&*m.kind).select((&tt.melee).and(&tt.missile)))
-        .and(Same::<Id<Mobj>>::new())
-        .key_by(|_| Id::<Player>::new(0))
+        .and(Same::<Row<Mobj>>::new())
+        .key_by(|_| Row::<Player>::new(0))
         .and(pp)
         .map(
             move |(((((((_, a), ((((uid, x), y), ang), re)), sees), heard), (melee, missile)), id), ((px, py), dead)) : (
-                ((((((bool, Action), ((((usize, f64), f64), f64), i32)), Option<Sight>), bool), (Id<AnimState>, Id<AnimState>)), Id<Mobj>),
+                ((((((bool, Action), ((((usize, f64), f64), f64), i32)), Option<Sight>), bool), (Row<AnimState>, Row<AnimState>)), Row<Mobj>),
                 ((f64, f64), bool),
             )| {
                 let facts = ai_facts((uid, x, y, ang, re), (melee.0 != 0, missile.0 != 0), (px, py, dead), sees.is_some(), heard, tic, ranges);
@@ -395,8 +395,8 @@ pub fn think(db: &Db, m: &Mobj, action: &C<Mobj, Action>, live: &C<Mobj, bool>, 
         .key_by(|(id, _)| id)
         .map(|(_, v)| v)
         .collect();
-    let rows: MultiRel<Id<Mobj>, (usize, u32)> = (&t).map(|(r, _): ((usize, u32), Ctx)| r).collect();
-    let ctx: MultiRel<Id<Mobj>, Ctx> = (&t).map(|(_, c): ((usize, u32), Ctx)| c).collect();
+    let rows: MultiRel<Row<Mobj>, (usize, u32)> = (&t).map(|(r, _): ((usize, u32), Ctx)| r).collect();
+    let ctx: MultiRel<Row<Mobj>, Ctx> = (&t).map(|(_, c): ((usize, u32), Ctx)| c).collect();
     run_rules(db, &plan, &rows, &ctx)
 }
 
@@ -409,8 +409,8 @@ pub fn move_cands(db: &Db, plan: &Plan) -> MultiRel<usize, Cand> {
     let chase = base()
         .and(&*plan.go)
         .flat_map(|(b, go): (B, Option<f64>)| go.map(|a| (b, a)))
-        .cross((&cd.turn).and(&cd.step).and(&cd.stay).and(Same::<Id<crate::schema::ChaseDir>>::new()))
-        .map(|((((_, ((((u, x), y), z), f)), ((r, h), speed)), a), (((turn, step), stay), idx)): ((B, f64), (((f64, f64), bool), Id<crate::schema::ChaseDir>))| -> Cand {
+        .cross((&cd.turn).and(&cd.step).and(&cd.stay).and(Same::<Row<crate::schema::ChaseDir>>::new()))
+        .map(|((((_, ((((u, x), y), z), f)), ((r, h), speed)), a), (((turn, step), stay), idx)): ((B, f64), (((f64, f64), bool), Row<crate::schema::ChaseDir>))| -> Cand {
             (u, idx.0, x + step * speed * (a + turn).cos(), y + step * speed * (a + turn).sin(), z, r, h, f & MONSTER != 0, false, stay)
         });
     // Flying missiles: a single candidate one momentum step ahead.
@@ -432,31 +432,31 @@ pub fn apply_moves(db: &Db, plan: &Plan, clips: &MultiRel<usize, Clip>, bodies: 
     let hits = flying()
         .filt(|f: bool| f)
         .and((&*m.uid).and(&*m.source).and(&*m.x).and(&*m.y).and(&*m.z).and((&*m.momx).and(&*m.momy)))
-        .and(Same::<Id<Mobj>>::new())
+        .and(Same::<Row<Mobj>>::new())
         .cross(bodies)
-        .filt(move |(((_, (((((u, src), x), y), z), (mx, my))), _), (_, buid, bx, by, bz, br, bh, _, shootable)): (((bool, (((((usize, usize), f64), f64), f64), (f64, f64))), Id<Mobj>), Body)| {
+        .filt(move |(((_, (((((u, src), x), y), z), (mx, my))), _), (_, buid, bx, by, bz, br, bh, _, shootable)): (((bool, (((((usize, usize), f64), f64), f64), (f64, f64))), Row<Mobj>), Body)| {
             shootable && buid != src && buid != u && (x + mx - bx).abs() < br + reach && (y + my - by).abs() < br + reach && z <= bz + bh && z + zreach >= bz
         })
-        .key_by(|((_, me), _): (((bool, (((((usize, usize), f64), f64), f64), (f64, f64))), Id<Mobj>), Body)| me)
-        .map(|(_, b): (((bool, (((((usize, usize), f64), f64), f64), (f64, f64))), Id<Mobj>), Body)| b.0)
+        .key_by(|((_, me), _): (((bool, (((((usize, usize), f64), f64), f64), (f64, f64))), Row<Mobj>), Body)| me)
+        .map(|(_, b): (((bool, (((((usize, usize), f64), f64), f64), (f64, f64))), Row<Mobj>), Body)| b.0)
         .dense_fold(m.id.n, NONE, |_, b: usize| b);
     let clip = || bid(m).select(clips);
     // Fact bits for the Move rules: flying, found a clear spot, hit, wants to walk, stayed put.
-    let t: MultiRel<Id<Mobj>, ((usize, u32), Ctx)> = flying()
+    let t: MultiRel<Row<Mobj>, ((usize, u32), Ctx)> = flying()
         .and(clip().opt())
         .and(hits.opt())
         .and(&*plan.go)
         .and(&*m.ang)
-        .and(Same::<Id<Mobj>>::new())
-        .map(|(((((fly, c), hit), go), ang), id): (((((bool, Option<Clip>), Option<usize>), Option<f64>), f64), Id<Mobj>)| {
+        .and(Same::<Row<Mobj>>::new())
+        .map(|(((((fly, c), hit), go), ang), id): (((((bool, Option<Clip>), Option<usize>), Option<f64>), f64), Row<Mobj>)| {
             let facts = bit(fly, FLYING) | bit(c.is_some(), CLIP_OK) | bit(hit.is_some(), HIT) | bit(go.is_some(), GO) | bit(c.is_some_and(|c| c.0.9), STAY);
             (id, ((Action::Move as usize, facts), (ang, 0, c.map(|c| (c.0.2, c.0.3)), hit)))
         })
         .key_by(|(id, _)| id)
         .map(|(_, v)| v)
         .collect();
-    let rows: MultiRel<Id<Mobj>, (usize, u32)> = (&t).map(|(r, _): ((usize, u32), Ctx)| r).collect();
-    let ctx: MultiRel<Id<Mobj>, Ctx> = (&t).map(|(_, c): ((usize, u32), Ctx)| c).collect();
+    let rows: MultiRel<Row<Mobj>, (usize, u32)> = (&t).map(|(r, _): ((usize, u32), Ctx)| r).collect();
+    let ctx: MultiRel<Row<Mobj>, Ctx> = (&t).map(|(_, c): ((usize, u32), Ctx)| c).collect();
     run_rules(db, plan, &rows, &ctx)
 }
 
@@ -520,21 +520,21 @@ pub fn damage(db: &Db, impacts: &MultiRel<usize, Impact>, plan: &Plan, bodies: &
 pub fn wound(db: &Db, plan: &Plan, dmg: &DenseFold<usize, i32>, tic: u64) -> Plan {
     use fact::*;
     let (m, tt) = (&plan.m, &db.t.ttype);
-    let t: MultiRel<Id<Mobj>, ((usize, u32), Ctx)> = alive(&plan.live)
+    let t: MultiRel<Row<Mobj>, ((usize, u32), Ctx)> = alive(&plan.live)
         .and(bid(m).select(dmg))
         .and((&*m.flags).and(&*m.health).and(&*m.uid).and(&*m.awake).and(&*m.ang))
         .filt(|((_, h), ((((f, health), _), _), _)): ((bool, i32), ((((u32, i32), usize), bool), f64))| h > 0 && f & SHOOTABLE != 0 && health > 0)
         .and((&*m.kind).select((&tt.painchance).and(&tt.see)))
-        .and(Same::<Id<Mobj>>::new())
-        .map(move |((((_, h), ((((_, health), u), awake), ang)), (pain, see)), id): ((((bool, i32), ((((u32, i32), usize), bool), f64)), (i32, Id<AnimState>)), Id<Mobj>)| {
+        .and(Same::<Row<Mobj>>::new())
+        .map(move |((((_, h), ((((_, health), u), awake), ang)), (pain, see)), id): ((((bool, i32), ((((u32, i32), usize), bool), f64)), (i32, Row<AnimState>)), Row<Mobj>)| {
             let facts = bit(health - h <= 0, KILLED) | bit(rnd(tic, u, 77) < pain, PAIN_ROLL) | bit(!awake, ASLEEP) | bit(see.0 != 0, HAS_SEE);
             (id, ((Action::Hurt as usize, facts), (ang, h, None, None)))
         })
         .key_by(|(id, _)| id)
         .map(|(_, v)| v)
         .collect();
-    let rows: MultiRel<Id<Mobj>, (usize, u32)> = (&t).map(|(r, _): ((usize, u32), Ctx)| r).collect();
-    let ctx: MultiRel<Id<Mobj>, Ctx> = (&t).map(|(_, c): ((usize, u32), Ctx)| c).collect();
+    let rows: MultiRel<Row<Mobj>, (usize, u32)> = (&t).map(|(r, _): ((usize, u32), Ctx)| r).collect();
+    let ctx: MultiRel<Row<Mobj>, Ctx> = (&t).map(|(_, c): ((usize, u32), Ctx)| c).collect();
     run_rules(db, plan, &rows, &ctx)
 }
 
@@ -546,10 +546,10 @@ pub fn drops(db: &Db, before: &Plan, after: &Plan, tic: u64) -> MultiRel<usize, 
         .and((&*b.health).and(&*a.health))
         .filt(|(_, (hb, ha)): (bool, (i32, i32))| hb > 0 && ha <= 0)
         .and((&*b.kind).select(&db.t.ttype.drop))
-        .filt(|(_, d): ((bool, (i32, i32)), Id<ThingType>)| d.0 != NONE)
+        .filt(|(_, d): ((bool, (i32, i32)), Row<ThingType>)| d.0 != NONE)
         .and((&*b.uid).and(&*b.x).and(&*b.y).and(&*b.z))
-        .and(Same::<Id<Mobj>>::new())
-        .map(move |(((_, kind), (((u, x), y), z)), i): ((((bool, (i32, i32)), Id<ThingType>), (((usize, f64), f64), f64)), Id<Mobj>)| (i.0, (base + (1 << 21) + u, kind, x, y, z, 0.0, 0.0, NONE)))
+        .and(Same::<Row<Mobj>>::new())
+        .map(move |(((_, kind), (((u, x), y), z)), i): ((((bool, (i32, i32)), Row<ThingType>), (((usize, f64), f64), f64)), Row<Mobj>)| (i.0, (base + (1 << 21) + u, kind, x, y, z, 0.0, 0.0, NONE)))
         .key_by(|(k, _)| k)
         .map(|(_, s): (usize, Spawn)| s)
         .collect()
@@ -573,23 +573,23 @@ pub fn effects(db: &Db, impacts: &MultiRel<usize, Impact>, plan: &Plan, p: &Play
         .and(&*plan.atk)
         .filt(|(_, a): (bool, u8)| a == ATK_BALL)
         .and((&*m.uid).and(&*m.x).and(&*m.y).and(&*m.z))
-        .and(Same::<Id<Mobj>>::new())
-        .key_by(|_| Id::<Player>::new(0))
+        .and(Same::<Row<Mobj>>::new())
+        .key_by(|_| Row::<Player>::new(0))
         .and((&*p.x).and(&*p.y))
-        .map(move |(((_, (((u, x), y), z)), i), (px, py)): ((((bool, u8), (((usize, f64), f64), f64)), Id<Mobj>), (f64, f64))| {
+        .map(move |(((_, (((u, x), y), z)), i), (px, py)): ((((bool, u8), (((usize, f64), f64), f64)), Row<Mobj>), (f64, f64))| {
             (n + i.0, (base + (1 << 22) + u, ball, x, y, z + shot_z, (py - y).atan2(px - x), speed, u))
         });
     puffs.key_by(|(k, _)| k).union(balls.key_by(|(k, _)| k)).map(|(_, s): (usize, Spawn)| s).collect()
 }
 
 // Next tic's mobjs: removed and picked-up ones dropped, new drops and effects added.
-pub fn survivors(db: &Db, s: &SectorState, plan: &Plan, taken: &DenseFold<Id<Mobj>, bool>, spawns: &MultiRel<usize, Spawn>) -> Mobj {
+pub fn survivors(db: &Db, s: &SectorState, plan: &Plan, taken: &DenseFold<Row<Mobj>, bool>, spawns: &MultiRel<usize, Spawn>) -> Mobj {
     let m = &plan.m;
-    let keep: MultiRel<Id<Mobj>, bool> = alive(&plan.live)
+    let keep: MultiRel<Row<Mobj>, bool> = alive(&plan.live)
         .and(&*m.state)
-        .filt(|(_, st): (bool, Id<AnimState>)| st.0 != 0)
+        .filt(|(_, st): (bool, Row<AnimState>)| st.0 != 0)
         .and(taken.opt())
-        .filt(|(_, t): ((bool, Id<AnimState>), Option<bool>)| t.is_none())
+        .filt(|(_, t): ((bool, Row<AnimState>), Option<bool>)| t.is_none())
         .map(|_| true)
         .collect();
     assemble(db, s, Some(m), &keep, spawns)

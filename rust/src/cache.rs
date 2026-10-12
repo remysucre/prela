@@ -9,7 +9,7 @@
 // Strings and CSR payloads are returned as `&'static` borrows — the mmap
 // is leaked, so the bytes live for the program. No per-string allocation.
 
-use crate::engine::{Dense, Id, MultiRel, VecRel};
+use crate::engine::{Dense, Row, MultiRel, VecRel};
 use crate::format::*;
 use memmap2::Mmap;
 use std::fs::File;
@@ -79,7 +79,7 @@ fn cast_slice<T>(bytes: &'static [u8], off: usize, len: usize) -> &'static [T] {
 // ===== dense columns (one value per 0-based id) ==========================
 // The `_in` readers are dir-parameterized and generic over the key domain
 // `D: Dense` (and, for FK columns, the value entity tag `T`) — the typed
-// `Loader` instantiates them with `D = Id<E>`; the wrappers below pin
+// `Loader` instantiates them with `D = Row<E>`; the wrappers below pin
 // `D = usize` and the default `../cache` dir.
 
 /// Dense i64 column (scalars; dates are pre-parsed yyyymmdd).
@@ -90,15 +90,15 @@ pub fn load_i64_in<D: Dense>(dir: &Path, name: &str) -> VecRel<D, i64> {
 
 /// Dense id column (FKs): same payload kind as i64, but the words are
 /// 0-based ids with `NO_ID` (= !0) baked into the holes by regen. The
-/// typed value is produced by BULK REINTERPRET: `Id<T>` is
-/// `repr(transparent)` over `usize`, so `cast_slice::<Id<T>>` reads the
+/// typed value is produced by BULK REINTERPRET: `Row<T>` is
+/// `repr(transparent)` over `usize`, so `cast_slice::<Row<T>>` reads the
 /// cache words as tagged ids with no per-element conversion.
-pub fn load_ids_in<D: Dense, T: 'static>(dir: &Path, name: &str) -> VecRel<D, Id<T>> {
+pub fn load_ids_in<D: Dense, T: 'static>(dir: &Path, name: &str) -> VecRel<D, Row<T>> {
     let (n, _, bytes) = open_in(dir, name, KIND_DENSE_I64);
-    VecRel::new(cast_slice::<Id<T>>(bytes, HEADER_LEN, n).to_vec())
+    VecRel::new(cast_slice::<Row<T>>(bytes, HEADER_LEN, n).to_vec())
 }
 
-/// A foreign-key column into entity `T`, storing `T::Fk` — `Id<T>` for a dense
+/// A foreign-key column into entity `T`, storing `T::Fk` — `Row<T>` for a dense
 /// entity, `Key<T>` for a non-dense one (both `repr(transparent)` 8-byte ids,
 /// so the same `KIND_DENSE_I64` bytes reinterpret to whichever `T` declares).
 pub fn load_fk_in<D: Dense, T: crate::engine::EntityKind>(
@@ -167,8 +167,8 @@ pub fn load_multi_words_in<D: Dense>(dir: &Path, name: &str) -> MultiRel<D, usiz
 /// CSR with 8-byte word values, read as 0-based ids tagged with the value
 /// entity `T` (same bulk-reinterpret as `load_ids_in`). Zero-copy: offsets
 /// and values are slices into the leaked mmap.
-pub fn load_multi_ids_in<D: Dense, T: 'static>(dir: &Path, name: &str) -> MultiRel<D, Id<T>> {
-    let (offsets, values) = csr_words::<Id<T>>(dir, name);
+pub fn load_multi_ids_in<D: Dense, T: 'static>(dir: &Path, name: &str) -> MultiRel<D, Row<T>> {
+    let (offsets, values) = csr_words::<Row<T>>(dir, name);
     MultiRel::from_csr(offsets, values)
 }
 

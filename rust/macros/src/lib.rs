@@ -9,9 +9,9 @@
 //! #[derive(IntoQuery)]
 //! pub struct Movie {
 //!     #[primary_key]
-//!     pub id: Key<Self>,                // the identity column: id → id
+//!     pub id: Rows<Self>,                // the identity column: id → id
 //!     pub title: Col<Self, Str>,        // id → title
-//!     pub company: Set<Self, Id<Company>>,
+//!     pub company: Set<Self, Row<Company>>,
 //! }
 //! ```
 //!
@@ -20,7 +20,7 @@
 //!
 //! ```ignore
 //! impl IntoQuery for &Movie {
-//!     type Q = Key<Movie>;              // the marked field's type, `Self` resolved
+//!     type Q = Rows<Movie>;              // the marked field's type, `Self` resolved
 //!     fn iq(self) -> Self::Q { self.id }
 //! }
 //! ```
@@ -34,7 +34,7 @@
 //!
 //! Whether the id space is dense or has holes is a fact about the schema,
 //! so it is stated by the author in the primary key's type, not by the
-//! macro: `Key<Self>` for a dense entity, `SparseKey<Self>` for a gappy
+//! macro: `Rows<Self>` for a dense entity, `SparseRows<Self>` for a gappy
 //! one. The derive only asks that the type be `Copy` and a `Query`.
 
 use proc_macro::TokenStream;
@@ -65,7 +65,7 @@ fn named_fields<'a>(
 }
 
 /// `Self` → `name` throughout a type's tokens. Field types are written
-/// `Key<Self>`; inside `impl IntoQuery for &Movie`, `Self` would be `&Movie`.
+/// `Rows<Self>`; inside `impl IntoQuery for &Movie`, `Self` would be `&Movie`.
 fn subst_self(ts: TokenStream2, name: &syn::Ident) -> TokenStream2 {
     ts.into_iter()
         .map(|tt| match tt {
@@ -97,7 +97,7 @@ pub fn derive_into_query(item: TokenStream) -> TokenStream {
         [] => {
             return syn::Error::new_spanned(
                 name,
-                "IntoQuery needs one field marked `#[primary_key]`, e.g. `pub id: Key<Self>`",
+                "IntoQuery needs one field marked `#[primary_key]`, e.g. `pub id: Rows<Self>`",
             )
             .to_compile_error()
             .into();

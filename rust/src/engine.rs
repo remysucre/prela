@@ -114,14 +114,14 @@ impl<T: Member + ?Sized> Member for &T {
 
 pub const NO_ID: usize = usize::MAX;
 
-// ===== Dense domains: untyped `usize` or phantom-typed `Id<E>` ==========
+// ===== Dense domains: untyped `usize` or phantom-typed `Row<E>` ==========
 // `Dense` abstracts "an id indexing a dense 0..n universe". The dense nodes
 // are generic over it: `D = usize` is the untyped default (existing loaders
-// and queries, unchanged); `D = Id<E>` carries a phantom entity tag so that
+// and queries, unchanged); `D = Row<E>` carries a phantom entity tag so that
 // composing through mismatched entities is a COMPILE error — e.g. with
-// `movie_keyword: Query<D = Id<Movie>, R = Id<Keyword>>` and
-// `person_name: Query<D = Id<Person>>`, `movie_keyword.select(person_name)`
-// fails to type-check (expected `Id<Keyword>`, found `Id<Person>`).
+// `movie_keyword: Query<D = Row<Movie>, R = Row<Keyword>>` and
+// `person_name: Query<D = Row<Person>>`, `movie_keyword.select(person_name)`
+// fails to type-check (expected `Row<Keyword>`, found `Row<Person>`).
 
 pub trait Dense: Copy + Eq + Hash + 'static {
     /// Missing-id sentinel for this domain — fails every bounds check.
@@ -143,62 +143,62 @@ impl Dense for usize {
 }
 
 #[repr(transparent)]
-pub struct Id<E: 'static>(pub usize, pub PhantomData<E>);
+pub struct Row<E: 'static>(pub usize, pub PhantomData<E>);
 
-impl<E> Id<E> {
+impl<E> Row<E> {
     #[inline(always)]
     pub fn new(i: usize) -> Self {
-        Id(i, PhantomData)
+        Row(i, PhantomData)
     }
 }
 
-impl<E> Copy for Id<E> {}
-impl<E> Clone for Id<E> {
+impl<E> Copy for Row<E> {}
+impl<E> Clone for Row<E> {
     #[inline(always)]
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<E> PartialEq for Id<E> {
+impl<E> PartialEq for Row<E> {
     #[inline(always)]
     fn eq(&self, o: &Self) -> bool {
         self.0 == o.0
     }
 }
-impl<E> Eq for Id<E> {}
-impl<E> Hash for Id<E> {
+impl<E> Eq for Row<E> {}
+impl<E> Hash for Row<E> {
     #[inline(always)]
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
         self.0.hash(h)
     }
 }
 
-impl<E> PartialOrd for Id<E> {
+impl<E> PartialOrd for Row<E> {
     #[inline(always)]
     fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(o))
     }
 }
-impl<E> Ord for Id<E> {
+impl<E> Ord for Row<E> {
     #[inline(always)]
     fn cmp(&self, o: &Self) -> std::cmp::Ordering {
         self.0.cmp(&o.0)
     }
 }
-impl<E> std::fmt::Debug for Id<E> {
+impl<E> std::fmt::Debug for Row<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Id({})", self.0)
+        write!(f, "Row({})", self.0)
     }
 }
-impl<E: 'static> Dense for Id<E> {
-    const NONE: Self = Id(NO_ID, PhantomData);
+impl<E: 'static> Dense for Row<E> {
+    const NONE: Self = Row(NO_ID, PhantomData);
     #[inline(always)]
     fn idx(self) -> usize {
         self.0
     }
     #[inline(always)]
     fn from_idx(i: usize) -> Self {
-        Id::new(i)
+        Row::new(i)
     }
 }
 
@@ -611,7 +611,7 @@ impl<D: Dense> Probe for Universe<D> {
     }
 }
 
-// ===== Ident — the identity ENTITY TABLE `Id<E> → Id<E>` ================
+// ===== Ident — the identity ENTITY TABLE `Row<E> → Row<E>` ================
 
 pub struct Ident<E: 'static>(pub PhantomData<E>);
 impl<E> Ident<E> {
@@ -627,22 +627,22 @@ impl<E> Default for Ident<E> {
     }
 }
 impl<E: 'static> Query for Ident<E> {
-    type D = Id<E>;
-    type R = Id<E>;
+    type D = Row<E>;
+    type R = Row<E>;
 }
 impl<E: 'static> Member for Ident<E> {
     #[inline(always)]
-    fn member(&self, _x: Id<E>) -> bool {
+    fn member(&self, _x: Row<E>) -> bool {
         true
     }
 }
 impl<E: 'static> Probe for Ident<E> {
     #[inline(always)]
-    fn probe<K: FnMut(Id<E>)>(&self, x: Id<E>, mut k: K) {
+    fn probe<K: FnMut(Row<E>)>(&self, x: Row<E>, mut k: K) {
         k(x);
     }
     #[inline(always)]
-    fn probe_any<K: FnMut(Id<E>) -> bool>(&self, x: Id<E>, mut k: K) -> bool {
+    fn probe_any<K: FnMut(Row<E>) -> bool>(&self, x: Row<E>, mut k: K) -> bool {
         k(x)
     }
 }
@@ -720,7 +720,7 @@ impl<E> std::fmt::Debug for Key<E> {
 }
 
 pub struct DictTable<E: 'static> {
-    map: HashMap<Key<E>, Id<E>>,
+    map: HashMap<Key<E>, Row<E>>,
 }
 impl<E: 'static> DictTable<E> {
     // invert natural row -> key mapping
@@ -729,7 +729,7 @@ impl<E: 'static> DictTable<E> {
             map: keys
                 .iter()
                 .enumerate()
-                .map(|(r, &k)| (Key::new(k), Id::from_idx(r)))
+                .map(|(r, &k)| (Key::new(k), Row::from_idx(r)))
                 .collect(),
         }
     }
@@ -738,7 +738,7 @@ impl<E: 'static> DictTable<E> {
             map: keys
                 .iter()
                 .enumerate()
-                .map(|(r, &k)| (Key::new(k as u64), Id::from_idx(r)))
+                .map(|(r, &k)| (Key::new(k as u64), Row::from_idx(r)))
                 .collect(),
         }
     }
@@ -751,7 +751,7 @@ impl<E: 'static> DictTable<E> {
 }
 impl<E: 'static> Query for DictTable<E> {
     type D = Key<E>;
-    type R = Id<E>;
+    type R = Row<E>;
 }
 impl<E: 'static> Member for DictTable<E> {
     #[inline]
@@ -761,23 +761,23 @@ impl<E: 'static> Member for DictTable<E> {
 }
 impl<E: 'static> Probe for DictTable<E> {
     #[inline]
-    fn probe<K: FnMut(Id<E>)>(&self, x: Key<E>, mut k: K) {
+    fn probe<K: FnMut(Row<E>)>(&self, x: Key<E>, mut k: K) {
         if let Some(&r) = self.map.get(&x) {
             k(r);
         }
     }
     #[inline]
-    fn probe_any<K: FnMut(Id<E>) -> bool>(&self, x: Key<E>, mut k: K) -> bool {
+    fn probe_any<K: FnMut(Row<E>) -> bool>(&self, x: Key<E>, mut k: K) -> bool {
         self.map.get(&x).is_some_and(|&r| k(r))
     }
 }
 
 /// How an entity is ADDRESSED:
-///   - DENSE  (default) — `Fk = Id<Self>`, `Table = Ident` (inlines away).
+///   - DENSE  (default) — `Fk = Row<Self>`, `Table = Ident` (inlines away).
 ///   - NON-DENSE (`dict`)— `Fk = Key<Self>`, `Table = &'static DictTable`.
 pub trait EntityKind: Sized + 'static {
     type Fk: Copy + Eq + Hash;
-    type Table: Probe<D = Self::Fk, R = Id<Self>>;
+    type Table: Probe<D = Self::Fk, R = Row<Self>>;
     fn table() -> Self::Table;
 }
 
@@ -3396,9 +3396,9 @@ mod tests {
         struct M;
         struct K;
         // typed fixture columns: movie → kind id, kind → name
-        let mk: VecRel<Id<M>, Id<K>> = VecRel::new(vec![Id::new(1), Id::new(0), Id::new(1)]);
-        let kname: VecRel<Id<K>, &'static str> = VecRel::new(vec!["alpha", "beta"]);
-        // compose through the typed bridge (Id<K> = Id<K>) — the shape the
+        let mk: VecRel<Row<M>, Row<K>> = VecRel::new(vec![Row::new(1), Row::new(0), Row::new(1)]);
+        let kname: VecRel<Row<K>, &'static str> = VecRel::new(vec!["alpha", "beta"]);
+        // compose through the typed bridge (Row<K> = Row<K>) — the shape the
         // schema!-generated nav methods build (`q.kname()` ≡ `q.select(kname)`)
         let mut got = Vec::new();
         (&mk).select(&kname).drive(|m, n| got.push((m.0, n)));
@@ -3410,14 +3410,14 @@ mod tests {
             .drive(|m, n| got.push((m.0, n)));
         assert_eq!(got, vec![(0, "beta"), (2, "beta")]);
         // member position through a typed universe restriction
-        let u: Universe<Id<M>> = Universe::new(3);
+        let u: Universe<Row<M>> = Universe::new(3);
         let live = u.with((&mk).select(&kname).eq("alpha"));
-        assert!(live.member(Id::new(1)) && !live.member(Id::new(0)));
-        assert!(!live.member(Id::NONE));
+        assert!(live.member(Row::new(1)) && !live.member(Row::new(0)));
+        assert!(!live.member(Row::NONE));
         // typed ids work as fold/group keys (Eq + Hash + Ord)
         let counts = (&mk).inv().fold(0i64, |a, _| a + 1);
         let mut got = Vec::new();
-        counts.drive(|k: Id<K>, c| got.push((k.0, c)));
+        counts.drive(|k: Row<K>, c| got.push((k.0, c)));
         got.sort();
         assert_eq!(got, vec![(0, 1), (1, 2)]);
     }
@@ -3449,16 +3449,16 @@ mod tests {
         struct Person;
         // Person: non-dense external ids {100,205,9899} → rows {0,1,2}; names.
         let person_table = DictTable::<Person>::from_keys(&[100, 205, 9899]);
-        let person_name: VecRel<Id<Person>, &str> = VecRel {
+        let person_name: VecRel<Row<Person>, &str> = VecRel {
             v: vec!["Nolan", "Kubrick", "Tarkovsky"],
             _d: PhantomData,
         };
         // Movie.director : FK storing the EXTERNAL person key.
-        let director: VecRel<Id<Movie>, Key<Person>> = VecRel {
+        let director: VecRel<Row<Movie>, Key<Person>> = VecRel {
             v: vec![Key::new(205), Key::new(100), Key::new(9899)],
             _d: PhantomData,
         };
-        let movies = Universe::<Id<Movie>>::new(3);
+        let movies = Universe::<Row<Movie>>::new(3);
 
         // movie → director(Key) → person(row) → name
         let q = (&movies)
@@ -3472,7 +3472,7 @@ mod tests {
 
         // A DANGLING key (no such person) drops out via the table's probe miss;
         // the table works in `with` (semijoin) position too.
-        let director2: VecRel<Id<Movie>, Key<Person>> = VecRel {
+        let director2: VecRel<Row<Movie>, Key<Person>> = VecRel {
             v: vec![Key::new(205), Key::new(404), Key::new(9899)],
             _d: PhantomData,
         };
@@ -3491,15 +3491,15 @@ mod tests {
         struct Movie;
         struct Person;
         let person_table = DictTable::<Person>::from_keys(&[100, 205, 9899]);
-        let country: VecRel<Id<Person>, &str> = VecRel {
+        let country: VecRel<Row<Person>, &str> = VecRel {
             v: vec!["US", "UK", "RU"],
             _d: PhantomData,
         };
-        let director: VecRel<Id<Movie>, Key<Person>> = VecRel {
+        let director: VecRel<Row<Movie>, Key<Person>> = VecRel {
             v: vec![Key::new(205), Key::new(100), Key::new(9899), Key::new(100)],
             _d: PhantomData,
         };
-        let movies = Universe::<Id<Movie>>::new(4);
+        let movies = Universe::<Row<Movie>>::new(4);
 
         let dir_country = (&director).select(&person_table).select(&country);
         let counts = (&movies).group_by(dir_country).fold(0_i64, |a, _| a + 1);
@@ -3510,21 +3510,21 @@ mod tests {
         assert_eq!(rows, vec![("RU", 1), ("UK", 1), ("US", 2)]);
     }
 
-    // The entity table is pluggable: an Ident (dense, Key==Id) and a DictTable
+    // The entity table is pluggable: an Ident (dense, Key==Row) and a DictTable
     // (non-dense) both drive the same navigation to the same result.
     #[test]
     fn dense_ident_matches_nondense_dict() {
         struct Movie;
         struct Person;
-        let name: VecRel<Id<Person>, &str> = VecRel {
+        let name: VecRel<Row<Person>, &str> = VecRel {
             v: vec!["Nolan", "Kubrick"],
             _d: PhantomData,
         };
-        let movies = Universe::<Id<Movie>>::new(2);
+        let movies = Universe::<Row<Movie>>::new(2);
 
-        // dense: FK stores the row Id directly; entity table is Ident.
-        let fk_dense: VecRel<Id<Movie>, Id<Person>> = VecRel {
-            v: vec![Id::from_idx(1), Id::from_idx(0)],
+        // dense: FK stores the row Row directly; entity table is Ident.
+        let fk_dense: VecRel<Row<Movie>, Row<Person>> = VecRel {
+            v: vec![Row::from_idx(1), Row::from_idx(0)],
             _d: PhantomData,
         };
         let mut d = Vec::new();
@@ -3537,7 +3537,7 @@ mod tests {
 
         // non-dense: same logical mapping via external keys + a DictTable.
         let table = DictTable::<Person>::from_keys(&[100, 205]); // row0=key100, row1=key205
-        let fk_keys: VecRel<Id<Movie>, Key<Person>> = VecRel {
+        let fk_keys: VecRel<Row<Movie>, Key<Person>> = VecRel {
             v: vec![Key::new(205), Key::new(100)],
             _d: PhantomData,
         };

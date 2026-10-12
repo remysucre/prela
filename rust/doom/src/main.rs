@@ -91,7 +91,7 @@ fn main() {
             (&*m.uid)
                 .and((&*m.x).and(&*m.y))
                 .and((&*m.kind).and(&*m.state).and(&*m.health))
-                .filt(move |((_, (x, y)), _): ((usize, (f64, f64)), ((schema::Id<schema::ThingType>, schema::Id<schema::AnimState>), i32))| (x - px).hypot(y - py) < 400.0)
+                .filt(move |((_, (x, y)), _): ((usize, (f64, f64)), ((schema::Row<schema::ThingType>, schema::Row<schema::AnimState>), i32))| (x - px).hypot(y - py) < 400.0)
                 .drive(|_, v| eprintln!("mobj {v:?}"));
             (&*sec.kind).and((&*sec.floor).and(&*sec.ceil)).filt(|(k, _): (u8, (f64, f64))| k != 0).drive(|s, v| eprintln!("mover {s:?} {v:?}"));
         }

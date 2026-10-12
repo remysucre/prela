@@ -1,5 +1,5 @@
-use crate::engine::{Id, IntoQuery};
-use crate::loader::{Col, Key, Loader, SparseKey, Str, sparse_key};
+use crate::engine::{Row, IntoQuery};
+use crate::loader::{Col, Rows, Loader, SparseRows, Str, sparse_key};
 use std::path::Path;
 
 // =====================================================================
@@ -16,14 +16,14 @@ use std::path::Path;
 // `db.part.id` itself when you want the `Universe`, e.g. for its `.n`.
 //
 // `Order` is the exception: TPC-H leaves the orderkey range gappy, so its
-// primary key is a `SparseKey` — `0..n` with the holes masked out, so a drive
+// primary key is a `SparseRows` — `0..n` with the holes masked out, so a drive
 // never emits one. Its `.n` counts slots INCLUDING holes (about 4× the live
 // orders), which is what a `dense_fold` over orders is sized by.
 
 #[derive(IntoQuery)]
 pub struct Region {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub name: Col<Self, Str>,
     pub comment: Col<Self, Str>,
 }
@@ -31,19 +31,19 @@ pub struct Region {
 #[derive(IntoQuery)]
 pub struct Nation {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub name: Col<Self, Str>,
-    pub region: Col<Self, Id<Region>>,
+    pub region: Col<Self, Row<Region>>,
     pub comment: Col<Self, Str>,
 }
 
 #[derive(IntoQuery)]
 pub struct Supplier {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub name: Col<Self, Str>,
     pub address: Col<Self, Str>,
-    pub nation: Col<Self, Id<Nation>>,
+    pub nation: Col<Self, Row<Nation>>,
     pub phone: Col<Self, Str>,
     pub acctbal: Col<Self, f64>,
     pub comment: Col<Self, Str>,
@@ -52,10 +52,10 @@ pub struct Supplier {
 #[derive(IntoQuery)]
 pub struct Customer {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub name: Col<Self, Str>,
     pub address: Col<Self, Str>,
-    pub nation: Col<Self, Id<Nation>>,
+    pub nation: Col<Self, Row<Nation>>,
     pub phone: Col<Self, Str>,
     pub acctbal: Col<Self, f64>,
     pub mktsegment: Col<Self, Str>,
@@ -65,7 +65,7 @@ pub struct Customer {
 #[derive(IntoQuery)]
 pub struct Part {
     #[primary_key]
-    pub id: Key<Self>,
+    pub id: Rows<Self>,
     pub name: Col<Self, Str>,
     pub mfgr: Col<Self, Str>,
     pub brand: Col<Self, Str>,
@@ -80,9 +80,9 @@ pub struct Part {
 #[derive(IntoQuery)]
 pub struct PartSupp {
     #[primary_key]
-    pub id: Key<Self>,
-    pub part: Col<Self, Id<Part>>,
-    pub supplier: Col<Self, Id<Supplier>>,
+    pub id: Rows<Self>,
+    pub part: Col<Self, Row<Part>>,
+    pub supplier: Col<Self, Row<Supplier>>,
     pub availqty: Col<Self, i64>,
     pub supplycost: Col<Self, f64>,
     pub comment: Col<Self, Str>,
@@ -91,8 +91,8 @@ pub struct PartSupp {
 #[derive(IntoQuery)]
 pub struct Order {
     #[primary_key]
-    pub id: SparseKey<Self>,
-    pub customer: Col<Self, Id<Customer>>,
+    pub id: SparseRows<Self>,
+    pub customer: Col<Self, Row<Customer>>,
     pub status: Col<Self, Str>,
     pub totalprice: Col<Self, f64>,
     pub date: Col<Self, i64>,
@@ -105,10 +105,10 @@ pub struct Order {
 #[derive(IntoQuery)]
 pub struct Lineitem {
     #[primary_key]
-    pub id: Key<Self>,
-    pub order: Col<Self, Id<Order>>,
-    pub part: Col<Self, Id<Part>>,
-    pub supplier: Col<Self, Id<Supplier>>,
+    pub id: Rows<Self>,
+    pub order: Col<Self, Row<Order>>,
+    pub part: Col<Self, Row<Part>>,
+    pub supplier: Col<Self, Row<Supplier>>,
     pub number: Col<Self, i64>,
     pub quantity: Col<Self, f64>,
     pub extendedprice: Col<Self, f64>,

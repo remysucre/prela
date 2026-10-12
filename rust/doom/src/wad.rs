@@ -1,6 +1,6 @@
 use crate::schema::{Bsp, Image, Linedef, Sector, Seg, Sidedef, Thing, Vertex};
-use prela::engine::{Id, MultiRel, Universe, VecRel};
-use prela::loader::{Col, Key};
+use prela::engine::{Row, MultiRel, Universe, VecRel};
+use prela::loader::{Col, Rows};
 use std::collections::HashMap;
 
 // Thing flags in the map: appears on skill 3 (medium), multiplayer only.
@@ -126,8 +126,8 @@ pub struct Game {
     pub texels: VecRel<usize, u16>,
     pub palette: VecRel<usize, u32>,
     pub colormap: VecRel<usize, u8>,
-    pub sky: Id<Image>,
-    pub sky_flat: Id<Image>,
+    pub sky: Row<Image>,
+    pub sky_flat: Row<Image>,
     pub sprite_names: HashMap<String, usize>,
     pub patch_names: HashMap<String, usize>,
 }
@@ -136,7 +136,7 @@ fn col<E, T: Copy>(v: Vec<T>) -> Col<E, T> {
     VecRel::new(v)
 }
 
-fn key<E>(n: usize) -> Key<E> {
+fn key<E>(n: usize) -> Rows<E> {
     Universe::new(n)
 }
 
@@ -208,8 +208,8 @@ impl Game {
             texels: VecRel::new(gfx.texels),
             palette: VecRel::new(palette),
             colormap: VecRel::new(colormap),
-            sky: Id::new(gfx.names["SKY1"]),
-            sky_flat: Id::new(gfx.flat_names["F_SKY1"]),
+            sky: Row::new(gfx.names["SKY1"]),
+            sky_flat: Row::new(gfx.flat_names["F_SKY1"]),
             sprite_names: gfx.sprite_names,
             patch_names: gfx.patch_names,
         }
@@ -285,9 +285,9 @@ impl Game {
         let l = |n| wad.map_lump(map, n);
         let tex = |b: &[u8], o| {
             let n = name_at(b, o);
-            Id::new(if n == "-" { NONE } else { gfx.names.get(&n).copied().unwrap_or(NONE) })
+            Row::new(if n == "-" { NONE } else { gfx.names.get(&n).copied().unwrap_or(NONE) })
         };
-        let flat = |b: &[u8], o| Id::new(gfx.flat_names.get(&name_at(b, o)).copied().unwrap_or(NONE));
+        let flat = |b: &[u8], o| Row::new(gfx.flat_names.get(&name_at(b, o)).copied().unwrap_or(NONE));
         // Offsets of each fixed-size record in a lump.
         let recs = |b: &[u8], size: usize| (0..b.len() / size).map(move |i| i * size).collect::<Vec<_>>();
         let v = l("VERTEXES");
@@ -303,13 +303,13 @@ impl Game {
         let lid = |off: usize| lo.iter().map(|&o| id16(u16_at(ld, o + off))).collect::<Vec<usize>>();
         let linedef = Linedef {
             id: key(lo.len()),
-            v1: col(lid(0).into_iter().map(Id::new).collect()),
-            v2: col(lid(2).into_iter().map(Id::new).collect()),
+            v1: col(lid(0).into_iter().map(Row::new).collect()),
+            v2: col(lid(2).into_iter().map(Row::new).collect()),
             flags: lcol(4),
             special: col(lo.iter().map(|&o| u16_at(ld, o + 6) as usize).collect()),
             tag: col(lo.iter().map(|&o| u16_at(ld, o + 8) as usize).collect()),
-            front: col(lid(10).into_iter().map(Id::new).collect()),
-            back: col(lid(12).into_iter().map(Id::new).collect()),
+            front: col(lid(10).into_iter().map(Row::new).collect()),
+            back: col(lid(12).into_iter().map(Row::new).collect()),
             x1: empty(),
             y1: empty(),
             x2: empty(),
@@ -326,15 +326,15 @@ impl Game {
             upper: col(so.iter().map(|&o| tex(sd, o + 4)).collect()),
             lower: col(so.iter().map(|&o| tex(sd, o + 12)).collect()),
             middle: col(so.iter().map(|&o| tex(sd, o + 20)).collect()),
-            sector: col(so.iter().map(|&o| Id::new(u16_at(sd, o + 28) as usize)).collect()),
+            sector: col(so.iter().map(|&o| Row::new(u16_at(sd, o + 28) as usize)).collect()),
         };
         let sg = l("SEGS");
         let go = recs(sg, 12);
         let seg = Seg {
             id: key(go.len()),
-            v1: col(go.iter().map(|&o| Id::new(u16_at(sg, o) as usize)).collect()),
-            v2: col(go.iter().map(|&o| Id::new(u16_at(sg, o + 2) as usize)).collect()),
-            line: col(go.iter().map(|&o| Id::new(u16_at(sg, o + 6) as usize)).collect()),
+            v1: col(go.iter().map(|&o| Row::new(u16_at(sg, o) as usize)).collect()),
+            v2: col(go.iter().map(|&o| Row::new(u16_at(sg, o + 2) as usize)).collect()),
+            line: col(go.iter().map(|&o| Row::new(u16_at(sg, o + 6) as usize)).collect()),
             side: col(go.iter().map(|&o| u16_at(sg, o + 8) as usize).collect()),
             offset: col(go.iter().map(|&o| i16_at(sg, o + 10) as f64).collect()),
             x1: empty(),
@@ -365,7 +365,7 @@ impl Game {
                 n,
                 no.iter().enumerate().map(|(i, &o)| {
                     let c = u16_at(nd, o + 24 + 2 * k);
-                    (i, Id::new(if c & 0x8000 != 0 { nn + (c & 0x7FFF) as usize } else { c as usize }))
+                    (i, Row::new(if c & 0x8000 != 0 { nn + (c & 0x7FFF) as usize } else { c as usize }))
                 }),
             )
         };
@@ -374,7 +374,7 @@ impl Game {
             n,
             sso.iter().enumerate().flat_map(|(i, &o)| {
                 let (count, first) = (u16_at(ss, o) as usize, u16_at(ss, o + 2) as usize);
-                (first..first + count).map(move |s| (nn + i, Id::new(s)))
+                (first..first + count).map(move |s| (nn + i, Row::new(s)))
             }),
         );
         let bsp = Bsp {
