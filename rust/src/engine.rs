@@ -6,6 +6,7 @@ use std::cmp::Ordering;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::Range;
+use std::rc::Rc;
 
 /// Default inline capacity for the probe-index buckets.
 type SVec<T> = SmallVec<[T; 4]>;
@@ -81,6 +82,33 @@ impl<T: Probe + ?Sized> Probe for &T {
     }
 }
 impl<T: Member + ?Sized> Member for &T {
+    #[inline(always)]
+    fn member(&self, x: T::D) -> bool {
+        (**self).member(x)
+    }
+}
+
+impl<T: Query + ?Sized> Query for Rc<T> {
+    type D = T::D;
+    type R = T::R;
+}
+impl<T: Drive + ?Sized> Drive for Rc<T> {
+    #[inline(always)]
+    fn drive<K: FnMut(T::D, T::R)>(&self, k: K) {
+        (**self).drive(k);
+    }
+}
+impl<T: Probe + ?Sized> Probe for Rc<T> {
+    #[inline(always)]
+    fn probe<K: FnMut(T::R)>(&self, x: T::D, k: K) {
+        (**self).probe(x, k);
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut(T::R) -> bool>(&self, x: T::D, k: K) -> bool {
+        (**self).probe_any(x, k)
+    }
+}
+impl<T: Member + ?Sized> Member for Rc<T> {
     #[inline(always)]
     fn member(&self, x: T::D) -> bool {
         (**self).member(x)
@@ -2843,6 +2871,17 @@ mod tests {
         assert_eq!(got, vec![20]);
         assert!(cast().probe_any(2, |_| true) && !cast().probe_any(1, |_| true));
         assert!(!f.probe_any(NO_ID, |_| true) && !f.probe_any(3, |_| true));
+    }
+
+    #[test]
+    fn rc_columns() {
+        let f = Rc::new(films());
+        let g = f.clone();
+        assert_eq!(drive_all(&g), drive_all(&films()));
+        assert_eq!(g.get(1), Some(20));
+        let to_film: MultiRel<usize, usize> = MultiRel::from_pairs(3, [(0, 1), (0, 2), (2, 1)]);
+        assert_eq!(drive_all(&(&to_film).select(&g)), vec![(0, 20), (0, 30), (2, 20)]);
+        assert_eq!(drive_all(&(&g).and(&f).map(|(a, b): (usize, usize)| a + b)), vec![(0, 20), (1, 40), (2, 60)]);
     }
 
     #[test]
