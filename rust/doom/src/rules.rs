@@ -1,46 +1,84 @@
-use crate::info::Rule;
+use crate::schema::{AiRule, FaceRule, MoverRule, WeaponRule};
 use prela::engine::*;
+use prela::loader::Col;
+use std::hash::Hash;
 
 // `flag` if `on`, else 0. Used to pack conditions into a bitmask.
 pub fn bit(on: bool, flag: u32) -> u32 {
     flag * on as u32
 }
 
-// Rule-table lookup: for each row, pick the highest-priority rule whose conditions match.
-// Rows are (row, rule key, fact bits); `id` names the row in the result.
-pub fn matching<Q, T, O, F>(rows: Q, rules: &MultiRel<usize, Rule<O>>, id: F) -> HashIdx<usize, (T, O)>
+// The columns every rule table has: a rule matches facts when (facts & mask) == want; lowest prio wins.
+pub trait Rules: Sized + 'static {
+    fn prio(&self) -> &Col<Self, u8>;
+    fn mask(&self) -> &Col<Self, u32>;
+    fn want(&self) -> &Col<Self, u32>;
+}
+
+macro_rules! rule_tables {
+    ($($t:ty),*) => {$(
+        impl Rules for $t {
+            fn prio(&self) -> &Col<Self, u8> {
+                &self.prio
+            }
+            fn mask(&self) -> &Col<Self, u32> {
+                &self.mask
+            }
+            fn want(&self) -> &Col<Self, u32> {
+                &self.want
+            }
+        }
+    )*};
+}
+rule_tables!(AiRule, WeaponRule, MoverRule, FaceRule);
+
+// Rule-table lookup: for each row, the highest-priority rule whose conditions match.
+// Rows are (row, rule key, fact bits); `by_key` lists each key's rules; `id` names the row in the result.
+pub fn matching<Q, T, R, F, K>(rows: Q, rules: &R, by_key: &MultiRel<usize, Id<R>>, id: F) -> HashIdx<K, (T, Id<R>)>
 where
     Q: Drive<R = (T, usize, u32)>,
     T: Copy,
-    O: Copy + 'static,
-    F: Fn(T) -> usize,
+    R: Rules,
+    F: Fn(T) -> K,
+    K: Copy + Eq + Hash,
 {
-    // Join rows to rules by key, keep rules whose mask matches the row's facts.
+    // Join rows to the rules for their key, keep rules whose mask matches the row's facts.
     rows.key_by(|(_, k, _): (T, usize, u32)| k)
-        .and(rules)
-        .filt(|((_, _, f), r): ((T, usize, u32), Rule<O>)| f & r.mask == r.want)
-        // Per row id, keep the rule with the lowest prio number.
-        .key_by(move |((t, _, _), _): ((T, usize, u32), Rule<O>)| id(t))
-        .fold(None, |a: Option<(T, Rule<O>)>, ((t, _, _), r): ((T, usize, u32), Rule<O>)| match a {
-            Some(b) if b.1.prio <= r.prio => Some(b),
-            _ => Some((t, r)),
+        .and(by_key)
+        .key_by(|(_, r)| r)
+        .and(rules.mask().and(rules.want()).and(rules.prio()))
+        .filt(|(((_, _, f), _), ((mask, want), _)): (((T, usize, u32), Id<R>), ((u32, u32), u8))| f & mask == want)
+        // Per row id, keep the rule with the lowest prio number (the first listed on ties).
+        .key_by(move |(((t, _, _), _), _): (((T, usize, u32), Id<R>), ((u32, u32), u8))| id(t))
+        .fold(None, |a: Option<(T, Id<R>, u8)>, (((t, _, _), r), (_, prio)): (((T, usize, u32), Id<R>), ((u32, u32), u8))| match a {
+            Some(b) if b.2 <= prio => Some(b),
+            _ => Some((t, r, prio)),
         })
-        // Unwrap the winner: (row, rule output).
-        .flat_map(|a: Option<(T, Rule<O>)>| a.map(|(t, r)| (t, r.out)))
+        // Unwrap the winner: (row, rule).
+        .flat_map(|a: Option<(T, Id<R>, u8)>| a.map(|(t, r, _)| (t, r)))
         .collect()
 }
 
-// Decision table: (key, facts) -> the best matching rule's output, for every combination of `bits` fact bits.
-pub fn decisions<O: Copy + 'static>(rules: &MultiRel<usize, Rule<O>>, bits: u32) -> HashIdx<(usize, usize), O> {
-    // Every rule against every fact combination; key = (rule key, facts).
-    rules
+// Decision table: (key, facts) -> the best matching rule, for every combination of `bits` fact bits.
+pub fn decisions<R: Rules>(rules: &R, by_key: &MultiRel<usize, Id<R>>, bits: u32) -> HashIdx<(usize, usize), Id<R>> {
+    // Every rule against every fact combination; keep (key, facts) alongside.
+    by_key
         .cross(Universe::<usize>::new(1 << bits))
-        .filt(|(r, f): (Rule<O>, usize)| f as u32 & r.mask == r.want)
+        .and(Same::<(usize, usize)>::new())
+        .key_by(|((r, _), _): ((Id<R>, usize), (usize, usize))| r)
+        .and(rules.mask().and(rules.want()).and(rules.prio()))
+        .filt(|(((_, f), _), ((mask, want), _)): (((Id<R>, usize), (usize, usize)), ((u32, u32), u8))| f as u32 & mask == want)
         // Lowest prio per (key, facts).
-        .fold(None, |a: Option<Rule<O>>, (r, _): (Rule<O>, usize)| match a {
-            Some(b) if b.prio <= r.prio => Some(b),
-            _ => Some(r),
+        .key_by(|((_, kf), _): (((Id<R>, usize), (usize, usize)), ((u32, u32), u8))| kf)
+        .fold(None, |a: Option<(Id<R>, u8)>, (((r, _), _), (_, prio)): (((Id<R>, usize), (usize, usize)), ((u32, u32), u8))| match a {
+            Some(b) if b.1 <= prio => Some(b),
+            _ => Some((r, prio)),
         })
-        .flat_map(|a: Option<Rule<O>>| a.map(|r| r.out))
+        .flat_map(|a: Option<(Id<R>, u8)>| a.map(|(r, _)| r))
         .collect()
+}
+
+// A rule table's key column as an index: key -> its rules, in table order.
+pub fn by_key<R: 'static>(key: &Col<R, usize>) -> MultiRel<usize, Id<R>> {
+    key.inv().collect()
 }

@@ -1,147 +1,185 @@
-use crate::db::{consts, Db, Weapon};
-use crate::info::AmmoDef;
-use crate::mobj::{self, Decision, Mobj};
-use crate::physics::{clip_moves, hitscan, line_rows, locate, opening, visible, LineRow, Shot};
-use crate::player::{self, Input, Player, PLAYER};
-use crate::wad::{Sector, Thing};
-use crate::world::{self, Mover};
+use crate::db::Db;
+use crate::info::{MV_IDLE, SOLID};
+use crate::mobj;
+use crate::physics::{clip_moves, hitscan, lines, locate, visible, Shot};
+use crate::player::{self, Input};
+use crate::schema::{one, rc, AmmoKind, Mobj, Player, Sector, SectorState, C};
+use crate::wad::NONE;
+use crate::world;
 use prela::engine::*;
+use prela::loader::Key;
 
 // Linedef flag: sound stops here. Thing type of the player 1 start.
 const ML_SOUNDBLOCK: i64 = 64;
 const PLAYER1_START: i64 = 1;
 
-// The whole game state; each tic builds a new one.
+// The whole game state; each tic builds a new one, sharing the columns it doesn't change.
 pub struct State {
     pub tic: u64,
-    pub player: VecRel<usize, Player>,
-    pub ammo: VecRel<usize, i32>,
-    pub sectors: VecRel<usize, Sector>,
-    pub movers: VecRel<usize, Mover>,
-    pub mobjs: HashIdx<usize, Mobj>,
-    pub heard: HashIdx<usize, bool>,
+    pub player: Player,
+    pub ammo: C<AmmoKind, i32>,
+    pub sector: SectorState,
+    pub mobj: Mobj,
 }
 
-// Fill in each player's current sector.
-fn with_sector(db: &Db, players: &VecRel<usize, Player>) -> VecRel<usize, Player> {
-    let here: VecRel<usize, (f64, f64)> = players.map(|p: Player| (p.x, p.y)).collect();
+// A one-row player column holding v.
+fn konst<T: Copy + 'static>(id: &Key<Player>, v: T) -> C<Player, T> {
+    rc(id.map(move |_| v))
+}
+
+// Fill in the player's current sector.
+fn with_sector(db: &Db, p: Player) -> Player {
+    let here = (&*p.x).and(&*p.y);
     // player -> sector, via the BSP walk.
-    let sec: HashIdx<usize, usize> = locate(db, &here).collect();
-    players.and(&sec).map(|(p, s): (Player, usize)| Player { sector: s, ..p }).collect()
+    Player { sector: rc(locate(db, &here)), ..p }
 }
 
-// Starting state: player at the start thing, standing on its sector floor.
+// Put the player on the floor of its sector.
+fn on_floor(s: &SectorState, p: Player) -> Player {
+    Player { z: rc((&*p.sector).select(&*s.floor)), ..p }
+}
+
+// Starting state: player at the start thing, standing on its sector floor; nothing moving.
 pub fn initial(db: &Db) -> State {
-    let sectors: VecRel<usize, Sector> = (&db.sectors).map(|s: Sector| s).collect();
-    let k = consts(db);
-    // The player 1 start thing, joined with the starting weapon for its ready state.
-    let start = (&db.things)
-        .filt(|t: Thing| t.kind == PLAYER1_START)
-        .key_by(move |_| k.start_weapon)
-        .and(&db.t.weapons)
-        .map(move |(t, w): (Thing, Weapon)| Player::new(t.x, t.y, t.angle.to_radians(), w.ready, k))
-        .key_by(|_| PLAYER)
+    let fill = |v| rc((&db.sector).map(move |_| v));
+    let sector = SectorState {
+        floor: rc(&db.sector.floor),
+        ceil: rc(&db.sector.ceil),
+        kind: rc((&db.sector).map(|_| MV_IDLE)),
+        plane: rc((&db.sector).map(|_| 0u8)),
+        dir: rc((&db.sector).map(|_| 0i8)),
+        speed: fill(0.0),
+        up: fill(0.0),
+        down: fill(0.0),
+        wait: rc((&db.sector).map(|_| 0i32)),
+        heard: rc((&db.sector).map(|_| false)),
+    };
+    let (k, th) = (&db.t.k, &db.thing);
+    let weapon = one(&k.start_weapon);
+    // The player 1 start thing, as the player's row.
+    let start: VecRel<Id<Player>, ((f64, f64), f64)> = (&th.kind)
+        .filt(|kind: i64| kind == PLAYER1_START)
+        .and((&th.x).and(&th.y).and(&th.angle))
+        .key_by(|_| Id::<Player>::new(0))
+        .map(|(_, p): (i64, ((f64, f64), f64))| p)
         .collect();
-    let player = with_sector(db, &start);
-    // Stand on the floor of that sector.
-    let player = (&player)
-        .and((&player).map(|p: Player| p.sector).select(&sectors))
-        .map(|(p, s): (Player, Sector)| Player { z: s.floor, ..p })
-        .collect();
-    // No doors or lifts moving yet.
-    let movers = (&sectors).map(|_| world::IDLE).collect();
-    let mobjs = mobj::spawn_things(db, &sectors);
-    let ammo = (&db.t.ammo_defs).map(|a: AmmoDef| a.start).collect();
-    State { tic: 0, player, ammo, sectors, movers, mobjs, heard: HashIdx { idx: Default::default() } }
+    let id = Universe::new(1);
+    let player = Player {
+        x: rc((&start).map(|((x, _), _): ((f64, f64), f64)| x)),
+        y: rc((&start).map(|((_, y), _): ((f64, f64), f64)| y)),
+        z: konst(&id, 0.0),
+        ang: rc((&start).map(|(_, a): ((f64, f64), f64)| a.to_radians())),
+        momx: konst(&id, 0.0),
+        momy: konst(&id, 0.0),
+        momz: konst(&id, 0.0),
+        sector: rc((&id).map(|_| Id::<Sector>::new(0))),
+        usedown: konst(&id, false),
+        exited: konst(&id, false),
+        dead: konst(&id, false),
+        health: konst(&id, one(&k.start_health)),
+        armor: konst(&id, 0),
+        armor_class: rc((&id).map(|_| Id::new(0))),
+        owned: konst(&id, one(&k.start_owned)),
+        keys: konst(&id, 0),
+        weapon: rc((&id).map(move |_| weapon)),
+        wanted: rc((&id).map(|_| Id::new(NONE))),
+        wstate: rc((&id).map(move |_| weapon).select(&db.t.weapon.ready)),
+        wtics: konst(&id, 1),
+        flash: rc((&id).map(|_| Id::new(0))),
+        flash_tics: konst(&id, 0),
+        damagecount: konst(&id, 0),
+        bonuscount: konst(&id, 0),
+        id,
+    };
+    let player = on_floor(&sector, with_sector(db, player));
+    let mobj = mobj::spawn_things(db, &sector);
+    State { tic: 0, player, ammo: rc(&db.t.ammo.start), sector, mobj }
 }
 
 // Teleport the player (debug `--at`).
 pub fn place(db: &Db, s: State, x: f64, y: f64, ang: f64) -> State {
-    let moved: VecRel<usize, Player> = (&s.player).map(move |p: Player| Player { x, y, ang, ..p }).collect();
-    let moved = with_sector(db, &moved);
-    let player = (&moved)
-        .and((&moved).map(|p: Player| p.sector).select(&s.sectors))
-        .map(|(p, sec): (Player, Sector)| Player { z: sec.floor, ..p })
-        .collect();
+    let p = &s.player;
+    let moved = Player { x: rc((&p.id).map(move |_| x)), y: rc((&p.id).map(move |_| y)), ang: rc((&p.id).map(move |_| ang)), ..p.clone() };
+    let player = on_floor(&s.sector, with_sector(db, moved));
     State { player, ..s }
 }
 
 // One game tic: old state + input -> new state.
 pub fn tic(db: &Db, s: &State, inp: Input) -> State {
+    let p = &s.player;
     // Dead or finished, and use freshly pressed: restart the level.
     // `usedown` is last tic's use key, so holding use doesn't restart twice.
-    let restart = (&s.player).filt(move |p: Player| (p.dead || p.exited) && inp.use_ && !p.usedown).fold_flat(false, |_, _| true);
+    let restart = (&*p.dead).and(&*p.exited).and(&*p.usedown).filt(move |((d, e), held): ((bool, bool), bool)| (d || e) && inp.use_ && !held).fold_flat(false, |_, _| true);
     if restart {
         return initial(db);
     }
     let t = s.tic;
-    // Inputs shared by several steps: lines with live sector heights, and every solid/shootable box.
-    let lines = line_rows(db, &s.sectors);
-    let bodies = mobj::bodies(db, &s.player, &s.mobjs);
+    // Inputs shared by several steps: line openings at the start of the tic, and every solid/shootable box.
+    let lines = lines(db, &s.sector);
+    let everyone = rc((&s.mobj.id).map(|_| true));
+    let bodies = mobj::bodies(db, p, &s.mobj, &everyone);
 
     // Player movement: apply input, try candidate moves, keep the first that fits.
-    let moved = player::moved(db, &s.player, inp);
-    let walked = player::walk(db, &moved, &clip_moves(db, &s.sectors, &lines, &bodies, &player::cands(db, &moved)));
-    let walked = with_sector(db, &walked);
+    let moved = player::moved(db, p, inp);
+    let walked = with_sector(db, player::walk(db, &moved, &clip_moves(db, &s.sector, &lines, &bodies, &player::cands(db, &moved))));
 
     // Lines walked over or used this tic.
-    let events = world::line_events(db, &lines, &s.player, &walked, inp.use_);
+    let events = world::line_events(db, &lines, p, &walked, inp.use_);
     // Sectors with something solid in them (doors won't close on them).
-    let occupied = (&s.mobjs)
-        .filt(|m: Mobj| m.flags & crate::info::SOLID != 0)
-        .map(|m: Mobj| m.sector)
-        .union((&walked).map(|p: Player| p.sector))
+    let m = &s.mobj;
+    let occupied = (&*m.flags)
+        .filt(|f: u32| f & SOLID != 0)
+        .and(&*m.sector)
+        .map(|(_, sec)| sec)
         .key_by(|sec| sec)
+        .union((&*walked.sector).key_by(|sec| sec))
         .fold(true, |_, _| true);
-    let (sectors, movers) = world::movers(db, &s.sectors, &s.movers, &events, &occupied);
+    let sector = world::movers(db, &s.sector, &events, &occupied);
 
     // Weapon state machine and any bullets fired.
     let (armed, ammo, player_shots) = player::weapon(db, &walked, &s.ammo, inp, t);
 
     // Sector adjacency that sound can travel through.
     // Sound passes lines with an open gap and no sound-block flag; edges go both ways.
-    let sound: MultiRel<usize, usize> = (&lines)
-        .filt(|row: LineRow| {
-            let (lo, hi) = opening(row);
-            hi > lo && row.0.0.flags & ML_SOUNDBLOCK == 0
-        })
-        .flat_map(|((l, _), _): LineRow| [(l.fsec, l.bsec), (l.bsec, l.fsec)])
+    let l = &db.linedef;
+    let sound: MultiRel<Id<Sector>, Id<Sector>> = (&lines.lo)
+        .and(&lines.hi)
+        .and(&l.flags)
+        .filt(|((lo, hi), flags): ((f64, f64), i64)| hi > lo && flags & ML_SOUNDBLOCK == 0)
+        .and((&l.fsec).and(&l.bsec))
+        .flat_map(|(_, (f, b)): (((f64, f64), i64), (Id<Sector>, Id<Sector>))| [(f, b), (b, f)])
         .key_by(|(a, _)| a)
         .map(|(_, b)| b)
         .collect();
     // Sectors that have heard the player fire (sticky across tics).
-    let heard: HashIdx<usize, bool> = (&player_shots)
+    let reached: HashIdx<Id<Sector>, usize> = (&player_shots)
         // Player's sector, once per bullet fired (none if no shot).
-        .key_by(|_| PLAYER)
-        .and(&armed)
-        .map(|(_, p): (Shot, Player)| p.sector)
+        .key_by(|_| Id::<Player>::new(0))
+        .and(&*armed.sector)
+        .map(|(_, sec): (Shot, Id<Sector>)| sec)
         // Flood out through the sound graph: sector -> depth.
         .reach_set(&sound, usize::MAX)
-        .map(|_| true)
-        // Add last tic's set and dedupe.
-        .union(&s.heard)
-        .fold(true, |_, _| true)
         .collect();
+    let sector = SectorState { heard: rc((&*s.sector.heard).and((&reached).opt()).map(|(h, r): (bool, Option<usize>)| h || r.is_some())), ..sector };
     // Monsters: advance animation, check sight, decide, then move.
-    let advanced = mobj::advance(db, &s.mobjs);
-    let seen = visible(&lines, &mobj::sight_pairs(db, &advanced, &armed));
-    let decided = mobj::think(db, &advanced, &seen, &heard, &armed, t);
+    let (advanced, action, live) = mobj::advance(db, m);
+    let seen = visible(db, &lines, &mobj::sight_pairs(db, &advanced, &action, &live, &armed));
+    let plan = mobj::think(db, &advanced, &action, &live, &seen, &sector, &armed, t);
     // Bodies rebuilt from post-move player and post-AI monsters for monster collision and hits.
-    let bodies = mobj::bodies(db, &armed, &(&decided).map(|d: Decision| d.m).collect());
-    let clips = clip_moves(db, &sectors, &lines, &bodies, &mobj::move_cands(db, &decided));
-    let moved = mobj::apply_moves(db, &decided, &clips, &bodies);
+    let bodies = mobj::bodies(db, &armed, &plan.m, &plan.live);
+    let clips = clip_moves(db, &sector, &lines, &bodies, &mobj::move_cands(db, &plan));
+    let moved = mobj::apply_moves(db, &plan, &clips, &bodies);
 
     // All bullets, their hits, and the resulting damage, deaths, drops and puffs.
     let shots: HashIdx<usize, Shot> = (&player_shots).union(&mobj::monster_shots(db, &moved, t)).collect();
     let impacts = hitscan(db, &lines, &bodies, &shots);
     let dmg = mobj::damage(db, &impacts, &moved, &bodies, t);
     let wounded = mobj::wound(db, &moved, &dmg, t);
-    let dropped = mobj::drops(db, &moved, &wounded, t);
-    let fx = mobj::effects(db, &impacts, &wounded, &armed, t);
+    let spawns: HashIdx<usize, mobj::Spawn> = (&mobj::drops(db, &moved, &wounded, t)).union(&mobj::effects(db, &impacts, &wounded, &armed, t)).collect();
 
     // Pickups, final player update, and the new mobj set.
-    let (picked, ammo, taken) = player::pickups(db, &armed, &ammo, &(&wounded).map(|d: Decision| d.m).collect());
-    let player = player::finish(db, &picked, &dmg, &sectors, inp, world::exited(&events), t);
-    let mobjs = mobj::relocate(db, &sectors, &mobj::survivors(&wounded, &taken, &dropped, &fx));
-    State { tic: t + 1, player, ammo, sectors, movers, mobjs, heard }
+    let (picked, ammo, taken) = player::pickups(db, &armed, &ammo, &wounded.m, &wounded.live);
+    let player = player::finish(db, &picked, &dmg, &sector, inp, world::exited(db, &events), t);
+    let mobj = mobj::survivors(db, &sector, &wounded, &taken, &spawns);
+    State { tic: t + 1, player, ammo, sector, mobj }
 }

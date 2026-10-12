@@ -6,21 +6,36 @@ mod physics;
 mod player;
 mod render;
 mod rules;
+mod schema;
 mod tic;
 mod wad;
 mod world;
 
 use db::Db;
-use player::{Input, Player};
+use player::Input;
+use schema::one;
 use prela::engine::*;
 use render::{H, W};
 use std::io::Write;
 use std::time::Instant;
 use tic::State;
 
-// The single player row (key PLAYER = 0).
-fn player(s: &State) -> Player {
-    s.player.get(0).unwrap()
+// The player's main fields, for logging.
+fn player(s: &State) -> String {
+    let p = &s.player;
+    format!(
+        "player x {:.3} y {:.3} z {:.1} ang {:.4} sector {} health {} armor {} weapon {} dead {} exited {}",
+        one(&p.x),
+        one(&p.y),
+        one(&p.z),
+        one(&p.ang),
+        one(&p.sector).0,
+        one(&p.health),
+        one(&p.armor),
+        one(&p.weapon).0,
+        one(&p.dead),
+        one(&p.exited)
+    )
 }
 
 // Writes the framebuffer as a PPM image (for --shot).
@@ -44,7 +59,7 @@ fn main() {
         let v: Vec<f64> = args[i + 1..i + 4].iter().map(|a| a.parse().unwrap()).collect();
         state = tic::place(&db, state, v[0], v[1], v[2].to_radians());
     }
-    eprintln!("loaded in {:?}, {} mobjs, start {:?}", t0.elapsed(), state.mobjs.idx.len(), render::pose(player(&state), db::consts(&db)));
+    eprintln!("loaded in {:?}, {} mobjs, start {:?}", t0.elapsed(), state.mobj.id.n, render::pose(&db, &state.player));
     let mut buf = vec![0u32; W * H];
 
     // --shot out.ppm SCRIPT: run one tic per script letter, render one frame, write it, exit.
@@ -68,12 +83,17 @@ fn main() {
         let tics = t.elapsed();
         let t = Instant::now();
         render::render(&db, &state, &mut buf);
-        eprintln!("{} tics in {:?}, frame in {:?}, {:?}", script.len(), tics, t.elapsed(), player(&state));
+        eprintln!("{} tics in {:?}, frame in {:?}, {}", script.len(), tics, t.elapsed(), player(&state));
         // Print nearby things and active movers.
         if std::env::var_os("DOOM_DEBUG").is_some() {
-            let p = player(&state);
-            (&state.mobjs).filt(move |m: mobj::Mobj| (m.x - p.x).hypot(m.y - p.y) < 400.0).drive(|_, m| eprintln!("{m:?}"));
-            (&state.movers).and(&state.sectors).filt(|(m, _): (world::Mover, wad::Sector)| m.kind != 0).drive(|k, v| eprintln!("mover {k} {v:?}"));
+            let (m, sec) = (&state.mobj, &state.sector);
+            let (px, py) = (one(&state.player.x), one(&state.player.y));
+            (&*m.uid)
+                .and((&*m.x).and(&*m.y))
+                .and((&*m.kind).and(&*m.state).and(&*m.health))
+                .filt(move |((_, (x, y)), _): ((usize, (f64, f64)), ((schema::Id<schema::ThingType>, schema::Id<schema::AnimState>), i32))| (x - px).hypot(y - py) < 400.0)
+                .drive(|_, v| eprintln!("mobj {v:?}"));
+            (&*sec.kind).and((&*sec.floor).and(&*sec.ceil)).filt(|(k, _): (u8, (f64, f64))| k != 0).drive(|s, v| eprintln!("mover {s:?} {v:?}"));
         }
         write_ppm(&args[i + 1], &buf);
         return;

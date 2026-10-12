@@ -1,90 +1,56 @@
-use crate::info::{self, Action, ActOut, AiOut, AmmoDef, ArmorClass, Consts, ChaseDir, FaceOut, NumberSlot, PickupDef, Rule, Slide, Special, StepOut, WOut, G_DEATH, G_MELEE, G_MISSILE, G_PAIN, G_SEE, G_SPAWN};
-use crate::rules::decisions;
-use crate::wad::{Game, Linedef, Node, Sector, Seg, Sidedef, Thing, NONE};
+use crate::info::{self, eff_bits, G_DEATH, G_MELEE, G_MISSILE, G_PAIN, G_SEE, G_SPAWN};
+use crate::rules::{by_key, decisions};
+use crate::schema::*;
+use crate::wad::{Game, NONE};
 use prela::engine::*;
+use prela::loader::{Col, Key};
 use std::collections::HashMap;
 
-// One animation/AI state: sprite frame to show, how long, what action to run, and the next state.
-#[derive(Clone, Copy, Debug)]
-pub struct StateRow {
-    pub sprite: usize,
-    pub frame: usize,
-    pub bright: bool,
-    pub tics: i32,
-    pub action: Action,
-    pub next: usize,
-}
-
-// Static stats for one kind of thing (monster, item, decoration): states to jump to, size, health, flags.
-#[derive(Clone, Copy, Debug)]
-pub struct Info {
-    pub ednum: i64,
-    pub spawn: usize,
-    pub see: usize,
-    pub pain: usize,
-    pub melee: usize,
-    pub missile: usize,
-    pub death: usize,
-    pub speed: f64,
-    pub radius: f64,
-    pub height: f64,
-    pub health: i32,
-    pub painchance: i32,
-    pub damage: i32,
-    pub flags: u32,
-    pub drop: usize,
-}
-
-// One weapon: which ammo it uses and its ready/attack/flash states.
-#[derive(Clone, Copy, Debug)]
-pub struct Weapon {
-    pub ammo: usize,
-    pub per_shot: i32,
-    pub ready: usize,
-    pub attack: usize,
-    pub flash: usize,
-    pub flash_tics: i32,
-    pub damage: i32,
-    pub damage_roll: i32,
-    pub range: f64,
-    pub spread_div: f64,
-}
-
-// All the game-rule tables from info.rs, loaded as Prela relations.
+// The game-rule entities from info.rs, plus the lookup indexes over them.
 pub struct Tables {
-    pub states: VecRel<usize, StateRow>,
-    pub infos: VecRel<usize, Info>,
-    pub ednum_info: HashIdx<i64, usize>,
-    pub sprite_frames: HashIdx<u64, (usize, bool)>,
-    pub weapons: VecRel<usize, Weapon>,
-    pub hud_fonts: HashIdx<(usize, usize), usize>,
-    pub hud_patches: VecRel<usize, (usize, f64, f64, f32)>,
-    pub hud_numbers: VecRel<usize, NumberSlot>,
-    pub hud_arms: VecRel<usize, (usize, f64, f64, usize)>,
-    pub hud_keys: VecRel<usize, (f64, f64, usize)>,
-    pub face_rules: MultiRel<usize, Rule<FaceOut>>,
-    pub faces: HashIdx<(u8, usize, usize), usize>,
-    pub info_goto: HashIdx<(usize, u8), usize>,
-    pub ai_rules: MultiRel<usize, Rule<AiOut>>,
-    pub weapon_choice: HashIdx<(usize, usize), WOut>,
-    pub specials: HashIdx<i64, Special>,
-    pub activations: HashIdx<usize, ActOut>,
-    pub mover_rules: MultiRel<usize, Rule<StepOut>>,
-    pub pickups: HashIdx<usize, PickupDef>,
-    pub ammo_defs: VecRel<usize, AmmoDef>,
+    pub state: AnimState,
+    pub ttype: ThingType,
+    pub pickup: Pickup,
+    pub weapon: Weapon,
+    pub ammo: AmmoKind,
+    pub armor: ArmorClass,
+    pub chase: ChaseDir,
+    pub slide: Slide,
+    pub special: LineSpecial,
+    pub activation: Activation,
+    pub ai_rule: AiRule,
+    pub weapon_rule: WeaponRule,
+    pub mover_rule: MoverRule,
+    pub face_rule: FaceRule,
+    pub hud_patch: HudPatch,
+    pub hud_number: NumberSlot,
+    pub hud_arm: HudArm,
+    pub hud_key: HudKey,
+    pub k: Konst,
+    // Map editor number -> thing type.
+    pub ednum_type: HashIdx<i64, Id<ThingType>>,
+    // (thing type, goto label) -> state, so rules can say "go to SEE".
+    pub goto: HashIdx<(Id<ThingType>, u8), Id<AnimState>>,
+    // frame_key(sprite, frame, rotation) -> image and whether to mirror it.
+    pub sprite_frames: HashIdx<u64, (Id<Image>, bool)>,
+    // Line special number -> special.
+    pub special_num: HashIdx<i64, Id<LineSpecial>>,
+    // act_key(kind, dir, act) -> activation.
+    pub activation_key: HashIdx<usize, Id<Activation>>,
+    // Rule key -> rules, per rule table.
+    pub ai_by_key: MultiRel<usize, Id<AiRule>>,
+    pub mover_by_key: MultiRel<usize, Id<MoverRule>>,
+    pub face_by_key: MultiRel<usize, Id<FaceRule>>,
+    // (weapon state action, weapon facts) -> the weapon rule that applies.
+    pub weapon_choice: HashIdx<(usize, usize), Id<WeaponRule>>,
+    // Sector special -> floor damage.
     pub sector_damage: HashIdx<i64, i32>,
-    pub armor_classes: VecRel<usize, ArmorClass>,
-    pub consts: VecRel<usize, Consts>,
-    pub chase_dirs: VecRel<usize, ChaseDir>,
-    pub slides: VecRel<usize, Slide>,
-    pub puff: usize,
-    pub blood: usize,
-    pub ball: usize,
-}
-
-// The constants row, read once at the top of a function (like SQLDoom's doom_const()).
-pub fn consts(db: &Db) -> Consts {
-    db.t.consts.get(0).unwrap()
+    // (font, glyph) -> image; (face kind, pain, look) -> image.
+    pub hud_fonts: HashIdx<(usize, usize), Id<Image>>,
+    pub faces: HashIdx<(u8, usize, usize), Id<Image>>,
+    pub puff: Id<ThingType>,
+    pub blood: Id<ThingType>,
+    pub ball: Id<ThingType>,
 }
 
 // Packs (sprite, frame, rotation) into one lookup key for sprite images.
@@ -92,374 +58,409 @@ pub fn frame_key(sprite: usize, frame: usize, rot: usize) -> u64 {
     (sprite * 1000 + frame * 10 + rot) as u64
 }
 
-// Turns the Rust-literal tables in info.rs into relations, resolving state names to ids.
-fn tables(gfx: &crate::wad::Graphics) -> Tables {
+fn key<E>(n: usize) -> Key<E> {
+    Universe::new(n)
+}
+
+// One column from a row list.
+fn col<E, R, T: Copy>(rows: &[R], f: impl Fn(&R) -> T) -> Col<E, T> {
+    VecRel::new(rows.iter().map(f).collect())
+}
+
+// A lookup index from (key, value) pairs.
+fn index<K: Copy + Eq + std::hash::Hash, V: Copy>(pairs: Vec<(K, V)>) -> HashIdx<K, V> {
+    VecRel::<usize, (K, V)>::new(pairs).key_by(|(k, _)| k).map(|(_, v)| v).collect()
+}
+
+// Turns the Rust-literal tables in info.rs into entities, resolving names to ids.
+fn tables(sprite_names: &HashMap<String, usize>, patch_names: &HashMap<String, usize>) -> Tables {
     // Animation states, with names and sprites replaced by ids.
     let defs = info::states();
     let ids: HashMap<String, usize> = defs.iter().enumerate().map(|(i, d)| (d.name.clone(), i)).collect();
-    let id = |n: &str| *ids.get(n).unwrap_or_else(|| panic!("unknown state {n}"));
+    let sid = |n: &str| Id::<AnimState>::new(*ids.get(n).unwrap_or_else(|| panic!("unknown state {n}")));
     // Sprite id = index in the sorted list of 4-letter sprite names.
     let mut sprites: Vec<&str> = defs.iter().map(|d| d.sprite).collect();
     sprites.sort();
     sprites.dedup();
     let sprite_id = |n: &str| sprites.iter().position(|&s| s == n).unwrap();
-    let states = VecRel::new(
-        defs.iter()
-            .map(|d| StateRow {
-                sprite: sprite_id(d.sprite),
-                frame: d.frame as usize,
-                bright: d.bright,
-                tics: d.tics,
-                action: d.action,
-                next: id(&d.next),
-            })
-            .collect(),
-    );
-    // Thing kinds, with state names and drop items resolved to ids.
+    let state = AnimState {
+        id: key(defs.len()),
+        sprite: col(&defs, |d| sprite_id(d.sprite)),
+        frame: col(&defs, |d| d.frame as usize),
+        bright: col(&defs, |d| d.bright),
+        tics: col(&defs, |d| d.tics),
+        action: col(&defs, |d| d.action),
+        next: col(&defs, |d| sid(&d.next)),
+    };
+    // Thing types, with state names, drop items and pickups resolved to ids.
     let mdefs = info::mobjs();
     let by_ednum: HashMap<i64, usize> = mdefs.iter().enumerate().rev().map(|(i, m)| (m.doomednum, i)).collect();
-    let infos: VecRel<usize, Info> = VecRel::new(
-        mdefs
-            .iter()
-            .map(|m| Info {
-                ednum: m.doomednum,
-                spawn: id(&m.spawn),
-                see: id(&m.see),
-                pain: id(&m.pain),
-                melee: id(&m.melee),
-                missile: id(&m.missile),
-                death: id(&m.death),
-                speed: m.speed,
-                radius: m.radius,
-                height: m.height,
-                health: m.health,
-                painchance: m.painchance,
-                damage: m.damage,
-                flags: m.flags,
-                drop: by_ednum.get(&m.drop).copied().unwrap_or(NONE),
-            })
-            .collect(),
-    );
-    // Map editor number -> thing kind, for spawning map things.
-    let ednum_info = (&infos)
-        .and(Same::<usize>::new())
-        .filt(|(i, _): (Info, usize)| i.ednum > 0)
-        .key_by(|(i, _): (Info, usize)| i.ednum)
-        .map(|(_, k)| k)
+    let pdefs: Vec<(usize, info::PickupDef)> = mdefs.iter().enumerate().filter_map(|(i, m)| m.pickup.map(|p| (i, p))).collect();
+    let ttype = ThingType {
+        id: key(mdefs.len()),
+        ednum: col(&mdefs, |m| m.doomednum),
+        spawn: col(&mdefs, |m| sid(&m.spawn)),
+        see: col(&mdefs, |m| sid(&m.see)),
+        pain: col(&mdefs, |m| sid(&m.pain)),
+        melee: col(&mdefs, |m| sid(&m.melee)),
+        missile: col(&mdefs, |m| sid(&m.missile)),
+        death: col(&mdefs, |m| sid(&m.death)),
+        speed: col(&mdefs, |m| m.speed),
+        radius: col(&mdefs, |m| m.radius),
+        height: col(&mdefs, |m| m.height),
+        health: col(&mdefs, |m| m.health),
+        painchance: col(&mdefs, |m| m.painchance),
+        damage: col(&mdefs, |m| m.damage),
+        flags: col(&mdefs, |m| m.flags),
+        drop: col(&mdefs, |m| Id::new(by_ednum.get(&m.drop).copied().unwrap_or(NONE))),
+        pickup: MultiRel::from_pairs(mdefs.len(), pdefs.iter().enumerate().map(|(p, &(t, _))| (t, Id::new(p)))),
+    };
+    let pickup = Pickup {
+        id: key(pdefs.len()),
+        health: col(&pdefs, |p| p.1.health),
+        health_max: col(&pdefs, |p| p.1.health_max),
+        armor: col(&pdefs, |p| p.1.armor),
+        armor_max: col(&pdefs, |p| p.1.armor_max),
+        class_set: col(&pdefs, |p| p.1.class_set),
+        class_min: col(&pdefs, |p| p.1.class_min),
+        ammo_kind: col(&pdefs, |p| Id::new(p.1.ammo_kind)),
+        ammo: col(&pdefs, |p| p.1.ammo),
+        weapon: col(&pdefs, |p| Id::new(p.1.weapon)),
+        weapon_bit: col(&pdefs, |p| p.1.weapon_bit),
+        key: col(&pdefs, |p| p.1.key),
+        always: col(&pdefs, |p| p.1.always),
+    };
+    // Map editor number -> thing type, for spawning map things.
+    let ednum_type = (&ttype.ednum).filt(|e: i64| e > 0).inv().collect();
+    let kind = |n: &str| Id::new(mdefs.iter().position(|m| m.name == n).unwrap());
+    // (thing type, goto label) -> state id, for each label the type has.
+    let goto = (&ttype.see)
+        .map(|s| (G_SEE, s))
+        .union((&ttype.spawn).map(|s| (G_SPAWN, s)))
+        .union((&ttype.melee).map(|s| (G_MELEE, s)))
+        .union((&ttype.missile).map(|s| (G_MISSILE, s)))
+        .union((&ttype.death).map(|s| (G_DEATH, s)))
+        .union((&ttype.pain).map(|s| (G_PAIN, s)))
+        .filt(|(_, s): (u8, Id<AnimState>)| s.0 != 0)
+        .and(Same::<Id<ThingType>>::new())
+        .key_by(|((g, _), t): ((u8, Id<AnimState>), Id<ThingType>)| (t, g))
+        .map(|((_, s), _)| s)
         .collect();
     // Sprite lump names like TROOA2A8 -> (sprite, frame, rotation) -> image id; the second half is the mirrored rotation.
     let mut frames = Vec::new();
-    for (name, &gid) in &gfx.sprite_names {
+    for (name, &gid) in sprite_names {
         let b = name.as_bytes();
         if b.len() < 6 {
             continue;
         }
         let Some(sp) = sprites.iter().position(|&s| s.as_bytes() == &b[..4]) else { continue };
-        frames.push((frame_key(sp, (b[4] - b'A') as usize, (b[5] - b'0') as usize), (gid, false)));
+        frames.push((frame_key(sp, (b[4] - b'A') as usize, (b[5] - b'0') as usize), (Id::new(gid), false)));
         if b.len() >= 8 {
-            frames.push((frame_key(sp, (b[6] - b'A') as usize, (b[7] - b'0') as usize), (gid, true)));
+            frames.push((frame_key(sp, (b[6] - b'A') as usize, (b[7] - b'0') as usize), (Id::new(gid), true)));
         }
     }
-    let sprite_frames = VecRel::<usize, (u64, (usize, bool))>::new(frames).key_by(|(k, _)| k).map(|(_, v)| v).collect();
-    // Weapons, with state names resolved.
-    let weapons: VecRel<usize, Weapon> = VecRel::new(
-        info::weapons()
-            .iter()
-            .map(|w| Weapon {
-                ammo: w.ammo,
-                per_shot: w.per_shot,
-                ready: id(w.ready),
-                attack: id(w.attack),
-                flash: id(w.flash),
-                flash_tics: 0,
-                damage: w.damage,
-                damage_roll: w.damage_roll,
-                range: w.range,
-                spread_div: w.spread_div,
-            })
-            .collect(),
-    );
-    // Fill in each weapon's flash duration from its flash state.
-    let weapons: VecRel<usize, Weapon> = (&weapons).and((&weapons).map(|w: Weapon| w.flash).select(&states)).map(|(w, r): (Weapon, StateRow)| Weapon { flash_tics: r.tics, ..w }).collect();
+    let wdefs = info::weapons();
+    let weapon = Weapon {
+        id: key(wdefs.len()),
+        ammo: col(&wdefs, |w| Id::new(w.ammo)),
+        per_shot: col(&wdefs, |w| w.per_shot),
+        ready: col(&wdefs, |w| sid(w.ready)),
+        attack: col(&wdefs, |w| sid(w.attack)),
+        flash: col(&wdefs, |w| sid(w.flash)),
+        flash_tics: VecRel::new(vec![]),
+        damage: col(&wdefs, |w| w.damage),
+        damage_roll: col(&wdefs, |w| w.damage_roll),
+        range: col(&wdefs, |w| w.range),
+        spread_div: col(&wdefs, |w| w.spread_div),
+    };
+    // Each weapon's flash duration, from its flash state.
+    let weapon = Weapon { flash_tics: (&weapon.flash).select(&state.tics).collect(), ..weapon };
+    let adefs = info::ammo_defs();
+    let ammo = AmmoKind { id: key(adefs.len()), cap: col(&adefs, |a| a.cap), start: col(&adefs, |a| a.start) };
+    let cdefs = info::armor_classes();
+    let armor = ArmorClass { id: key(cdefs.len()), num: col(&cdefs, |c| c.num), den: col(&cdefs, |c| c.den) };
+    let ddefs = info::chase_dirs();
+    let chase = ChaseDir { id: key(ddefs.len()), turn: col(&ddefs, |d| d.turn), step: col(&ddefs, |d| d.step), stay: col(&ddefs, |d| d.stay) };
+    let ldefs = info::slides();
+    let slide = Slide { id: key(ldefs.len()), keep_x: col(&ldefs, |s| s.keep_x), keep_y: col(&ldefs, |s| s.keep_y), stay: col(&ldefs, |s| s.stay) };
+    let spdefs = info::specials();
+    let special = LineSpecial {
+        id: key(spdefs.len()),
+        num: col(&spdefs, |s| s.0),
+        act: col(&spdefs, |s| s.1.act),
+        speed: col(&spdefs, |s| s.1.speed),
+        tagged: col(&spdefs, |s| s.1.tagged),
+        key: col(&spdefs, |s| s.1.key),
+        walk: col(&spdefs, |s| s.1.walk),
+        use_: col(&spdefs, |s| s.1.use_),
+    };
+    let special_num = (&special.num).inv().collect();
+    let acdefs = info::activations();
+    let activation = Activation {
+        id: key(acdefs.len()),
+        key: col(&acdefs, |a| a.0),
+        kind: col(&acdefs, |a| a.1.kind),
+        dir: col(&acdefs, |a| a.1.dir),
+        init: col(&acdefs, |a| a.1.init),
+        plane: col(&acdefs, |a| a.1.plane),
+        up_lc: col(&acdefs, |a| a.1.up_lc),
+        up_floor: col(&acdefs, |a| a.1.up_floor),
+        down_floor: col(&acdefs, |a| a.1.down_floor),
+        down_lowest: col(&acdefs, |a| a.1.down_lowest),
+    };
+    let activation_key = (&activation.key).inv().collect();
+    // Rule tables.
+    let rdefs = info::ai_rules();
+    let ai_rule = AiRule {
+        id: key(rdefs.len()),
+        key: col(&rdefs, |r| r.0 as usize),
+        prio: col(&rdefs, |r| r.1.prio),
+        mask: col(&rdefs, |r| r.1.mask),
+        want: col(&rdefs, |r| r.1.want),
+        goto: col(&rdefs, |r| r.1.out.goto),
+        awake: col(&rdefs, |r| r.1.out.awake),
+        reaction: col(&rdefs, |r| r.1.out.reaction),
+        attack: col(&rdefs, |r| r.1.out.attack.kind),
+        pellets: col(&rdefs, |r| r.1.out.attack.pellets),
+        mult: col(&rdefs, |r| r.1.out.attack.mult),
+        modulo: col(&rdefs, |r| r.1.out.attack.modulo),
+        effects: col(&rdefs, |r| eff_bits(r.1.out)),
+    };
+    let wrdefs = info::weapon_rules();
+    let weapon_rule = WeaponRule {
+        id: key(wrdefs.len()),
+        key: col(&wrdefs, |r| r.0 as usize),
+        prio: col(&wrdefs, |r| r.1.prio),
+        mask: col(&wrdefs, |r| r.1.mask),
+        want: col(&wrdefs, |r| r.1.want),
+        redirect: col(&wrdefs, |r| r.1.out.redirect),
+        pellets: col(&wrdefs, |r| r.1.out.pellets),
+    };
+    let mrdefs = info::mover_rules();
+    let mover_rule = MoverRule {
+        id: key(mrdefs.len()),
+        key: col(&mrdefs, |r| r.0),
+        prio: col(&mrdefs, |r| r.1.prio),
+        mask: col(&mrdefs, |r| r.1.mask),
+        want: col(&mrdefs, |r| r.1.want),
+        kind: col(&mrdefs, |r| r.1.out.kind),
+        dir: col(&mrdefs, |r| r.1.out.dir),
+        wait: col(&mrdefs, |r| r.1.out.wait),
+        wait_dec: col(&mrdefs, |r| r.1.out.wait_dec),
+    };
+    let frdefs = info::face_rules();
+    let face_rule = FaceRule {
+        id: key(frdefs.len()),
+        key: col(&frdefs, |_| 0),
+        prio: col(&frdefs, |r| r.prio),
+        mask: col(&frdefs, |r| r.mask),
+        want: col(&frdefs, |r| r.want),
+        kind: col(&frdefs, |r| r.out.kind),
+        by_pain: col(&frdefs, |r| r.out.by_pain),
+        by_look: col(&frdefs, |r| r.out.by_look),
+    };
+    let ai_by_key = by_key(&ai_rule.key);
+    let weapon_choice = decisions(&weapon_rule, &by_key(&weapon_rule.key), 3);
     // Status bar tables, with lump names resolved to image ids.
-    let lump = |n: &str| gfx.patch_names.get(n).copied().unwrap_or(NONE);
-    let hud_fonts = VecRel::<usize, ((usize, usize), usize)>::new(info::hud_fonts().iter().map(|(k, n)| (*k, lump(n))).collect()).key_by(|(k, _)| k).map(|(_, g)| g).collect();
-    let hud_patches = VecRel::new(info::hud_patches().iter().map(|&(n, x, y, d)| (lump(n), x, y, d)).collect());
-    let hud_keys = VecRel::new(info::hud_keys().iter().map(|&(x, y, n)| (x, y, lump(n))).collect());
-    let faces = VecRel::<usize, ((u8, usize, usize), usize)>::new(info::faces().iter().map(|(k, n)| (*k, lump(n))).collect()).key_by(|(k, _)| k).map(|(_, g)| g).collect();
-    let face_rules = VecRel::<usize, Rule<FaceOut>>::new(info::face_rules()).key_by(|_| 0usize).collect();
-    let kind = |n: &str| mdefs.iter().position(|m| m.name == n).unwrap();
-    // (thing kind, goto label) -> state id, so rules can say "go to SEE" and get the right state per monster.
-    let info_goto = (&infos)
-        .and(Same::<usize>::new())
-        .flat_map(|(i, k): (Info, usize)| {
-            [(G_SEE, i.see), (G_SPAWN, i.spawn), (G_MELEE, i.melee), (G_MISSILE, i.missile), (G_DEATH, i.death), (G_PAIN, i.pain)].map(|(g, s)| (k, g, s))
-        })
-        .filt(|(_, _, s)| s != 0)
-        .key_by(|(k, g, _)| (k, g))
-        .map(|(_, _, s)| s)
-        .collect();
-    // Rule tables keyed by the action (or special/mover key) they apply to.
-    let by_action = |rules: Vec<(Action, Rule<AiOut>)>| VecRel::<usize, (Action, Rule<AiOut>)>::new(rules).key_by(|(a, _)| a as usize).map(|(_, r)| r).collect();
-    let ai_rules = by_action(info::ai_rules());
-    let weapon_rules: MultiRel<usize, Rule<WOut>> = VecRel::<usize, (Action, Rule<WOut>)>::new(info::weapon_rules()).key_by(|(a, _)| a as usize).map(|(_, r)| r).collect();
-    // Only 3 weapon fact bits, so precompute (action, facts) -> outcome.
-    let weapon_choice = decisions(&weapon_rules, 3);
-    let specials = VecRel::<usize, (i64, Special)>::new(info::specials()).key_by(|(k, _)| k).map(|(_, v)| v).collect();
-    let activations = VecRel::<usize, (usize, ActOut)>::new(info::activations()).key_by(|(k, _)| k).map(|(_, v)| v).collect();
-    let mover_rules = VecRel::<usize, (usize, Rule<StepOut>)>::new(info::mover_rules()).key_by(|(k, _)| k).map(|(_, v)| v).collect();
-    // Thing kind -> what picking it up gives.
-    let pickups = VecRel::<usize, Option<PickupDef>>::new(mdefs.iter().map(|m| m.pickup).collect()).flat_map(|p| p).collect();
-    let sector_damage = VecRel::<usize, (i64, i32)>::new(info::sector_damage()).key_by(|(k, _)| k).map(|(_, v)| v).collect();
+    let lump = |n: &str| Id::<Image>::new(patch_names.get(n).copied().unwrap_or(NONE));
+    let hp = info::hud_patches();
+    let hud_patch = HudPatch { id: key(hp.len()), image: col(&hp, |p| lump(p.0)), x: col(&hp, |p| p.1), y: col(&hp, |p| p.2), depth: col(&hp, |p| p.3) };
+    let hn = info::hud_numbers();
+    let hud_number = NumberSlot {
+        id: key(hn.len()),
+        x: col(&hn, |n| n.x),
+        y: col(&hn, |n| n.y),
+        font: col(&hn, |n| n.font),
+        digits: col(&hn, |n| n.digits),
+        percent: col(&hn, |n| n.percent),
+    };
+    let ha = info::hud_arms();
+    let hud_arm = HudArm { id: key(ha.len()), weapon: col(&ha, |a| a.0), x: col(&ha, |a| a.1), y: col(&ha, |a| a.2), digit: col(&ha, |a| a.3) };
+    let hk = info::hud_keys();
+    let hud_key = HudKey { id: key(hk.len()), x: col(&hk, |k| k.0), y: col(&hk, |k| k.1), image: col(&hk, |k| lump(k.2)) };
+    let c = [info::consts()];
+    let k = Konst {
+        id: key(1),
+        friction: col(&c, |c| c.friction),
+        walk_thrust: col(&c, |c| c.walk_thrust),
+        run_thrust: col(&c, |c| c.run_thrust),
+        strafe_scale: col(&c, |c| c.strafe_scale),
+        turn_walk: col(&c, |c| c.turn_walk),
+        turn_run: col(&c, |c| c.turn_run),
+        gravity: col(&c, |c| c.gravity),
+        player_radius: col(&c, |c| c.player_radius),
+        player_height: col(&c, |c| c.player_height),
+        view_height: col(&c, |c| c.view_height),
+        dead_view_height: col(&c, |c| c.dead_view_height),
+        max_step: col(&c, |c| c.max_step),
+        use_range: col(&c, |c| c.use_range),
+        door_gap: col(&c, |c| c.door_gap),
+        melee_range: col(&c, |c| c.melee_range),
+        close_range: col(&c, |c| c.close_range),
+        missile_near: col(&c, |c| c.missile_near),
+        missile_no_melee: col(&c, |c| c.missile_no_melee),
+        missile_far: col(&c, |c| c.missile_far),
+        sight_z: col(&c, |c| c.sight_z),
+        shot_z: col(&c, |c| c.shot_z),
+        attack_range: col(&c, |c| c.attack_range),
+        hitscan_spread_div: col(&c, |c| c.hitscan_spread_div),
+        puff_back: col(&c, |c| c.puff_back),
+        blast_radius: col(&c, |c| c.blast_radius),
+        missile_reach: col(&c, |c| c.missile_reach),
+        missile_z_reach: col(&c, |c| c.missile_z_reach),
+        pickup_z_reach: col(&c, |c| c.pickup_z_reach),
+        bonus_add: col(&c, |c| c.bonus_add),
+        damage_cap: col(&c, |c| c.damage_cap),
+        floor_damage_period: col(&c, |c| c.floor_damage_period),
+        reaction: col(&c, |c| c.reaction),
+        start_health: col(&c, |c| c.start_health),
+        start_owned: col(&c, |c| c.start_owned),
+        start_weapon: col(&c, |c| Id::new(c.start_weapon)),
+    };
     Tables {
-        states,
-        infos,
-        ednum_info,
-        sprite_frames,
-        weapons,
-        hud_fonts,
-        hud_patches,
-        hud_numbers: VecRel::new(info::hud_numbers()),
-        hud_arms: VecRel::new(info::hud_arms()),
-        hud_keys,
-        face_rules,
-        faces,
-        info_goto,
-        ai_rules,
-        weapon_choice,
-        specials,
-        activations,
-        mover_rules,
-        pickups,
-        ammo_defs: VecRel::new(info::ammo_defs()),
-        sector_damage,
-        armor_classes: VecRel::new(info::armor_classes()),
-        consts: VecRel::new(vec![info::consts()]),
-        chase_dirs: VecRel::new(info::chase_dirs()),
-        slides: VecRel::new(info::slides()),
+        mover_by_key: by_key(&mover_rule.key),
+        face_by_key: by_key(&face_rule.key),
+        sprite_frames: index(frames),
+        hud_fonts: index(info::hud_fonts().into_iter().map(|(k, n)| (k, lump(&n))).collect()),
+        faces: index(info::faces().into_iter().map(|(k, n)| (k, lump(&n))).collect()),
+        sector_damage: index(info::sector_damage()),
         puff: kind("PUFF"),
         blood: kind("BLOOD"),
         ball: kind("TBALL"),
+        state,
+        ttype,
+        pickup,
+        weapon,
+        ammo,
+        armor,
+        chase,
+        slide,
+        special,
+        activation,
+        ai_rule,
+        weapon_rule,
+        mover_rule,
+        face_rule,
+        hud_patch,
+        hud_number,
+        hud_arm,
+        hud_key,
+        k,
+        ednum_type,
+        goto,
+        special_num,
+        activation_key,
+        ai_by_key,
+        weapon_choice,
     }
 }
 
-// Where an image's texels start in the texel table, plus its size and draw offset.
-#[derive(Clone, Copy)]
-pub struct Tex {
-    pub base: usize,
-    pub w: usize,
-    pub h: usize,
-    pub left: i64,
-    pub top: i64,
-}
-
-// A seg joined with its line, vertices, and sidedefs: everything the renderer needs per wall piece.
-#[derive(Clone, Copy)]
-pub struct Wall {
-    pub x1: f64,
-    pub y1: f64,
-    pub x2: f64,
-    pub y2: f64,
-    pub offset: f64,
-    pub yoff: f64,
-    pub fsec: usize,
-    pub bsec: usize,
-    pub upper: usize,
-    pub lower: usize,
-    pub middle: usize,
-    pub flags: i64,
-    pub light_delta: i64,
-}
-
-// A linedef joined with its vertices and sectors: what collision and triggers need.
-#[derive(Clone, Copy)]
-pub struct Line {
-    pub x1: f64,
-    pub y1: f64,
-    pub x2: f64,
-    pub y2: f64,
-    pub flags: i64,
-    pub special: i64,
-    pub tag: i64,
-    pub fsec: usize,
-    pub bsec: usize,
-}
-
-// Everything static about the level and graphics, as relations.
+// Everything static about the level, its graphics and the game rules, as relations.
 pub struct Db {
     pub t: Tables,
-    pub lines: VecRel<usize, Line>,
-    pub neighbors: MultiRel<usize, usize>,
-    pub tag_sectors: MultiRel<usize, usize>,
-    pub sectors: VecRel<usize, Sector>,
-    pub vertices: VecRel<usize, (f64, f64)>,
-    pub linedefs: VecRel<usize, Linedef>,
-    pub sidedefs: VecRel<usize, Sidedef>,
-    pub segs: VecRel<usize, Seg>,
-    pub ss_segs: MultiRel<usize, usize>,
-    pub nodes: VecRel<usize, Node>,
-    pub node_children: MultiRel<usize, (usize, usize)>,
-    pub leaf_sector: MultiRel<usize, usize>,
-    pub bsp_root: usize,
-    pub things: VecRel<usize, Thing>,
-    pub tex: VecRel<usize, Tex>,
+    pub linedef: Linedef,
+    pub seg: Seg,
+    pub bsp: Bsp,
+    pub bsp_root: Id<Bsp>,
+    pub sector: Sector,
+    pub tag_sectors: HashIdx<i64, Id<Sector>>,
+    pub thing: Thing,
+    pub image: Image,
     pub texels: VecRel<usize, u16>,
     pub colormap: VecRel<usize, u8>,
     pub palette: VecRel<usize, u32>,
-    pub walls: VecRel<usize, Wall>,
-    pub sky: usize,
-    pub sky_flat: usize,
+    pub sky: Id<Image>,
+    pub sky_flat: Id<Image>,
 }
 
 impl Db {
-    // Builds the database from the parsed WAD. `sectors` holds the starting heights; live heights are in tic::State.
+    // Builds the database from the parsed WAD, filling in the derived columns.
     pub fn new(g: Game) -> Db {
-        let l = g.level;
-        let n_nodes = l.nodes.len();
-        let gfx = g.gfx;
-        // Image metadata, one row per texture/flat/sprite/HUD glyph.
-        let tex = VecRel::new(
-            (0..gfx.base.len())
-                .map(|i| Tex {
-                    base: gfx.base[i],
-                    w: gfx.width[i],
-                    h: gfx.height[i],
-                    left: gfx.left[i],
-                    top: gfx.top[i],
-                })
-                .collect(),
-        );
-        // Subsector -> its run of segs.
-        // A subsector is (first seg, count); expand lists its seg ids.
-        let ss_segs: MultiRel<usize, usize> = VecRel::<usize, (usize, usize)>::new(l.subsectors.clone())
-            .expand(|(first, n): (usize, usize)| (first, first + n))
-            .map(|(_, s): ((usize, usize), usize)| s)
-            .collect();
-        // Node -> (side, child); leaf children are numbered after the nodes.
-        let nodes: VecRel<usize, Node> = VecRel::new(l.nodes);
-        let node_children: MultiRel<usize, (usize, usize)> = (&nodes)
-            .and(Same::<usize>::new())
-            // One row per (node, side 0/1).
-            .cross(Universe::<usize>::new(2))
-            .key_by(|((_, i), _): ((Node, usize), usize)| i)
-            .map(move |((n, _), s): ((Node, usize), usize)| (s, if n.child_is_leaf[s] { n_nodes + n.child[s] } else { n.child[s] }))
-            .collect();
-        let t = tables(&gfx);
-        // First pass with placeholders; the derived tables below are filled in from it.
-        let db = Db {
-            t,
-            lines: VecRel::new(vec![]),
-            neighbors: MultiRel::from_pairs(0, []),
-            tag_sectors: MultiRel::from_pairs(0, []),
-            sectors: VecRel::new(vec![]),
-            vertices: VecRel::new(l.vertices),
-            linedefs: VecRel::new(l.linedefs),
-            sidedefs: VecRel::new(l.sidedefs),
-            segs: VecRel::new(l.segs),
-            ss_segs,
-            nodes,
-            node_children,
-            leaf_sector: MultiRel::from_pairs(0, []),
-            bsp_root: n_nodes - 1,
-            things: VecRel::new(l.things),
-            tex,
-            texels: VecRel::new(gfx.texels),
-            colormap: VecRel::new(g.colormap),
-            palette: VecRel::new(g.palette),
-            walls: VecRel::new(vec![]),
-            sky: g.sky,
-            sky_flat: g.sky_flat,
-        };
-        let db = Db { walls: db.derive_walls(), ..db };
-        let leaf_sector = db.derive_leaf_sector(n_nodes);
-        let lines = db.derive_lines();
-        // Sector -> sectors that share a two-sided line with it.
-        let neighbors = (&lines)
-            .filt(|l: Line| l.bsec != NONE)
-            .flat_map(|l: Line| [(l.fsec, l.bsec), (l.bsec, l.fsec)])
+        let t = tables(&g.sprite_names, &g.patch_names);
+        // The root is the last split node.
+        let bsp_root = Id::new((&g.bsp.x).fold_flat(0, |n: usize, _| n + 1) - 1);
+        let linedef = derive_linedef(g.linedef, &g.vertex, &g.sidedef);
+        let seg = derive_seg(g.seg, &g.vertex, &linedef, &g.sidedef);
+        // A leaf's sector: the front sector of its first seg.
+        let leaf_sector = (&g.bsp.segs).fold(Id::new(NONE), |a: Id<Seg>, s: Id<Seg>| a.min(s)).select(&seg.fsec).collect();
+        let bsp = Bsp { sector: leaf_sector, ..g.bsp };
+        // Sectors sharing a two-sided line, both ways.
+        let neighbors = (&linedef.fsec)
+            .and(&linedef.bsec)
+            .filt(|(_, b): (Id<Sector>, Id<Sector>)| b.0 != NONE)
+            .flat_map(|(f, b): (Id<Sector>, Id<Sector>)| [(f, b), (b, f)])
             .key_by(|(a, _)| a)
             .map(|(_, b)| b)
             .collect();
-        let sectors = VecRel::new(l.sectors);
+        let sector = Sector { neighbors, ..g.sector };
         // Tag -> sectors with that tag, for switches that move tagged sectors.
-        let tag_sectors = (&sectors)
-            .and(Same::<usize>::new())
-            .key_by(|(s, _): (Sector, usize)| s.tag as usize)
-            .map(|(_, id)| id)
-            .collect();
-        Db { leaf_sector, lines, neighbors, tag_sectors, sectors, ..db }
+        let tag_sectors = (&sector.tag).inv().collect();
+        Db {
+            t,
+            linedef,
+            seg,
+            bsp,
+            bsp_root,
+            sector,
+            tag_sectors,
+            thing: g.thing,
+            image: g.image,
+            texels: g.texels,
+            colormap: g.colormap,
+            palette: g.palette,
+            sky: g.sky,
+            sky_flat: g.sky_flat,
+        }
     }
+}
 
-    // Joins each seg with its linedef, vertices, and front/back sidedefs.
-    fn derive_walls(&self) -> VecRel<usize, Wall> {
-        // Each is a seg-keyed lookup; `side` 1 means the seg runs along the line's back.
-        let line = (&self.segs).map(|s: Seg| s.line).select(&self.linedefs);
-        let p1 = (&self.segs).map(|s: Seg| s.v1).select(&self.vertices);
-        let p2 = (&self.segs).map(|s: Seg| s.v2).select(&self.vertices);
-        let front = (&self.segs)
-            .and(&line)
-            .map(|(s, l)| if s.side == 0 { l.front } else { l.back })
-            .select(&self.sidedefs);
-        let back = (&self.segs)
-            .and(&line)
-            .map(|(s, l)| if s.side == 0 { l.back } else { l.front })
-            .select(&self.sidedefs)
-            .opt();
-        (&self.segs)
-            .and(&line)
-            .and(p1.and(p2))
-            .and(front.and(back))
-            .map(|(((s, l), (a, b)), (f, bk)): (((Seg, Linedef), ((f64, f64), (f64, f64))), (Sidedef, Option<Sidedef>))| Wall {
-                x1: a.0,
-                y1: a.1,
-                x2: b.0,
-                y2: b.1,
-                offset: s.offset + f.xoff,
-                yoff: f.yoff,
-                fsec: f.sector,
-                bsec: bk.map_or(NONE, |b| b.sector),
-                upper: f.upper,
-                lower: f.lower,
-                middle: f.middle,
-                flags: l.flags,
-                // Doom's fake contrast: horizontal walls darker, vertical walls lighter.
-                light_delta: if a.1 == b.1 { -1 } else if a.0 == b.0 { 1 } else { 0 },
-            })
-            .collect()
-    }
+// Missing ids become NONE so the column stays total.
+fn or_none<E: 'static>(o: Option<Id<E>>) -> Id<E> {
+    o.unwrap_or(Id::new(NONE))
+}
 
-    // Joins each linedef with its vertices and front/back sidedefs.
-    fn derive_lines(&self) -> VecRel<usize, Line> {
-        let p1 = (&self.linedefs).map(|l: Linedef| l.v1).select(&self.vertices);
-        let p2 = (&self.linedefs).map(|l: Linedef| l.v2).select(&self.vertices);
-        let front = (&self.linedefs).map(|l: Linedef| l.front).select(&self.sidedefs);
-        let back = (&self.linedefs).map(|l: Linedef| l.back).select(&self.sidedefs).opt();
-        (&self.linedefs)
-            .and(p1.and(p2))
-            .and(front.and(back))
-            .map(|((l, (a, b)), (f, bk)): ((Linedef, ((f64, f64), (f64, f64))), (Sidedef, Option<Sidedef>))| Line {
-                x1: a.0,
-                y1: a.1,
-                x2: b.0,
-                y2: b.1,
-                flags: l.flags,
-                special: l.special,
-                tag: l.tag,
-                fsec: f.sector,
-                bsec: bk.map_or(NONE, |b| b.sector),
-            })
-            .collect()
-    }
+// Linedef endpoints and the sector on each side.
+fn derive_linedef(l: Linedef, v: &Vertex, sd: &Sidedef) -> Linedef {
+    let x1 = (&l.v1).select(&v.x).collect();
+    let y1 = (&l.v1).select(&v.y).collect();
+    let x2 = (&l.v2).select(&v.x).collect();
+    let y2 = (&l.v2).select(&v.y).collect();
+    let fsec = (&l.front).select(&sd.sector).collect();
+    let bsec = (&l).and((&l.back).select(&sd.sector).opt()).map(|(_, s)| or_none(s)).collect();
+    Linedef { x1, y1, x2, y2, fsec, bsec, ..l }
+}
 
-    // BSP leaf -> sector, taken from the leaf's first seg.
-    fn derive_leaf_sector(&self, n_nodes: usize) -> MultiRel<usize, usize> {
-        let first_seg = (&self.ss_segs).fold(NONE, |a: usize, s: usize| a.min(s));
-        let sector = (&first_seg).select(&self.walls).map(|w: Wall| w.fsec);
-        // Leaf ids come after node ids (see node_children).
-        Universe::<usize>::new(self.ss_segs.n_dom())
-            .and(sector)
-            .key_by(move |(ss, _)| n_nodes + ss)
-            .map(|(_, sec)| sec)
-            .collect()
+// Seg endpoints, plus what its line and sidedefs say as seen from the seg's side.
+fn derive_seg(s: Seg, v: &Vertex, l: &Linedef, sd: &Sidedef) -> Seg {
+    // The sidedef facing this seg (side 0 = the line's front) and the one behind it.
+    let sides = (&s.side).and((&s.line).select(&l.front)).and((&s.line).select(&l.back));
+    let front: VecRel<Id<Seg>, Id<Sidedef>> = (&sides).map(|((side, f), b): ((usize, Id<Sidedef>), Id<Sidedef>)| if side == 0 { f } else { b }).collect();
+    let back: VecRel<Id<Seg>, Id<Sidedef>> = (&sides).map(|((side, f), b): ((usize, Id<Sidedef>), Id<Sidedef>)| if side == 0 { b } else { f }).collect();
+    let x1: VecRel<Id<Seg>, f64> = (&s.v1).select(&v.x).collect();
+    let y1: VecRel<Id<Seg>, f64> = (&s.v1).select(&v.y).collect();
+    let x2: VecRel<Id<Seg>, f64> = (&s.v2).select(&v.x).collect();
+    let y2: VecRel<Id<Seg>, f64> = (&s.v2).select(&v.y).collect();
+    // Doom's fake contrast: horizontal walls darker, vertical walls lighter.
+    let light_delta = (&x1)
+        .and(&y1)
+        .and(&x2)
+        .and(&y2)
+        .map(|(((x1, y1), x2), y2): (((f64, f64), f64), f64)| if y1 == y2 { -1 } else if x1 == x2 { 1 } else { 0 })
+        .collect();
+    Seg {
+        xoff: (&s.offset).and((&front).select(&sd.xoff)).map(|(o, x): (f64, f64)| o + x).collect(),
+        yoff: (&front).select(&sd.yoff).collect(),
+        fsec: (&front).select(&sd.sector).collect(),
+        bsec: (&s).and((&back).select(&sd.sector).opt()).map(|(_, b)| or_none(b)).collect(),
+        upper: (&front).select(&sd.upper).collect(),
+        middle: (&front).select(&sd.middle).collect(),
+        lower: (&front).select(&sd.lower).collect(),
+        flags: (&s.line).select(&l.flags).collect(),
+        x1,
+        y1,
+        x2,
+        y2,
+        light_delta,
+        ..s
     }
 }

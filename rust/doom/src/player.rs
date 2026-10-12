@@ -1,16 +1,17 @@
-use crate::db::{consts, Db, Info, StateRow, Weapon};
-use crate::info::{wfact, AmmoDef, ArmorClass, Consts, PickupDef, Slide, WOut, PICKUP};
-use crate::rules::bit;
-use crate::mobj::Mobj;
+use crate::db::Db;
+use crate::info::{wfact, PICKUP};
 use crate::physics::{rnd, Cand, Clip, Shot};
-use crate::wad::{Sector, NONE};
+use crate::rules::bit;
+use crate::schema::{one, rc, AmmoKind, AnimState, ArmorClass, Mobj, Player, SectorState, Slide, Weapon, C};
+use crate::wad::NONE;
 use prela::engine::*;
 use std::f64::consts::TAU;
 
+// The player's id among bodies and shooters (mobj uids start at 1).
 pub const PLAYER: usize = 0;
 
 #[derive(Clone, Copy, Default)]
-// One tic of player controls.
+// One tic of player controls, from the host.
 pub struct Input {
     pub forward: f64,
     pub strafe: f64,
@@ -22,383 +23,377 @@ pub struct Input {
     pub weapon: Option<usize>,
 }
 
-#[derive(Clone, Copy, Debug)]
-// The player's full state.
-pub struct Player {
-    pub x: f64,
-    pub y: f64,
-    pub z: f64,
-    pub ang: f64,
-    pub momx: f64,
-    pub momy: f64,
-    pub momz: f64,
-    pub sector: usize,
-    pub usedown: bool,
-    pub exited: bool,
-    pub dead: bool,
-    pub health: i32,
-    pub armor: i32,
-    pub armor_class: i32,
-    pub owned: u8,
-    pub keys: u8,
-    pub weapon: usize,
-    pub wanted: usize,
-    pub wstate: usize,
-    pub wtics: i32,
-    pub flash: usize,
-    pub flash_tics: i32,
-    pub damagecount: i32,
-    pub bonuscount: i32,
-}
-
-impl Player {
-    // A fresh player holding the starting weapon (starting ammo comes from the ammo table).
-    pub fn new(x: f64, y: f64, ang: f64, wstate: usize, k: Consts) -> Player {
-        Player {
-            x,
-            y,
-            z: 0.0,
-            ang,
-            momx: 0.0,
-            momy: 0.0,
-            momz: 0.0,
-            sector: 0,
-            usedown: false,
-            exited: false,
-            dead: false,
-            health: k.start_health,
-            armor: 0,
-            armor_class: 0,
-            owned: k.start_owned,
-            keys: 0,
-            weapon: k.start_weapon,
-            wanted: NONE,
-            wstate,
-            wtics: 1,
-            flash: 0,
-            flash_tics: 0,
-            damagecount: 0,
-            bonuscount: 0,
-        }
-    }
+// The player's row id.
+fn me(p: &Player) -> impl Drive<D = Id<Player>, R = usize> + Probe + '_ {
+    (&p.id).map(|_| PLAYER)
 }
 
 // Turns and accelerates from input, with friction; dead players just slide to a stop.
-fn thrust(p: Player, inp: Input, k: Consts) -> Player {
-    if p.dead {
-        return Player { momx: p.momx * k.friction, momy: p.momy * k.friction, ..p };
-    }
-    let ang = p.ang + inp.turn * if inp.run { k.turn_run } else { k.turn_walk } + inp.look;
-    // Forward thrust along the facing, strafe thrust 90° to the right of it.
-    let (s, c) = ang.sin_cos();
-    let speed = if inp.run { k.run_thrust } else { k.walk_thrust };
-    let fwd = inp.forward * speed;
-    let side = inp.strafe * speed * k.strafe_scale;
-    Player {
-        ang,
-        momx: (p.momx + fwd * c + side * s) * k.friction,
-        momy: (p.momy + fwd * s - side * c) * k.friction,
-        ..p
-    }
-}
-
-// Applies thrust to the player.
-pub fn moved(db: &Db, players: &VecRel<usize, Player>, inp: Input) -> VecRel<usize, Player> {
-    let k = consts(db);
-    players.map(move |p| thrust(p, inp, k)).collect()
+pub fn moved(db: &Db, p: &Player, inp: Input) -> Player {
+    let k = &db.t.k;
+    let (friction, turn_run, turn_walk, run_thrust, walk_thrust, strafe_scale) =
+        (one(&k.friction), one(&k.turn_run), one(&k.turn_walk), one(&k.run_thrust), one(&k.walk_thrust), one(&k.strafe_scale));
+    let t: VecRel<Id<Player>, (f64, f64, f64)> = (&*p.ang)
+        .and(&*p.momx)
+        .and(&*p.momy)
+        .and(&*p.dead)
+        .map(move |(((ang, momx), momy), dead): (((f64, f64), f64), bool)| {
+            if dead {
+                return (ang, momx * friction, momy * friction);
+            }
+            let ang = ang + inp.turn * if inp.run { turn_run } else { turn_walk } + inp.look;
+            // Forward thrust along the facing, strafe thrust 90° to the right of it.
+            let (s, c) = ang.sin_cos();
+            let speed = if inp.run { run_thrust } else { walk_thrust };
+            let (fwd, side) = (inp.forward * speed, inp.strafe * speed * strafe_scale);
+            (ang, (momx + fwd * c + side * s) * friction, (momy + fwd * s - side * c) * friction)
+        })
+        .collect();
+    Player { ang: rc((&t).map(|v: (f64, f64, f64)| v.0)), momx: rc((&t).map(|v: (f64, f64, f64)| v.1)), momy: rc((&t).map(|v: (f64, f64, f64)| v.2)), ..p.clone() }
 }
 
 // One candidate move per slide row (full move, x only, y only, stay); this gives wall sliding.
-pub fn cands(db: &Db, players: &VecRel<usize, Player>) -> HashIdx<(usize, usize), Cand> {
-    let k = consts(db);
-    // Key (player, slide idx); the idx becomes the candidate's preference order.
-    players
-        .cross(&db.t.slides)
-        .and(Same::<(usize, usize)>::new())
-        .map(move |((p, s), (who, idx)): ((Player, Slide), (usize, usize))| Cand {
-            who,
-            idx,
-            x: p.x + s.keep_x * p.momx,
-            y: p.y + s.keep_y * p.momy,
-            z: p.z,
-            radius: k.player_radius,
-            height: k.player_height,
-            monster: false,
-            missile: false,
-            stay: s.stay,
+pub fn cands(db: &Db, p: &Player) -> HashIdx<(usize, usize), Cand> {
+    let k = &db.t.k;
+    let (radius, height) = (one(&k.player_radius), one(&k.player_height));
+    let sl = &db.t.slide;
+    (&*p.x)
+        .and(&*p.y)
+        .and(&*p.z)
+        .and(&*p.momx)
+        .and(&*p.momy)
+        .cross((&sl.keep_x).and(&sl.keep_y).and(&sl.stay).and(Same::<Id<Slide>>::new()))
+        // The slide's id is the candidate's preference order.
+        .map(move |(((((x, y), z), momx), momy), (((kx, ky), stay), idx)) : (((((f64, f64), f64), f64), f64), (((f64, f64), bool), Id<Slide>))| {
+            (PLAYER, idx.0, x + kx * momx, y + ky * momy, z, radius, height, false, false, stay)
         })
+        .key_by(|c: Cand| (c.0, c.1))
         .collect()
 }
 
 // Takes the chosen candidate, keeps only the momentum its slide row keeps, applies gravity.
-pub fn walk(db: &Db, players: &VecRel<usize, Player>, clips: &HashIdx<usize, Clip>) -> VecRel<usize, Player> {
-    let g = consts(db).gravity;
-    players
-        .and(clips)
-        .and(clips.map(|k: Clip| k.c.idx).select(&db.t.slides))
-        .map(move |((p, k), s): ((Player, Clip), Slide)| {
+pub fn walk(db: &Db, p: &Player, clips: &HashIdx<usize, Clip>) -> Player {
+    let g = one(&db.t.k.gravity);
+    let sl = &db.t.slide;
+    let clip = || me(p).select(clips);
+    let t: VecRel<Id<Player>, (f64, f64, f64, f64, f64, f64)> = (&*p.z)
+        .and(&*p.momx)
+        .and(&*p.momy)
+        .and(&*p.momz)
+        .and(clip())
+        .and(clip().map(|c: Clip| Id::<Slide>::new(c.0.1)).select((&sl.keep_x).and(&sl.keep_y)))
+        .map(move |(((((z, momx), momy), momz), (c, floor, _, _)), (kx, ky)): (((((f64, f64), f64), f64), Clip), (f64, f64))| {
             // Fall when above the floor; snap up onto a higher floor (stairs).
-            let momz = if p.z > k.floor { p.momz - g } else { 0.0 };
-            let z = (p.z + momz).max(k.floor);
-            Player { x: k.c.x, y: k.c.y, z, momx: p.momx * s.keep_x, momy: p.momy * s.keep_y, momz: if z == k.floor { 0.0 } else { momz }, ..p }
+            let momz = if z > floor { momz - g } else { 0.0 };
+            let z = (z + momz).max(floor);
+            (c.2, c.3, z, momx * kx, momy * ky, if z == floor { 0.0 } else { momz })
         })
-        .collect()
+        .collect();
+    type T = (f64, f64, f64, f64, f64, f64);
+    Player {
+        x: rc((&t).map(|v: T| v.0)),
+        y: rc((&t).map(|v: T| v.1)),
+        z: rc((&t).map(|v: T| v.2)),
+        momx: rc((&t).map(|v: T| v.3)),
+        momy: rc((&t).map(|v: T| v.4)),
+        momz: rc((&t).map(|v: T| v.5)),
+        ..p.clone()
+    }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-// Weapon state machine node: the player's weapon fields and ammo, the state to enter next, pellets fired, steps taken.
-// `pending` = NONE means the chain has settled for this tic.
-struct Psp {
-    who: usize,
-    weapon: usize,
-    fire: bool,
-    alive: bool,
-    wstate: usize,
-    wtics: i32,
-    flash: usize,
-    flash_tics: i32,
-    ammo: i32,
-    pending: usize,
-    pellets: usize,
-    depth: u8,
-}
+// A node of the weapon state machine walk: player, weapon, fire held, alive, weapon state and
+// timer, flash state and timer, ammo count, state to enter next (NONE = settled), pellets fired, steps taken.
+type Psp = (Id<Player>, Id<Weapon>, bool, bool, Id<AnimState>, i32, Id<AnimState>, i32, i32, Id<AnimState>, usize, u8);
+// A weapon's ammo kind, ammo per shot, attack state, flash state and flash duration.
+type WeaponRow = (Id<AmmoKind>, i32, Id<AnimState>, Id<AnimState>, i32);
 
 // Facts the weapon rules match on.
-fn weapon_facts(q: Psp, w: Weapon) -> usize {
-    (bit(q.fire, wfact::FIRE) | bit(q.alive, wfact::ALIVE) | bit(q.ammo >= w.per_shot, wfact::AMMO)) as usize
+fn weapon_facts(q: Psp, per_shot: i32) -> usize {
+    (bit(q.2, wfact::FIRE) | bit(q.3, wfact::ALIVE) | bit(q.8 >= per_shot, wfact::AMMO)) as usize
 }
 
-// Enters the pending weapon state, or redirects to the attack state; firing spends ammo and starts the flash.
-fn enter(q: Psp, r: StateRow, w: Weapon, o: WOut) -> Psp {
-    let q = Psp { depth: q.depth + 1, ..q };
-    if o.redirect {
-        return Psp { pending: w.attack, ..q };
+// Enters the pending weapon state (its tics and next state), or redirects to the attack state;
+// firing spends ammo and starts the flash. `o` = the matched rule's (redirect, pellets).
+fn enter(q: Psp, (tics, next): (i32, Id<AnimState>), w: WeaponRow, (redirect, pellets): (bool, usize)) -> Psp {
+    let (who, weapon, fire, alive, wstate, wtics, flash, flash_tics, ammo, pending, fired, depth) = q;
+    let (_, per_shot, attack, wflash, wflash_tics) = w;
+    if redirect {
+        return (who, weapon, fire, alive, wstate, wtics, flash, flash_tics, ammo, attack, fired, depth + 1);
     }
-    let fires = o.pellets > 0;
-    Psp {
-        wstate: q.pending,
-        wtics: r.tics,
-        flash: if fires { w.flash } else { q.flash },
-        flash_tics: if fires { w.flash_tics } else { q.flash_tics },
-        ammo: q.ammo - w.per_shot * fires as i32,
+    let fires = pellets > 0;
+    (
+        who,
+        weapon,
+        fire,
+        alive,
+        pending,
+        tics,
+        if fires { wflash } else { flash },
+        if fires { wflash_tics } else { flash_tics },
+        ammo - per_shot * fires as i32,
         // A 0-tic state passes straight through to its next state this same tic.
-        pending: if r.tics == 0 { r.next } else { NONE },
-        pellets: q.pellets.max(o.pellets),
-        ..q
-    }
-}
-
-// Advances the muzzle flash one tic: count down, then move to the next flash state.
-fn flash_tick(db: &Db, players: &VecRel<usize, Player>) -> VecRel<usize, Player> {
-    let state = || players.map(|p: Player| p.flash).select(&db.t.states);
-    players
-        .and(state())
-        .and(state().map(|r: StateRow| r.next).select(&db.t.states))
-        .map(|((p, r), n): ((Player, StateRow), StateRow)| {
-            if p.flash == 0 {
-                p
-            } else if p.flash_tics > 1 {
-                Player { flash_tics: p.flash_tics - 1, ..p }
-            } else {
-                Player { flash: r.next, flash_tics: n.tics, ..p }
-            }
-        })
-        .collect()
+        if tics == 0 { next } else { Id::new(NONE) },
+        fired.max(pellets),
+        depth + 1,
+    )
 }
 
 // Weapon logic for this tic (switching, animation, firing); returns the updated player, ammo and bullets.
-pub fn weapon(db: &Db, players: &VecRel<usize, Player>, ammo: &VecRel<usize, i32>, inp: Input, tic: u64) -> (VecRel<usize, Player>, VecRel<usize, i32>, HashIdx<usize, Shot>) {
-    let k = consts(db);
+pub fn weapon(db: &Db, p: &Player, ammo: &C<AmmoKind, i32>, inp: Input, tic: u64) -> (Player, C<AmmoKind, i32>, HashIdx<usize, Shot>) {
+    let (k, st, wp, wr) = (&db.t.k, &db.t.state, &db.t.weapon, &db.t.weapon_rule);
+    let shot_z = one(&k.shot_z);
+    let wrow = || (&wp.ammo).and(&wp.per_shot).and(&wp.attack).and(&wp.flash).and(&wp.flash_tics).map(|((((a, s), at), f), ft): ((((Id<AmmoKind>, i32), Id<AnimState>), Id<AnimState>), i32)| (a, s, at, f, ft));
     // Weapon asked for: this tic's key, else a remembered request (or NONE).
-    let target = move |p: Player| inp.weapon.unwrap_or(p.wanted);
-    // Player with current weapon, requested weapon and current weapon state.
-    let rows = players
-        .and(players.map(|p: Player| p.weapon).select(&db.t.weapons))
-        .and(players.map(target).select(&db.t.weapons).opt())
-        .and(players.map(|p: Player| p.wstate).select(&db.t.states));
+    let target = move |wanted: Id<Weapon>| inp.weapon.map_or(wanted, Id::new);
     // A different, owned weapon was asked for; the switch happens only in the ready state.
-    let wants = move |p: Player, new: Option<Weapon>| new.is_some() && target(p) != p.weapon && p.owned & (1 << target(p)) != 0;
-    let switching = move |(((p, cur), new), _): (((Player, Weapon), Option<Weapon>), StateRow)| wants(p, new) && p.wstate == cur.ready;
+    let wants = move |cur: Id<Weapon>, wanted: Id<Weapon>, owned: u8, exists: bool| exists && target(wanted) != cur && owned & (1 << target(wanted).0) != 0;
     // Switch weapons if asked and ready, else remember the request and tick down the current state's timer.
-    // Value: (player, state to enter now or NONE).
-    let switched: VecRel<usize, (Player, usize)> = (&rows)
-        .filt(switching)
-        .flat_map(move |(((p, _), new), _): (((Player, Weapon), Option<Weapon>), StateRow)| new.map(|w| (Player { weapon: target(p), wanted: NONE, ..p }, w.ready)))
-        .union((&rows).filt(move |r| !switching(r)).map(move |(((p, _), new), row): (((Player, Weapon), Option<Weapon>), StateRow)| {
-            let wtics = p.wtics - 1;
-            let wanted = if wants(p, new) { target(p) } else { p.wanted };
-            (Player { wtics, wanted, ..p }, if wtics <= 0 { row.next } else { NONE })
-        }))
+    // Value: (weapon, wanted, wtics, state to enter now or NONE).
+    let switched: VecRel<Id<Player>, (Id<Weapon>, Id<Weapon>, i32, Id<AnimState>)> = (&*p.weapon)
+        .and(&*p.wanted)
+        .and(&*p.owned)
+        .and(&*p.wstate)
+        .and(&*p.wtics)
+        .and((&*p.weapon).select(&wp.ready))
+        .and((&*p.wanted).map(target).select(&wp.ready).opt())
+        .and((&*p.wstate).select(&st.next))
+        .map(move |(((((((cur, wanted), owned), ws), wt), cur_ready), new_ready), next): (((((((Id<Weapon>, Id<Weapon>), u8), Id<AnimState>), i32), Id<AnimState>), Option<Id<AnimState>>), Id<AnimState>)| {
+            let want = wants(cur, wanted, owned, new_ready.is_some());
+            match new_ready {
+                Some(ready) if want && ws == cur_ready => (target(wanted), Id::new(NONE), wt, ready),
+                _ => (cur, if want { target(wanted) } else { wanted }, wt - 1, if wt - 1 <= 0 { next } else { Id::new(NONE) }),
+            }
+        })
         .collect();
     // Start node: weapon fields plus the ammo count for the (possibly new) weapon.
     let start = (&switched)
-        .and((&switched).map(|(p, _): (Player, usize)| p.weapon).select(&db.t.weapons).map(|w: Weapon| w.ammo).select(ammo))
-        .and(Same::<usize>::new())
-        .map(move |(((p, pending), a), who): (((Player, usize), i32), usize)| Psp {
-            who,
-            weapon: p.weapon,
-            fire: inp.fire,
-            alive: !p.dead,
-            wstate: p.wstate,
-            wtics: p.wtics,
-            flash: p.flash,
-            flash_tics: p.flash_tics,
-            ammo: a,
-            pending,
-            pellets: 0,
-            depth: 0,
+        .and(&*p.wstate)
+        .and(&*p.flash)
+        .and(&*p.flash_tics)
+        .and(&*p.dead)
+        .and((&switched).map(|s: (Id<Weapon>, Id<Weapon>, i32, Id<AnimState>)| s.0).select(&wp.ammo).select(ammo))
+        .and(Same::<Id<Player>>::new())
+        .map(move |((((((s, ws), fl), ft), dead), a), who): (((((((Id<Weapon>, Id<Weapon>, i32, Id<AnimState>), Id<AnimState>), Id<AnimState>), i32), bool), i32), Id<Player>) | -> Psp {
+            (who, s.0, inp.fire, !dead, ws, s.2, fl, ft, a, s.3, 0, 0)
         });
     // One step: look up the pending state and weapon, pick the weapon rule, enter the state. At most 4 per tic.
     // The step relation is keyed by the Psp node itself: node -> next node.
     let node = || Same::<Psp>::new();
     let ctx = node()
-        .filt(|q: Psp| q.pending != NONE && q.depth < 4)
-        .and(node().map(|q: Psp| q.pending).select(&db.t.states))
-        .and(node().map(|q: Psp| q.weapon).select(&db.t.weapons));
+        .filt(|q: Psp| q.9.0 != NONE && q.11 < 4)
+        .and(node().map(|q: Psp| q.9).select((&st.tics).and(&st.next).and(&st.action)))
+        .and(node().map(|q: Psp| q.1).select(wrow()));
     let step = (&ctx)
-        .and((&ctx).map(|((q, r), w): ((Psp, StateRow), Weapon)| (r.action as usize, weapon_facts(q, w))).select(&db.t.weapon_choice).opt())
-        .map(|(((q, r), w), o): (((Psp, StateRow), Weapon), Option<WOut>)| enter(q, r, w, o.unwrap_or_default()));
-    // The last node of each chain.
-    let done: HashIdx<usize, Psp> = start
-        // Every node visited (node -> depth); inv makes the node the value again.
+        .and(
+            (&ctx)
+                .map(|((q, (_, a)), w): ((Psp, ((i32, Id<AnimState>), crate::info::Action)), WeaponRow)| (a as usize, weapon_facts(q, w.1)))
+                .select(&db.t.weapon_choice)
+                .select((&wr.redirect).and(&wr.pellets))
+                .opt(),
+        )
+        .map(|(((q, (r, _)), w), o): (((Psp, ((i32, Id<AnimState>), crate::info::Action)), WeaponRow), Option<(bool, usize)>)| enter(q, r, w, o.unwrap_or((false, 0))));
+    // The last node of each chain: every node visited (node -> depth), inverted back to node values.
+    let done: HashIdx<Id<Player>, Psp> = start
         .reach(&step, 4)
         .inv()
-        .filt(|q: Psp| q.pending == NONE || q.depth == 4)
-        .key_by(|q: Psp| q.who)
+        .filt(|q: Psp| q.9.0 == NONE || q.11 == 4)
+        .key_by(|q: Psp| q.0)
         .collect();
-    // Copy the weapon fields back, settling any state still pending.
-    let fired: VecRel<usize, Player> = (&switched)
+    // Weapon fields after the walk, settling any state still pending.
+    let fired: VecRel<Id<Player>, (Id<Weapon>, Id<Weapon>, Id<AnimState>, i32, Id<AnimState>, i32)> = (&switched)
         .and(&done)
-        .map(|((p, _), q): ((Player, usize), Psp)| {
-            let (wstate, wtics) = if q.pending != NONE { (q.pending, 1) } else { (q.wstate, q.wtics) };
-            Player { wstate, wtics, flash: q.flash, flash_tics: q.flash_tics, ..p }
+        .map(|((w, wanted, _, _), q): ((Id<Weapon>, Id<Weapon>, i32, Id<AnimState>), Psp)| {
+            let (wstate, wtics) = if q.9.0 != NONE { (q.9, 1) } else { (q.4, q.5) };
+            (w, wanted, wstate, wtics, q.6, q.7)
         })
         .collect();
-    let weapon_of = || (&done).map(|q: Psp| q.weapon).select(&db.t.weapons);
+    // Advance the muzzle flash one tic: count down, then move to the next flash state.
+    type F = (Id<Weapon>, Id<Weapon>, Id<AnimState>, i32, Id<AnimState>, i32);
+    let flash: VecRel<Id<Player>, (Id<AnimState>, i32)> = (&fired)
+        .and((&fired).map(|f: F| f.4).select(&st.next))
+        .and((&fired).map(|f: F| f.4).select(&st.next).select(&st.tics))
+        .map(|((f, next), next_tics): ((F, Id<AnimState>), i32)| match (f.4.0, f.5) {
+            (0, _) => (f.4, f.5),
+            (_, t) if t > 1 => (f.4, t - 1),
+            _ => (next, next_tics),
+        })
+        .collect();
     // One bullet per pellet fired, with random spread and damage.
-    let shots = (&fired)
+    let wd = (&wp.damage).and(&wp.damage_roll).and(&wp.range).and(&wp.spread_div);
+    let shots = (&*p.x)
+        .and(&*p.y)
+        .and(&*p.z)
+        .and(&*p.ang)
         .and(&done)
-        .and(weapon_of())
-        .expand(|((_, q), _): ((Player, Psp), Weapon)| (0, q.pellets))
-        .map(move |(((p, _), w), n): (((Player, Psp), Weapon), usize)| {
+        .and((&done).map(|q: Psp| q.1).select(wd))
+        .expand(|((_, q), _): (((((f64, f64), f64), f64), Psp), (((i32, i32), f64), f64)) | (0, q.10))
+        .map(move |((((((x, y), z), ang), _), (((damage, roll), range), div)), n): ((((((f64, f64), f64), f64), Psp), (((i32, i32), f64), f64)), usize)| {
             // Difference of two rolls: spread centred on zero.
-            let spread = (rnd(tic, n, 1) - rnd(tic, n, 2)) as f64 * TAU / w.spread_div;
-            Shot { id: (1 << 23) | n, from: PLAYER, x: p.x, y: p.y, z: p.z + k.shot_z, ang: p.ang + spread, range: w.range, damage: w.damage * (rnd(tic, n, 3) % w.damage_roll + 1) }
+            let spread = (rnd(tic, n, 1) - rnd(tic, n, 2)) as f64 * TAU / div;
+            ((1 << 23) | n, (PLAYER, x, y, z + shot_z, ang + spread, range, damage * (rnd(tic, n, 3) % roll + 1)))
         })
-        .key_by(|s: Shot| s.id)
+        .key_by(|(id, _)| id)
+        .map(|(_, s)| s)
         .collect();
-    // Write the spent count back to its ammo kind.
-    let spent: HashIdx<usize, i32> = (&done)
-        .and(weapon_of())
-        .key_by(|(_, w): (Psp, Weapon)| w.ammo)
-        .map(|(q, _): (Psp, Weapon)| q.ammo)
-        .collect();
-    // Replace the spent kind's count, keep the others.
-    let ammo = ammo.minus(&spent).union(&spent).collect();
-    (flash_tick(db, &fired), ammo, shots)
+    // Write the spent count back to its ammo kind; keep the other kinds.
+    let spent: HashIdx<Id<AmmoKind>, i32> = (&done).map(|q: Psp| q.1).select(&wp.ammo).and((&done).map(|q: Psp| q.8)).key_by(|(k, _)| k).map(|(_, n)| n).collect();
+    let ammo = rc((&**ammo).minus(&spent).union(&spent));
+    type W = (Id<Weapon>, Id<Weapon>, Id<AnimState>, i32, Id<AnimState>, i32);
+    let player = Player {
+        weapon: rc((&fired).map(|f: W| f.0)),
+        wanted: rc((&fired).map(|f: W| f.1)),
+        wstate: rc((&fired).map(|f: W| f.2)),
+        wtics: rc((&fired).map(|f: W| f.3)),
+        flash: rc((&flash).map(|f: (Id<AnimState>, i32)| f.0)),
+        flash_tics: rc((&flash).map(|f: (Id<AnimState>, i32)| f.1)),
+        ..p.clone()
+    };
+    (player, ammo, shots)
 }
+
+// The player fields a pickup changes: health, armor, armor class, owned weapons, wanted weapon, keys.
+type Gains = (i32, i32, Id<ArmorClass>, u8, Id<Weapon>, u8);
+// A pickup row: health, health max, armor, armor max, class set, class min, ammo kind, ammo,
+// weapon, weapon bit, key, always taken.
+type PickupRow = (i32, i32, i32, i32, i32, i32, Id<AmmoKind>, i32, Id<Weapon>, u8, u8, bool);
 
 // A pickup's effect on the player's own fields; health and armor only ever go up, toward the item's max.
-fn gain(p: Player, d: PickupDef, bonus: i32) -> Player {
-    Player {
-        health: p.health.max((p.health + d.health).min(d.health_max)),
-        armor: p.armor.max((p.armor + d.armor).min(d.armor_max)),
-        armor_class: (if d.class_set > 0 { d.class_set } else { p.armor_class }).max(d.class_min),
-        owned: p.owned | d.weapon_bit,
-        wanted: if d.weapon_bit & !p.owned != 0 { d.weapon } else { p.wanted },
-        keys: p.keys | d.key,
-        bonuscount: bonus,
-        ..p
-    }
+fn gain((health, armor, class, owned, wanted, keys): Gains, d: PickupRow) -> Gains {
+    let (dh, dh_max, da, da_max, class_set, class_min, _, _, weapon, weapon_bit, key, _) = d;
+    (
+        health.max((health + dh).min(dh_max)),
+        armor.max((armor + da).min(da_max)),
+        Id::new((if class_set > 0 { class_set as usize } else { class.0 }).max(class_min as usize)),
+        owned | weapon_bit,
+        if weapon_bit & !owned != 0 { weapon } else { wanted },
+        keys | key,
+    )
 }
 
-// Picks up touching items that do something; returns the updated player, ammo, and ids of items taken.
-pub fn pickups(
-    db: &Db,
-    players: &VecRel<usize, Player>,
-    ammo: &VecRel<usize, i32>,
-    mobjs: &HashIdx<usize, Mobj>,
-) -> (VecRel<usize, Player>, VecRel<usize, i32>, Fold<usize, bool>) {
-    let k = consts(db);
-    // Items overlapping the player, with the ammo each would add (capped).
-    let touching: HashIdx<usize, (Mobj, PickupDef, Player, i32)> = mobjs
-        // Item mobjs with their type info and pickup row, then the player.
-        .filt(|m: Mobj| m.flags & PICKUP != 0)
-        .key_by(|m: Mobj| m.kind)
-        .and(&db.t.infos)
-        .and(&db.t.pickups)
-        .key_by(|_| PLAYER)
-        .and(players)
-        // Box overlap in x/y and z.
-        .filt(move |(((m, i), _), p): (((Mobj, Info), PickupDef), Player)| {
-            !p.dead && (m.x - p.x).abs() < k.player_radius + i.radius && (m.y - p.y).abs() < k.player_radius + i.radius && m.z <= p.z + k.player_height && m.z + k.pickup_z_reach >= p.z
+// Picks up touching items that do something; returns the updated player, ammo, and uids of items taken.
+pub fn pickups(db: &Db, p: &Player, ammo: &C<AmmoKind, i32>, m: &Mobj, live: &C<Mobj, bool>) -> (Player, C<AmmoKind, i32>, Fold<usize, bool>) {
+    let (k, tt, pk, am) = (&db.t.k, &db.t.ttype, &db.t.pickup, &db.t.ammo);
+    let (pr, ph, zr, bonus) = (one(&k.player_radius), one(&k.player_height), one(&k.pickup_z_reach), one(&k.bonus_add));
+    let def = (&pk.health)
+        .and(&pk.health_max)
+        .and(&pk.armor)
+        .and(&pk.armor_max)
+        .and(&pk.class_set)
+        .and(&pk.class_min)
+        .and(&pk.ammo_kind)
+        .and(&pk.ammo)
+        .and(&pk.weapon)
+        .and(&pk.weapon_bit)
+        .and(&pk.key)
+        .and(&pk.always)
+        .map(
+            |(((((((((((h, hm), a), am), cs), cm), ak), n), w), wb), key), al): (((((((((((i32, i32), i32), i32), i32), i32), Id<AmmoKind>), i32), Id<Weapon>), u8), u8), bool)| -> PickupRow {
+                (h, hm, a, am, cs, cm, ak, n, w, wb, key, al)
+            },
+        );
+    let gains = (&*p.health)
+        .and(&*p.armor)
+        .and(&*p.armor_class)
+        .and(&*p.owned)
+        .and(&*p.wanted)
+        .and(&*p.keys)
+        .map(|(((((h, a), c), o), w), k): (((((i32, i32), Id<ArmorClass>), u8), Id<Weapon>), u8)| -> Gains { (h, a, c, o, w, k) });
+    let pos = (&*p.x).and(&*p.y).and(&*p.z).and(&*p.dead).and(gains);
+    // Items overlapping the player, with the ammo each would add (capped): (uid, pickup, player gains, more ammo).
+    let touching: HashIdx<usize, (usize, PickupRow, Gains, i32)> = (&**live)
+        .filt(|l: bool| l)
+        .and(&*m.flags)
+        .filt(|(_, f): (bool, u32)| f & PICKUP != 0)
+        .and(&*m.uid)
+        .and((&*m.x).and(&*m.y).and(&*m.z))
+        .and((&*m.kind).select(&tt.radius))
+        .and((&*m.kind).select(&tt.pickup).select(def))
+        .key_by(|_| Id::<Player>::new(0))
+        .and(pos)
+        .filt(move |((((((_, _), _), ((mx, my), mz)), r), _), ((((px, py), pz), dead), _)): ((((((bool, u32), usize), ((f64, f64), f64)), f64), PickupRow), ((((f64, f64), f64), bool), Gains))| {
+            !dead && (mx - px).abs() < pr + r && (my - py).abs() < pr + r && mz <= pz + ph && mz + zr >= pz
         })
+        .map(|((((((_, _), uid), _), _), d), (_, g)): ((((((bool, u32), usize), ((f64, f64), f64)), f64), PickupRow), ((((f64, f64), f64), bool), Gains))| (uid, d, g))
         // Join the current count and cap of the ammo kind it gives.
-        .key_by(|((_, d), _): (((Mobj, Info), PickupDef), Player)| d.ammo_kind)
-        .and(ammo.and(&db.t.ammo_defs))
-        .map(|((((m, _), d), p), (a, k)): ((((Mobj, Info), PickupDef), Player), (i32, AmmoDef))| (m, d, p, (a + d.ammo).min(k.cap) - a))
+        .key_by(|(_, d, _): (usize, PickupRow, Gains)| d.6)
+        .and((&**ammo).and(&am.cap))
+        .map(|((uid, d, g), (a, cap)): ((usize, PickupRow, Gains), (i32, i32))| (uid, d, g, (a + d.7).min(cap) - a))
         // Skip items that would change nothing (full health, full ammo), unless `always`.
-        .filt(move |(_, d, p, more): (Mobj, PickupDef, Player, i32)| {
-            let g = gain(p, d, k.bonus_add);
-            d.always || more > 0 || g.health > p.health || g.armor > p.armor
+        .filt(|(_, d, g, more): (usize, PickupRow, Gains, i32)| {
+            let n = gain(g, d);
+            d.11 || more > 0 || n.0 > g.0 || n.1 > g.1
         })
         .key_by(|_| PLAYER)
         .collect();
     // Apply the player effects in turn.
-    let gained = (&touching).fold(None, move |a: Option<Player>, (_, d, p, _): (Mobj, PickupDef, Player, i32)| Some(gain(a.unwrap_or(p), d, k.bonus_add)));
-    let applied = players.and(gained.opt()).map(|(p, g): (Player, Option<Option<Player>>)| g.flatten().unwrap_or(p)).collect();
+    let gained = (&touching).fold(None, |a: Option<Gains>, (_, d, g, _): (usize, PickupRow, Gains, i32)| Some(gain(a.unwrap_or(g), d)));
+    let applied = me(p).select(&gained).flat_map(|g: Option<Gains>| g);
+    let any = me(p).select(&gained).map(|_| bonus);
+    type G = Gains;
+    let player = Player {
+        health: rc((&*p.health).minus(&applied).union((&applied).map(|g: G| g.0))),
+        armor: rc((&*p.armor).minus(&applied).union((&applied).map(|g: G| g.1))),
+        armor_class: rc((&*p.armor_class).minus(&applied).union((&applied).map(|g: G| g.2))),
+        owned: rc((&*p.owned).minus(&applied).union((&applied).map(|g: G| g.3))),
+        wanted: rc((&*p.wanted).minus(&applied).union((&applied).map(|g: G| g.4))),
+        keys: rc((&*p.keys).minus(&applied).union((&applied).map(|g: G| g.5))),
+        bonuscount: rc((&*p.bonuscount).minus(&any).union(&any)),
+        ..p.clone()
+    };
     // Ammo added per kind, capped.
-    let added = (&touching)
-        .key_by(|(_, d, _, _): (Mobj, PickupDef, Player, i32)| d.ammo_kind)
-        .map(|(_, _, _, more): (Mobj, PickupDef, Player, i32)| more)
-        .fold(0, |a: i32, n: i32| a + n);
-    let ammo = ammo
-        .and(added.opt())
-        .and(&db.t.ammo_defs)
-        .map(|((a, n), k): ((i32, Option<i32>), AmmoDef)| (a + n.unwrap_or(0)).min(k.cap))
-        .collect();
+    let added = (&touching).key_by(|(_, d, _, _): (usize, PickupRow, Gains, i32)| d.6).map(|(_, _, _, more): (usize, PickupRow, Gains, i32)| more).fold(0, |a: i32, n: i32| a + n);
+    let ammo = rc((&**ammo).and(added.opt()).and(&am.cap).map(|((a, n), cap): ((i32, Option<i32>), i32)| (a + n.unwrap_or(0)).min(cap)));
     // Items to remove from the map.
-    let taken = (&touching).key_by(|(m, _, _, _): (Mobj, PickupDef, Player, i32)| m.id).fold(true, |_, _| true);
-    (applied, ammo, taken)
+    let taken = (&touching).key_by(|(uid, _, _, _): (usize, PickupRow, Gains, i32)| uid).fold(true, |_, _| true);
+    (player, ammo, taken)
 }
 
-// Applies damage after armor absorbs its share; sets dead at 0 health.
-pub fn hurt(p: Player, d: i32, ac: ArmorClass, cap: i32) -> Player {
-    if p.dead || d <= 0 {
+// The player fields damage changes: health, armor, armor class, dead, damagecount.
+type Hurt = (i32, i32, Id<ArmorClass>, bool, i32);
+
+// Applies damage after armor absorbs its share (num / den); sets dead at 0 health.
+fn hurt(p: Hurt, d: i32, (num, den): (i32, i32), cap: i32) -> Hurt {
+    let (health, armor, class, dead, dc) = p;
+    if dead || d <= 0 {
         return p;
     }
-    let saved = (d * ac.num / ac.den).min(p.armor);
-    let health = p.health - (d - saved);
-    Player {
-        armor: p.armor - saved,
-        armor_class: if p.armor - saved == 0 { 0 } else { p.armor_class },
-        health: health.max(0),
-        dead: health <= 0,
-        damagecount: (p.damagecount + d).min(cap),
-        ..p
-    }
+    let saved = (d * num / den).min(armor);
+    let h = health - (d - saved);
+    (h.max(0), armor - saved, if armor - saved == 0 { Id::new(0) } else { class }, h <= 0, (dc + d).min(cap))
 }
 
 // End of tic: damage, damaging floors every 32 tics, use-key latch, exit flag, screen-tint timers.
-pub fn finish(db: &Db, players: &VecRel<usize, Player>, damage: &Fold<usize, i32>, sectors: &VecRel<usize, Sector>, inp: Input, exited: bool, tic: u64) -> VecRel<usize, Player> {
-    let k = consts(db);
-    let sector = || players.map(|p: Player| p.sector).select(sectors);
-    players
-        .and(damage.opt())
-        .and(sector())
-        .and(sector().map(|s: Sector| s.special).select(&db.t.sector_damage).opt())
-        .and(players.map(|p: Player| p.armor_class as usize).select(&db.t.armor_classes))
-        .map(move |((((p, d), s), floor), ac): ((((Player, Option<i32>), Sector), Option<i32>), ArmorClass)| {
+pub fn finish(db: &Db, p: &Player, damage: &Fold<usize, i32>, s: &SectorState, inp: Input, exited: bool, tic: u64) -> Player {
+    let (k, ac) = (&db.t.k, &db.t.armor);
+    let (period, cap) = (one(&k.floor_damage_period), one(&k.damage_cap));
+    let t: VecRel<Id<Player>, (Hurt, i32)> = (&*p.health)
+        .and(&*p.armor)
+        .and(&*p.armor_class)
+        .and(&*p.dead)
+        .and(&*p.damagecount)
+        .and(&*p.bonuscount)
+        .and(&*p.z)
+        .and(me(p).select(damage).opt())
+        .and((&*p.sector).select(&*s.floor))
+        .and((&*p.sector).select(&db.sector.special).select(&db.t.sector_damage).opt())
+        .and((&*p.armor_class).select((&ac.num).and(&ac.den)))
+        .map(move |((((((((((h, a), c), dead), dc), bc), z), d), floor), fd), armor_frac): ((((((((((i32, i32), Id<ArmorClass>), bool), i32), i32), f64), Option<i32>), f64), Option<i32>), (i32, i32))| {
             // Floor damage only on the period tick and only when standing on the floor.
-            let floor = if tic % k.floor_damage_period == 0 && p.z <= s.floor { floor.unwrap_or(0) } else { 0 };
-            let p = hurt(p, d.unwrap_or(0) + floor, ac, k.damage_cap);
-            Player {
-                usedown: inp.use_,
-                exited: p.exited || exited,
-                damagecount: (p.damagecount - 1).max(0),
-                bonuscount: (p.bonuscount - 1).max(0),
-                ..p
-            }
+            let fd = if tic % period == 0 && z <= floor { fd.unwrap_or(0) } else { 0 };
+            let (h, a, c, dead, dc) = hurt((h, a, c, dead, dc), d.unwrap_or(0) + fd, armor_frac, cap);
+            ((h, a, c, dead, (dc - 1).max(0)), (bc - 1).max(0))
         })
-        .collect()
+        .collect();
+    type T = (Hurt, i32);
+    Player {
+        health: rc((&t).map(|v: T| v.0.0)),
+        armor: rc((&t).map(|v: T| v.0.1)),
+        armor_class: rc((&t).map(|v: T| v.0.2)),
+        dead: rc((&t).map(|v: T| v.0.3)),
+        damagecount: rc((&t).map(|v: T| v.0.4)),
+        bonuscount: rc((&t).map(|v: T| v.1)),
+        usedown: rc((&p.id).map(move |_| inp.use_)),
+        exited: rc((&*p.exited).map(move |e: bool| e || exited)),
+        ..p.clone()
+    }
 }

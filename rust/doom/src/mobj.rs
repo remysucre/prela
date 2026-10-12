@@ -1,409 +1,493 @@
-use crate::db::{consts, Db, Info, StateRow};
-use crate::info::{fact, Action, AiOut, Attack, ChaseDir, Consts, ATK_BALL, ATK_HITSCAN, ATK_MELEE, ATK_NONE, NO_ATTACK, HANGING, KEEP, MISSILE, MONSTER, NOGRAV, SHOOTABLE, SOLID};
-use crate::rules::{bit, matching};
+use crate::db::Db;
+use crate::info::{fact, Action, ATK_BALL, ATK_HITSCAN, ATK_MELEE, ATK_NONE, G_NONE, HANGING, MISSILE, MONSTER, NOGRAV, SHOOTABLE, SOLID};
 use crate::physics::{locate, rnd, Body, Cand, Clip, Impact, Shot, Sight};
-use crate::player::{Player, PLAYER};
-use crate::wad::{Sector, Thing, MTF_MEDIUM, MTF_MULTI, NONE};
+use crate::player::PLAYER;
+use crate::rules::{bit, matching};
+use crate::schema::{eff, one, rc, AiRule, AnimState, Mobj, Player, Sector, SectorState, Thing, ThingType, C};
+use crate::wad::{MTF_MEDIUM, MTF_MULTI, NONE};
 use prela::engine::*;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
-#[derive(Clone, Copy, Debug)]
-// A live map object (monster, item, decoration, projectile, effect) and its per-tic state.
-pub struct Mobj {
-    pub id: usize,
-    pub kind: usize,
-    pub x: f64,
-    pub y: f64,
-    pub z: f64,
-    pub ang: f64,
-    pub momx: f64,
-    pub momy: f64,
-    pub state: usize,
-    pub tics: i32,
-    pub health: i32,
-    pub flags: u32,
-    pub awake: bool,
-    pub reaction: i32,
-    pub sector: usize,
-    pub source: usize,
+// A request to create a mobj: uid, type, x, y, z, angle, speed, source uid (keyed by uid).
+pub type Spawn = (usize, Id<ThingType>, f64, f64, f64, f64, f64, usize);
+
+// What each mobj decided this tic, beside its updated columns. Columns cover every id;
+// `live` marks the mobjs still in play.
+#[derive(Clone)]
+pub struct Plan {
+    pub m: Mobj,
+    pub live: C<Mobj, bool>,
+    // State asked for this tic (NONE = none), re-applied whenever rules run.
+    pub goto: C<Mobj, Id<AnimState>>,
+    // Direction to walk this tic.
+    pub go: C<Mobj, Option<f64>>,
+    // Attack this tic: kind (ATK_*), bullets, damage mult * (1..=modulo).
+    pub atk: C<Mobj, u8>,
+    pub pellets: C<Mobj, usize>,
+    pub mult: C<Mobj, i32>,
+    pub modulo: C<Mobj, i32>,
+    pub explode: C<Mobj, bool>,
+    // uid a projectile hit (NONE = none).
+    pub hit: C<Mobj, usize>,
 }
 
-#[derive(Clone, Copy, Debug)]
-// A request to create a new mobj.
-pub struct Spawn {
-    pub id: usize,
-    pub kind: usize,
-    pub x: f64,
-    pub y: f64,
-    pub z: f64,
-    pub ang: f64,
-    pub speed: f64,
-    pub source: usize,
+// Ids of live mobjs.
+fn alive(live: &C<Mobj, bool>) -> impl Drive<D = Id<Mobj>, R = bool> + Probe + '_ {
+    (&**live).filt(|l: bool| l)
 }
 
-// Turns spawn requests into mobjs in their type's spawn state.
-pub fn spawn<Q: Drive<R = Spawn>>(db: &Db, reqs: Q) -> HashIdx<usize, Mobj> {
-    let reaction = consts(db).reaction;
-    // Request -> its type info -> that type's spawn state (for the starting tic count).
-    reqs.key_by(|s: Spawn| s.kind)
-        .and(&db.t.infos)
-        .key_by(|(_, i): (Spawn, Info)| i.spawn)
-        .and(&db.t.states)
-        .map(|((s, i), r): ((Spawn, Info), StateRow)| Mobj {
-            id: s.id,
-            kind: s.kind,
-            x: s.x,
-            y: s.y,
-            z: s.z,
-            ang: s.ang,
-            momx: s.speed * s.ang.cos(),
-            momy: s.speed * s.ang.sin(),
-            state: i.spawn,
-            tics: r.tics,
-            health: i.health,
-            flags: i.flags,
-            awake: false,
-            reaction,
-            sector: NONE,
-            source: s.source,
-        })
-        .key_by(|m: Mobj| m.id)
-        .collect()
+// A constant column over the mobjs.
+fn fill<T: Copy + 'static>(m: &Mobj, v: T) -> C<Mobj, T> {
+    rc((&m.id).map(move |_| v))
 }
 
-// Spawns the map's THINGS that appear on this skill level and aren't multiplayer-only.
-pub fn spawn_things(db: &Db, sectors: &VecRel<usize, Sector>) -> HashIdx<usize, Mobj> {
-    let reqs = (&db.things)
+// Replace some rows of a column.
+fn upd<T: Copy + 'static, Q: Drive<D = Id<Mobj>, R = T> + Probe>(old: &C<Mobj, T>, new: Q) -> C<Mobj, T> {
+    rc((&**old).minus(&new).union(&new))
+}
+
+// One column of the next tic's mobjs: kept rows (old id -> uid) carry their value, spawned
+// rows bring theirs (by uid), and `rank` gives every uid its new id.
+fn carry<T: Copy + 'static, Q: Drive<D = usize, R = T>>(kept: &HashIdx<Id<Mobj>, usize>, rank: &HashIdx<usize, Id<Mobj>>, old: &C<Mobj, T>, new: Q) -> C<Mobj, T> {
+    rc(kept.and(&**old).key_by(|(u, _)| u).map(|(_, v)| v).union(new).and(rank).key_by(|(_, i)| i).map(|(v, _)| v))
+}
+
+// The next tic's mobjs: kept rows of `m` plus new spawns, each placed in its sector at its
+// floor (or ceiling, or flying height), renumbered 0..n in uid order. Mobjs outside the map drop out.
+fn assemble(db: &Db, s: &SectorState, m: Option<&Mobj>, keep: &HashIdx<Id<Mobj>, bool>, spawns: &HashIdx<usize, Spawn>) -> Mobj {
+    let (tt, st) = (&db.t.ttype, &db.t.state);
+    let reaction = one(&db.t.k.reaction);
+    let none = Mobj {
+        id: Universe::new(0),
+        uid: rc(VecRel::<Id<Mobj>, usize>::new(vec![])),
+        kind: rc(VecRel::<Id<Mobj>, Id<ThingType>>::new(vec![])),
+        x: rc(VecRel::<Id<Mobj>, f64>::new(vec![])),
+        y: rc(VecRel::<Id<Mobj>, f64>::new(vec![])),
+        z: rc(VecRel::<Id<Mobj>, f64>::new(vec![])),
+        ang: rc(VecRel::<Id<Mobj>, f64>::new(vec![])),
+        momx: rc(VecRel::<Id<Mobj>, f64>::new(vec![])),
+        momy: rc(VecRel::<Id<Mobj>, f64>::new(vec![])),
+        state: rc(VecRel::<Id<Mobj>, Id<AnimState>>::new(vec![])),
+        tics: rc(VecRel::<Id<Mobj>, i32>::new(vec![])),
+        health: rc(VecRel::<Id<Mobj>, i32>::new(vec![])),
+        flags: rc(VecRel::<Id<Mobj>, u32>::new(vec![])),
+        awake: rc(VecRel::<Id<Mobj>, bool>::new(vec![])),
+        reaction: rc(VecRel::<Id<Mobj>, i32>::new(vec![])),
+        sector: rc(VecRel::<Id<Mobj>, Id<Sector>>::new(vec![])),
+        source: rc(VecRel::<Id<Mobj>, usize>::new(vec![])),
+    };
+    let m = m.unwrap_or(&none);
+    // Kept rows: old id -> uid.
+    let kept: HashIdx<Id<Mobj>, usize> = keep.and(&*m.uid).map(|(_, u)| u).collect();
+    // Spawned columns, by uid.
+    let sp = |f: fn(Spawn) -> f64| spawns.map(f);
+    let kind = || spawns.map(|s: Spawn| s.1);
+    // Where each row is, by uid, then its sector.
+    let pts: HashIdx<usize, (f64, f64)> = (&kept).and((&*m.x).and(&*m.y)).key_by(|(u, _)| u).map(|(_, p)| p).union(spawns.map(|s: Spawn| (s.2, s.3))).collect();
+    let sector: HashIdx<usize, Id<Sector>> = locate(db, &pts).collect();
+    // Every placed uid gets its rank in uid order as its new id.
+    let rank: HashIdx<usize, Id<Mobj>> = (&sector)
         .and(Same::<usize>::new())
-        .filt(|(t, _): (Thing, usize)| t.flags & MTF_MEDIUM != 0 && t.flags & MTF_MULTI == 0)
+        .key_by(|_| 0usize)
+        .window_rows(row_number, |(_, u): (Id<Sector>, usize)| u, |a: &usize, b: &usize| a.cmp(b))
+        .map(|((_, u), n): ((Id<Sector>, usize), i64)| (u, Id::<Mobj>::new(n as usize - 1)))
+        .key_by(|(u, _)| u)
+        .map(|(_, i)| i)
+        .collect();
+    let n = (&rank).fold_flat(0, |n: usize, _| n + 1);
+    let flags = carry(&kept, &rank, &m.flags, kind().select(&tt.flags));
+    let kinds = carry(&kept, &rank, &m.kind, kind());
+    let z = carry(&kept, &rank, &m.z, sp(|s| s.4));
+    let sector = rc((&sector).and(&rank).key_by(|(_, i)| i).map(|(s, _)| s));
+    // Floor for walkers, ceiling for hanging things, unchanged for flyers.
+    let z = rc((&*z)
+        .and(&*flags)
+        .and((&*kinds).select(&tt.height))
+        .and((&*sector).select((&*s.floor).and(&*s.ceil)))
+        .map(|(((z, f), h), (floor, ceil)): (((f64, u32), f64), (f64, f64))| if f & (MISSILE | NOGRAV) != 0 { z } else if f & HANGING != 0 { ceil - h } else { floor }));
+    let spawn_state = || kind().select(&tt.spawn);
+    Mobj {
+        id: Universe::new(n),
+        uid: carry(&kept, &rank, &m.uid, spawns.map(|s: Spawn| s.0)),
+        x: carry(&kept, &rank, &m.x, sp(|s| s.2)),
+        y: carry(&kept, &rank, &m.y, sp(|s| s.3)),
+        ang: carry(&kept, &rank, &m.ang, sp(|s| s.5)),
+        momx: carry(&kept, &rank, &m.momx, sp(|s| s.6 * s.5.cos())),
+        momy: carry(&kept, &rank, &m.momy, sp(|s| s.6 * s.5.sin())),
+        state: carry(&kept, &rank, &m.state, spawn_state()),
+        tics: carry(&kept, &rank, &m.tics, spawn_state().select(&st.tics)),
+        health: carry(&kept, &rank, &m.health, kind().select(&tt.health)),
+        awake: carry(&kept, &rank, &m.awake, spawns.map(|_| false)),
+        reaction: carry(&kept, &rank, &m.reaction, spawns.map(move |_| reaction)),
+        source: carry(&kept, &rank, &m.source, spawns.map(|s: Spawn| s.7)),
+        kind: kinds,
+        flags,
+        z,
+        sector,
+    }
+}
+
+// The map's THINGS that appear on this skill level and aren't multiplayer-only, as mobjs.
+pub fn spawn_things(db: &Db, s: &SectorState) -> Mobj {
+    let th = &db.thing;
+    let reqs: HashIdx<usize, Spawn> = (&th.flags)
+        .filt(|f: i64| f & MTF_MEDIUM != 0 && f & MTF_MULTI == 0)
+        .and((&th.x).and(&th.y).and(&th.angle))
         // Editor number -> thing type; unknown numbers drop out here.
-        .key_by(|(t, _): (Thing, usize)| t.kind)
-        .and(&db.t.ednum_info)
-        .map(|((t, i), kind): ((Thing, usize), usize)| Spawn {
-            id: i + 1,
-            kind,
-            x: t.x,
-            y: t.y,
-            z: 0.0,
-            ang: t.angle.to_radians(),
-            speed: 0.0,
-            source: NONE,
-        });
-    relocate(db, sectors, &spawn(db, reqs))
+        .and((&th.kind).select(&db.t.ednum_type))
+        .and(Same::<Id<Thing>>::new())
+        .map(|(((_, ((x, y), a)), kind), t): (((i64, ((f64, f64), f64)), Id<ThingType>), Id<Thing>)| (t.0 + 1, kind, x, y, 0.0, a.to_radians(), 0.0, NONE))
+        .key_by(|s: Spawn| s.0)
+        .collect();
+    assemble(db, s, None, &HashIdx { idx: Default::default() }, &reqs)
 }
 
-// Finds each mobj's sector and sets its z (floor, ceiling for hanging things, unchanged for flyers).
-pub fn relocate(db: &Db, sectors: &VecRel<usize, Sector>, mobjs: &HashIdx<usize, Mobj>) -> HashIdx<usize, Mobj> {
-    let pts: HashIdx<usize, (f64, f64)> = mobjs.map(|m: Mobj| (m.x, m.y)).collect();
-    // mobj id -> (sector, sector id) -> + mobj -> + type info.
-    locate(db, &pts)
-        .select(sectors.and(Same::<usize>::new()))
-        .and(mobjs)
-        .key_by(|(_, m): ((Sector, usize), Mobj)| m.kind)
-        .and(&db.t.infos)
-        .map(|(((s, sec), m), i): (((Sector, usize), Mobj), Info)| {
-            let z = if m.flags & (MISSILE | NOGRAV) != 0 {
-                m.z
-            } else if m.flags & HANGING != 0 {
-                s.ceil - i.height
-            } else {
-                s.floor
-            };
-            Mobj { z, sector: sec, ..m }
-        })
-        .key_by(|m: Mobj| m.id)
-        .collect()
-}
-
-// Collision/hit boxes for solid or shootable mobjs, plus the player.
-pub fn bodies(db: &Db, players: &VecRel<usize, Player>, mobjs: &HashIdx<usize, Mobj>) -> HashIdx<usize, Body> {
-    let k = consts(db);
-    mobjs
-        .filt(|m: Mobj| m.flags & (SOLID | SHOOTABLE) != 0)
-        .key_by(|m: Mobj| m.kind)
-        .and(&db.t.infos)
-        .map(|(m, i): (Mobj, Info)| Body {
-            id: m.id,
-            x: m.x,
-            y: m.y,
-            z: m.z,
-            radius: i.radius,
-            height: i.height,
-            solid: m.flags & SOLID != 0,
-            shootable: m.flags & SHOOTABLE != 0,
-        })
-        .key_by(|b: Body| b.id)
+// Collision/hit boxes for live solid or shootable mobjs, plus the player.
+pub fn bodies(db: &Db, p: &Player, m: &Mobj, live: &C<Mobj, bool>) -> HashIdx<usize, Body> {
+    let (k, tt) = (&db.t.k, &db.t.ttype);
+    let (pr, ph) = (one(&k.player_radius), one(&k.player_height));
+    alive(live)
+        .and(&*m.flags)
+        .filt(|(_, f): (bool, u32)| f & (SOLID | SHOOTABLE) != 0)
+        .and((&*m.uid).and(&*m.x).and(&*m.y).and(&*m.z))
+        .and((&*m.kind).select((&tt.radius).and(&tt.height)))
+        .map(|(((_, f), (((u, x), y), z)), (r, h)): (((bool, u32), (((usize, f64), f64), f64)), (f64, f64))| (u, x, y, z, r, h, f & SOLID != 0, f & SHOOTABLE != 0))
+        .key_by(|b: Body| b.0)
         .union(
-            players
-                .map(move |p: Player| Body { id: PLAYER, x: p.x, y: p.y, z: p.z, radius: k.player_radius, height: k.player_height, solid: !p.dead, shootable: !p.dead })
-                .key_by(|b: Body| b.id),
+            (&*p.x)
+                .and(&*p.y)
+                .and(&*p.z)
+                .and(&*p.dead)
+                .map(move |(((x, y), z), dead): (((f64, f64), f64), bool)| (PLAYER, x, y, z, pr, ph, !dead, !dead))
+                .key_by(|b: Body| b.0),
         )
         .collect()
 }
 
-// Counts down each mobj's state timer, steps to the next state when it runs out, and returns that state's action.
-pub fn advance(db: &Db, mobjs: &HashIdx<usize, Mobj>) -> HashIdx<usize, (Mobj, Action)> {
-    mobjs
-        .key_by(|m: Mobj| m.state)
-        .and(&db.t.states)
-        // -1 tics = stay forever; otherwise count down, and at 1 take the next state.
-        .map(|(m, r): (Mobj, StateRow)| match m.tics {
-            -1 => (m, NONE),
-            t if t > 1 => (Mobj { tics: t - 1, ..m }, NONE),
-            _ => (m, r.next),
+// Counts down each mobj's state timer and steps to the next state when it runs out.
+// Returns the updated mobjs, the action of any state just entered, and which mobjs are still live
+// (state 0 = gone).
+pub fn advance(db: &Db, m: &Mobj) -> (Mobj, C<Mobj, Action>, C<Mobj, bool>) {
+    let st = &db.t.state;
+    // -1 tics = stay forever; otherwise count down, and at 1 take the next state.
+    let next = || (&*m.tics).and((&*m.state).select(&st.next)).map(|(t, n): (i32, Id<AnimState>)| if t == -1 || t > 1 { Id::new(NONE) } else { n });
+    let t: VecRel<Id<Mobj>, (Id<AnimState>, i32, Action)> = (&*m.state)
+        .and(&*m.tics)
+        .and(next())
+        .and(next().select((&st.tics).and(&st.action)).opt())
+        .map(|(((s, t), n), e): (((Id<AnimState>, i32), Id<AnimState>), Option<(i32, Action)>)| match e {
+            Some((nt, a)) => (n, nt, a),
+            None => (s, if t > 1 { t - 1 } else { t }, Action::None),
         })
-        // Enter the next state (NONE finds no row and keeps the mobj as is).
-        .key_by(|(_, next)| next)
-        .and((&db.t.states).opt())
-        .map(|((m, next), r): ((Mobj, usize), Option<StateRow>)| match r {
-            Some(r) => (Mobj { state: next, tics: r.tics, ..m }, r.action),
-            None => (m, Action::None),
-        })
-        // State 0 (NULL) means the mobj is gone (finished puffs, etc.).
-        .filt(|(m, _): (Mobj, Action)| m.state != 0)
-        .key_by(|(m, _): (Mobj, Action)| m.id)
-        .collect()
+        .collect();
+    type T = (Id<AnimState>, i32, Action);
+    let m = Mobj { state: rc((&t).map(|v: T| v.0)), tics: rc((&t).map(|v: T| v.1)), ..m.clone() };
+    (m, rc((&t).map(|v: T| v.2)), rc((&t).map(|v: T| v.0.0 != 0)))
 }
 
 // Eye-to-eye segments from each looking/chasing monster to the player, for the line-of-sight check.
-pub fn sight_pairs(db: &Db, advanced: &HashIdx<usize, (Mobj, Action)>, players: &VecRel<usize, Player>) -> HashIdx<usize, Sight> {
-    let z = consts(db).sight_z;
-    advanced
-        .filt(|(_, a): (Mobj, Action)| matches!(a, Action::Look | Action::Chase))
-        .key_by(|_| PLAYER)
-        .and(players)
-        .map(move |((m, _), p): ((Mobj, Action), Player)| (m.id, ((m.x, m.y, m.z + z), (p.x, p.y, p.z + z))))
+pub fn sight_pairs(db: &Db, m: &Mobj, action: &C<Mobj, Action>, live: &C<Mobj, bool>, p: &Player) -> HashIdx<Id<Mobj>, Sight> {
+    let z = one(&db.t.k.sight_z);
+    let pp = (&*p.x).and(&*p.y).and(&*p.z);
+    alive(live)
+        .and(&**action)
+        .filt(|(_, a): (bool, Action)| matches!(a, Action::Look | Action::Chase))
+        .and((&*m.x).and(&*m.y).and(&*m.z))
+        .and(Same::<Id<Mobj>>::new())
+        .key_by(|_| Id::<Player>::new(0))
+        .and(pp)
+        .map(move |(((_, ((mx, my), mz)), id), ((px, py), pz)) : ((((bool, Action), ((f64, f64), f64)), Id<Mobj>), ((f64, f64), f64))| (id, ((mx, my, mz + z), (px, py, pz + z))))
         .key_by(|(id, _)| id)
         .map(|(_, s)| s)
         .collect()
 }
 
-#[derive(Clone, Copy, Debug)]
-// A mobj plus what it decided this tic: state to jump to, direction to walk, attack, explosion, projectile hit.
-pub struct Decision {
-    pub m: Mobj,
-    pub goto: usize,
-    pub go: Option<f64>,
-    pub attack: Attack,
-    pub explode: bool,
-    pub hit: usize,
-}
-
-// A decision that changes nothing.
-fn idle(m: Mobj) -> Decision {
-    Decision { m, goto: NONE, go: None, attack: NO_ATTACK, explode: false, hit: NONE }
-}
-
-// Angle from the mobj to the player.
-fn face(m: Mobj, p: Player) -> f64 {
-    (p.y - m.y).atan2(p.x - m.x)
+// Angle from (x, y) to (px, py).
+fn face(x: f64, y: f64, px: f64, py: f64) -> f64 {
+    (py - y).atan2(px - x)
 }
 
 // Packs the conditions the AI rules test (sees player, in range, random roll...) into a bitmask.
-fn ai_facts(m: Mobj, i: Info, p: Player, sees: bool, heard: bool, tic: u64, k: Consts) -> u32 {
+// m = (uid, x, y, ang, reaction); i = (has melee, has missile); p = (x, y, dead).
+#[allow(clippy::too_many_arguments)]
+fn ai_facts((uid, x, y, ang, reaction): (usize, f64, f64, f64, i32), (melee, missile): (bool, bool), (px, py, dead): (f64, f64, bool), sees: bool, heard: bool, tic: u64, (close, mrange, near, no_melee, far): (f64, f64, f64, f64, f64)) -> u32 {
     use fact::*;
-    let dist = (p.x - m.x).hypot(p.y - m.y);
+    let dist = (px - x).hypot(py - y);
     // Player within 90° of the monster's facing.
-    let ahead = ((face(m, p) - m.ang + PI).rem_euclid(TAU) - PI).abs() <= FRAC_PI_2;
+    let ahead = ((face(x, y, px, py) - ang + PI).rem_euclid(TAU) - PI).abs() <= FRAC_PI_2;
     // Missile odds: the farther away, the higher the roll must be (vanilla P_CheckMissileRange).
-    let d = (dist - k.missile_near - k.missile_no_melee * (i.melee == 0) as i32 as f64).clamp(0.0, k.missile_far);
-    bit(p.dead, DEAD)
+    let d = (dist - near - no_melee * (!melee) as i32 as f64).clamp(0.0, far);
+    bit(dead, DEAD)
         | bit(sees, SEES)
         | bit(heard, HEARD)
         | bit(ahead, AHEAD)
-        | bit(dist < k.close_range, CLOSE)
-        | bit(dist < k.melee_range, MELEE_RANGE)
-        | bit(i.melee != 0, HAS_MELEE)
-        | bit(i.missile != 0, HAS_MISSILE)
-        | bit(m.reaction <= 1, REACTION0)
-        | bit(rnd(tic, m.id, 1) as f64 >= d, ROLL)
+        | bit(dist < close, CLOSE)
+        | bit(dist < mrange, MELEE_RANGE)
+        | bit(melee, HAS_MELEE)
+        | bit(missile, HAS_MISSILE)
+        | bit(reaction <= 1, REACTION0)
+        | bit(rnd(tic, uid, 1) as f64 >= d, ROLL)
 }
 
-#[derive(Clone, Copy)]
-// Working row for rule matching: the decision so far plus inputs the chosen rule may use.
-struct Ctx {
-    d: Decision,
-    face: f64,
-    damage: i32,
-    clip: Option<Clip>,
-    hit: Option<usize>,
-}
+// The mobj fields rules change: x, y, ang, reaction, flags, momx, momy, health, awake.
+type Body9 = (f64, f64, f64, i32, u32, f64, f64, i32, bool);
+// The decision fields: goto, go, attack (kind, pellets, mult, modulo), explode, hit.
+type Dec = (Id<AnimState>, Option<f64>, (u8, usize, i32, i32), bool, usize);
+// Extra inputs a rule may use: facing toward the target, damage taken, the chosen move, the body hit.
+type Ctx = (f64, i32, Option<(f64, f64)>, Option<usize>);
+// A rule's outputs: wake, reaction, attack, effects (eff::* bits).
+type Out = (i8, i32, (u8, usize, i32, i32), u32);
 
-// Starts a Ctx from a decision with no extra inputs.
-fn ctx(d: Decision) -> Ctx {
-    Ctx { d, face: d.m.ang, damage: 0, clip: None, hit: None }
-}
+const NO_ATTACK: (u8, usize, i32, i32) = (ATK_NONE, 0, 0, 1);
+const KEEP: Out = (0, -1, NO_ATTACK, 0);
 
-// Applies a chosen rule's output to the mobj and its decision.
-fn apply(c: Ctx, o: AiOut, goto: Option<usize>) -> Decision {
-    let (d, m) = (c.d, c.d.m);
-    // Each output field either sets, keeps, or adjusts the matching mobj field.
-    let (x, y) = c.clip.filter(|_| o.to_clip).map_or((m.x, m.y), |k| (k.c.x, k.c.y));
-    let ang = if o.face { c.face } else if o.face_move { (y - m.y).atan2(x - m.x) } else { m.ang };
-    let reaction = if o.reaction >= 0 { o.reaction } else { (m.reaction - o.reaction_dec as i32).max(0) };
+// Applies a chosen rule's output to the mobj and its decision; `goto` = the rule's target state, if any.
+fn apply(m: Body9, d: Dec, (face, damage, clip, hit): Ctx, (awake_o, reaction_o, attack_o, e): Out, goto: Option<Id<AnimState>>) -> (Body9, Dec) {
+    let (x0, y0, ang, reaction, flags, momx, momy, health, awake) = m;
+    let on = |b: u32| e & b != 0;
+    let (x, y) = clip.filter(|_| on(eff::TO_CLIP)).unwrap_or((x0, y0));
+    let ang = if on(eff::FACE) { face } else if on(eff::FACE_MOVE) { (y - y0).atan2(x - x0) } else { ang };
+    let reaction = if reaction_o >= 0 { reaction_o } else { (reaction - on(eff::REACTION_DEC) as i32).max(0) };
     // A stopped missile loses MISSILE and gains NOGRAV so it explodes in place.
-    let cleared = SOLID * o.clear_solid as u32 | SHOOTABLE * o.clear_shootable as u32 | MISSILE * o.stop as u32;
-    let flags = m.flags & !cleared | NOGRAV * o.stop as u32;
-    let (momx, momy) = if o.stop { (0.0, 0.0) } else { (m.momx, m.momy) };
-    let m = Mobj { x, y, ang, reaction, flags, momx, momy, health: m.health - c.damage, awake: if o.awake == 0 { m.awake } else { o.awake > 0 }, ..m };
-    Decision {
-        m,
-        goto: goto.unwrap_or(d.goto),
-        go: if o.reset { None } else if o.go { Some(c.face) } else { d.go },
-        attack: if o.reset { NO_ATTACK } else if o.attack.kind == ATK_NONE { d.attack } else { o.attack },
-        explode: !o.reset && (d.explode || o.explode),
-        hit: if o.stop { c.hit.unwrap_or(NONE) } else { d.hit },
+    let cleared = SOLID * on(eff::CLEAR_SOLID) as u32 | SHOOTABLE * on(eff::CLEAR_SHOOTABLE) as u32 | MISSILE * on(eff::STOP) as u32;
+    let flags = flags & !cleared | NOGRAV * on(eff::STOP) as u32;
+    let (momx, momy) = if on(eff::STOP) { (0.0, 0.0) } else { (momx, momy) };
+    let awake = if awake_o == 0 { awake } else { awake_o > 0 };
+    let (goto_d, go, attack, explode, hit_d) = d;
+    let reset = on(eff::RESET);
+    (
+        (x, y, ang, reaction, flags, momx, momy, health - damage, awake),
+        (
+            goto.unwrap_or(goto_d),
+            if reset { None } else if on(eff::GO) { Some(face) } else { go },
+            if reset { NO_ATTACK } else if attack_o.0 == ATK_NONE { attack } else { attack_o },
+            !reset && (explode || on(eff::EXPLODE)),
+            if on(eff::STOP) { hit.unwrap_or(NONE) } else { hit_d },
+        ),
+    )
+}
+
+// Picks the best matching AI rule for each row (key, facts), applies it with the row's context,
+// and enters any state it jumps to. Rows not listed keep their values.
+fn run_rules(db: &Db, plan: &Plan, rows: &HashIdx<Id<Mobj>, (usize, u32)>, ctx: &HashIdx<Id<Mobj>, Ctx>) -> Plan {
+    let (m, r, st) = (&plan.m, &db.t.ai_rule, &db.t.state);
+    // Best rule per mobj, looked up by key and fact bits.
+    let chosen: HashIdx<Id<Mobj>, Id<AiRule>> =
+        matching(rows.and(Same::<Id<Mobj>>::new()).map(|((k, f), id)| (id, k, f)), r, &db.t.ai_by_key, |id: Id<Mobj>| id).map(|(_, rule)| rule).collect();
+    let out = (&chosen)
+        .select((&r.awake).and(&r.reaction).and((&r.attack).and(&r.pellets).and(&r.mult).and(&r.modulo)).and(&r.effects))
+        .map(|(((a, re), (((k, p), mu), mo)), e): (((i8, i32), (((u8, usize), i32), i32)), u32)| -> Out { (a, re, (k, p, mu, mo), e) });
+    // The rule's goto label -> this type's state (e.g. SEE -> TROO_RUN).
+    let goto = (&*m.kind).and((&chosen).select(&r.goto).opt()).map(|(k, l): (Id<ThingType>, Option<u8>)| (k, l.unwrap_or(G_NONE))).select(&db.t.goto).opt();
+    let body = (&*m.x)
+        .and(&*m.y)
+        .and(&*m.ang)
+        .and(&*m.reaction)
+        .and(&*m.flags)
+        .and(&*m.momx)
+        .and(&*m.momy)
+        .and(&*m.health)
+        .and(&*m.awake)
+        .map(|((((((((x, y), a), r), f), mx), my), h), aw): ((((((((f64, f64), f64), i32), u32), f64), f64), i32), bool)| -> Body9 { (x, y, a, r, f, mx, my, h, aw) });
+    let dec = (&*plan.goto)
+        .and(&*plan.go)
+        .and((&*plan.atk).and(&*plan.pellets).and(&*plan.mult).and(&*plan.modulo))
+        .and(&*plan.explode)
+        .and(&*plan.hit)
+        .map(|((((g, go), (((k, p), mu), mo)), ex), h): ((((Id<AnimState>, Option<f64>), (((u8, usize), i32), i32)), bool), usize)| -> Dec { (g, go, (k, p, mu, mo), ex, h) });
+    let applied: HashIdx<Id<Mobj>, (Body9, Dec)> = rows
+        .and(body)
+        .and(dec)
+        .and(ctx)
+        .and(out.opt())
+        .and(goto)
+        .map(|(((((_, b), d), c), o), g): (((((( usize, u32), Body9), Dec), Ctx), Option<Out>), Option<Id<AnimState>>)| apply(b, d, c, o.unwrap_or(KEEP), g))
+        .collect();
+    // Enter the requested state, restarting its timer.
+    let entered = (&applied).map(|(_, d): (Body9, Dec)| d.0).and((&applied).map(|(_, d): (Body9, Dec)| d.0).select(&st.tics));
+    let b = |f: fn((Body9, Dec)) -> f64| (&applied).map(f);
+    Plan {
+        m: Mobj {
+            x: upd(&m.x, b(|v| v.0.0)),
+            y: upd(&m.y, b(|v| v.0.1)),
+            ang: upd(&m.ang, b(|v| v.0.2)),
+            reaction: upd(&m.reaction, (&applied).map(|v: (Body9, Dec)| v.0.3)),
+            flags: upd(&m.flags, (&applied).map(|v: (Body9, Dec)| v.0.4)),
+            momx: upd(&m.momx, b(|v| v.0.5)),
+            momy: upd(&m.momy, b(|v| v.0.6)),
+            health: upd(&m.health, (&applied).map(|v: (Body9, Dec)| v.0.7)),
+            awake: upd(&m.awake, (&applied).map(|v: (Body9, Dec)| v.0.8)),
+            state: upd(&m.state, (&entered).map(|(s, _): (Id<AnimState>, i32)| s)),
+            tics: upd(&m.tics, (&entered).map(|(_, t): (Id<AnimState>, i32)| t)),
+            ..m.clone()
+        },
+        goto: upd(&plan.goto, (&applied).map(|v: (Body9, Dec)| v.1.0)),
+        go: upd(&plan.go, (&applied).map(|v: (Body9, Dec)| v.1.1)),
+        atk: upd(&plan.atk, (&applied).map(|v: (Body9, Dec)| v.1.2.0)),
+        pellets: upd(&plan.pellets, (&applied).map(|v: (Body9, Dec)| v.1.2.1)),
+        mult: upd(&plan.mult, (&applied).map(|v: (Body9, Dec)| v.1.2.2)),
+        modulo: upd(&plan.modulo, (&applied).map(|v: (Body9, Dec)| v.1.2.3)),
+        explode: upd(&plan.explode, (&applied).map(|v: (Body9, Dec)| v.1.3)),
+        hit: upd(&plan.hit, (&applied).map(|v: (Body9, Dec)| v.1.4)),
+        live: plan.live.clone(),
     }
 }
 
-// Picks the best matching AI rule per mobj, applies it, and resolves its state jump.
-fn run_rules<Q: Drive<R = (Ctx, usize, u32)>>(db: &Db, rows: Q) -> HashIdx<usize, Decision> {
-    let rows: HashIdx<usize, (Ctx, usize, u32)> = rows.key_by(|(c, _, _): (Ctx, usize, u32)| c.d.m.id).collect();
-    // Best rule per mobj, looked up by action and fact bits.
-    let chosen = matching(&rows, &db.t.ai_rules, |c: Ctx| c.d.m.id);
-    // Apply it (KEEP if none matched) and look up the target state for this mobj type.
-    let applied = (&rows)
-        .and(chosen.opt())
-        .map(|((c, _, _), o): ((Ctx, usize, u32), Option<(Ctx, AiOut)>)| (c, o.map_or(KEEP, |(_, o)| o)))
-        // Goto label -> this type's state (e.g. SEE -> TROO_RUN).
-        .key_by(|(c, o): (Ctx, AiOut)| (c.d.m.kind, o.goto))
-        .and((&db.t.info_goto).opt())
-        .map(|((c, o), g): ((Ctx, AiOut), Option<usize>)| apply(c, o, g));
-    goto(db, applied)
-}
-
 // Monster AI for this tic: look for the player, chase, choose attacks.
-pub fn think(
-    db: &Db,
-    advanced: &HashIdx<usize, (Mobj, Action)>,
-    visible: &HashIdx<usize, Sight>,
-    heard: &HashIdx<usize, bool>,
-    players: &VecRel<usize, Player>,
-    tic: u64,
-) -> HashIdx<usize, Decision> {
-    let k = consts(db);
-    // Join each mobj with its sight/hearing result, type info and the player, then compute its fact bits.
-    let rows = advanced
-        // Some(..) = sees the player.
-        .and(visible.opt())
-        // Some(..) = its sector heard a shot.
-        .key_by(|((m, _), _): ((Mobj, Action), Option<Sight>)| m.sector)
-        .and(heard.opt())
-        .key_by(|(((m, _), _), _): (((Mobj, Action), Option<Sight>), Option<bool>)| m.kind)
-        .and(&db.t.infos)
-        .key_by(|_| PLAYER)
-        .and(players)
-        .map(move |(((((m, a), s), h), i), p): (((((Mobj, Action), Option<Sight>), Option<bool>), Info), Player)| {
-            (Ctx { face: face(m, p), ..ctx(idle(m)) }, a as usize, ai_facts(m, i, p, s.is_some(), h.is_some(), tic, k))
-        });
-    run_rules(db, rows)
-}
-
-// Puts decisions that requested a state jump into that state.
-pub fn goto<Q: Drive<R = Decision>>(db: &Db, decided: Q) -> HashIdx<usize, Decision> {
-    decided
-        .key_by(|d: Decision| d.goto)
-        .and((&db.t.states).opt())
-        .map(|(d, r): (Decision, Option<StateRow>)| match r {
-            Some(r) => Decision { m: Mobj { state: d.goto, tics: r.tics, ..d.m }, ..d },
-            None => d,
-        })
-        .key_by(|d: Decision| d.m.id)
-        .collect()
+#[allow(clippy::too_many_arguments)]
+pub fn think(db: &Db, m: &Mobj, action: &C<Mobj, Action>, live: &C<Mobj, bool>, seen: &HashIdx<Id<Mobj>, Sight>, s: &SectorState, p: &Player, tic: u64) -> Plan {
+    let (k, tt) = (&db.t.k, &db.t.ttype);
+    let ranges = (one(&k.close_range), one(&k.melee_range), one(&k.missile_near), one(&k.missile_no_melee), one(&k.missile_far));
+    let plan = Plan {
+        live: live.clone(),
+        goto: fill(m, Id::new(NONE)),
+        go: fill(m, None),
+        atk: fill(m, ATK_NONE),
+        pellets: fill(m, 0),
+        mult: fill(m, 0),
+        modulo: fill(m, 1),
+        explode: fill(m, false),
+        hit: fill(m, NONE),
+        m: m.clone(),
+    };
+    let pp = (&*p.x).and(&*p.y).and(&*p.dead);
+    // Each live mobj with its action, sight and hearing, type, and the player: (facts, facing toward the player).
+    let t: HashIdx<Id<Mobj>, ((usize, u32), Ctx)> = alive(live)
+        .and(&**action)
+        .and((&*m.uid).and(&*m.x).and(&*m.y).and(&*m.ang).and(&*m.reaction))
+        .and(seen.opt())
+        .and((&*m.sector).select(&*s.heard))
+        .and((&*m.kind).select((&tt.melee).and(&tt.missile)))
+        .and(Same::<Id<Mobj>>::new())
+        .key_by(|_| Id::<Player>::new(0))
+        .and(pp)
+        .map(
+            move |(((((((_, a), ((((uid, x), y), ang), re)), sees), heard), (melee, missile)), id), ((px, py), dead)) : (
+                ((((((bool, Action), ((((usize, f64), f64), f64), i32)), Option<Sight>), bool), (Id<AnimState>, Id<AnimState>)), Id<Mobj>),
+                ((f64, f64), bool),
+            )| {
+                let facts = ai_facts((uid, x, y, ang, re), (melee.0 != 0, missile.0 != 0), (px, py, dead), sees.is_some(), heard, tic, ranges);
+                (id, ((a as usize, facts), (face(x, y, px, py), 0, None, None)))
+            },
+        )
+        .key_by(|(id, _)| id)
+        .map(|(_, v)| v)
+        .collect();
+    let rows: HashIdx<Id<Mobj>, (usize, u32)> = (&t).map(|(r, _): ((usize, u32), Ctx)| r).collect();
+    let ctx: HashIdx<Id<Mobj>, Ctx> = (&t).map(|(_, c): ((usize, u32), Ctx)| c).collect();
+    run_rules(db, &plan, &rows, &ctx)
 }
 
 // Candidate positions: one per chase direction (the last is stay put), or a projectile's next step.
-pub fn move_cands(db: &Db, decided: &HashIdx<usize, Decision>) -> HashIdx<(usize, usize), Cand> {
-    let base = |m: Mobj, i: Info| Cand { who: m.id, idx: 0, x: m.x, y: m.y, z: m.z, radius: i.radius, height: i.height, monster: m.flags & MONSTER != 0, missile: false, stay: false };
-    let infos = || decided.key_by(|d: Decision| d.m.kind).and(&db.t.infos);
+pub fn move_cands(db: &Db, plan: &Plan) -> HashIdx<(usize, usize), Cand> {
+    let (m, tt, cd) = (&plan.m, &db.t.ttype, &db.t.chase);
+    let base = || alive(&plan.live).and((&*m.uid).and(&*m.x).and(&*m.y).and(&*m.z).and(&*m.flags)).and((&*m.kind).select((&tt.radius).and(&tt.height).and(&tt.speed)));
+    type B = ((bool, ((((usize, f64), f64), f64), u32)), ((f64, f64), f64));
     // Walkers: one candidate per chase direction, idx = preference order.
-    let chase = infos()
-        .flat_map(|(d, i): (Decision, Info)| d.go.map(|a| (d.m, i, a)))
-        .key_by(|(m, _, _): (Mobj, Info, f64)| m.id)
-        .cross(&db.t.chase_dirs)
-        .and(Same::<(usize, usize)>::new())
-        .map(move |(((m, i, a), c), (_, idx)): (((Mobj, Info, f64), ChaseDir), (usize, usize))| Cand {
-            idx,
-            x: m.x + c.step * i.speed * (a + c.turn).cos(),
-            y: m.y + c.step * i.speed * (a + c.turn).sin(),
-            stay: c.stay,
-            ..base(m, i)
+    let chase = base()
+        .and(&*plan.go)
+        .flat_map(|(b, go): (B, Option<f64>)| go.map(|a| (b, a)))
+        .cross((&cd.turn).and(&cd.step).and(&cd.stay).and(Same::<Id<crate::schema::ChaseDir>>::new()))
+        .map(|((((_, ((((u, x), y), z), f)), ((r, h), speed)), a), (((turn, step), stay), idx)): ((B, f64), (((f64, f64), bool), Id<crate::schema::ChaseDir>))| -> Cand {
+            (u, idx.0, x + step * speed * (a + turn).cos(), y + step * speed * (a + turn).sin(), z, r, h, f & MONSTER != 0, false, stay)
         });
     // Flying missiles: a single candidate one momentum step ahead.
-    let fly = infos()
-        .filt(|(d, _): (Decision, Info)| d.m.flags & MISSILE != 0 && (d.m.momx != 0.0 || d.m.momy != 0.0))
-        .map(move |(d, i): (Decision, Info)| Cand { x: d.m.x + d.m.momx, y: d.m.y + d.m.momy, missile: true, ..base(d.m, i) });
-    chase.key_by(|c: Cand| (c.who, c.idx)).union(fly.key_by(|c: Cand| (c.who, c.idx))).collect()
+    let fly = base()
+        .and((&*m.momx).and(&*m.momy))
+        .filt(|(((_, (_, f)), _), (mx, my)): (B, (f64, f64))| f & MISSILE != 0 && (mx != 0.0 || my != 0.0))
+        .map(|(((_, ((((u, x), y), z), f)), ((r, h), _)), (mx, my)): (B, (f64, f64))| -> Cand { (u, 0, x + mx, y + my, z, r, h, f & MONSTER != 0, true, false) });
+    chase.key_by(|c: Cand| (c.0, c.1)).union(fly.key_by(|c: Cand| (c.0, c.1))).collect()
 }
 
 // Applies collision results: moves monsters and projectiles, detonates projectiles that hit something.
-pub fn apply_moves(db: &Db, decided: &HashIdx<usize, Decision>, clips: &HashIdx<usize, Clip>, bodies: &HashIdx<usize, Body>) -> HashIdx<usize, Decision> {
-    let k = consts(db);
+pub fn apply_moves(db: &Db, plan: &Plan, clips: &HashIdx<usize, Clip>, bodies: &HashIdx<usize, Body>) -> Plan {
     use fact::*;
-    // Projectiles whose next step overlaps a shootable body.
-    let hits = decided
-        .filt(|d: Decision| d.m.flags & MISSILE != 0 && (d.m.momx != 0.0 || d.m.momy != 0.0))
+    let k = &db.t.k;
+    let (reach, zreach) = (one(&k.missile_reach), one(&k.missile_z_reach));
+    let m = &plan.m;
+    let flying = || alive(&plan.live).and(&*m.flags).and((&*m.momx).and(&*m.momy)).map(|((_, f), (mx, my)): ((bool, u32), (f64, f64))| f & MISSILE != 0 && (mx != 0.0 || my != 0.0));
+    // Projectiles whose next step overlaps a shootable body: missile -> uid of one body hit.
+    let hits = flying()
+        .filt(|f: bool| f)
+        .and((&*m.uid).and(&*m.source).and(&*m.x).and(&*m.y).and(&*m.z).and((&*m.momx).and(&*m.momy)))
+        .and(Same::<Id<Mobj>>::new())
         .cross(bodies)
-        .filt(move |(d, b): (Decision, Body)| {
-            let m = d.m;
-            b.shootable && b.id != m.source && b.id != m.id && (m.x + m.momx - b.x).abs() < b.radius + k.missile_reach && (m.y + m.momy - b.y).abs() < b.radius + k.missile_reach && m.z <= b.z + b.height && m.z + k.missile_z_reach >= b.z
+        .filt(move |(((_, (((((u, src), x), y), z), (mx, my))), _), (id, bx, by, bz, br, bh, _, shootable)): (((bool, (((((usize, usize), f64), f64), f64), (f64, f64))), Id<Mobj>), Body)| {
+            shootable && id != src && id != u && (x + mx - bx).abs() < br + reach && (y + my - by).abs() < br + reach && z <= bz + bh && z + zreach >= bz
         })
-        // Missile id -> one body it hit.
-        .key_by(|(d, _): (Decision, Body)| d.m.id)
-        .fold(NONE, |_, (_, b): (Decision, Body)| b.id);
+        .key_by(|((_, me), _): (((bool, (((((usize, usize), f64), f64), f64), (f64, f64))), Id<Mobj>), Body)| me)
+        .map(|(_, b): (((bool, (((((usize, usize), f64), f64), f64), (f64, f64))), Id<Mobj>), Body)| b.0)
+        .fold(NONE, |_, b: usize| b);
+    let clip = || (&*m.uid).select(clips);
     // Fact bits for the Move rules: flying, found a clear spot, hit, wants to walk, stayed put.
-    let rows = decided.and(clips.opt()).and(hits.opt()).map(|((d, k), hit): ((Decision, Option<Clip>), Option<usize>)| {
-        let m = d.m;
-        let facts = bit(m.flags & MISSILE != 0 && (m.momx != 0.0 || m.momy != 0.0), FLYING)
-            | bit(k.is_some(), CLIP_OK)
-            | bit(hit.is_some(), HIT)
-            | bit(d.go.is_some(), GO)
-            | bit(k.is_some_and(|k| k.c.stay), STAY);
-        (Ctx { clip: k, hit, ..ctx(d) }, Action::Move as usize, facts)
-    });
-    run_rules(db, rows)
+    let t: HashIdx<Id<Mobj>, ((usize, u32), Ctx)> = flying()
+        .and(clip().opt())
+        .and(hits.opt())
+        .and(&*plan.go)
+        .and(&*m.ang)
+        .and(Same::<Id<Mobj>>::new())
+        .map(|(((((fly, c), hit), go), ang), id): (((((bool, Option<Clip>), Option<usize>), Option<f64>), f64), Id<Mobj>)| {
+            let facts = bit(fly, FLYING) | bit(c.is_some(), CLIP_OK) | bit(hit.is_some(), HIT) | bit(go.is_some(), GO) | bit(c.is_some_and(|c| c.0.9), STAY);
+            (id, ((Action::Move as usize, facts), (ang, 0, c.map(|c| (c.0.2, c.0.3)), hit)))
+        })
+        .key_by(|(id, _)| id)
+        .map(|(_, v)| v)
+        .collect();
+    let rows: HashIdx<Id<Mobj>, (usize, u32)> = (&t).map(|(r, _): ((usize, u32), Ctx)| r).collect();
+    let ctx: HashIdx<Id<Mobj>, Ctx> = (&t).map(|(_, c): ((usize, u32), Ctx)| c).collect();
+    run_rules(db, plan, &rows, &ctx)
 }
 
-// Hitscan bullets fired by monsters this tic, with random spread and damage.
-pub fn monster_shots(db: &Db, decided: &HashIdx<usize, Decision>, tic: u64) -> HashIdx<usize, Shot> {
-    let k = consts(db);
-    decided
-        .filt(|d: Decision| d.attack.kind == ATK_HITSCAN)
-        .expand(|d: Decision| (0, d.attack.pellets))
-        .map(move |(d, n): (Decision, usize)| {
-            let (m, a) = (d.m, d.attack);
-            let spread = (rnd(tic, m.id, 20 + n as u64) - rnd(tic, m.id, 40 + n as u64)) as f64 * TAU / k.hitscan_spread_div;
-            Shot { id: m.id * 8 + n, from: m.id, x: m.x, y: m.y, z: m.z + k.shot_z, ang: m.ang + spread, range: k.attack_range, damage: a.mult * (rnd(tic, m.id, 60 + n as u64) % a.modulo + 1) }
+// Hitscan bullets fired by monsters this tic, with random spread and damage (keyed by shot id).
+pub fn monster_shots(db: &Db, plan: &Plan, tic: u64) -> HashIdx<usize, Shot> {
+    let k = &db.t.k;
+    let (div, range, shot_z) = (one(&k.hitscan_spread_div), one(&k.attack_range), one(&k.shot_z));
+    let m = &plan.m;
+    alive(&plan.live)
+        .and(&*plan.atk)
+        .filt(|(_, a): (bool, u8)| a == ATK_HITSCAN)
+        .and((&*plan.pellets).and(&*plan.mult).and(&*plan.modulo))
+        .and((&*m.uid).and(&*m.x).and(&*m.y).and(&*m.z).and(&*m.ang))
+        .expand(|((_, ((p, _), _)), _): (((bool, u8), ((usize, i32), i32)), ((((usize, f64), f64), f64), f64))| (0, p))
+        .map(move |(((_, ((_, mult), modulo)), ((((u, x), y), z), ang)), n): ((((bool, u8), ((usize, i32), i32)), ((((usize, f64), f64), f64), f64)), usize)| {
+            let spread = (rnd(tic, u, 20 + n as u64) - rnd(tic, u, 40 + n as u64)) as f64 * TAU / div;
+            (u * 8 + n, (u, x, y, z + shot_z, ang + spread, range, mult * (rnd(tic, u, 60 + n as u64) % modulo + 1)))
         })
-        .key_by(|s: Shot| s.id)
+        .key_by(|(id, _)| id)
+        .map(|(_, s)| s)
         .collect()
 }
 
-// Total damage per target this tic from bullets, melee, projectile hits and explosions.
-pub fn damage(db: &Db, impacts: &HashIdx<usize, Impact>, decided: &HashIdx<usize, Decision>, bodies: &HashIdx<usize, Body>, tic: u64) -> Fold<usize, i32> {
+// Total damage per target uid this tic from bullets, melee, projectile hits and explosions.
+pub fn damage(db: &Db, impacts: &HashIdx<usize, Impact>, plan: &Plan, bodies: &HashIdx<usize, Body>, tic: u64) -> Fold<usize, i32> {
+    let (m, tt) = (&plan.m, &db.t.ttype);
+    let r = one(&db.t.k.blast_radius);
     // Bullets that hit a body.
-    let shots = impacts.filt(|i: Impact| i.target != NONE).map(|i: Impact| (i.target, i.shot.damage)).key_by(|(t, _)| t);
+    let shots = impacts.filt(|i: Impact| i.1 != NONE).map(|i: Impact| (i.1, i.5)).key_by(|(t, _)| t);
     // Monster melee attacks (always on the player).
-    let melee = decided
-        .filt(|d: Decision| d.attack.kind == ATK_MELEE)
-        .map(move |d: Decision| (PLAYER, d.attack.mult * (rnd(tic, d.m.id, 2) % d.attack.modulo + 1)))
+    let melee = alive(&plan.live)
+        .and(&*plan.atk)
+        .filt(|(_, a): (bool, u8)| a == ATK_MELEE)
+        .and((&*plan.mult).and(&*plan.modulo).and(&*m.uid))
+        .map(move |(_, ((mult, modulo), u)): ((bool, u8), ((i32, i32), usize))| (PLAYER, mult * (rnd(tic, u, 2) % modulo + 1)))
         .key_by(|(t, _)| t);
     // Projectile direct hits.
-    let missiles = decided
-        .filt(|d: Decision| d.hit != NONE)
-        .key_by(|d: Decision| d.m.kind)
-        .and(&db.t.infos)
-        .map(move |(d, i): (Decision, Info)| (d.hit, i.damage * (rnd(tic, d.m.id, 9) % 8 + 1)))
+    let missiles = alive(&plan.live)
+        .and(&*plan.hit)
+        .filt(|(_, h): (bool, usize)| h != NONE)
+        .and((&*m.uid).and((&*m.kind).select(&tt.damage)))
+        .map(move |((_, h), (u, d)): ((bool, usize), (usize, i32))| (h, d * (rnd(tic, u, 9) % 8 + 1)))
         .key_by(|(t, _)| t);
     // Explosion splash, falling off with distance up to the blast radius.
-    let r = consts(db).blast_radius;
-    let blast = decided
-        .filt(|d: Decision| d.explode)
+    let blast = alive(&plan.live)
+        .and(&*plan.explode)
+        .filt(|(_, e): (bool, bool)| e)
+        .and((&*m.uid).and(&*m.x).and(&*m.y))
         .cross(bodies)
-        .flat_map(move |(d, b): (Decision, Body)| {
+        .flat_map(move |((_, ((u, x), y)), (id, bx, by, _, br, _, _, shootable)): (((bool, bool), ((usize, f64), f64)), Body)| {
             // Box distance (max of |dx|, |dy|) to the body's edge, as in vanilla.
-            let dist = ((d.m.x - b.x).abs().max((d.m.y - b.y).abs()) - b.radius).max(0.0);
-            (b.shootable && b.id != d.m.id && dist < r).then_some((b.id, (r - dist) as i32))
+            let dist = ((x - bx).abs().max((y - by).abs()) - br).max(0.0);
+            (shootable && id != u && dist < r).then_some((id, (r - dist) as i32))
         })
         .key_by(|(t, _)| t);
     // Sum per target.
@@ -411,87 +495,75 @@ pub fn damage(db: &Db, impacts: &HashIdx<usize, Impact>, decided: &HashIdx<usize
 }
 
 // Applies damage to mobjs and runs the Hurt rules (die, pain, wake up).
-pub fn wound(db: &Db, decided: &HashIdx<usize, Decision>, dmg: &Fold<usize, i32>, tic: u64) -> HashIdx<usize, Decision> {
+pub fn wound(db: &Db, plan: &Plan, dmg: &Fold<usize, i32>, tic: u64) -> Plan {
     use fact::*;
-    let hurt = decided
-        .and(dmg)
-        .filt(|(d, h): (Decision, i32)| h > 0 && d.m.flags & SHOOTABLE != 0 && d.m.health > 0)
-        .key_by(|(d, _): (Decision, i32)| d.m.kind)
-        .and(&db.t.infos)
-        .map(move |((d, h), i): ((Decision, i32), Info)| {
-            let m = d.m;
-            let facts = bit(m.health - h <= 0, KILLED) | bit(rnd(tic, m.id, 77) < i.painchance, PAIN_ROLL) | bit(!m.awake, ASLEEP) | bit(i.see != 0, HAS_SEE);
-            (Ctx { damage: h, ..ctx(d) }, Action::Hurt as usize, facts)
-        });
-    let hurt = run_rules(db, hurt);
-    // Replace hurt mobjs, keep the rest.
-    decided.minus(&hurt).union(&hurt).collect()
+    let (m, tt) = (&plan.m, &db.t.ttype);
+    let t: HashIdx<Id<Mobj>, ((usize, u32), Ctx)> = alive(&plan.live)
+        .and((&*m.uid).select(dmg))
+        .and((&*m.flags).and(&*m.health).and(&*m.uid).and(&*m.awake).and(&*m.ang))
+        .filt(|((_, h), ((((f, health), _), _), _)): ((bool, i32), ((((u32, i32), usize), bool), f64))| h > 0 && f & SHOOTABLE != 0 && health > 0)
+        .and((&*m.kind).select((&tt.painchance).and(&tt.see)))
+        .and(Same::<Id<Mobj>>::new())
+        .map(move |((((_, h), ((((_, health), u), awake), ang)), (pain, see)), id): ((((bool, i32), ((((u32, i32), usize), bool), f64)), (i32, Id<AnimState>)), Id<Mobj>)| {
+            let facts = bit(health - h <= 0, KILLED) | bit(rnd(tic, u, 77) < pain, PAIN_ROLL) | bit(!awake, ASLEEP) | bit(see.0 != 0, HAS_SEE);
+            (id, ((Action::Hurt as usize, facts), (ang, h, None, None)))
+        })
+        .key_by(|(id, _)| id)
+        .map(|(_, v)| v)
+        .collect();
+    let rows: HashIdx<Id<Mobj>, (usize, u32)> = (&t).map(|(r, _): ((usize, u32), Ctx)| r).collect();
+    let ctx: HashIdx<Id<Mobj>, Ctx> = (&t).map(|(_, c): ((usize, u32), Ctx)| c).collect();
+    run_rules(db, plan, &rows, &ctx)
 }
 
-// Spawns items dropped by monsters that died this tic.
-pub fn drops(db: &Db, before: &HashIdx<usize, Decision>, after: &HashIdx<usize, Decision>, tic: u64) -> HashIdx<usize, Mobj> {
-    // Fresh ids for this tic's spawns (see the id scheme in the guide).
+// Items dropped by monsters that died this tic.
+pub fn drops(db: &Db, before: &Plan, after: &Plan, tic: u64) -> HashIdx<usize, Spawn> {
     let base = (tic as usize + 1) << 24;
-    // Alive before wounding, dead after.
-    let reqs = before
-        .filt(|d: Decision| d.m.health > 0)
-        .key_by(|d: Decision| d.m.id)
-        .and(after)
-        .filt(|(_, a): (Decision, Decision)| a.m.health <= 0)
-        .key_by(|(d, _): (Decision, Decision)| d.m.kind)
-        .and(&db.t.infos)
-        .filt(|(_, i): ((Decision, Decision), Info)| i.drop != NONE)
-        .map(move |((d, _), i): ((Decision, Decision), Info)| Spawn {
-            id: base + (1 << 21) + d.m.id,
-            kind: i.drop,
-            x: d.m.x,
-            y: d.m.y,
-            z: d.m.z,
-            ang: 0.0,
-            speed: 0.0,
-            source: NONE,
-        });
-    spawn(db, reqs)
+    let (b, a) = (&before.m, &after.m);
+    alive(&before.live)
+        .and((&*b.health).and(&*a.health))
+        .filt(|(_, (hb, ha)): (bool, (i32, i32))| hb > 0 && ha <= 0)
+        .and((&*b.kind).select(&db.t.ttype.drop))
+        .filt(|(_, d): ((bool, (i32, i32)), Id<ThingType>)| d.0 != NONE)
+        .and((&*b.uid).and(&*b.x).and(&*b.y).and(&*b.z))
+        .map(move |((_, kind), (((u, x), y), z)): (((bool, (i32, i32)), Id<ThingType>), (((usize, f64), f64), f64))| -> Spawn { (base + (1 << 21) + u, kind, x, y, z, 0.0, 0.0, NONE) })
+        .key_by(|s: Spawn| s.0)
+        .collect()
 }
 
-// Spawns bullet puffs/blood at impacts and imp fireballs.
-pub fn effects(db: &Db, impacts: &HashIdx<usize, Impact>, decided: &HashIdx<usize, Decision>, players: &VecRel<usize, Player>, tic: u64) -> HashIdx<usize, Mobj> {
+// Bullet puffs and blood at impacts, and imp fireballs.
+pub fn effects(db: &Db, impacts: &HashIdx<usize, Impact>, plan: &Plan, p: &Player, tic: u64) -> HashIdx<usize, Spawn> {
     let base = (tic as usize + 1) << 24;
     let (puff, blood, ball) = (db.t.puff, db.t.blood, db.t.ball);
-    let shot_z = consts(db).shot_z;
+    let shot_z = one(&db.t.k.shot_z);
+    let speed = (&db.t.ttype.speed).get(ball).unwrap_or(0.0);
+    let m = &plan.m;
     // Puff on walls, blood on bodies.
-    let puffs = impacts.map(move |i: Impact| Spawn {
-        id: base + i.shot.id,
-        kind: if i.target == NONE { puff } else { blood },
-        x: i.x,
-        y: i.y,
-        z: i.z,
-        ang: 0.0,
-        speed: 0.0,
-        source: NONE,
-    });
+    let puffs = impacts
+        .and(Same::<usize>::new())
+        .map(move |((_, target, x, y, z, _), id): (Impact, usize)| -> Spawn { (base + id, if target == NONE { puff } else { blood }, x, y, z, 0.0, 0.0, NONE) });
     // Imp fireballs aimed at the player.
-    let balls = decided
-        .filt(|d: Decision| d.attack.kind == ATK_BALL)
-        .key_by(|_| PLAYER)
-        .and(players)
-        .key_by(move |_| ball)
-        .and(&db.t.infos)
-        .map(move |((d, p), i): ((Decision, Player), Info)| Spawn {
-            id: base + (1 << 22) + d.m.id,
-            kind: ball,
-            x: d.m.x,
-            y: d.m.y,
-            z: d.m.z + shot_z,
-            ang: (p.y - d.m.y).atan2(p.x - d.m.x),
-            speed: i.speed,
-            source: d.m.id,
+    let balls = alive(&plan.live)
+        .and(&*plan.atk)
+        .filt(|(_, a): (bool, u8)| a == ATK_BALL)
+        .and((&*m.uid).and(&*m.x).and(&*m.y).and(&*m.z))
+        .key_by(|_| Id::<Player>::new(0))
+        .and((&*p.x).and(&*p.y))
+        .map(move |((_, (((u, x), y), z)), (px, py)): (((bool, u8), (((usize, f64), f64), f64)), (f64, f64))| -> Spawn {
+            (base + (1 << 22) + u, ball, x, y, z + shot_z, (py - y).atan2(px - x), speed, u)
         });
-    // Same key on both sides so they can be unioned.
-    spawn(db, puffs.key_by(|_| 0usize).union(balls.key_by(|_| 0usize)))
+    puffs.key_by(|s: Spawn| s.0).union(balls.key_by(|s: Spawn| s.0)).collect()
 }
 
 // Next tic's mobjs: removed and picked-up ones dropped, new drops and effects added.
-pub fn survivors(decided: &HashIdx<usize, Decision>, taken: &Fold<usize, bool>, dropped: &HashIdx<usize, Mobj>, effects: &HashIdx<usize, Mobj>) -> HashIdx<usize, Mobj> {
-    decided.map(|d: Decision| d.m).filt(|m: Mobj| m.state != 0).minus(taken).union(dropped).union(effects).collect()
+pub fn survivors(db: &Db, s: &SectorState, plan: &Plan, taken: &Fold<usize, bool>, spawns: &HashIdx<usize, Spawn>) -> Mobj {
+    let m = &plan.m;
+    let keep: HashIdx<Id<Mobj>, bool> = alive(&plan.live)
+        .and(&*m.state)
+        .filt(|(_, st): (bool, Id<AnimState>)| st.0 != 0)
+        .and((&*m.uid).select(taken).opt())
+        .filt(|(_, t): ((bool, Id<AnimState>), Option<bool>)| t.is_none())
+        .map(|_| true)
+        .collect();
+    assemble(db, s, Some(m), &keep, spawns)
 }

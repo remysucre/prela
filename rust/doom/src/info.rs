@@ -561,6 +561,25 @@ pub struct AiOut {
     pub stop: bool,
 }
 
+// An AI rule's flag outputs packed as schema::eff bits.
+pub fn eff_bits(o: AiOut) -> u32 {
+    use crate::schema::eff::*;
+    [
+        (o.face, FACE),
+        (o.reaction_dec, REACTION_DEC),
+        (o.go, GO),
+        (o.clear_solid, CLEAR_SOLID),
+        (o.explode, EXPLODE),
+        (o.clear_shootable, CLEAR_SHOOTABLE),
+        (o.reset, RESET),
+        (o.to_clip, TO_CLIP),
+        (o.face_move, FACE_MOVE),
+        (o.stop, STOP),
+    ]
+    .iter()
+    .fold(0, |a, &(on, b)| a | if on { b } else { 0 })
+}
+
 // Do nothing; rules override fields of this.
 pub const KEEP: AiOut = AiOut {
     goto: G_NONE,

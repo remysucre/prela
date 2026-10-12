@@ -1,3 +1,6 @@
+use crate::schema::{Bsp, Image, Linedef, Sector, Seg, Sidedef, Thing, Vertex};
+use prela::engine::{Id, MultiRel, Universe, VecRel};
+use prela::loader::{Col, Key};
 use std::collections::HashMap;
 
 // Thing flags in the map: appears on skill 3 (medium), multiplayer only.
@@ -81,68 +84,8 @@ impl Wad {
     }
 }
 
-// Raw map records, as stored in the WAD.
-#[derive(Clone, Copy)]
-pub struct Linedef {
-    pub v1: usize,
-    pub v2: usize,
-    pub flags: i64,
-    pub special: i64,
-    pub tag: i64,
-    pub front: usize,
-    pub back: usize,
-}
-
-#[derive(Clone, Copy)]
-pub struct Sidedef {
-    pub xoff: f64,
-    pub yoff: f64,
-    pub upper: usize,
-    pub lower: usize,
-    pub middle: usize,
-    pub sector: usize,
-}
-
-#[derive(Clone, Copy)]
-pub struct Seg {
-    pub v1: usize,
-    pub v2: usize,
-    pub line: usize,
-    pub side: usize,
-    pub offset: f64,
-}
-
-#[derive(Clone, Copy)]
-pub struct Node {
-    pub x: f64,
-    pub y: f64,
-    pub dx: f64,
-    pub dy: f64,
-    pub child: [usize; 2],
-    pub child_is_leaf: [bool; 2],
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Sector {
-    pub floor: f64,
-    pub ceil: f64,
-    pub floorpic: usize,
-    pub ceilpic: usize,
-    pub light: i64,
-    pub special: i64,
-    pub tag: i64,
-}
-
-#[derive(Clone, Copy)]
-pub struct Thing {
-    pub x: f64,
-    pub y: f64,
-    pub angle: f64,
-    pub kind: i64,
-    pub flags: i64,
-}
-
-// All images packed into one texel array; each image has a base offset and size. Name maps let the level resolve texture names.
+// Images built from the WAD, plus the name maps the level and the game tables resolve
+// texture, flat, sprite and HUD lump names through (load time only).
 pub struct Graphics {
     pub names: HashMap<String, usize>,
     pub flat_names: HashMap<String, usize>,
@@ -170,26 +113,35 @@ impl Graphics {
     }
 }
 
-// One map's raw records.
-pub struct Level {
-    pub vertices: Vec<(f64, f64)>,
-    pub linedefs: Vec<Linedef>,
-    pub sidedefs: Vec<Sidedef>,
-    pub segs: Vec<Seg>,
-    pub subsectors: Vec<(usize, usize)>,
-    pub nodes: Vec<Node>,
-    pub sectors: Vec<Sector>,
-    pub things: Vec<Thing>,
+// Everything loaded from the WAD: the map's entities, all images, palettes and colormaps.
+pub struct Game {
+    pub vertex: Vertex,
+    pub linedef: Linedef,
+    pub sidedef: Sidedef,
+    pub seg: Seg,
+    pub bsp: Bsp,
+    pub sector: Sector,
+    pub thing: Thing,
+    pub image: Image,
+    pub texels: VecRel<usize, u16>,
+    pub palette: VecRel<usize, u32>,
+    pub colormap: VecRel<usize, u8>,
+    pub sky: Id<Image>,
+    pub sky_flat: Id<Image>,
+    pub sprite_names: HashMap<String, usize>,
+    pub patch_names: HashMap<String, usize>,
 }
 
-// Everything loaded from the WAD.
-pub struct Game {
-    pub level: Level,
-    pub gfx: Graphics,
-    pub palette: Vec<u32>,
-    pub colormap: Vec<u8>,
-    pub sky: usize,
-    pub sky_flat: usize,
+fn col<E, T: Copy>(v: Vec<T>) -> Col<E, T> {
+    VecRel::new(v)
+}
+
+fn key<E>(n: usize) -> Key<E> {
+    Universe::new(n)
+}
+
+fn empty<E, T: Copy>() -> Col<E, T> {
+    VecRel::new(vec![])
 }
 
 // Decodes a standalone patch (sprite or HUD glyph) into an image.
@@ -230,17 +182,38 @@ impl Game {
     pub fn load(path: &str, map: &str) -> Game {
         let wad = Wad::open(path);
         let gfx = Self::graphics(&wad);
-        let level = Self::level(&wad, map, &gfx);
         let pal = wad.lump("PLAYPAL");
         let palette = (0..14 * 256)
             .map(|i| ((pal[3 * i] as u32) << 16) | ((pal[3 * i + 1] as u32) << 8) | pal[3 * i + 2] as u32)
             .collect();
         let colormap = wad.lump("COLORMAP")[..34 * 256].to_vec();
-        let sky = gfx.names["SKY1"];
-        let sky_flat = gfx.flat_names["F_SKY1"];
-        Game { level, gfx, palette, colormap, sky, sky_flat }
+        let n = gfx.base.len();
+        let (vertex, linedef, sidedef, seg, bsp, sector, thing) = Self::level(&wad, map, &gfx);
+        Game {
+            vertex,
+            linedef,
+            sidedef,
+            seg,
+            bsp,
+            sector,
+            thing,
+            image: Image {
+                id: key(n),
+                base: col(gfx.base),
+                w: col(gfx.width),
+                h: col(gfx.height),
+                left: col(gfx.left),
+                top: col(gfx.top),
+            },
+            texels: VecRel::new(gfx.texels),
+            palette: VecRel::new(palette),
+            colormap: VecRel::new(colormap),
+            sky: Id::new(gfx.names["SKY1"]),
+            sky_flat: Id::new(gfx.flat_names["F_SKY1"]),
+            sprite_names: gfx.sprite_names,
+            patch_names: gfx.patch_names,
+        }
     }
-
     // Builds every image: wall textures (composed from patches), flats, sprites, HUD glyphs.
     fn graphics(wad: &Wad) -> Graphics {
         let mut g = Graphics {
@@ -307,100 +280,137 @@ impl Game {
         g
     }
 
-    // Parses one map's lumps into records, resolving texture and flat names to image ids.
-    fn level(wad: &Wad, map: &str, gfx: &Graphics) -> Level {
+    // Parses one map's lumps into entity columns, resolving texture and flat names to image ids.
+    fn level(wad: &Wad, map: &str, gfx: &Graphics) -> (Vertex, Linedef, Sidedef, Seg, Bsp, Sector, Thing) {
         let l = |n| wad.map_lump(map, n);
         let tex = |b: &[u8], o| {
             let n = name_at(b, o);
-            if n == "-" { NONE } else { gfx.names.get(&n).copied().unwrap_or(NONE) }
+            Id::new(if n == "-" { NONE } else { gfx.names.get(&n).copied().unwrap_or(NONE) })
         };
-        let flat = |b: &[u8], o| gfx.flat_names.get(&name_at(b, o)).copied().unwrap_or(NONE);
-        let recs = |b: &[u8], size: usize| (0..b.len() / size).map(move |i| i * size);
+        let flat = |b: &[u8], o| Id::new(gfx.flat_names.get(&name_at(b, o)).copied().unwrap_or(NONE));
+        // Offsets of each fixed-size record in a lump.
+        let recs = |b: &[u8], size: usize| (0..b.len() / size).map(move |i| i * size).collect::<Vec<_>>();
         let v = l("VERTEXES");
-        let vertices = recs(v, 4).map(|o| (i16_at(v, o) as f64, i16_at(v, o + 2) as f64)).collect();
+        let vo = recs(v, 4);
+        let vertex = Vertex {
+            id: key(vo.len()),
+            x: col(vo.iter().map(|&o| i16_at(v, o) as f64).collect()),
+            y: col(vo.iter().map(|&o| i16_at(v, o + 2) as f64).collect()),
+        };
         let ld = l("LINEDEFS");
-        let linedefs = recs(ld, 14)
-            .map(|o| Linedef {
-                v1: u16_at(ld, o) as usize,
-                v2: u16_at(ld, o + 2) as usize,
-                flags: u16_at(ld, o + 4) as i64,
-                special: u16_at(ld, o + 6) as i64,
-                tag: u16_at(ld, o + 8) as i64,
-                front: id16(u16_at(ld, o + 10)),
-                back: id16(u16_at(ld, o + 12)),
-            })
-            .collect();
+        let lo = recs(ld, 14);
+        let lcol = |off: usize| col::<Linedef, i64>(lo.iter().map(|&o| u16_at(ld, o + off) as i64).collect());
+        let lid = |off: usize| lo.iter().map(|&o| id16(u16_at(ld, o + off))).collect::<Vec<usize>>();
+        let linedef = Linedef {
+            id: key(lo.len()),
+            v1: col(lid(0).into_iter().map(Id::new).collect()),
+            v2: col(lid(2).into_iter().map(Id::new).collect()),
+            flags: lcol(4),
+            special: lcol(6),
+            tag: lcol(8),
+            front: col(lid(10).into_iter().map(Id::new).collect()),
+            back: col(lid(12).into_iter().map(Id::new).collect()),
+            x1: empty(),
+            y1: empty(),
+            x2: empty(),
+            y2: empty(),
+            fsec: empty(),
+            bsec: empty(),
+        };
         let sd = l("SIDEDEFS");
-        let sidedefs = recs(sd, 30)
-            .map(|o| Sidedef {
-                xoff: i16_at(sd, o) as f64,
-                yoff: i16_at(sd, o + 2) as f64,
-                upper: tex(sd, o + 4),
-                lower: tex(sd, o + 12),
-                middle: tex(sd, o + 20),
-                sector: u16_at(sd, o + 28) as usize,
-            })
-            .collect();
+        let so = recs(sd, 30);
+        let sidedef = Sidedef {
+            id: key(so.len()),
+            xoff: col(so.iter().map(|&o| i16_at(sd, o) as f64).collect()),
+            yoff: col(so.iter().map(|&o| i16_at(sd, o + 2) as f64).collect()),
+            upper: col(so.iter().map(|&o| tex(sd, o + 4)).collect()),
+            lower: col(so.iter().map(|&o| tex(sd, o + 12)).collect()),
+            middle: col(so.iter().map(|&o| tex(sd, o + 20)).collect()),
+            sector: col(so.iter().map(|&o| Id::new(u16_at(sd, o + 28) as usize)).collect()),
+        };
         let sg = l("SEGS");
-        let segs = recs(sg, 12)
-            .map(|o| Seg {
-                v1: u16_at(sg, o) as usize,
-                v2: u16_at(sg, o + 2) as usize,
-                line: u16_at(sg, o + 6) as usize,
-                side: u16_at(sg, o + 8) as usize,
-                offset: i16_at(sg, o + 10) as f64,
-            })
-            .collect();
-        let ss = l("SSECTORS");
-        // (first seg, seg count)
-        let subsectors = recs(ss, 4).map(|o| (u16_at(ss, o + 2) as usize, u16_at(ss, o) as usize)).collect();
+        let go = recs(sg, 12);
+        let seg = Seg {
+            id: key(go.len()),
+            v1: col(go.iter().map(|&o| Id::new(u16_at(sg, o) as usize)).collect()),
+            v2: col(go.iter().map(|&o| Id::new(u16_at(sg, o + 2) as usize)).collect()),
+            line: col(go.iter().map(|&o| Id::new(u16_at(sg, o + 6) as usize)).collect()),
+            side: col(go.iter().map(|&o| u16_at(sg, o + 8) as usize).collect()),
+            offset: col(go.iter().map(|&o| i16_at(sg, o + 10) as f64).collect()),
+            x1: empty(),
+            y1: empty(),
+            x2: empty(),
+            y2: empty(),
+            xoff: empty(),
+            yoff: empty(),
+            fsec: empty(),
+            bsec: empty(),
+            upper: empty(),
+            middle: empty(),
+            lower: empty(),
+            flags: empty(),
+            light_delta: empty(),
+        };
+        // BSP: nodes keep their ids; subsector i becomes leaf nodes + i.
         let nd = l("NODES");
-        let nodes = recs(nd, 28)
-            .map(|o| {
-                let f = |k: usize| i16_at(nd, o + 2 * k) as f64;
-                // Child ids; the high bit marks a subsector (leaf).
-                let c = |k: usize| u16_at(nd, o + 24 + 2 * k);
-                Node {
-                    x: f(0),
-                    y: f(1),
-                    dx: f(2),
-                    dy: f(3),
-                    child: [(c(0) & 0x7FFF) as usize, (c(1) & 0x7FFF) as usize],
-                    child_is_leaf: [c(0) & 0x8000 != 0, c(1) & 0x8000 != 0],
-                }
-            })
-            .collect();
-        let se = l("SECTORS");
-        let sectors = recs(se, 26)
-            .map(|o| Sector {
-                floor: i16_at(se, o) as f64,
-                ceil: i16_at(se, o + 2) as f64,
-                floorpic: flat(se, o + 4),
-                ceilpic: flat(se, o + 12),
-                light: i16_at(se, o + 20) as i64,
-                special: u16_at(se, o + 22) as i64,
-                tag: u16_at(se, o + 24) as i64,
-            })
-            .collect();
-        let th = l("THINGS");
-        let things = recs(th, 10)
-            .map(|o| Thing {
-                x: i16_at(th, o) as f64,
-                y: i16_at(th, o + 2) as f64,
-                angle: u16_at(th, o + 4) as f64,
-                kind: u16_at(th, o + 6) as i64,
-                flags: u16_at(th, o + 8) as i64,
-            })
-            .collect();
-        Level {
-            vertices,
-            linedefs,
-            sidedefs,
+        let no = recs(nd, 28);
+        let ss = l("SSECTORS");
+        let sso = recs(ss, 4);
+        let nn = no.len();
+        let n = nn + sso.len();
+        let f = |k: usize| MultiRel::from_pairs(n, no.iter().enumerate().map(|(i, &o)| (i, i16_at(nd, o + 2 * k) as f64)));
+        // Child ids; the high bit marks a subsector (leaf).
+        let child = |k: usize| {
+            MultiRel::from_pairs(
+                n,
+                no.iter().enumerate().map(|(i, &o)| {
+                    let c = u16_at(nd, o + 24 + 2 * k);
+                    (i, Id::new(if c & 0x8000 != 0 { nn + (c & 0x7FFF) as usize } else { c as usize }))
+                }),
+            )
+        };
+        // Each subsector is (seg count, first seg).
+        let segs = MultiRel::from_pairs(
+            n,
+            sso.iter().enumerate().flat_map(|(i, &o)| {
+                let (count, first) = (u16_at(ss, o) as usize, u16_at(ss, o + 2) as usize);
+                (first..first + count).map(move |s| (nn + i, Id::new(s)))
+            }),
+        );
+        let bsp = Bsp {
+            id: key(n),
+            x: f(0),
+            y: f(1),
+            dx: f(2),
+            dy: f(3),
+            child0: child(0),
+            child1: child(1),
             segs,
-            subsectors,
-            nodes,
-            sectors,
-            things,
-        }
+            sector: MultiRel::from_pairs(0, []),
+        };
+        let se = l("SECTORS");
+        let eo = recs(se, 26);
+        let sector = Sector {
+            id: key(eo.len()),
+            floor: col(eo.iter().map(|&o| i16_at(se, o) as f64).collect()),
+            ceil: col(eo.iter().map(|&o| i16_at(se, o + 2) as f64).collect()),
+            floorpic: col(eo.iter().map(|&o| flat(se, o + 4)).collect()),
+            ceilpic: col(eo.iter().map(|&o| flat(se, o + 12)).collect()),
+            light: col(eo.iter().map(|&o| i16_at(se, o + 20) as i64).collect()),
+            special: col(eo.iter().map(|&o| u16_at(se, o + 22) as i64).collect()),
+            tag: col(eo.iter().map(|&o| u16_at(se, o + 24) as i64).collect()),
+            neighbors: MultiRel::from_pairs(0, []),
+        };
+        let th = l("THINGS");
+        let to = recs(th, 10);
+        let thing = Thing {
+            id: key(to.len()),
+            x: col(to.iter().map(|&o| i16_at(th, o) as f64).collect()),
+            y: col(to.iter().map(|&o| i16_at(th, o + 2) as f64).collect()),
+            angle: col(to.iter().map(|&o| u16_at(th, o + 4) as f64).collect()),
+            kind: col(to.iter().map(|&o| u16_at(th, o + 6) as i64).collect()),
+            flags: col(to.iter().map(|&o| u16_at(th, o + 8) as i64).collect()),
+        };
+        (vertex, linedef, sidedef, seg, bsp, sector, thing)
     }
 }
