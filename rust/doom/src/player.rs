@@ -1,13 +1,13 @@
 use crate::db::Db;
 use crate::info::{wfact, PICKUP};
-use crate::physics::{rnd, Cand, Clip, Shot};
-use crate::rules::bit;
+use crate::physics::{rnd, slot_key, Cand, Clip, Shot};
+use crate::rules::{bit, choice_key};
 use crate::schema::{one, rc, AmmoKind, AnimState, ArmorClass, Mobj, Player, SectorState, Slide, Weapon, C};
 use crate::wad::NONE;
 use prela::engine::*;
 use std::f64::consts::TAU;
 
-// The player's id among bodies and shooters (mobj uids start at 1).
+// The player's body id (mobj m is body m + 1) and the uid it shoots and is hurt as.
 pub const PLAYER: usize = 0;
 
 #[derive(Clone, Copy, Default)]
@@ -53,7 +53,7 @@ pub fn moved(db: &Db, p: &Player, inp: Input) -> Player {
 }
 
 // One candidate move per slide row (full move, x only, y only, stay); this gives wall sliding.
-pub fn cands(db: &Db, p: &Player) -> HashIdx<(usize, usize), Cand> {
+pub fn cands(db: &Db, p: &Player) -> MultiRel<usize, Cand> {
     let k = &db.t.k;
     let (radius, height) = (one(&k.player_radius), one(&k.player_height));
     let sl = &db.t.slide;
@@ -67,12 +67,12 @@ pub fn cands(db: &Db, p: &Player) -> HashIdx<(usize, usize), Cand> {
         .map(move |(((((x, y), z), momx), momy), (((kx, ky), stay), idx)) : (((((f64, f64), f64), f64), f64), (((f64, f64), bool), Id<Slide>))| {
             (PLAYER, idx.0, x + kx * momx, y + ky * momy, z, radius, height, false, false, stay)
         })
-        .key_by(|c: Cand| (c.0, c.1))
+        .key_by(|c: Cand| slot_key(c.0, c.1))
         .collect()
 }
 
 // Takes the chosen candidate, keeps only the momentum its slide row keeps, applies gravity.
-pub fn walk(db: &Db, p: &Player, clips: &HashIdx<usize, Clip>) -> Player {
+pub fn walk(db: &Db, p: &Player, clips: &MultiRel<usize, Clip>) -> Player {
     let g = one(&db.t.k.gravity);
     let sl = &db.t.slide;
     let clip = || me(p).select(clips);
@@ -139,7 +139,7 @@ fn enter(q: Psp, (tics, next): (i32, Id<AnimState>), w: WeaponRow, (redirect, pe
 }
 
 // Weapon logic for this tic (switching, animation, firing); returns the updated player, ammo and bullets.
-pub fn weapon(db: &Db, p: &Player, ammo: &C<AmmoKind, i32>, inp: Input, tic: u64) -> (Player, C<AmmoKind, i32>, HashIdx<usize, Shot>) {
+pub fn weapon(db: &Db, p: &Player, ammo: &C<AmmoKind, i32>, inp: Input, tic: u64) -> (Player, C<AmmoKind, i32>, MultiRel<usize, Shot>) {
     let (k, st, wp, wr) = (&db.t.k, &db.t.state, &db.t.weapon, &db.t.weapon_rule);
     let shot_z = one(&k.shot_z);
     let wrow = || (&wp.ammo).and(&wp.per_shot).and(&wp.attack).and(&wp.flash).and(&wp.flash_tics).map(|((((a, s), at), f), ft): ((((Id<AmmoKind>, i32), Id<AnimState>), Id<AnimState>), i32)| (a, s, at, f, ft));
@@ -186,14 +186,14 @@ pub fn weapon(db: &Db, p: &Player, ammo: &C<AmmoKind, i32>, inp: Input, tic: u64
     let step = (&ctx)
         .and(
             (&ctx)
-                .map(|((q, (_, a)), w): ((Psp, ((i32, Id<AnimState>), crate::info::Action)), WeaponRow)| (a as usize, weapon_facts(q, w.1)))
+                .map(|((q, (_, a)), w): ((Psp, ((i32, Id<AnimState>), crate::info::Action)), WeaponRow)| choice_key(a as usize, weapon_facts(q, w.1), 3))
                 .select(&db.t.weapon_choice)
                 .select((&wr.redirect).and(&wr.pellets))
                 .opt(),
         )
         .map(|(((q, (r, _)), w), o): (((Psp, ((i32, Id<AnimState>), crate::info::Action)), WeaponRow), Option<(bool, usize)>)| enter(q, r, w, o.unwrap_or((false, 0))));
     // The last node of each chain: every node visited (node -> depth), inverted back to node values.
-    let done: HashIdx<Id<Player>, Psp> = start
+    let done: MultiRel<Id<Player>, Psp> = start
         .reach(&step, 4)
         .inv()
         .filt(|q: Psp| q.9.0 == NONE || q.11 == 4)
@@ -230,13 +230,13 @@ pub fn weapon(db: &Db, p: &Player, ammo: &C<AmmoKind, i32>, inp: Input, tic: u64
         .map(move |((((((x, y), z), ang), _), (((damage, roll), range), div)), n): ((((((f64, f64), f64), f64), Psp), (((i32, i32), f64), f64)), usize)| {
             // Difference of two rolls: spread centred on zero.
             let spread = (rnd(tic, n, 1) - rnd(tic, n, 2)) as f64 * TAU / div;
-            ((1 << 23) | n, (PLAYER, x, y, z + shot_z, ang + spread, range, damage * (rnd(tic, n, 3) % roll + 1)))
+            (slot_key(PLAYER, n), ((1 << 23) | n, PLAYER, x, y, z + shot_z, ang + spread, range, damage * (rnd(tic, n, 3) % roll + 1)))
         })
         .key_by(|(id, _)| id)
         .map(|(_, s)| s)
         .collect();
     // Write the spent count back to its ammo kind; keep the other kinds.
-    let spent: HashIdx<Id<AmmoKind>, i32> = (&done).map(|q: Psp| q.1).select(&wp.ammo).and((&done).map(|q: Psp| q.8)).key_by(|(k, _)| k).map(|(_, n)| n).collect();
+    let spent: MultiRel<Id<AmmoKind>, i32> = (&done).map(|q: Psp| q.1).select(&wp.ammo).and((&done).map(|q: Psp| q.8)).key_by(|(k, _)| k).map(|(_, n)| n).collect();
     let ammo = rc((&**ammo).minus(&spent).union(&spent));
     type W = (Id<Weapon>, Id<Weapon>, Id<AnimState>, i32, Id<AnimState>, i32);
     let player = Player {
@@ -270,8 +270,8 @@ fn gain((health, armor, class, owned, wanted, keys): Gains, d: PickupRow) -> Gai
     )
 }
 
-// Picks up touching items that do something; returns the updated player, ammo, and uids of items taken.
-pub fn pickups(db: &Db, p: &Player, ammo: &C<AmmoKind, i32>, m: &Mobj, live: &C<Mobj, bool>) -> (Player, C<AmmoKind, i32>, Fold<usize, bool>) {
+// Picks up touching items that do something; returns the updated player, ammo, and the items taken.
+pub fn pickups(db: &Db, p: &Player, ammo: &C<AmmoKind, i32>, m: &Mobj, live: &C<Mobj, bool>) -> (Player, C<AmmoKind, i32>, DenseFold<Id<Mobj>, bool>) {
     let (k, tt, pk, am) = (&db.t.k, &db.t.ttype, &db.t.pickup, &db.t.ammo);
     let (pr, ph, zr, bonus) = (one(&k.player_radius), one(&k.player_height), one(&k.pickup_z_reach), one(&k.bonus_add));
     let def = (&pk.health)
@@ -299,34 +299,34 @@ pub fn pickups(db: &Db, p: &Player, ammo: &C<AmmoKind, i32>, m: &Mobj, live: &C<
         .and(&*p.keys)
         .map(|(((((h, a), c), o), w), k): (((((i32, i32), Id<ArmorClass>), u8), Id<Weapon>), u8)| -> Gains { (h, a, c, o, w, k) });
     let pos = (&*p.x).and(&*p.y).and(&*p.z).and(&*p.dead).and(gains);
-    // Items overlapping the player, with the ammo each would add (capped): (uid, pickup, player gains, more ammo).
-    let touching: HashIdx<usize, (usize, PickupRow, Gains, i32)> = (&**live)
+    // Items overlapping the player, with the ammo each would add (capped): (item, pickup, player gains, more ammo).
+    let touching: MultiRel<usize, (Id<Mobj>, PickupRow, Gains, i32)> = (&**live)
         .filt(|l: bool| l)
         .and(&*m.flags)
         .filt(|(_, f): (bool, u32)| f & PICKUP != 0)
-        .and(&*m.uid)
+        .and(Same::<Id<Mobj>>::new())
         .and((&*m.x).and(&*m.y).and(&*m.z))
         .and((&*m.kind).select(&tt.radius))
         .and((&*m.kind).select(&tt.pickup).select(def))
         .key_by(|_| Id::<Player>::new(0))
         .and(pos)
-        .filt(move |((((((_, _), _), ((mx, my), mz)), r), _), ((((px, py), pz), dead), _)): ((((((bool, u32), usize), ((f64, f64), f64)), f64), PickupRow), ((((f64, f64), f64), bool), Gains))| {
+        .filt(move |((((((_, _), _), ((mx, my), mz)), r), _), ((((px, py), pz), dead), _)): ((((((bool, u32), Id<Mobj>), ((f64, f64), f64)), f64), PickupRow), ((((f64, f64), f64), bool), Gains))| {
             !dead && (mx - px).abs() < pr + r && (my - py).abs() < pr + r && mz <= pz + ph && mz + zr >= pz
         })
-        .map(|((((((_, _), uid), _), _), d), (_, g)): ((((((bool, u32), usize), ((f64, f64), f64)), f64), PickupRow), ((((f64, f64), f64), bool), Gains))| (uid, d, g))
+        .map(|((((((_, _), uid), _), _), d), (_, g)): ((((((bool, u32), Id<Mobj>), ((f64, f64), f64)), f64), PickupRow), ((((f64, f64), f64), bool), Gains))| (uid, d, g))
         // Join the current count and cap of the ammo kind it gives.
-        .key_by(|(_, d, _): (usize, PickupRow, Gains)| d.6)
+        .key_by(|(_, d, _): (Id<Mobj>, PickupRow, Gains)| d.6)
         .and((&**ammo).and(&am.cap))
-        .map(|((uid, d, g), (a, cap)): ((usize, PickupRow, Gains), (i32, i32))| (uid, d, g, (a + d.7).min(cap) - a))
+        .map(|((uid, d, g), (a, cap)): ((Id<Mobj>, PickupRow, Gains), (i32, i32))| (uid, d, g, (a + d.7).min(cap) - a))
         // Skip items that would change nothing (full health, full ammo), unless `always`.
-        .filt(|(_, d, g, more): (usize, PickupRow, Gains, i32)| {
+        .filt(|(_, d, g, more): (Id<Mobj>, PickupRow, Gains, i32)| {
             let n = gain(g, d);
             d.11 || more > 0 || n.0 > g.0 || n.1 > g.1
         })
         .key_by(|_| PLAYER)
         .collect();
     // Apply the player effects in turn.
-    let gained = (&touching).fold(None, |a: Option<Gains>, (_, d, g, _): (usize, PickupRow, Gains, i32)| Some(gain(a.unwrap_or(g), d)));
+    let gained = (&touching).dense_fold(1, None, |a: Option<Gains>, (_, d, g, _): (Id<Mobj>, PickupRow, Gains, i32)| Some(gain(a.unwrap_or(g), d)));
     let applied = me(p).select(&gained).flat_map(|g: Option<Gains>| g);
     let any = me(p).select(&gained).map(|_| bonus);
     type G = Gains;
@@ -341,10 +341,10 @@ pub fn pickups(db: &Db, p: &Player, ammo: &C<AmmoKind, i32>, m: &Mobj, live: &C<
         ..p.clone()
     };
     // Ammo added per kind, capped.
-    let added = (&touching).key_by(|(_, d, _, _): (usize, PickupRow, Gains, i32)| d.6).map(|(_, _, _, more): (usize, PickupRow, Gains, i32)| more).fold(0, |a: i32, n: i32| a + n);
+    let added = (&touching).key_by(|(_, d, _, _): (Id<Mobj>, PickupRow, Gains, i32)| d.6).map(|(_, _, _, more): (Id<Mobj>, PickupRow, Gains, i32)| more).dense_fold(am.id.n, 0, |a: i32, n: i32| a + n);
     let ammo = rc((&**ammo).and(added.opt()).and(&am.cap).map(|((a, n), cap): ((i32, Option<i32>), i32)| (a + n.unwrap_or(0)).min(cap)));
     // Items to remove from the map.
-    let taken = (&touching).key_by(|(uid, _, _, _): (usize, PickupRow, Gains, i32)| uid).fold(true, |_, _| true);
+    let taken = (&touching).key_by(|(uid, _, _, _): (Id<Mobj>, PickupRow, Gains, i32)| uid).dense_fold(m.id.n, true, |_, _| true);
     (player, ammo, taken)
 }
 
@@ -363,7 +363,7 @@ fn hurt(p: Hurt, d: i32, (num, den): (i32, i32), cap: i32) -> Hurt {
 }
 
 // End of tic: damage, damaging floors every 32 tics, use-key latch, exit flag, screen-tint timers.
-pub fn finish(db: &Db, p: &Player, damage: &Fold<usize, i32>, s: &SectorState, inp: Input, exited: bool, tic: u64) -> Player {
+pub fn finish(db: &Db, p: &Player, damage: &DenseFold<usize, i32>, s: &SectorState, inp: Input, exited: bool, tic: u64) -> Player {
     let (k, ac) = (&db.t.k, &db.t.armor);
     let (period, cap) = (one(&k.floor_damage_period), one(&k.damage_cap));
     let t: VecRel<Id<Player>, (Hurt, i32)> = (&*p.health)

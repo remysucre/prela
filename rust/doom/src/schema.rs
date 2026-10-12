@@ -35,8 +35,8 @@ pub struct Linedef {
     pub v1: Col<Self, Id<Vertex>>,
     pub v2: Col<Self, Id<Vertex>>,
     pub flags: Col<Self, i64>,
-    pub special: Col<Self, i64>,
-    pub tag: Col<Self, i64>,
+    pub special: Col<Self, usize>,
+    pub tag: Col<Self, usize>,
     pub front: Col<Self, Id<Sidedef>>,
     pub back: Col<Self, Id<Sidedef>>,
     // Derived: endpoints, and the sectors on each side.
@@ -102,8 +102,8 @@ pub struct Sector {
     pub floorpic: Col<Self, Id<Image>>,
     pub ceilpic: Col<Self, Id<Image>>,
     pub light: Col<Self, i64>,
-    pub special: Col<Self, i64>,
-    pub tag: Col<Self, i64>,
+    pub special: Col<Self, usize>,
+    pub tag: Col<Self, usize>,
     // Derived: sectors sharing a two-sided line.
     pub neighbors: Set<Self, Id<Sector>>,
 }
@@ -116,7 +116,7 @@ pub struct Thing {
     pub x: Col<Self, f64>,
     pub y: Col<Self, f64>,
     pub angle: Col<Self, f64>,
-    pub kind: Col<Self, i64>,
+    pub kind: Col<Self, usize>,
     pub flags: Col<Self, i64>,
 }
 
@@ -253,7 +253,7 @@ pub struct Slide {
 pub struct LineSpecial {
     #[primary_key]
     pub id: Key<Self>,
-    pub num: Col<Self, i64>,
+    pub num: Col<Self, usize>,
     pub act: Col<Self, u8>,
     pub speed: Col<Self, f64>,
     pub tagged: Col<Self, bool>,

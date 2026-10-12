@@ -681,7 +681,7 @@ pub struct Special {
 }
 
 // Line special number -> what it does.
-pub fn specials() -> Vec<(i64, Special)> {
+pub fn specials() -> Vec<(usize, Special)> {
     let s = |act, speed, tagged, key, walk| Special { act, speed, tagged, key, walk, use_: !walk };
     vec![
         (1, s(MV_DOOR, 2.0, false, 0, false)),
@@ -772,7 +772,7 @@ pub fn mover_rules() -> Vec<(usize, Rule<StepOut>)> {
 }
 
 // Damaging floors: sector special -> damage every 32 tics.
-pub fn sector_damage() -> Vec<(i64, i32)> {
+pub fn sector_damage() -> Vec<(usize, i32)> {
     vec![(5, 10), (7, 5), (4, 20), (16, 20)]
 }
 

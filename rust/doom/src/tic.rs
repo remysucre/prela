@@ -11,7 +11,7 @@ use prela::loader::Key;
 
 // Linedef flag: sound stops here. Thing type of the player 1 start.
 const ML_SOUNDBLOCK: i64 = 64;
-const PLAYER1_START: i64 = 1;
+const PLAYER1_START: usize = 1;
 
 // The whole game state; each tic builds a new one, sharing the columns it doesn't change.
 pub struct State {
@@ -58,10 +58,10 @@ pub fn initial(db: &Db) -> State {
     let weapon = one(&k.start_weapon);
     // The player 1 start thing, as the player's row.
     let start: VecRel<Id<Player>, ((f64, f64), f64)> = (&th.kind)
-        .filt(|kind: i64| kind == PLAYER1_START)
+        .filt(|kind: usize| kind == PLAYER1_START)
         .and((&th.x).and(&th.y).and(&th.angle))
         .key_by(|_| Id::<Player>::new(0))
-        .map(|(_, p): (i64, ((f64, f64), f64))| p)
+        .map(|(_, p): (usize, ((f64, f64), f64))| p)
         .collect();
     let id = Universe::new(1);
     let player = Player {
@@ -133,7 +133,7 @@ pub fn tic(db: &Db, s: &State, inp: Input) -> State {
         .map(|(_, sec)| sec)
         .key_by(|sec| sec)
         .union((&*walked.sector).key_by(|sec| sec))
-        .fold(true, |_, _| true);
+        .dense_fold(db.sector.id.n, true, |_, _| true);
     let sector = world::movers(db, &s.sector, &events, &occupied);
 
     // Weapon state machine and any bullets fired.
@@ -152,7 +152,7 @@ pub fn tic(db: &Db, s: &State, inp: Input) -> State {
         .map(|(_, b)| b)
         .collect();
     // Sectors that have heard the player fire (sticky across tics).
-    let reached: HashIdx<Id<Sector>, usize> = (&player_shots)
+    let reached: MultiRel<Id<Sector>, usize> = (&player_shots)
         // Player's sector, once per bullet fired (none if no shot).
         .key_by(|_| Id::<Player>::new(0))
         .and(&*armed.sector)
@@ -171,11 +171,11 @@ pub fn tic(db: &Db, s: &State, inp: Input) -> State {
     let moved = mobj::apply_moves(db, &plan, &clips, &bodies);
 
     // All bullets, their hits, and the resulting damage, deaths, drops and puffs.
-    let shots: HashIdx<usize, Shot> = (&player_shots).union(&mobj::monster_shots(db, &moved, t)).collect();
+    let shots: MultiRel<usize, Shot> = (&player_shots).union(&mobj::monster_shots(db, &moved, t)).collect();
     let impacts = hitscan(db, &lines, &bodies, &shots);
     let dmg = mobj::damage(db, &impacts, &moved, &bodies, t);
     let wounded = mobj::wound(db, &moved, &dmg, t);
-    let spawns: HashIdx<usize, mobj::Spawn> = (&mobj::drops(db, &moved, &wounded, t)).union(&mobj::effects(db, &impacts, &wounded, &armed, t)).collect();
+    let spawns: MultiRel<usize, mobj::Spawn> = (&mobj::drops(db, &moved, &wounded, t)).union(&mobj::effects(db, &impacts, &wounded, &armed, t)).collect();
 
     // Pickups, final player update, and the new mobj set.
     let (picked, ammo, taken) = player::pickups(db, &armed, &ammo, &wounded.m, &wounded.live);

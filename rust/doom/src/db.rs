@@ -28,34 +28,51 @@ pub struct Tables {
     pub hud_key: HudKey,
     pub k: Konst,
     // Map editor number -> thing type.
-    pub ednum_type: HashIdx<i64, Id<ThingType>>,
-    // (thing type, goto label) -> state, so rules can say "go to SEE".
-    pub goto: HashIdx<(Id<ThingType>, u8), Id<AnimState>>,
+    pub ednum_type: MultiRel<usize, Id<ThingType>>,
+    // goto_key(thing type, goto label) -> state, so rules can say "go to SEE".
+    pub goto: MultiRel<usize, Id<AnimState>>,
     // frame_key(sprite, frame, rotation) -> image and whether to mirror it.
-    pub sprite_frames: HashIdx<u64, (Id<Image>, bool)>,
+    pub sprite_frames: MultiRel<usize, (Id<Image>, bool)>,
     // Line special number -> special.
-    pub special_num: HashIdx<i64, Id<LineSpecial>>,
+    pub special_num: MultiRel<usize, Id<LineSpecial>>,
     // act_key(kind, dir, act) -> activation.
-    pub activation_key: HashIdx<usize, Id<Activation>>,
+    pub activation_key: MultiRel<usize, Id<Activation>>,
     // Rule key -> rules, per rule table.
     pub ai_by_key: MultiRel<usize, Id<AiRule>>,
     pub mover_by_key: MultiRel<usize, Id<MoverRule>>,
     pub face_by_key: MultiRel<usize, Id<FaceRule>>,
-    // (weapon state action, weapon facts) -> the weapon rule that applies.
-    pub weapon_choice: HashIdx<(usize, usize), Id<WeaponRule>>,
+    // choice_key(weapon state action, weapon facts) -> the weapon rule that applies.
+    pub weapon_choice: MultiRel<usize, Id<WeaponRule>>,
     // Sector special -> floor damage.
-    pub sector_damage: HashIdx<i64, i32>,
-    // (font, glyph) -> image; (face kind, pain, look) -> image.
-    pub hud_fonts: HashIdx<(usize, usize), Id<Image>>,
-    pub faces: HashIdx<(u8, usize, usize), Id<Image>>,
+    pub sector_damage: MultiRel<usize, i32>,
+    // glyph_key(font, glyph) -> image; face_key(face kind, pain, look) -> image.
+    pub hud_fonts: MultiRel<usize, Id<Image>>,
+    pub faces: MultiRel<usize, Id<Image>>,
     pub puff: Id<ThingType>,
     pub blood: Id<ThingType>,
     pub ball: Id<ThingType>,
 }
 
-// Packs (sprite, frame, rotation) into one lookup key for sprite images.
-pub fn frame_key(sprite: usize, frame: usize, rot: usize) -> u64 {
-    (sprite * 1000 + frame * 10 + rot) as u64
+// Lookup indexes are dense, keyed by small integers packed from the lookup's parts.
+
+// (sprite, frame, rotation) -> sprite image key.
+pub fn frame_key(sprite: usize, frame: usize, rot: usize) -> usize {
+    sprite * 1000 + frame * 10 + rot
+}
+
+// (thing type, goto label) -> goto key.
+pub fn goto_key(t: Id<ThingType>, label: u8) -> usize {
+    t.0 * 8 + label as usize
+}
+
+// (font, glyph) -> glyph key.
+pub fn glyph_key(font: usize, glyph: usize) -> usize {
+    font * 16 + glyph
+}
+
+// (face kind, pain level, look direction) -> face key.
+pub fn face_key(kind: u8, pain: usize, look: usize) -> usize {
+    kind as usize * 16 + pain * 3 + look
 }
 
 fn key<E>(n: usize) -> Key<E> {
@@ -67,9 +84,9 @@ fn col<E, R, T: Copy>(rows: &[R], f: impl Fn(&R) -> T) -> Col<E, T> {
     VecRel::new(rows.iter().map(f).collect())
 }
 
-// A lookup index from (key, value) pairs.
-fn index<K: Copy + Eq + std::hash::Hash, V: Copy>(pairs: Vec<(K, V)>) -> HashIdx<K, V> {
-    VecRel::<usize, (K, V)>::new(pairs).key_by(|(k, _)| k).map(|(_, v)| v).collect()
+// A dense lookup index from (key, value) pairs.
+fn index<V: Copy + 'static>(pairs: Vec<(usize, V)>) -> MultiRel<usize, V> {
+    VecRel::<usize, (usize, V)>::new(pairs).key_by(|(k, _)| k).map(|(_, v)| v).collect()
 }
 
 // Turns the Rust-literal tables in info.rs into entities, resolving names to ids.
@@ -131,7 +148,7 @@ fn tables(sprite_names: &HashMap<String, usize>, patch_names: &HashMap<String, u
         always: col(&pdefs, |p| p.1.always),
     };
     // Map editor number -> thing type, for spawning map things.
-    let ednum_type = (&ttype.ednum).filt(|e: i64| e > 0).inv().collect();
+    let ednum_type = (&ttype.ednum).filt(|e: i64| e > 0).map(|e| e as usize).inv().collect();
     let kind = |n: &str| Id::new(mdefs.iter().position(|m| m.name == n).unwrap());
     // (thing type, goto label) -> state id, for each label the type has.
     let goto = (&ttype.see)
@@ -143,7 +160,7 @@ fn tables(sprite_names: &HashMap<String, usize>, patch_names: &HashMap<String, u
         .union((&ttype.pain).map(|s| (G_PAIN, s)))
         .filt(|(_, s): (u8, Id<AnimState>)| s.0 != 0)
         .and(Same::<Id<ThingType>>::new())
-        .key_by(|((g, _), t): ((u8, Id<AnimState>), Id<ThingType>)| (t, g))
+        .key_by(|((g, _), t): ((u8, Id<AnimState>), Id<ThingType>)| goto_key(t, g))
         .map(|((_, s), _)| s)
         .collect();
     // Sprite lump names like TROOA2A8 -> (sprite, frame, rotation) -> image id; the second half is the mirrored rotation.
@@ -321,8 +338,8 @@ fn tables(sprite_names: &HashMap<String, usize>, patch_names: &HashMap<String, u
         mover_by_key: by_key(&mover_rule.key),
         face_by_key: by_key(&face_rule.key),
         sprite_frames: index(frames),
-        hud_fonts: index(info::hud_fonts().into_iter().map(|(k, n)| (k, lump(&n))).collect()),
-        faces: index(info::faces().into_iter().map(|(k, n)| (k, lump(&n))).collect()),
+        hud_fonts: index(info::hud_fonts().into_iter().map(|((f, g), n)| (glyph_key(f, g), lump(&n))).collect()),
+        faces: index(info::faces().into_iter().map(|((k, p, l), n)| (face_key(k, p, l), lump(&n))).collect()),
         sector_damage: index(info::sector_damage()),
         puff: kind("PUFF"),
         blood: kind("BLOOD"),
@@ -363,7 +380,7 @@ pub struct Db {
     pub bsp: Bsp,
     pub bsp_root: Id<Bsp>,
     pub sector: Sector,
-    pub tag_sectors: HashIdx<i64, Id<Sector>>,
+    pub tag_sectors: MultiRel<usize, Id<Sector>>,
     pub thing: Thing,
     pub image: Image,
     pub texels: VecRel<usize, u16>,
@@ -382,7 +399,7 @@ impl Db {
         let linedef = derive_linedef(g.linedef, &g.vertex, &g.sidedef);
         let seg = derive_seg(g.seg, &g.vertex, &linedef, &g.sidedef);
         // A leaf's sector: the front sector of its first seg.
-        let leaf_sector = (&g.bsp.segs).fold(Id::new(NONE), |a: Id<Seg>, s: Id<Seg>| a.min(s)).select(&seg.fsec).collect();
+        let leaf_sector = (&g.bsp.segs).dense_fold(g.bsp.id.n, Id::new(NONE), |a: Id<Seg>, s: Id<Seg>| a.min(s)).select(&seg.fsec).collect();
         let bsp = Bsp { sector: leaf_sector, ..g.bsp };
         // Sectors sharing a two-sided line, both ways.
         let neighbors = (&linedef.fsec)

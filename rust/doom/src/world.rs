@@ -99,7 +99,7 @@ pub fn line_events(db: &Db, lines: &Lines, old: &Player, new: &Player, use_: boo
         .filt(|h: Hit| h.2 || h.3)
         // Nearest one.
         .key_by(|_| 0usize)
-        .fold(None, |a: Option<Hit>, h: Hit| match a {
+        .dense_fold(1, None, |a: Option<Hit>, h: Hit| match a {
             Some(a) if a.0 <= h.0 => Some(a),
             _ => Some(h),
         })
@@ -117,8 +117,8 @@ pub fn exited(db: &Db, events: &Events) -> bool {
 }
 
 // Advance doors/lifts one tic: activate from events, move, then apply mover rules.
-pub fn movers(db: &Db, s: &SectorState, events: &Events, occupied: &Fold<Id<Sector>, bool>) -> SectorState {
-    let gap = one(&db.t.k.door_gap);
+pub fn movers(db: &Db, s: &SectorState, events: &Events, occupied: &DenseFold<Id<Sector>, bool>) -> SectorState {
+    let (gap, n) = (one(&db.t.k.door_gap), db.sector.id.n);
     let (sp, ac) = (&db.t.special, &db.t.activation);
     // Which sectors each event activates (by tag, or the line's back sector).
     let tagged = || events.key_by(|(_, s)| s).and(&sp.tagged).key_by(|((l, _), _)| l);
@@ -128,7 +128,7 @@ pub fn movers(db: &Db, s: &SectorState, events: &Events, occupied: &Fold<Id<Sect
         .key_by(|(_, tag)| tag)
         .and(&db.tag_sectors)
         .key_by(|(_, sec)| sec)
-        .map(|((((_, s), _), _), _): ((((Id<Linedef>, Id<LineSpecial>), bool), i64), Id<Sector>)| s)
+        .map(|((((_, s), _), _), _): ((((Id<Linedef>, Id<LineSpecial>), bool), usize), Id<Sector>)| s)
         .union(
             tagged()
                 .filt(|(_, t): ((Id<Linedef>, Id<LineSpecial>), bool)| !t)
@@ -137,12 +137,12 @@ pub fn movers(db: &Db, s: &SectorState, events: &Events, occupied: &Fold<Id<Sect
                 .map(|(((_, s), _), _): (((Id<Linedef>, Id<LineSpecial>), bool), Id<Sector>)| s),
         )
         // One activation per sector (last one wins).
-        .fold(None, |_, s: Id<LineSpecial>| Some(s));
+        .dense_fold(n, None, |_, s: Id<LineSpecial>| Some(s));
     let heights = || (&*s.ceil).and(&*s.floor);
     // Lowest neighboring ceiling/floor per sector (lift and door targets).
     let lowest = (&db.sector.neighbors)
         .select(heights())
-        .fold((f64::MAX, f64::MAX), |(c, f): (f64, f64), (sc, sf): (f64, f64)| (c.min(sc), f.min(sf)));
+        .dense_fold(n, (f64::MAX, f64::MAX), |(c, f): (f64, f64), (sc, sf): (f64, f64)| (c.min(sc), f.min(sf)));
     let mover = (&*s.kind)
         .and(&*s.plane)
         .and(&*s.dir)
@@ -180,7 +180,7 @@ pub fn movers(db: &Db, s: &SectorState, events: &Events, occupied: &Fold<Id<Sect
         .map(|(_, m)| m)
         .collect();
     // Move each plane one step and compute facts.
-    let rows: HashIdx<Id<Sector>, (Moved, usize, u32)> = (&activated)
+    let rows: MultiRel<Id<Sector>, (Moved, usize, u32)> = (&activated)
         .and(heights())
         .and(occupied.opt())
         .and(Same::<Id<Sector>>::new())
@@ -189,7 +189,7 @@ pub fn movers(db: &Db, s: &SectorState, events: &Events, occupied: &Fold<Id<Sect
         .collect();
     // Pick the mover rule for each sector and apply it.
     let r = &db.t.mover_rule;
-    let chosen = matching(&rows, r, &db.t.mover_by_key, |v: Moved| v.0);
+    let chosen = matching(&rows, r, &db.t.mover_by_key, |v: Moved| v.0, db.sector.id.n);
     let settled: VecRel<Id<Sector>, Moved> = (&rows)
         .and(chosen.map(|(_, rule): (Moved, Id<MoverRule>)| rule).select((&r.kind).and(&r.dir).and(&r.wait).and(&r.wait_dec)).opt())
         .map(|((v, _, _), o): ((Moved, usize, u32), Option<(((u8, i8), i32), bool)>)| o.map_or(v, |o| settle(v, o)))

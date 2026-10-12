@@ -306,8 +306,8 @@ impl Game {
             v1: col(lid(0).into_iter().map(Id::new).collect()),
             v2: col(lid(2).into_iter().map(Id::new).collect()),
             flags: lcol(4),
-            special: lcol(6),
-            tag: lcol(8),
+            special: col(lo.iter().map(|&o| u16_at(ld, o + 6) as usize).collect()),
+            tag: col(lo.iter().map(|&o| u16_at(ld, o + 8) as usize).collect()),
             front: col(lid(10).into_iter().map(Id::new).collect()),
             back: col(lid(12).into_iter().map(Id::new).collect()),
             x1: empty(),
@@ -397,8 +397,8 @@ impl Game {
             floorpic: col(eo.iter().map(|&o| flat(se, o + 4)).collect()),
             ceilpic: col(eo.iter().map(|&o| flat(se, o + 12)).collect()),
             light: col(eo.iter().map(|&o| i16_at(se, o + 20) as i64).collect()),
-            special: col(eo.iter().map(|&o| u16_at(se, o + 22) as i64).collect()),
-            tag: col(eo.iter().map(|&o| u16_at(se, o + 24) as i64).collect()),
+            special: col(eo.iter().map(|&o| u16_at(se, o + 22) as usize).collect()),
+            tag: col(eo.iter().map(|&o| u16_at(se, o + 24) as usize).collect()),
             neighbors: MultiRel::from_pairs(0, []),
         };
         let th = l("THINGS");
@@ -408,7 +408,7 @@ impl Game {
             x: col(to.iter().map(|&o| i16_at(th, o) as f64).collect()),
             y: col(to.iter().map(|&o| i16_at(th, o + 2) as f64).collect()),
             angle: col(to.iter().map(|&o| u16_at(th, o + 4) as f64).collect()),
-            kind: col(to.iter().map(|&o| u16_at(th, o + 6) as i64).collect()),
+            kind: col(to.iter().map(|&o| u16_at(th, o + 6) as usize).collect()),
             flags: col(to.iter().map(|&o| u16_at(th, o + 8) as i64).collect()),
         };
         (vertex, linedef, sidedef, seg, bsp, sector, thing)

@@ -1,7 +1,6 @@
 use crate::schema::{AiRule, FaceRule, MoverRule, WeaponRule};
 use prela::engine::*;
 use prela::loader::Col;
-use std::hash::Hash;
 
 // `flag` if `on`, else 0. Used to pack conditions into a bitmask.
 pub fn bit(on: bool, flag: u32) -> u32 {
@@ -33,14 +32,15 @@ macro_rules! rule_tables {
 rule_tables!(AiRule, WeaponRule, MoverRule, FaceRule);
 
 // Rule-table lookup: for each row, the highest-priority rule whose conditions match.
-// Rows are (row, rule key, fact bits); `by_key` lists each key's rules; `id` names the row in the result.
-pub fn matching<Q, T, R, F, K>(rows: Q, rules: &R, by_key: &MultiRel<usize, Id<R>>, id: F) -> HashIdx<K, (T, Id<R>)>
+// Rows are (row, rule key, fact bits); `by_key` lists each key's rules; `id` names the row
+// in the result, a dense id below `n`.
+pub fn matching<Q, T, R, F, K>(rows: Q, rules: &R, by_key: &MultiRel<usize, Id<R>>, id: F, n: usize) -> MultiRel<K, (T, Id<R>)>
 where
     Q: Drive<R = (T, usize, u32)>,
-    T: Copy,
+    T: Copy + 'static,
     R: Rules,
     F: Fn(T) -> K,
-    K: Copy + Eq + Hash,
+    K: Dense,
 {
     // Join rows to the rules for their key, keep rules whose mask matches the row's facts.
     rows.key_by(|(_, k, _): (T, usize, u32)| k)
@@ -50,7 +50,7 @@ where
         .filt(|(((_, _, f), _), ((mask, want), _)): (((T, usize, u32), Id<R>), ((u32, u32), u8))| f & mask == want)
         // Per row id, keep the rule with the lowest prio number (the first listed on ties).
         .key_by(move |(((t, _, _), _), _): (((T, usize, u32), Id<R>), ((u32, u32), u8))| id(t))
-        .fold(None, |a: Option<(T, Id<R>, u8)>, (((t, _, _), r), (_, prio)): (((T, usize, u32), Id<R>), ((u32, u32), u8))| match a {
+        .dense_fold(n, None, |a: Option<(T, Id<R>, u8)>, (((t, _, _), r), (_, prio)): (((T, usize, u32), Id<R>), ((u32, u32), u8))| match a {
             Some(b) if b.2 <= prio => Some(b),
             _ => Some((t, r, prio)),
         })
@@ -59,8 +59,9 @@ where
         .collect()
 }
 
-// Decision table: (key, facts) -> the best matching rule, for every combination of `bits` fact bits.
-pub fn decisions<R: Rules>(rules: &R, by_key: &MultiRel<usize, Id<R>>, bits: u32) -> HashIdx<(usize, usize), Id<R>> {
+// Decision table: choice_key(key, facts) -> the best matching rule, for every combination of `bits` fact bits.
+pub fn decisions<R: Rules>(rules: &R, by_key: &MultiRel<usize, Id<R>>, bits: u32) -> MultiRel<usize, Id<R>> {
+    let n = by_key.n_dom() << bits;
     // Every rule against every fact combination; keep (key, facts) alongside.
     by_key
         .cross(Universe::<usize>::new(1 << bits))
@@ -69,13 +70,18 @@ pub fn decisions<R: Rules>(rules: &R, by_key: &MultiRel<usize, Id<R>>, bits: u32
         .and(rules.mask().and(rules.want()).and(rules.prio()))
         .filt(|(((_, f), _), ((mask, want), _)): (((Id<R>, usize), (usize, usize)), ((u32, u32), u8))| f as u32 & mask == want)
         // Lowest prio per (key, facts).
-        .key_by(|((_, kf), _): (((Id<R>, usize), (usize, usize)), ((u32, u32), u8))| kf)
-        .fold(None, |a: Option<(Id<R>, u8)>, (((r, _), _), (_, prio)): (((Id<R>, usize), (usize, usize)), ((u32, u32), u8))| match a {
+        .key_by(move |((_, (k, f)), _): (((Id<R>, usize), (usize, usize)), ((u32, u32), u8))| choice_key(k, f, bits))
+        .dense_fold(n, None, |a: Option<(Id<R>, u8)>, (((r, _), _), (_, prio)): (((Id<R>, usize), (usize, usize)), ((u32, u32), u8))| match a {
             Some(b) if b.1 <= prio => Some(b),
             _ => Some((r, prio)),
         })
         .flat_map(|a: Option<(Id<R>, u8)>| a.map(|(r, _)| r))
         .collect()
+}
+
+// (rule key, facts) -> decision-table key, for `bits` fact bits.
+pub fn choice_key(key: usize, facts: usize, bits: u32) -> usize {
+    (key << bits) + facts
 }
 
 // A rule table's key column as an index: key -> its rules, in table order.

@@ -1,4 +1,4 @@
-use crate::db::{frame_key, Db};
+use crate::db::{self, frame_key, glyph_key, Db};
 use crate::info::{ffact, FONT_GREY, FONT_YELLOW, STAT_AMMO, STAT_AMMO0, STAT_ARMOR, STAT_HEALTH, STAT_MAX0};
 use crate::physics::{rnd, Geom};
 use crate::player::PLAYER;
@@ -250,10 +250,10 @@ fn face_facts(dead: bool, damagecount: i32, bonuscount: i32, wanted: Id<Weapon>)
 }
 
 // Face image key: kind, pain level from health, and a look direction that changes every 17 tics.
-fn face_key(health: i32, ((kind, by_pain), by_look): ((u8, bool), bool), tic: u64) -> (u8, usize, usize) {
+fn face_key(health: i32, ((kind, by_pain), by_look): ((u8, bool), bool), tic: u64) -> usize {
     let pain = ((100 - health.clamp(0, 100)) * 5 / 101) as usize;
     let look = (rnd(tic / 17, PLAYER, 99) % 3) as usize;
-    (kind, pain * by_pain as usize, look * by_look as usize)
+    db::face_key(kind, pain * by_pain as usize, look * by_look as usize)
 }
 
 // Palette to use: red when hurt, gold after a pickup.
@@ -401,7 +401,7 @@ pub fn render(db: &Db, s: &State, out: &mut [u32]) {
     // One glyph per digit place, right-aligned using the width of the font's 0, no leading zeros.
     let digits = (&stats)
         .and(slots())
-        .key_by(|(_, n): (i32, Slot)| (n.2, 0))
+        .key_by(|(_, n): (i32, Slot)| glyph_key(n.2, 0))
         .and(&db.t.hud_fonts)
         .key_by(|(_, g)| g)
         .and(&db.image.w)
@@ -427,7 +427,7 @@ pub fn render(db: &Db, s: &State, out: &mut [u32]) {
         .key_by(|_| 0usize)
         .union(percents.key_by(|_| 0usize))
         .union(arms.key_by(|_| 0usize))
-        .key_by(|(f, _, _)| f)
+        .key_by(|((font, glyph), _, _): ((usize, usize), f64, f64)| glyph_key(font, glyph))
         .and(&db.t.hud_fonts)
         .map(|((_, x, y), g): (((usize, usize), f64, f64), Id<Image>)| (g, x, y, 0.0f32));
     // Keys held, and the face picked by the face rules.
@@ -441,14 +441,14 @@ pub fn render(db: &Db, s: &State, out: &mut [u32]) {
         .map(|((((x, y), g), _), _): ((((f64, f64), Id<Image>), Id<HudKey>), u8)| (g, x, y, 0.0f32));
     let tic = s.tic;
     let fr = &db.t.face_rule;
-    let face_rows: HashIdx<Id<Player>, (Id<Player>, usize, u32)> = (&*p.dead)
+    let face_rows: MultiRel<Id<Player>, (Id<Player>, usize, u32)> = (&*p.dead)
         .and(&*p.damagecount)
         .and(&*p.bonuscount)
         .and(&*p.wanted)
         .and(Same::<Id<Player>>::new())
         .map(|((((d, dc), bc), w), id): ((((bool, i32), i32), Id<Weapon>), Id<Player>)| (id, 0usize, face_facts(d, dc, bc, w)))
         .collect();
-    let face = matching(&face_rows, fr, &db.t.face_by_key, |id: Id<Player>| id)
+    let face = matching(&face_rows, fr, &db.t.face_by_key, |id: Id<Player>| id, 1)
         .map(|(_, r): (Id<Player>, Id<FaceRule>)| r)
         .select((&fr.kind).and(&fr.by_pain).and(&fr.by_look))
         .and(&*p.health)

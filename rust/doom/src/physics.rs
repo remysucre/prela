@@ -114,18 +114,30 @@ pub fn crossing((x1, y1, x2, y2): Geom, (ax, ay): (f64, f64), (bx, by): (f64, f6
 
 // Rows passed between the steps of a tic, as tuples.
 
-// Something solid or shootable (the player or a mobj): id (PLAYER or mobj uid), x, y, z,
-// radius, height, solid, shootable.
-pub type Body = (usize, f64, f64, f64, f64, f64, bool, bool);
-// A candidate position for a mover, tried in idx order: mover id, idx, x, y, z, radius,
+// Bodies (the player and the mobjs) share one dense id space per tic: body id 0 is the player,
+// body id m + 1 is mobj m. Move candidates are keyed body id * 8 + idx, shots body id * 8 + pellet.
+
+// The body id of a mobj.
+pub fn body_of(m: usize) -> usize {
+    m + 1
+}
+
+// Something solid or shootable: body id, uid (lasting identity), x, y, z, radius, height, solid, shootable.
+pub type Body = (usize, usize, f64, f64, f64, f64, f64, bool, bool);
+// A candidate position for a mover, tried in idx order: mover's body id, idx, x, y, z, radius,
 // height, is a monster, is a missile, stays put.
 pub type Cand = (usize, usize, f64, f64, f64, f64, f64, bool, bool, bool);
 // A candidate after collision: tightest floor and ceiling, and whether it's blocked.
 pub type Clip = (Cand, f64, f64, bool);
-// An instant-hit bullet: shooter id, x, y, z, angle, range, damage (keyed by shot id).
-pub type Shot = (usize, f64, f64, f64, f64, f64, i32);
-// Where a shot hit: distance, target (NONE for a wall), x, y, z, damage (keyed by shot id).
-pub type Impact = (f64, usize, f64, f64, f64, i32);
+// An instant-hit bullet: shot uid (names its puff), shooter body id, x, y, z, angle, range, damage.
+pub type Shot = (usize, usize, f64, f64, f64, f64, f64, i32);
+// Where a shot hit: distance, target body id (NONE for a wall), x, y, z, damage, shot uid.
+pub type Impact = (f64, usize, f64, f64, f64, i32, usize);
+
+// The key of a mover's candidate, or of a shooter's pellet.
+pub fn slot_key(body: usize, i: usize) -> usize {
+    body * 8 + i
+}
 
 // Combine two clip results: highest floor, lowest ceiling, blocked if either is.
 fn merge((_, af, ac, ab): Clip, (c, bf, bc, bb): Clip) -> Clip {
@@ -155,18 +167,16 @@ fn line_clip(c: Cand, (lo, hi): Gap, flags: i64, two: bool) -> Clip {
 }
 
 // Does a candidate overlap another solid body?
-fn overlaps((who, _, x, y, _, radius, _, _, missile, stay): Cand, (id, bx, by, _, br, _, solid, _): Body) -> bool {
+fn overlaps((who, _, x, y, _, radius, _, _, missile, stay): Cand, (id, _, bx, by, _, br, _, solid, _): Body) -> bool {
     solid && id != who && !stay && !missile && (x - bx).abs() < radius + br && (y - by).abs() < radius + br
 }
 
 // For each mover, the first candidate move that fits.
-pub fn clip_moves<Q>(db: &Db, h: &SectorState, lines: &Lines, bodies: &HashIdx<usize, Body>, cands: &Q) -> HashIdx<usize, Clip>
-where
-    Q: Drive<D = (usize, usize), R = Cand> + Probe,
-{
+pub fn clip_moves(db: &Db, h: &SectorState, lines: &Lines, bodies: &MultiRel<usize, Body>, cands: &MultiRel<usize, Cand>) -> MultiRel<usize, Clip> {
     let step = one(&db.t.k.max_step);
-    // Every source below is keyed by candidate (who, idx).
-    let pts: HashIdx<(usize, usize), (f64, f64)> = cands.map(|c: Cand| (c.2, c.3)).collect();
+    let n = cands.n_dom();
+    // Every source below is keyed by candidate key.
+    let pts: MultiRel<usize, (f64, f64)> = cands.map(|c: Cand| (c.2, c.3)).collect();
     // Start from the floor/ceiling of the sector the candidate lands in.
     let base = locate(db, &pts)
         .select((&*h.floor).and(&*h.ceil))
@@ -178,23 +188,23 @@ where
         .cross(view(db, lines).and(&db.linedef.flags).and(two_sided))
         .filt(|(c, (((g, _), _), _)): (Cand, (((Geom, Gap), i64), bool))| touches(g, c.2, c.3, c.5))
         .map(|(c, (((_, gap), flags), two)): (Cand, (((Geom, Gap), i64), bool))| line_clip(c, gap, flags, two))
-        .key_by(|k: Clip| (k.0.0, k.0.1));
+        .key_by(|k: Clip| slot_key(k.0.0, k.0.1));
     // Bodies the candidate bumps into.
     let things = cands
         .cross(bodies)
         .filt(|(c, b): (Cand, Body)| overlaps(c, b))
         .map(|(c, _): (Cand, Body)| (c, f64::MIN, f64::MAX, true))
-        .key_by(|k: Clip| (k.0.0, k.0.1));
+        .key_by(|k: Clip| slot_key(k.0.0, k.0.1));
     let init: Clip = ((NONE, NONE, 0.0, 0.0, 0.0, 0.0, 0.0, false, false, false), f64::MIN, f64::MAX, false);
     // Merge all constraints per candidate, keep those that fit, pick lowest idx per mover.
     base.union(walls)
         .union(things)
         // One merged Clip per candidate.
-        .fold(init, merge)
+        .dense_fold(n, init, merge)
         .filt(move |k: Clip| fits(k, step))
         // Then per mover, the fitting candidate with the lowest idx.
         .key_by(|k: Clip| k.0.0)
-        .fold(None, |a: Option<Clip>, k: Clip| match a {
+        .dense_fold(n / 8 + 1, None, |a: Option<Clip>, k: Clip| match a {
             Some(a) if a.0.1 <= k.0.1 => Some(a),
             _ => Some(k),
         })
@@ -214,28 +224,28 @@ fn blocks_sight(((ax, ay, az), (bx, by, bz)): Sight, (g, (lo, hi)): (Geom, Gap))
 }
 
 // Sight pairs not blocked by any line.
-pub fn visible<K: Copy + Eq + Hash>(db: &Db, lines: &Lines, pairs: &HashIdx<K, Sight>) -> HashIdx<K, Sight> {
+pub fn visible<K: Dense>(db: &Db, lines: &Lines, pairs: &MultiRel<K, Sight>) -> MultiRel<K, Sight> {
     // Ids of pairs with at least one blocking line.
     let blocked = pairs
         .and(Same::<K>::new())
         .cross(view(db, lines))
         .filt(|((s, _), row): ((Sight, K), (Geom, Gap))| blocks_sight(s, row))
         .key_by(|((_, id), _): ((Sight, K), (Geom, Gap))| id)
-        .fold(true, |_, _| true);
+        .dense_fold(pairs.n_dom(), true, |_, _| true);
     pairs.minus(&blocked).collect()
 }
 
 // Shot hitting a wall: crosses a line outside its gap. The puff is pulled back `back` units toward the shooter.
-fn wall_impact((_, x, y, z, ang, range, damage): Shot, (g, (lo, hi)): (Geom, Gap), back: f64) -> Option<Impact> {
+fn wall_impact((sid, _, x, y, z, ang, range, damage): Shot, (g, (lo, hi)): (Geom, Gap), back: f64) -> Option<Impact> {
     let end = (x + range * ang.cos(), y + range * ang.sin());
     crossing(g, (x, y), end).and_then(|t| {
         let d = (t * range - back).max(0.0);
-        (z < lo || z > hi).then(|| (d, NONE, x + d * ang.cos(), y + d * ang.sin(), z, damage))
+        (z < lo || z > hi).then(|| (d, NONE, x + d * ang.cos(), y + d * ang.sin(), z, damage, sid))
     })
 }
 
 // Shot hitting a body: ray passes within its radius.
-fn body_impact((from, x, y, _, ang, range, damage): Shot, (id, bx, by, bz, radius, height, _, shootable): Body) -> Option<Impact> {
+fn body_impact((sid, from, x, y, _, ang, range, damage): Shot, (id, _, bx, by, bz, radius, height, _, shootable): Body) -> Option<Impact> {
     let (dx, dy) = (bx - x, by - y);
     let (sn, cs) = ang.sin_cos();
     // Body centre in ray coordinates: distance along the ray and off to the side.
@@ -243,12 +253,12 @@ fn body_impact((from, x, y, _, ang, range, damage): Shot, (id, bx, by, bz, radiu
     let perp = (-dx * sn + dy * cs).abs();
     (shootable && id != from && along > 0.0 && along < range && perp < radius).then(|| {
         let t = along - (radius * radius - perp * perp).sqrt();
-        (t, id, x + t * cs, y + t * sn, bz + height / 2.0, damage)
+        (t, id, x + t * cs, y + t * sn, bz + height / 2.0, damage, sid)
     })
 }
 
 // For each shot, the nearest wall or body it hits.
-pub fn hitscan(db: &Db, lines: &Lines, bodies: &HashIdx<usize, Body>, shots: &HashIdx<usize, Shot>) -> HashIdx<usize, Impact> {
+pub fn hitscan(db: &Db, lines: &Lines, bodies: &MultiRel<usize, Body>, shots: &MultiRel<usize, Shot>) -> MultiRel<usize, Impact> {
     let back = one(&db.t.k.puff_back);
     shots
         .and(Same::<usize>::new())
@@ -257,7 +267,7 @@ pub fn hitscan(db: &Db, lines: &Lines, bodies: &HashIdx<usize, Body>, shots: &Ha
         .key_by(|(id, _)| id)
         .union(shots.and(Same::<usize>::new()).cross(bodies).flat_map(|((s, id), b): ((Shot, usize), Body)| body_impact(s, b).map(|i| (id, i))).key_by(|(id, _)| id))
         .map(|(_, i)| i)
-        .fold(None, |a: Option<Impact>, i: Impact| match a {
+        .dense_fold(shots.n_dom(), None, |a: Option<Impact>, i: Impact| match a {
             Some(a) if a.0 <= i.0 => Some(a),
             _ => Some(i),
         })
