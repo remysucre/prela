@@ -1,5 +1,5 @@
 use crate::engine::{Row, IntoQuery};
-use crate::loader::{Col, Rows, Loader, SparseRows, Str, sparse_key};
+use crate::loader::{Col, Rows, Loader, SparseRows, Str, sparse_rows};
 use std::path::Path;
 
 // =====================================================================
@@ -146,18 +146,18 @@ pub struct Tpch {
 fn build(l: &mut Loader) -> Tpch {
     Tpch {
         region: Region {
-            id: l.key("Region_name"),
+            id: l.rows("Region_name"),
             name: l.strs("Region_name"),
             comment: l.strs("Region_comment"),
         },
         nation: Nation {
-            id: l.key("Nation_name"),
+            id: l.rows("Nation_name"),
             name: l.strs("Nation_name"),
             region: l.ids("Nation_region"),
             comment: l.strs("Nation_comment"),
         },
         supplier: Supplier {
-            id: l.key("Supplier_name"),
+            id: l.rows("Supplier_name"),
             name: l.strs("Supplier_name"),
             address: l.strs("Supplier_address"),
             nation: l.ids("Supplier_nation"),
@@ -166,7 +166,7 @@ fn build(l: &mut Loader) -> Tpch {
             comment: l.strs("Supplier_comment"),
         },
         customer: Customer {
-            id: l.key("Customer_name"),
+            id: l.rows("Customer_name"),
             name: l.strs("Customer_name"),
             address: l.strs("Customer_address"),
             nation: l.ids("Customer_nation"),
@@ -176,7 +176,7 @@ fn build(l: &mut Loader) -> Tpch {
             comment: l.strs("Customer_comment"),
         },
         part: Part {
-            id: l.key("Part_name"),
+            id: l.rows("Part_name"),
             name: l.strs("Part_name"),
             mfgr: l.strs("Part_mfgr"),
             brand: l.strs("Part_brand"),
@@ -187,7 +187,7 @@ fn build(l: &mut Loader) -> Tpch {
             comment: l.strs("Part_comment"),
         },
         partsupp: PartSupp {
-            id: l.key("PartSupp_part"),
+            id: l.rows("PartSupp_part"),
             part: l.ids("PartSupp_part"),
             supplier: l.ids("PartSupp_supplier"),
             availqty: l.i64s("PartSupp_availqty"),
@@ -199,7 +199,7 @@ fn build(l: &mut Loader) -> Tpch {
             // the id space is that column's domain with those masked out.
             let customer = l.ids("Order_customer");
             Order {
-                id: sparse_key(&customer),
+                id: sparse_rows(&customer),
                 customer,
                 status: l.strs("Order_status"),
                 totalprice: l.f64s("Order_totalprice"),
@@ -211,7 +211,7 @@ fn build(l: &mut Loader) -> Tpch {
             }
         },
         lineitem: Lineitem {
-            id: l.key("Lineitem_order"),
+            id: l.rows("Lineitem_order"),
             order: l.ids("Lineitem_order"),
             part: l.ids("Lineitem_part"),
             supplier: l.ids("Lineitem_supplier"),

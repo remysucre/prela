@@ -109,7 +109,7 @@ pub struct Job {
 fn build(l: &mut Loader) -> Job {
     Job {
         movie: Movie {
-            id: l.key("Movie_title"),
+            id: l.rows("Movie_title"),
             title: l.strs("Movie_title"),
             kind: l.dict("Movie_kind", "Kind_text"),
             production_year: l.multi_i64("Movie_production_year"),
@@ -125,14 +125,14 @@ fn build(l: &mut Loader) -> Job {
             aka: l.multi_dict("Movie_aka", "AkaTitle_text"),
         },
         cast: Cast {
-            id: l.key("Cast_person"),
+            id: l.rows("Cast_person"),
             person: l.ids("Cast_person"),
             role: l.dict("Cast_role", "RoleType_text"),
             note: l.multi_strs("Cast_note"),
             character: l.multi_dict("Cast_character", "Character_text"),
         },
         person: Person {
-            id: l.key("Person_name"),
+            id: l.rows("Person_name"),
             name: l.strs("Person_name"),
             gender: l.multi_strs("Person_gender"),
             alias: l.multi_dict("Person_alias", "AkaName_text"),
@@ -140,36 +140,36 @@ fn build(l: &mut Loader) -> Job {
             name_pcode_cf: l.multi_strs("Person_name_pcode_cf"),
         },
         company: Company {
-            id: l.key("Company_name"),
+            id: l.rows("Company_name"),
             name: l.strs("Company_name"),
             country: l.multi_strs("Company_country"),
             note: l.multi_strs("Company_note"),
             ty: l.dict("Company_ty", "CompanyType_text"),
         },
         info: Info {
-            id: l.key("Info_info"),
+            id: l.rows("Info_info"),
             info: l.strs("Info_info"),
             ty: l.dict("Info_ty", "InfoType_text"),
             note: l.multi_strs("Info_note"),
         },
         data: Data {
-            id: l.key("Data_text"),
+            id: l.rows("Data_text"),
             text: l.strs("Data_text"),
             ty: l.dict("Data_ty", "InfoType_text"),
         },
         person_info: PersonInfo {
-            id: l.key("PersonInfo_info"),
+            id: l.rows("PersonInfo_info"),
             info: l.strs("PersonInfo_info"),
             ty: l.dict("PersonInfo_ty", "InfoType_text"),
             note: l.multi_strs("PersonInfo_note"),
         },
         movie_link: MovieLink {
-            id: l.key("MovieLink_target"),
+            id: l.rows("MovieLink_target"),
             target: l.ids("MovieLink_target"),
             ty: l.dict("MovieLink_ty", "LinkType_text"),
         },
         complete_cast: CompleteCast {
-            id: l.key("CompleteCast_status"),
+            id: l.rows("CompleteCast_status"),
             status: l.dict("CompleteCast_status", "CompCastType_text"),
             subject: l.dict("CompleteCast_subject", "CompCastType_text"),
         },

@@ -9,7 +9,7 @@
 //
 //     fn build(l: &mut Loader) -> Tpch {
 //         Tpch { region: Region {
-//             id: l.key("Region_name"),
+//             id: l.rows("Region_name"),
 //             name: l.strs("Region_name"), ..
 //         }, .. }
 //     }
@@ -131,7 +131,7 @@ impl<'a> Loader<'a> {
     /// the domain of column `name` — any dense column of `E` will do; by
     /// convention its value column. Only the header is read, and nothing is
     /// recorded: the column is already in the manifest under its own load.
-    pub fn key<E: 'static>(&self, name: &str) -> Rows<E> {
+    pub fn rows<E: 'static>(&self, name: &str) -> Rows<E> {
         match self.dir {
             Some(dir) => Universe::new(cache::n_dom_in(dir, name)),
             None => Universe::new(0),
@@ -250,7 +250,7 @@ fn empty_csr<D: Dense, R: Copy + 'static>() -> MultiRel<D, R> {
 /// whose foreign key `fk` is a real target (`NO_ID` marks a hole). One pass
 /// over `fk` at load; the mask is leaked because `SparseUniverse` holds
 /// `&'static Bitset` (the same reason `MultiRel` holds `&'static` slices).
-pub fn sparse_key<E: 'static, T: Dense>(fk: &VecRel<Row<E>, T>) -> SparseRows<E> {
+pub fn sparse_rows<E: 'static, T: Dense>(fk: &VecRel<Row<E>, T>) -> SparseRows<E> {
     let mask: &'static Bitset<Row<E>> = Box::leak(Box::new(Bitset::validity(&fk.v)));
     SparseUniverse::new(fk.n_dom(), mask)
 }
@@ -307,19 +307,19 @@ mod tests {
     fn build(l: &mut Loader) -> Toy {
         Toy {
             film: Film {
-                id: l.key("Film_ftitle"),
+                id: l.rows("Film_ftitle"),
                 ftitle: l.strs("Film_ftitle"),
                 year: l.i64s("Film_year"),
                 genre: l.ids("Film_genre"),
                 tags: l.multi_ids("Film_tags"),
             },
             genre: Genre {
-                id: l.key("Genre_gname"),
+                id: l.rows("Genre_gname"),
                 gname: l.strs("Genre_gname"),
                 ty: l.strs("Genre_ty"),
             },
             tag: Tag {
-                id: l.key("Tag_tag"),
+                id: l.rows("Tag_tag"),
                 tag: l.strs("Tag_tag"),
                 films: l.multi_ids("Tag_films"),
             },
