@@ -1,19 +1,21 @@
 use crate::db::Db;
 use crate::info::{MV_IDLE, SOLID};
 use crate::mobj;
-use crate::physics::{clip_moves, hitscan, lines, locate, visible, Shot};
+use crate::physics::{Shot, clip_moves, hitscan, lines, locate, visible};
 use crate::player::{self, Input};
-use crate::schema::{one, rc, AmmoKind, Mobj, Player, Sector, SectorState, C};
+use crate::schema::{AmmoKind, C, Mobj, Player, Sector, SectorState, one, rc};
 use crate::wad::NONE;
 use crate::world;
 use prela::engine::*;
 use prela::loader::Rows;
 
-// Linedef flag: sound stops here. Thing type of the player 1 start.
+// flag on walls that limit sound travel
 const ML_SOUNDBLOCK: i64 = 64;
+// player starting position
 const PLAYER1_START: usize = 1;
 
-// The whole game state; each tic builds a new one, sharing the columns it doesn't change.
+/// game state
+/// fields (except for tic) are Prela entities
 pub struct State {
     pub tic: u64,
     pub player: Player,
@@ -22,24 +24,29 @@ pub struct State {
     pub mobj: Mobj,
 }
 
-// A one-row player column holding v.
+/// one row col mapping playerID -> v
 fn konst<T: Copy + 'static>(id: &Rows<Player>, v: T) -> C<Player, T> {
     rc(id.map(move |_| v))
 }
 
-// Fill in the player's current sector.
+/// set player's current sector using physics::locate
 fn with_sector(db: &Db, p: Player) -> Player {
     let here = (&*p.x).and(&*p.y);
-    // player -> sector, via the BSP walk.
-    Player { sector: rc(locate(db, &here)), ..p }
+    Player {
+        sector: rc(locate(db, &here)),
+        ..p
+    }
 }
 
-// Put the player on the floor of its sector.
+/// set player z-position to floor
 fn on_floor(s: &SectorState, p: Player) -> Player {
-    Player { z: rc((&*p.sector).select(&*s.floor)), ..p }
+    Player {
+        z: rc((&*p.sector).select(&*s.floor)),
+        ..p
+    }
 }
 
-// Starting state: player at the start thing, standing on its sector floor; nothing moving.
+/// Starting state: player at the start thing, standing on its sector floor; nothing moving.
 pub fn initial(db: &Db) -> State {
     let fill = |v| rc((&db.sector).map(move |_| v));
     let sector = SectorState {
@@ -93,13 +100,24 @@ pub fn initial(db: &Db) -> State {
     };
     let player = on_floor(&sector, with_sector(db, player));
     let mobj = mobj::spawn_things(db, &sector);
-    State { tic: 0, player, ammo: rc(&db.t.ammo.start), sector, mobj }
+    State {
+        tic: 0,
+        player,
+        ammo: rc(&db.t.ammo.start),
+        sector,
+        mobj,
+    }
 }
 
 // Teleport the player (debug `--at`).
 pub fn place(db: &Db, s: State, x: f64, y: f64, ang: f64) -> State {
     let p = &s.player;
-    let moved = Player { x: rc((&p.id).map(move |_| x)), y: rc((&p.id).map(move |_| y)), ang: rc((&p.id).map(move |_| ang)), ..p.clone() };
+    let moved = Player {
+        x: rc((&p.id).map(move |_| x)),
+        y: rc((&p.id).map(move |_| y)),
+        ang: rc((&p.id).map(move |_| ang)),
+        ..p.clone()
+    };
     let player = on_floor(&s.sector, with_sector(db, moved));
     State { player, ..s }
 }
@@ -109,7 +127,11 @@ pub fn tic(db: &Db, s: &State, inp: Input) -> State {
     let p = &s.player;
     // Dead or finished, and use freshly pressed: restart the level.
     // `usedown` is last tic's use key, so holding use doesn't restart twice.
-    let restart = (&*p.dead).and(&*p.exited).and(&*p.usedown).filt(move |((d, e), held): ((bool, bool), bool)| (d || e) && inp.use_ && !held).fold_flat(false, |_, _| true);
+    let restart = (&*p.dead)
+        .and(&*p.exited)
+        .and(&*p.usedown)
+        .filt(move |((d, e), held): ((bool, bool), bool)| (d || e) && inp.use_ && !held)
+        .fold_flat(false, |_, _| true);
     if restart {
         return initial(db);
     }
@@ -121,7 +143,14 @@ pub fn tic(db: &Db, s: &State, inp: Input) -> State {
 
     // Player movement: apply input, try candidate moves, keep the first that fits.
     let moved = player::moved(db, p, inp);
-    let walked = with_sector(db, player::walk(db, &moved, &clip_moves(db, &s.sector, &lines, &bodies, &player::cands(db, &moved))));
+    let walked = with_sector(
+        db,
+        player::walk(
+            db,
+            &moved,
+            &clip_moves(db, &s.sector, &lines, &bodies, &player::cands(db, &moved)),
+        ),
+    );
 
     // Lines walked over or used this tic.
     let events = world::line_events(db, &lines, p, &walked, inp.use_);
@@ -160,10 +189,19 @@ pub fn tic(db: &Db, s: &State, inp: Input) -> State {
         // Flood out through the sound graph: sector -> depth.
         .reach_set(&sound, usize::MAX)
         .collect();
-    let sector = SectorState { heard: rc((&*s.sector.heard).and((&reached).opt()).map(|(h, r): (bool, Option<usize>)| h || r.is_some())), ..sector };
+    let sector = SectorState {
+        heard: rc((&*s.sector.heard)
+            .and((&reached).opt())
+            .map(|(h, r): (bool, Option<usize>)| h || r.is_some())),
+        ..sector
+    };
     // Monsters: advance animation, check sight, decide, then move.
     let (advanced, action, live) = mobj::advance(db, m);
-    let seen = visible(db, &lines, &mobj::sight_pairs(db, &advanced, &action, &live, &armed));
+    let seen = visible(
+        db,
+        &lines,
+        &mobj::sight_pairs(db, &advanced, &action, &live, &armed),
+    );
     let plan = mobj::think(db, &advanced, &action, &live, &seen, &sector, &armed, t);
     // Bodies rebuilt from post-move player and post-AI monsters for monster collision and hits.
     let bodies = mobj::bodies(db, &armed, &plan.m, &plan.live);
@@ -171,15 +209,33 @@ pub fn tic(db: &Db, s: &State, inp: Input) -> State {
     let moved = mobj::apply_moves(db, &plan, &clips, &bodies);
 
     // All bullets, their hits, and the resulting damage, deaths, drops and puffs.
-    let shots: MultiRel<usize, Shot> = (&player_shots).union(&mobj::monster_shots(db, &moved, t)).collect();
+    let shots: MultiRel<usize, Shot> = (&player_shots)
+        .union(&mobj::monster_shots(db, &moved, t))
+        .collect();
     let impacts = hitscan(db, &lines, &bodies, &shots);
     let dmg = mobj::damage(db, &impacts, &moved, &bodies, t);
     let wounded = mobj::wound(db, &moved, &dmg, t);
-    let spawns: MultiRel<usize, mobj::Spawn> = (&mobj::drops(db, &moved, &wounded, t)).union(&mobj::effects(db, &impacts, &wounded, &armed, t)).collect();
+    let spawns: MultiRel<usize, mobj::Spawn> = (&mobj::drops(db, &moved, &wounded, t))
+        .union(&mobj::effects(db, &impacts, &wounded, &armed, t))
+        .collect();
 
     // Pickups, final player update, and the new mobj set.
     let (picked, ammo, taken) = player::pickups(db, &armed, &ammo, &wounded.m, &wounded.live);
-    let player = player::finish(db, &picked, &dmg, &sector, inp, world::exited(db, &events), t);
+    let player = player::finish(
+        db,
+        &picked,
+        &dmg,
+        &sector,
+        inp,
+        world::exited(db, &events),
+        t,
+    );
     let mobj = mobj::survivors(db, &sector, &wounded, &taken, &spawns);
-    State { tic: t + 1, player, ammo, sector, mobj }
+    State {
+        tic: t + 1,
+        player,
+        ammo,
+        sector,
+        mobj,
+    }
 }
