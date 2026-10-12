@@ -7,6 +7,7 @@ use crate::wad::{Sector, Thing};
 use crate::world::{self, Mover};
 use prela::engine::*;
 
+// Linedef flag: sound stops here. Thing type of the player 1 start.
 const ML_SOUNDBLOCK: i64 = 64;
 const PLAYER1_START: i64 = 1;
 
@@ -24,6 +25,7 @@ pub struct State {
 // Fill in each player's current sector.
 fn with_sector(db: &Db, players: &VecRel<usize, Player>) -> VecRel<usize, Player> {
     let here: VecRel<usize, (f64, f64)> = players.map(|p: Player| (p.x, p.y)).collect();
+    // player -> sector, via the BSP walk.
     let sec: HashIdx<usize, usize> = locate(db, &here).collect();
     players.and(&sec).map(|(p, s): (Player, usize)| Player { sector: s, ..p }).collect()
 }
@@ -32,6 +34,7 @@ fn with_sector(db: &Db, players: &VecRel<usize, Player>) -> VecRel<usize, Player
 pub fn initial(db: &Db) -> State {
     let sectors: VecRel<usize, Sector> = (&db.sectors).map(|s: Sector| s).collect();
     let k = consts(db);
+    // The player 1 start thing, joined with the starting weapon for its ready state.
     let start = (&db.things)
         .filt(|t: Thing| t.kind == PLAYER1_START)
         .key_by(move |_| k.start_weapon)
@@ -40,6 +43,7 @@ pub fn initial(db: &Db) -> State {
         .key_by(|_| PLAYER)
         .collect();
     let player = with_sector(db, &start);
+    // Stand on the floor of that sector.
     let player = (&player)
         .and((&player).map(|p: Player| p.sector).select(&sectors))
         .map(|(p, s): (Player, Sector)| Player { z: s.floor, ..p })
@@ -65,11 +69,13 @@ pub fn place(db: &Db, s: State, x: f64, y: f64, ang: f64) -> State {
 // One game tic: old state + input -> new state.
 pub fn tic(db: &Db, s: &State, inp: Input) -> State {
     // Dead or finished, and use freshly pressed: restart the level.
+    // `usedown` is last tic's use key, so holding use doesn't restart twice.
     let restart = (&s.player).filt(move |p: Player| (p.dead || p.exited) && inp.use_ && !p.usedown).fold_flat(false, |_, _| true);
     if restart {
         return initial(db);
     }
     let t = s.tic;
+    // Inputs shared by several steps: lines with live sector heights, and every solid/shootable box.
     let lines = line_rows(db, &s.sectors);
     let bodies = mobj::bodies(db, &s.player, &s.mobjs);
 
@@ -93,6 +99,7 @@ pub fn tic(db: &Db, s: &State, inp: Input) -> State {
     let (armed, ammo, player_shots) = player::weapon(db, &walked, &s.ammo, inp, t);
 
     // Sector adjacency that sound can travel through.
+    // Sound passes lines with an open gap and no sound-block flag; edges go both ways.
     let sound: MultiRel<usize, usize> = (&lines)
         .filt(|row: LineRow| {
             let (lo, hi) = opening(row);
@@ -104,11 +111,14 @@ pub fn tic(db: &Db, s: &State, inp: Input) -> State {
         .collect();
     // Sectors that have heard the player fire (sticky across tics).
     let heard: HashIdx<usize, bool> = (&player_shots)
+        // Player's sector, once per bullet fired (none if no shot).
         .key_by(|_| PLAYER)
         .and(&armed)
         .map(|(_, p): (Shot, Player)| p.sector)
+        // Flood out through the sound graph: sector -> depth.
         .reach_set(&sound, usize::MAX)
         .map(|_| true)
+        // Add last tic's set and dedupe.
         .union(&s.heard)
         .fold(true, |_, _| true)
         .collect();
@@ -116,6 +126,7 @@ pub fn tic(db: &Db, s: &State, inp: Input) -> State {
     let advanced = mobj::advance(db, &s.mobjs);
     let seen = visible(&lines, &mobj::sight_pairs(db, &advanced, &armed));
     let decided = mobj::think(db, &advanced, &seen, &heard, &armed, t);
+    // Bodies rebuilt from post-move player and post-AI monsters for monster collision and hits.
     let bodies = mobj::bodies(db, &armed, &(&decided).map(|d: Decision| d.m).collect());
     let clips = clip_moves(db, &sectors, &lines, &bodies, &mobj::move_cands(db, &decided));
     let moved = mobj::apply_moves(db, &decided, &clips, &bodies);

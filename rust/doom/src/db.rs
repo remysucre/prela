@@ -98,6 +98,7 @@ fn tables(gfx: &crate::wad::Graphics) -> Tables {
     let defs = info::states();
     let ids: HashMap<String, usize> = defs.iter().enumerate().map(|(i, d)| (d.name.clone(), i)).collect();
     let id = |n: &str| *ids.get(n).unwrap_or_else(|| panic!("unknown state {n}"));
+    // Sprite id = index in the sorted list of 4-letter sprite names.
     let mut sprites: Vec<&str> = defs.iter().map(|d| d.sprite).collect();
     sprites.sort();
     sprites.dedup();
@@ -180,7 +181,6 @@ fn tables(gfx: &crate::wad::Graphics) -> Tables {
     );
     // Fill in each weapon's flash duration from its flash state.
     let weapons: VecRel<usize, Weapon> = (&weapons).and((&weapons).map(|w: Weapon| w.flash).select(&states)).map(|(w, r): (Weapon, StateRow)| Weapon { flash_tics: r.tics, ..w }).collect();
-    // Status bar glyphs: digits 0-9, percent sign, three keys.
     // Status bar tables, with lump names resolved to image ids.
     let lump = |n: &str| gfx.patch_names.get(n).copied().unwrap_or(NONE);
     let hud_fonts = VecRel::<usize, ((usize, usize), usize)>::new(info::hud_fonts().iter().map(|(k, n)| (*k, lump(n))).collect()).key_by(|(k, _)| k).map(|(_, g)| g).collect();
@@ -203,6 +203,7 @@ fn tables(gfx: &crate::wad::Graphics) -> Tables {
     let by_action = |rules: Vec<(Action, Rule<AiOut>)>| VecRel::<usize, (Action, Rule<AiOut>)>::new(rules).key_by(|(a, _)| a as usize).map(|(_, r)| r).collect();
     let ai_rules = by_action(info::ai_rules());
     let weapon_rules: MultiRel<usize, Rule<WOut>> = VecRel::<usize, (Action, Rule<WOut>)>::new(info::weapon_rules()).key_by(|(a, _)| a as usize).map(|(_, r)| r).collect();
+    // Only 3 weapon fact bits, so precompute (action, facts) -> outcome.
     let weapon_choice = decisions(&weapon_rules, 3);
     let specials = VecRel::<usize, (i64, Special)>::new(info::specials()).key_by(|(k, _)| k).map(|(_, v)| v).collect();
     let activations = VecRel::<usize, (usize, ActOut)>::new(info::activations()).key_by(|(k, _)| k).map(|(_, v)| v).collect();
@@ -311,7 +312,7 @@ pub struct Db {
 }
 
 impl Db {
-    // Builds the database from the parsed WAD. Also returns the starting sector heights (game state, not static).
+    // Builds the database from the parsed WAD. `sectors` holds the starting heights; live heights are in tic::State.
     pub fn new(g: Game) -> Db {
         let l = g.level;
         let n_nodes = l.nodes.len();
@@ -329,6 +330,7 @@ impl Db {
                 .collect(),
         );
         // Subsector -> its run of segs.
+        // A subsector is (first seg, count); expand lists its seg ids.
         let ss_segs: MultiRel<usize, usize> = VecRel::<usize, (usize, usize)>::new(l.subsectors.clone())
             .expand(|(first, n): (usize, usize)| (first, first + n))
             .map(|(_, s): ((usize, usize), usize)| s)
@@ -337,6 +339,7 @@ impl Db {
         let nodes: VecRel<usize, Node> = VecRel::new(l.nodes);
         let node_children: MultiRel<usize, (usize, usize)> = (&nodes)
             .and(Same::<usize>::new())
+            // One row per (node, side 0/1).
             .cross(Universe::<usize>::new(2))
             .key_by(|((_, i), _): ((Node, usize), usize)| i)
             .map(move |((n, _), s): ((Node, usize), usize)| (s, if n.child_is_leaf[s] { n_nodes + n.child[s] } else { n.child[s] }))
@@ -389,6 +392,7 @@ impl Db {
 
     // Joins each seg with its linedef, vertices, and front/back sidedefs.
     fn derive_walls(&self) -> VecRel<usize, Wall> {
+        // Each is a seg-keyed lookup; `side` 1 means the seg runs along the line's back.
         let line = (&self.segs).map(|s: Seg| s.line).select(&self.linedefs);
         let p1 = (&self.segs).map(|s: Seg| s.v1).select(&self.vertices);
         let p2 = (&self.segs).map(|s: Seg| s.v2).select(&self.vertices);
@@ -418,6 +422,7 @@ impl Db {
                 lower: f.lower,
                 middle: f.middle,
                 flags: l.flags,
+                // Doom's fake contrast: horizontal walls darker, vertical walls lighter.
                 light_delta: if a.1 == b.1 { -1 } else if a.0 == b.0 { 1 } else { 0 },
             })
             .collect()
@@ -450,6 +455,7 @@ impl Db {
     fn derive_leaf_sector(&self, n_nodes: usize) -> MultiRel<usize, usize> {
         let first_seg = (&self.ss_segs).fold(NONE, |a: usize, s: usize| a.min(s));
         let sector = (&first_seg).select(&self.walls).map(|w: Wall| w.fsec);
+        // Leaf ids come after node ids (see node_children).
         Universe::<usize>::new(self.ss_segs.n_dom())
             .and(sector)
             .key_by(move |(ss, _)| n_nodes + ss)

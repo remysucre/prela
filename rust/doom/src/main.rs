@@ -18,6 +18,7 @@ use std::io::Write;
 use std::time::Instant;
 use tic::State;
 
+// The single player row (key PLAYER = 0).
 fn player(s: &State) -> Player {
     s.player.get(0).unwrap()
 }
@@ -50,6 +51,7 @@ fn main() {
     if let Some(i) = args.iter().position(|a| a == "--shot") {
         let script = args.get(i + 2).map(String::as_str).unwrap_or("");
         let t = Instant::now();
+        // Each letter is one tic of held input.
         for c in script.chars() {
             let inp = match c {
                 'f' => Input { forward: 1.0, ..Default::default() },

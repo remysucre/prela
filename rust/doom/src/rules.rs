@@ -7,6 +7,7 @@ pub fn bit(on: bool, flag: u32) -> u32 {
 }
 
 // Rule-table lookup: for each row, pick the highest-priority rule whose conditions match.
+// Rows are (row, rule key, fact bits); `id` names the row in the result.
 pub fn matching<Q, T, O, F>(rows: Q, rules: &MultiRel<usize, Rule<O>>, id: F) -> HashIdx<usize, (T, O)>
 where
     Q: Drive<R = (T, usize, u32)>,
@@ -24,15 +25,18 @@ where
             Some(b) if b.1.prio <= r.prio => Some(b),
             _ => Some((t, r)),
         })
+        // Unwrap the winner: (row, rule output).
         .flat_map(|a: Option<(T, Rule<O>)>| a.map(|(t, r)| (t, r.out)))
         .collect()
 }
 
 // Decision table: (key, facts) -> the best matching rule's output, for every combination of `bits` fact bits.
 pub fn decisions<O: Copy + 'static>(rules: &MultiRel<usize, Rule<O>>, bits: u32) -> HashIdx<(usize, usize), O> {
+    // Every rule against every fact combination; key = (rule key, facts).
     rules
         .cross(Universe::<usize>::new(1 << bits))
         .filt(|(r, f): (Rule<O>, usize)| f as u32 & r.mask == r.want)
+        // Lowest prio per (key, facts).
         .fold(None, |a: Option<Rule<O>>, (r, _): (Rule<O>, usize)| match a {
             Some(b) if b.prio <= r.prio => Some(b),
             _ => Some(r),

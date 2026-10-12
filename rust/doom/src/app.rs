@@ -46,6 +46,7 @@ impl App<'_> {
     // Locks/hides the mouse cursor for mouselook.
     fn grab(&mut self, on: bool) {
         let Some(w) = &self.window else { return };
+        // Prefer a hard lock; fall back to confining the cursor to the window.
         let ok = !on
             || w.set_cursor_grab(CursorGrabMode::Locked).is_ok()
             || w.set_cursor_grab(CursorGrabMode::Confined).is_ok();
@@ -59,7 +60,9 @@ impl App<'_> {
     // Turns held keys and mouse movement into this tic's Input.
     fn input(&mut self) -> Input {
         let down = |ks: &[KeyCode]| ks.iter().any(|k| self.keys.contains(k));
+        // +1, -1 or 0 from a pair of key groups.
         let axis = |pos: &[KeyCode], neg: &[KeyCode]| down(pos) as i32 as f64 - down(neg) as i32 as f64;
+        // Alt turns the turn keys into strafe keys.
         let alt = down(&[KeyCode::AltLeft, KeyCode::AltRight]);
         let turn = axis(&[KeyCode::ArrowLeft], &[KeyCode::ArrowRight]);
         let digits = [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4];
@@ -73,11 +76,12 @@ impl App<'_> {
             run: down(&[KeyCode::ShiftLeft, KeyCode::ShiftRight]),
             weapon: digits.iter().position(|k| self.keys.contains(k)),
         };
+        // Mouse motion is consumed by the tic that reads it.
         self.look = 0.0;
         inp
     }
 
-    // Runs as many 35 Hz tics as are due.
+    // Runs as many 35 Hz tics as are due (several in a row if a frame ran long).
     fn step(&mut self) {
         while Instant::now() >= self.next {
             let inp = self.input();
@@ -188,6 +192,7 @@ impl ApplicationHandler for App<'_> {
         }
     }
 
+    // Idle: ask for another frame, so the loop runs continuously.
     fn about_to_wait(&mut self, _: &ActiveEventLoop) {
         if let Some(w) = &self.window {
             w.request_redraw();

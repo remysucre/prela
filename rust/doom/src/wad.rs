@@ -38,6 +38,7 @@ impl Wad {
     // Reads the file and its lump directory.
     pub fn open(path: &str) -> Wad {
         let data = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        // Header: magic, lump count, directory offset. Each directory entry: offset, size, 8-byte name.
         assert!(&data[0..4] == b"IWAD" || &data[0..4] == b"PWAD", "{path}: not a WAD");
         let n = i32_at(&data, 4) as usize;
         let dir = i32_at(&data, 8) as usize;
@@ -72,7 +73,7 @@ impl Wad {
             .collect()
     }
 
-    // A lump belonging to a map, e.g. E1M1's LINEDEFS.
+    // A lump belonging to a map, e.g. E1M1's LINEDEFS (the lumps right after the map marker).
     fn map_lump(&self, map: &str, name: &str) -> &[u8] {
         let m = self.index(map).unwrap_or_else(|| panic!("missing map {map}"));
         let i = (m + 1..m + 12).find(|&i| self.lumps[i].0 == name).unwrap();
@@ -208,6 +209,7 @@ fn draw_patch(p: &[u8], out: &mut [u16], w: usize, h: usize, ox: i64, oy: i64) {
         if x < 0 || x >= w as i64 {
             continue;
         }
+        // Each column is a list of posts (top row, length, pixels), ended by 0xFF.
         let mut o = i32_at(p, 8 + 4 * c as usize) as usize;
         while p[o] != 0xFF {
             let top = p[o] as i64;
@@ -350,11 +352,13 @@ impl Game {
             })
             .collect();
         let ss = l("SSECTORS");
+        // (first seg, seg count)
         let subsectors = recs(ss, 4).map(|o| (u16_at(ss, o + 2) as usize, u16_at(ss, o) as usize)).collect();
         let nd = l("NODES");
         let nodes = recs(nd, 28)
             .map(|o| {
                 let f = |k: usize| i16_at(nd, o + 2 * k) as f64;
+                // Child ids; the high bit marks a subsector (leaf).
                 let c = |k: usize| u16_at(nd, o + 24 + 2 * k);
                 Node {
                     x: f(0),

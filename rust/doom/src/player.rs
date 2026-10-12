@@ -89,6 +89,7 @@ fn thrust(p: Player, inp: Input, k: Consts) -> Player {
         return Player { momx: p.momx * k.friction, momy: p.momy * k.friction, ..p };
     }
     let ang = p.ang + inp.turn * if inp.run { k.turn_run } else { k.turn_walk } + inp.look;
+    // Forward thrust along the facing, strafe thrust 90° to the right of it.
     let (s, c) = ang.sin_cos();
     let speed = if inp.run { k.run_thrust } else { k.walk_thrust };
     let fwd = inp.forward * speed;
@@ -110,6 +111,7 @@ pub fn moved(db: &Db, players: &VecRel<usize, Player>, inp: Input) -> VecRel<usi
 // One candidate move per slide row (full move, x only, y only, stay); this gives wall sliding.
 pub fn cands(db: &Db, players: &VecRel<usize, Player>) -> HashIdx<(usize, usize), Cand> {
     let k = consts(db);
+    // Key (player, slide idx); the idx becomes the candidate's preference order.
     players
         .cross(&db.t.slides)
         .and(Same::<(usize, usize)>::new())
@@ -135,6 +137,7 @@ pub fn walk(db: &Db, players: &VecRel<usize, Player>, clips: &HashIdx<usize, Cli
         .and(clips)
         .and(clips.map(|k: Clip| k.c.idx).select(&db.t.slides))
         .map(move |((p, k), s): ((Player, Clip), Slide)| {
+            // Fall when above the floor; snap up onto a higher floor (stairs).
             let momz = if p.z > k.floor { p.momz - g } else { 0.0 };
             let z = (p.z + momz).max(k.floor);
             Player { x: k.c.x, y: k.c.y, z, momx: p.momx * s.keep_x, momy: p.momy * s.keep_y, momz: if z == k.floor { 0.0 } else { momz }, ..p }
@@ -144,6 +147,7 @@ pub fn walk(db: &Db, players: &VecRel<usize, Player>, clips: &HashIdx<usize, Cli
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 // Weapon state machine node: the player's weapon fields and ammo, the state to enter next, pellets fired, steps taken.
+// `pending` = NONE means the chain has settled for this tic.
 struct Psp {
     who: usize,
     weapon: usize,
@@ -177,6 +181,7 @@ fn enter(q: Psp, r: StateRow, w: Weapon, o: WOut) -> Psp {
         flash: if fires { w.flash } else { q.flash },
         flash_tics: if fires { w.flash_tics } else { q.flash_tics },
         ammo: q.ammo - w.per_shot * fires as i32,
+        // A 0-tic state passes straight through to its next state this same tic.
         pending: if r.tics == 0 { r.next } else { NONE },
         pellets: q.pellets.max(o.pellets),
         ..q
@@ -204,15 +209,18 @@ fn flash_tick(db: &Db, players: &VecRel<usize, Player>) -> VecRel<usize, Player>
 // Weapon logic for this tic (switching, animation, firing); returns the updated player, ammo and bullets.
 pub fn weapon(db: &Db, players: &VecRel<usize, Player>, ammo: &VecRel<usize, i32>, inp: Input, tic: u64) -> (VecRel<usize, Player>, VecRel<usize, i32>, HashIdx<usize, Shot>) {
     let k = consts(db);
+    // Weapon asked for: this tic's key, else a remembered request (or NONE).
     let target = move |p: Player| inp.weapon.unwrap_or(p.wanted);
     // Player with current weapon, requested weapon and current weapon state.
     let rows = players
         .and(players.map(|p: Player| p.weapon).select(&db.t.weapons))
         .and(players.map(target).select(&db.t.weapons).opt())
         .and(players.map(|p: Player| p.wstate).select(&db.t.states));
+    // A different, owned weapon was asked for; the switch happens only in the ready state.
     let wants = move |p: Player, new: Option<Weapon>| new.is_some() && target(p) != p.weapon && p.owned & (1 << target(p)) != 0;
     let switching = move |(((p, cur), new), _): (((Player, Weapon), Option<Weapon>), StateRow)| wants(p, new) && p.wstate == cur.ready;
     // Switch weapons if asked and ready, else remember the request and tick down the current state's timer.
+    // Value: (player, state to enter now or NONE).
     let switched: VecRel<usize, (Player, usize)> = (&rows)
         .filt(switching)
         .flat_map(move |(((p, _), new), _): (((Player, Weapon), Option<Weapon>), StateRow)| new.map(|w| (Player { weapon: target(p), wanted: NONE, ..p }, w.ready)))
@@ -241,6 +249,7 @@ pub fn weapon(db: &Db, players: &VecRel<usize, Player>, ammo: &VecRel<usize, i32
             depth: 0,
         });
     // One step: look up the pending state and weapon, pick the weapon rule, enter the state. At most 4 per tic.
+    // The step relation is keyed by the Psp node itself: node -> next node.
     let node = || Same::<Psp>::new();
     let ctx = node()
         .filt(|q: Psp| q.pending != NONE && q.depth < 4)
@@ -251,6 +260,7 @@ pub fn weapon(db: &Db, players: &VecRel<usize, Player>, ammo: &VecRel<usize, i32
         .map(|(((q, r), w), o): (((Psp, StateRow), Weapon), Option<WOut>)| enter(q, r, w, o.unwrap_or_default()));
     // The last node of each chain.
     let done: HashIdx<usize, Psp> = start
+        // Every node visited (node -> depth); inv makes the node the value again.
         .reach(&step, 4)
         .inv()
         .filt(|q: Psp| q.pending == NONE || q.depth == 4)
@@ -271,6 +281,7 @@ pub fn weapon(db: &Db, players: &VecRel<usize, Player>, ammo: &VecRel<usize, i32
         .and(weapon_of())
         .expand(|((_, q), _): ((Player, Psp), Weapon)| (0, q.pellets))
         .map(move |(((p, _), w), n): (((Player, Psp), Weapon), usize)| {
+            // Difference of two rolls: spread centred on zero.
             let spread = (rnd(tic, n, 1) - rnd(tic, n, 2)) as f64 * TAU / w.spread_div;
             Shot { id: (1 << 23) | n, from: PLAYER, x: p.x, y: p.y, z: p.z + k.shot_z, ang: p.ang + spread, range: w.range, damage: w.damage * (rnd(tic, n, 3) % w.damage_roll + 1) }
         })
@@ -282,6 +293,7 @@ pub fn weapon(db: &Db, players: &VecRel<usize, Player>, ammo: &VecRel<usize, i32
         .key_by(|(_, w): (Psp, Weapon)| w.ammo)
         .map(|(q, _): (Psp, Weapon)| q.ammo)
         .collect();
+    // Replace the spent kind's count, keep the others.
     let ammo = ammo.minus(&spent).union(&spent).collect();
     (flash_tick(db, &fired), ammo, shots)
 }
@@ -310,18 +322,22 @@ pub fn pickups(
     let k = consts(db);
     // Items overlapping the player, with the ammo each would add (capped).
     let touching: HashIdx<usize, (Mobj, PickupDef, Player, i32)> = mobjs
+        // Item mobjs with their type info and pickup row, then the player.
         .filt(|m: Mobj| m.flags & PICKUP != 0)
         .key_by(|m: Mobj| m.kind)
         .and(&db.t.infos)
         .and(&db.t.pickups)
         .key_by(|_| PLAYER)
         .and(players)
+        // Box overlap in x/y and z.
         .filt(move |(((m, i), _), p): (((Mobj, Info), PickupDef), Player)| {
             !p.dead && (m.x - p.x).abs() < k.player_radius + i.radius && (m.y - p.y).abs() < k.player_radius + i.radius && m.z <= p.z + k.player_height && m.z + k.pickup_z_reach >= p.z
         })
+        // Join the current count and cap of the ammo kind it gives.
         .key_by(|((_, d), _): (((Mobj, Info), PickupDef), Player)| d.ammo_kind)
         .and(ammo.and(&db.t.ammo_defs))
         .map(|((((m, _), d), p), (a, k)): ((((Mobj, Info), PickupDef), Player), (i32, AmmoDef))| (m, d, p, (a + d.ammo).min(k.cap) - a))
+        // Skip items that would change nothing (full health, full ammo), unless `always`.
         .filt(move |(_, d, p, more): (Mobj, PickupDef, Player, i32)| {
             let g = gain(p, d, k.bonus_add);
             d.always || more > 0 || g.health > p.health || g.armor > p.armor
@@ -373,6 +389,7 @@ pub fn finish(db: &Db, players: &VecRel<usize, Player>, damage: &Fold<usize, i32
         .and(sector().map(|s: Sector| s.special).select(&db.t.sector_damage).opt())
         .and(players.map(|p: Player| p.armor_class as usize).select(&db.t.armor_classes))
         .map(move |((((p, d), s), floor), ac): ((((Player, Option<i32>), Sector), Option<i32>), ArmorClass)| {
+            // Floor damage only on the period tick and only when standing on the floor.
             let floor = if tic % k.floor_damage_period == 0 && p.z <= s.floor { floor.unwrap_or(0) } else { 0 };
             let p = hurt(p, d.unwrap_or(0) + floor, ac, k.damage_cap);
             Player {

@@ -44,6 +44,7 @@ pub struct Spawn {
 // Turns spawn requests into mobjs in their type's spawn state.
 pub fn spawn<Q: Drive<R = Spawn>>(db: &Db, reqs: Q) -> HashIdx<usize, Mobj> {
     let reaction = consts(db).reaction;
+    // Request -> its type info -> that type's spawn state (for the starting tic count).
     reqs.key_by(|s: Spawn| s.kind)
         .and(&db.t.infos)
         .key_by(|(_, i): (Spawn, Info)| i.spawn)
@@ -75,6 +76,7 @@ pub fn spawn_things(db: &Db, sectors: &VecRel<usize, Sector>) -> HashIdx<usize, 
     let reqs = (&db.things)
         .and(Same::<usize>::new())
         .filt(|(t, _): (Thing, usize)| t.flags & MTF_MEDIUM != 0 && t.flags & MTF_MULTI == 0)
+        // Editor number -> thing type; unknown numbers drop out here.
         .key_by(|(t, _): (Thing, usize)| t.kind)
         .and(&db.t.ednum_info)
         .map(|((t, i), kind): ((Thing, usize), usize)| Spawn {
@@ -93,6 +95,7 @@ pub fn spawn_things(db: &Db, sectors: &VecRel<usize, Sector>) -> HashIdx<usize, 
 // Finds each mobj's sector and sets its z (floor, ceiling for hanging things, unchanged for flyers).
 pub fn relocate(db: &Db, sectors: &VecRel<usize, Sector>, mobjs: &HashIdx<usize, Mobj>) -> HashIdx<usize, Mobj> {
     let pts: HashIdx<usize, (f64, f64)> = mobjs.map(|m: Mobj| (m.x, m.y)).collect();
+    // mobj id -> (sector, sector id) -> + mobj -> + type info.
     locate(db, &pts)
         .select(sectors.and(Same::<usize>::new()))
         .and(mobjs)
@@ -143,17 +146,20 @@ pub fn advance(db: &Db, mobjs: &HashIdx<usize, Mobj>) -> HashIdx<usize, (Mobj, A
     mobjs
         .key_by(|m: Mobj| m.state)
         .and(&db.t.states)
+        // -1 tics = stay forever; otherwise count down, and at 1 take the next state.
         .map(|(m, r): (Mobj, StateRow)| match m.tics {
             -1 => (m, NONE),
             t if t > 1 => (Mobj { tics: t - 1, ..m }, NONE),
             _ => (m, r.next),
         })
+        // Enter the next state (NONE finds no row and keeps the mobj as is).
         .key_by(|(_, next)| next)
         .and((&db.t.states).opt())
         .map(|((m, next), r): ((Mobj, usize), Option<StateRow>)| match r {
             Some(r) => (Mobj { state: next, tics: r.tics, ..m }, r.action),
             None => (m, Action::None),
         })
+        // State 0 (NULL) means the mobj is gone (finished puffs, etc.).
         .filt(|(m, _): (Mobj, Action)| m.state != 0)
         .key_by(|(m, _): (Mobj, Action)| m.id)
         .collect()
@@ -197,7 +203,9 @@ fn face(m: Mobj, p: Player) -> f64 {
 fn ai_facts(m: Mobj, i: Info, p: Player, sees: bool, heard: bool, tic: u64, k: Consts) -> u32 {
     use fact::*;
     let dist = (p.x - m.x).hypot(p.y - m.y);
+    // Player within 90° of the monster's facing.
     let ahead = ((face(m, p) - m.ang + PI).rem_euclid(TAU) - PI).abs() <= FRAC_PI_2;
+    // Missile odds: the farther away, the higher the roll must be (vanilla P_CheckMissileRange).
     let d = (dist - k.missile_near - k.missile_no_melee * (i.melee == 0) as i32 as f64).clamp(0.0, k.missile_far);
     bit(p.dead, DEAD)
         | bit(sees, SEES)
@@ -229,9 +237,11 @@ fn ctx(d: Decision) -> Ctx {
 // Applies a chosen rule's output to the mobj and its decision.
 fn apply(c: Ctx, o: AiOut, goto: Option<usize>) -> Decision {
     let (d, m) = (c.d, c.d.m);
+    // Each output field either sets, keeps, or adjusts the matching mobj field.
     let (x, y) = c.clip.filter(|_| o.to_clip).map_or((m.x, m.y), |k| (k.c.x, k.c.y));
     let ang = if o.face { c.face } else if o.face_move { (y - m.y).atan2(x - m.x) } else { m.ang };
     let reaction = if o.reaction >= 0 { o.reaction } else { (m.reaction - o.reaction_dec as i32).max(0) };
+    // A stopped missile loses MISSILE and gains NOGRAV so it explodes in place.
     let cleared = SOLID * o.clear_solid as u32 | SHOOTABLE * o.clear_shootable as u32 | MISSILE * o.stop as u32;
     let flags = m.flags & !cleared | NOGRAV * o.stop as u32;
     let (momx, momy) = if o.stop { (0.0, 0.0) } else { (m.momx, m.momy) };
@@ -255,6 +265,7 @@ fn run_rules<Q: Drive<R = (Ctx, usize, u32)>>(db: &Db, rows: Q) -> HashIdx<usize
     let applied = (&rows)
         .and(chosen.opt())
         .map(|((c, _, _), o): ((Ctx, usize, u32), Option<(Ctx, AiOut)>)| (c, o.map_or(KEEP, |(_, o)| o)))
+        // Goto label -> this type's state (e.g. SEE -> TROO_RUN).
         .key_by(|(c, o): (Ctx, AiOut)| (c.d.m.kind, o.goto))
         .and((&db.t.info_goto).opt())
         .map(|((c, o), g): ((Ctx, AiOut), Option<usize>)| apply(c, o, g));
@@ -273,7 +284,9 @@ pub fn think(
     let k = consts(db);
     // Join each mobj with its sight/hearing result, type info and the player, then compute its fact bits.
     let rows = advanced
+        // Some(..) = sees the player.
         .and(visible.opt())
+        // Some(..) = its sector heard a shot.
         .key_by(|((m, _), _): ((Mobj, Action), Option<Sight>)| m.sector)
         .and(heard.opt())
         .key_by(|(((m, _), _), _): (((Mobj, Action), Option<Sight>), Option<bool>)| m.kind)
@@ -303,6 +316,7 @@ pub fn goto<Q: Drive<R = Decision>>(db: &Db, decided: Q) -> HashIdx<usize, Decis
 pub fn move_cands(db: &Db, decided: &HashIdx<usize, Decision>) -> HashIdx<(usize, usize), Cand> {
     let base = |m: Mobj, i: Info| Cand { who: m.id, idx: 0, x: m.x, y: m.y, z: m.z, radius: i.radius, height: i.height, monster: m.flags & MONSTER != 0, missile: false, stay: false };
     let infos = || decided.key_by(|d: Decision| d.m.kind).and(&db.t.infos);
+    // Walkers: one candidate per chase direction, idx = preference order.
     let chase = infos()
         .flat_map(|(d, i): (Decision, Info)| d.go.map(|a| (d.m, i, a)))
         .key_by(|(m, _, _): (Mobj, Info, f64)| m.id)
@@ -315,6 +329,7 @@ pub fn move_cands(db: &Db, decided: &HashIdx<usize, Decision>) -> HashIdx<(usize
             stay: c.stay,
             ..base(m, i)
         });
+    // Flying missiles: a single candidate one momentum step ahead.
     let fly = infos()
         .filt(|(d, _): (Decision, Info)| d.m.flags & MISSILE != 0 && (d.m.momx != 0.0 || d.m.momy != 0.0))
         .map(move |(d, i): (Decision, Info)| Cand { x: d.m.x + d.m.momx, y: d.m.y + d.m.momy, missile: true, ..base(d.m, i) });
@@ -333,6 +348,7 @@ pub fn apply_moves(db: &Db, decided: &HashIdx<usize, Decision>, clips: &HashIdx<
             let m = d.m;
             b.shootable && b.id != m.source && b.id != m.id && (m.x + m.momx - b.x).abs() < b.radius + k.missile_reach && (m.y + m.momy - b.y).abs() < b.radius + k.missile_reach && m.z <= b.z + b.height && m.z + k.missile_z_reach >= b.z
         })
+        // Missile id -> one body it hit.
         .key_by(|(d, _): (Decision, Body)| d.m.id)
         .fold(NONE, |_, (_, b): (Decision, Body)| b.id);
     // Fact bits for the Move rules: flying, found a clear spot, hit, wants to walk, stayed put.
@@ -385,6 +401,7 @@ pub fn damage(db: &Db, impacts: &HashIdx<usize, Impact>, decided: &HashIdx<usize
         .filt(|d: Decision| d.explode)
         .cross(bodies)
         .flat_map(move |(d, b): (Decision, Body)| {
+            // Box distance (max of |dx|, |dy|) to the body's edge, as in vanilla.
             let dist = ((d.m.x - b.x).abs().max((d.m.y - b.y).abs()) - b.radius).max(0.0);
             (b.shootable && b.id != d.m.id && dist < r).then_some((b.id, (r - dist) as i32))
         })
@@ -413,7 +430,9 @@ pub fn wound(db: &Db, decided: &HashIdx<usize, Decision>, dmg: &Fold<usize, i32>
 
 // Spawns items dropped by monsters that died this tic.
 pub fn drops(db: &Db, before: &HashIdx<usize, Decision>, after: &HashIdx<usize, Decision>, tic: u64) -> HashIdx<usize, Mobj> {
+    // Fresh ids for this tic's spawns (see the id scheme in the guide).
     let base = (tic as usize + 1) << 24;
+    // Alive before wounding, dead after.
     let reqs = before
         .filt(|d: Decision| d.m.health > 0)
         .key_by(|d: Decision| d.m.id)
@@ -468,6 +487,7 @@ pub fn effects(db: &Db, impacts: &HashIdx<usize, Impact>, decided: &HashIdx<usiz
             speed: i.speed,
             source: d.m.id,
         });
+    // Same key on both sides so they can be unioned.
     spawn(db, puffs.key_by(|_| 0usize).union(balls.key_by(|_| 0usize)))
 }
 

@@ -4,7 +4,7 @@ use crate::wad::{Node, Sector, NONE};
 use prela::engine::*;
 use std::hash::Hash;
 
-// Linedef flag bits and the max step-up height.
+// Linedef flag bits: blocks everything / blocks monsters.
 pub const ML_BLOCKING: i64 = 1;
 pub const ML_BLOCKMONSTERS: i64 = 2;
 
@@ -26,8 +26,10 @@ where
     Q: Drive<D = K, R = (f64, f64)> + Probe,
 {
     let root = db.bsp_root;
+    // point key -> (point, key)
     let keyed = || pts.and(Same::<K>::new());
     // One BSP step: from a node, go to the child on the point's side.
+    // Edge relation (key, node) -> (key, child); `cross` makes the key (point key, node).
     let step = keyed()
         .cross((&db.node_children).and(&db.nodes))
         .filt(|((p, _), ((side, _), n)): (((f64, f64), K), ((usize, usize), Node))| side == point_side(n, p.0, p.1))
@@ -35,8 +37,10 @@ where
     // Start every point at the root, walk down, keep the leaf, map leaf to sector.
     keyed()
         .map(move |(_, k)| (k, root))
+        // Every (key, node) visited on the way down, with its depth.
         .reach(step, 64)
         .and(Same::<(K, usize)>::new())
+        // Only leaves have a sector, so this join keeps just the last node.
         .key_by(|(_, (_, b))| b)
         .and(&db.leaf_sector)
         .key_by(|((_, (k, _)), _)| k)
@@ -57,6 +61,7 @@ pub fn side_of(l: Line, x: f64, y: f64) -> f64 {
 }
 
 // Does a box of half-size r at (x, y) straddle the line?
+// True when bounding boxes overlap and the box's corners are not all on one side.
 pub fn touches(l: Line, x: f64, y: f64, r: f64) -> bool {
     let overlap = l.x1.min(l.x2) < x + r && l.x1.max(l.x2) > x - r && l.y1.min(l.y2) < y + r && l.y1.max(l.y2) > y - r;
     let s = [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)].map(|(dx, dy)| side_of(l, x + dx * r, y + dy * r) > 0.0);
@@ -71,6 +76,7 @@ pub fn crossing(l: Line, (ax, ay): (f64, f64), (bx, by): (f64, f64)) -> Option<f
     if den.abs() < 1e-9 {
         return None;
     }
+    // t along a->b, u along the line; a hit needs both inside their segments.
     let t = ((l.x1 - ax) * ey - (l.y1 - ay) * ex) / den;
     let u = ((l.x1 - ax) * dy - (l.y1 - ay) * dx) / den;
     (t > 0.0 && t <= 1.0 && (0.0..=1.0).contains(&u)).then_some(t)
@@ -132,8 +138,10 @@ fn fits(k: Clip, step: f64) -> bool {
     c.stay
         || (!k.blocked
             && if c.missile {
+                // Missiles fly at fixed z: the gap must contain them.
                 k.floor <= c.z && k.ceil >= c.z + c.height
             } else {
+                // Gap tall enough, head room, step up at most `step`, monsters won't step off ledges.
                 k.ceil - k.floor >= c.height
                     && k.ceil - c.z >= c.height
                     && k.floor - c.z <= step
@@ -168,6 +176,7 @@ pub fn clip_moves(
     cands: &HashIdx<(usize, usize), Cand>,
 ) -> HashIdx<usize, Clip> {
     let step = consts(db).max_step;
+    // Every source below is keyed by candidate (who, idx).
     let pts: HashIdx<(usize, usize), (f64, f64)> = cands.map(|c: Cand| (c.x, c.y)).collect();
     // Start from the floor/ceiling of the sector the candidate lands in.
     let base = locate(db, &pts)
@@ -195,8 +204,10 @@ pub fn clip_moves(
     // Merge all constraints per candidate, keep those that fit, pick lowest idx per mover.
     base.union(walls)
         .union(things)
+        // One merged Clip per candidate.
         .fold(init, merge)
         .filt(move |k: Clip| fits(k, step))
+        // Then per mover, the fitting candidate with the lowest idx.
         .key_by(|k: Clip| k.c.who)
         .fold(None, |a: Option<Clip>, k: Clip| match a {
             Some(a) if a.c.idx <= k.c.idx => Some(a),
@@ -220,6 +231,7 @@ fn blocks_sight(((ax, ay, az), (bx, by, bz)): Sight, row: LineRow) -> bool {
 
 // Sight pairs not blocked by any line.
 pub fn visible(lines: &VecRel<usize, LineRow>, pairs: &HashIdx<usize, Sight>) -> HashIdx<usize, Sight> {
+    // Ids of pairs with at least one blocking line.
     let blocked = pairs
         .and(Same::<usize>::new())
         .cross(lines)
@@ -253,7 +265,7 @@ pub struct Impact {
     pub z: f64,
 }
 
-// Shot hitting a wall: crosses a line outside its opening.
+// Shot hitting a wall: crosses a line outside its opening. The puff is pulled back `back` units toward the shooter.
 fn wall_impact(s: Shot, row: LineRow, back: f64) -> Option<Impact> {
     let end = (s.x + s.range * s.ang.cos(), s.y + s.range * s.ang.sin());
     crossing(row.0.0, (s.x, s.y), end).and_then(|t| {
@@ -267,6 +279,7 @@ fn wall_impact(s: Shot, row: LineRow, back: f64) -> Option<Impact> {
 fn body_impact(s: Shot, b: Body) -> Option<Impact> {
     let (dx, dy) = (b.x - s.x, b.y - s.y);
     let (sn, cs) = s.ang.sin_cos();
+    // Body centre in ray coordinates: distance along the ray and off to the side.
     let along = dx * cs + dy * sn;
     let perp = (-dx * sn + dy * cs).abs();
     (b.shootable && b.id != s.from && along > 0.0 && along < s.range && perp < b.radius).then(|| {
