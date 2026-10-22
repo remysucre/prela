@@ -78,24 +78,61 @@ mod pickup {
         key: 0,
         always: false,
     };
-    pub const POWERUP: PickupDef = PickupDef { always: true, ..NOTHING };
-    pub const BACKPACK: PickupDef = PickupDef { ammo_kind: AM_CLIP, ammo: 10, always: true, ..NOTHING };
-    pub const BONUS_ARMOR: PickupDef = PickupDef { armor: 1, armor_max: 200, class_min: 1, ..NOTHING };
+    pub const POWERUP: PickupDef = PickupDef {
+        always: true,
+        ..NOTHING
+    };
+    pub const BACKPACK: PickupDef = PickupDef {
+        ammo_kind: AM_CLIP,
+        ammo: 10,
+        always: true,
+        ..NOTHING
+    };
+    pub const BONUS_ARMOR: PickupDef = PickupDef {
+        armor: 1,
+        armor_max: 200,
+        class_min: 1,
+        ..NOTHING
+    };
 
     pub fn health(amount: i32, max: i32) -> PickupDef {
-        PickupDef { health: amount, health_max: max, ..NOTHING }
+        PickupDef {
+            health: amount,
+            health_max: max,
+            ..NOTHING
+        }
     }
     pub fn armor(amount: i32, class: i32) -> PickupDef {
-        PickupDef { armor: amount, armor_max: amount, class_set: class, ..NOTHING }
+        PickupDef {
+            armor: amount,
+            armor_max: amount,
+            class_set: class,
+            ..NOTHING
+        }
     }
     pub fn ammo(kind: usize, amount: i32) -> PickupDef {
-        PickupDef { ammo_kind: kind, ammo: amount, ..NOTHING }
+        PickupDef {
+            ammo_kind: kind,
+            ammo: amount,
+            ..NOTHING
+        }
     }
     pub fn weapon(weapon: usize, kind: usize, amount: i32) -> PickupDef {
-        PickupDef { ammo_kind: kind, ammo: amount, weapon, weapon_bit: 1 << weapon, always: true, ..NOTHING }
+        PickupDef {
+            ammo_kind: kind,
+            ammo: amount,
+            weapon,
+            weapon_bit: 1 << weapon,
+            always: true,
+            ..NOTHING
+        }
     }
     pub fn key(k: u8) -> PickupDef {
-        PickupDef { key: k, always: true, ..NOTHING }
+        PickupDef {
+            key: k,
+            always: true,
+            ..NOTHING
+        }
     }
 }
 
@@ -160,7 +197,17 @@ pub const WP_CHAINGUN: usize = 3;
 
 // Weapon table: ammo use, states, and bullet damage (damage * (1..=damage_roll)), range, spread (angle units of TAU / spread_div).
 pub fn weapons() -> Vec<WeaponDef> {
-    let w = |ammo, per_shot, ready, attack, flash| WeaponDef { ammo, per_shot, ready, attack, flash, damage: 5, damage_roll: 3, range: 2048.0, spread_div: 16384.0 };
+    let w = |ammo, per_shot, ready, attack, flash| WeaponDef {
+        ammo,
+        per_shot,
+        ready,
+        attack,
+        flash,
+        damage: 5,
+        damage_roll: 3,
+        range: 2048.0,
+        spread_div: 16384.0,
+    };
     vec![
         w(AM_NONE, 0, "PUNCH", "PUNCH1", "NULL"),
         w(AM_CLIP, 1, "PISTOL", "PISTOL1", "PISTOLFLASH"),
@@ -173,24 +220,67 @@ pub fn weapons() -> Vec<WeaponDef> {
 struct B(Vec<StateDef>);
 
 impl B {
-    fn s(&mut self, name: &str, sprite: &'static str, frame: char, tics: i32, action: Action, next: &str) {
-        let (bright, frame) = (frame.is_ascii_lowercase(), frame.to_ascii_uppercase() as u8 - b'A');
-        self.0.push(StateDef { name: name.into(), sprite, frame, bright, tics, action, next: next.into() });
+    fn s(
+        &mut self,
+        name: &str,
+        sprite: &'static str,
+        frame: char,
+        tics: i32,
+        action: Action,
+        next: &str,
+    ) {
+        let (bright, frame) = (
+            frame.is_ascii_lowercase(),
+            frame.to_ascii_uppercase() as u8 - b'A',
+        );
+        self.0.push(StateDef {
+            name: name.into(),
+            sprite,
+            frame,
+            bright,
+            tics,
+            action,
+            next: next.into(),
+        });
     }
     fn anim(&mut self, name: &str, sprite: &'static str, frames: &str, tics: i32) {
         let fs: Vec<char> = frames.chars().collect();
         for (i, &f) in fs.iter().enumerate() {
-            let me = if i == 0 { name.to_string() } else { format!("{name}{i}") };
-            let next = if fs.len() == 1 { "SELF".to_string() } else if i + 1 == fs.len() { name.to_string() } else { format!("{name}{}", i + 1) };
+            let me = if i == 0 {
+                name.to_string()
+            } else {
+                format!("{name}{i}")
+            };
+            let next = if fs.len() == 1 {
+                "SELF".to_string()
+            } else if i + 1 == fs.len() {
+                name.to_string()
+            } else {
+                format!("{name}{}", i + 1)
+            };
             let tics = if fs.len() == 1 { -1 } else { tics };
             let next = if next == "SELF" { me.clone() } else { next };
             self.s(&me, sprite, f, tics, Action::None, &next);
         }
     }
-    fn seq(&mut self, name: &str, sprite: &'static str, frames: &[(char, i32, Action)], last: &str) {
+    fn seq(
+        &mut self,
+        name: &str,
+        sprite: &'static str,
+        frames: &[(char, i32, Action)],
+        last: &str,
+    ) {
         for (i, &(f, t, a)) in frames.iter().enumerate() {
-            let me = if i == 0 { name.to_string() } else { format!("{name}{}", i + 1) };
-            let next = if i + 1 == frames.len() { last.to_string() } else { format!("{name}{}", i + 2) };
+            let me = if i == 0 {
+                name.to_string()
+            } else {
+                format!("{name}{}", i + 1)
+            };
+            let next = if i + 1 == frames.len() {
+                last.to_string()
+            } else {
+                format!("{name}{}", i + 2)
+            };
             self.s(&me, sprite, f, t, a, &next);
         }
     }
@@ -202,60 +292,250 @@ pub fn states() -> Vec<StateDef> {
     let mut b = B(vec![]);
     b.s("NULL", "TROO", 'A', -1, None, "NULL");
     b.s("PUNCH", "PUNG", 'A', 1, WeaponReady, "PUNCH");
-    b.seq("PUNCH1", "PUNG", &[('B', 4, None), ('C', 4, None), ('D', 5, None), ('C', 4, None), ('B', 5, ReFire)], "PUNCH");
+    b.seq(
+        "PUNCH1",
+        "PUNG",
+        &[
+            ('B', 4, None),
+            ('C', 4, None),
+            ('D', 5, None),
+            ('C', 4, None),
+            ('B', 5, ReFire),
+        ],
+        "PUNCH",
+    );
     b.s("PISTOL", "PISG", 'A', 1, WeaponReady, "PISTOL");
-    b.seq("PISTOL1", "PISG", &[('A', 4, None), ('B', 6, FirePistol), ('C', 4, None), ('B', 5, ReFire)], "PISTOL");
+    b.seq(
+        "PISTOL1",
+        "PISG",
+        &[
+            ('A', 4, None),
+            ('B', 6, FirePistol),
+            ('C', 4, None),
+            ('B', 5, ReFire),
+        ],
+        "PISTOL",
+    );
     b.s("PISTOLFLASH", "PISF", 'a', 7, None, "NULL");
     b.s("SGUN", "SHTG", 'A', 1, WeaponReady, "SGUN");
     b.seq(
         "SGUN1",
         "SHTG",
-        &[('A', 3, None), ('A', 7, FireShotgun), ('B', 5, None), ('C', 5, None), ('D', 4, None), ('C', 5, None), ('B', 5, None), ('A', 3, None), ('A', 7, ReFire)],
+        &[
+            ('A', 3, None),
+            ('A', 7, FireShotgun),
+            ('B', 5, None),
+            ('C', 5, None),
+            ('D', 4, None),
+            ('C', 5, None),
+            ('B', 5, None),
+            ('A', 3, None),
+            ('A', 7, ReFire),
+        ],
         "SGUN",
     );
-    b.seq("SGUNFLASH1", "SHTF", &[('a', 4, None), ('b', 3, None)], "NULL");
+    b.seq(
+        "SGUNFLASH1",
+        "SHTF",
+        &[('a', 4, None), ('b', 3, None)],
+        "NULL",
+    );
     b.s("CHAIN", "CHGG", 'A', 1, WeaponReady, "CHAIN");
-    b.seq("CHAIN1", "CHGG", &[('A', 4, FireCGun), ('B', 4, FireCGun), ('B', 0, ReFire)], "CHAIN");
+    b.seq(
+        "CHAIN1",
+        "CHGG",
+        &[('A', 4, FireCGun), ('B', 4, FireCGun), ('B', 0, ReFire)],
+        "CHAIN",
+    );
     b.seq("CHAINFLASH1", "CHGF", &[('a', 5, None)], "NULL");
 
     for (p, atk, atk_tics) in [("POSS", PosAttack, 8), ("SPOS", SPosAttack, 10)] {
-        b.seq(&format!("{p}_STND"), p, &[('A', 10, Look), ('B', 10, Look)], &format!("{p}_STND"));
+        b.seq(
+            &format!("{p}_STND"),
+            p,
+            &[('A', 10, Look), ('B', 10, Look)],
+            &format!("{p}_STND"),
+        );
         b.seq(
             &format!("{p}_RUN"),
             p,
-            &[('A', 4, Chase), ('A', 4, Chase), ('B', 4, Chase), ('B', 4, Chase), ('C', 4, Chase), ('C', 4, Chase), ('D', 4, Chase), ('D', 4, Chase)],
+            &[
+                ('A', 4, Chase),
+                ('A', 4, Chase),
+                ('B', 4, Chase),
+                ('B', 4, Chase),
+                ('C', 4, Chase),
+                ('C', 4, Chase),
+                ('D', 4, Chase),
+                ('D', 4, Chase),
+            ],
             &format!("{p}_RUN"),
         );
-        b.seq(&format!("{p}_ATK"), p, &[('E', 10, FaceTarget), ('f', atk_tics, atk), ('E', atk_tics, None)], &format!("{p}_RUN"));
-        b.seq(&format!("{p}_PAIN"), p, &[('G', 3, None), ('G', 3, Pain)], &format!("{p}_RUN"));
-        b.seq(&format!("{p}_DIE"), p, &[('H', 5, None), ('I', 5, Scream), ('J', 5, Fall), ('K', 5, None), ('L', -1, None)], "NULL");
+        b.seq(
+            &format!("{p}_ATK"),
+            p,
+            &[
+                ('E', 10, FaceTarget),
+                ('f', atk_tics, atk),
+                ('E', atk_tics, None),
+            ],
+            &format!("{p}_RUN"),
+        );
+        b.seq(
+            &format!("{p}_PAIN"),
+            p,
+            &[('G', 3, None), ('G', 3, Pain)],
+            &format!("{p}_RUN"),
+        );
+        b.seq(
+            &format!("{p}_DIE"),
+            p,
+            &[
+                ('H', 5, None),
+                ('I', 5, Scream),
+                ('J', 5, Fall),
+                ('K', 5, None),
+                ('L', -1, None),
+            ],
+            "NULL",
+        );
     }
-    b.seq("TROO_STND", "TROO", &[('A', 10, Look), ('B', 10, Look)], "TROO_STND");
+    b.seq(
+        "TROO_STND",
+        "TROO",
+        &[('A', 10, Look), ('B', 10, Look)],
+        "TROO_STND",
+    );
     b.seq(
         "TROO_RUN",
         "TROO",
-        &[('A', 3, Chase), ('A', 3, Chase), ('B', 3, Chase), ('B', 3, Chase), ('C', 3, Chase), ('C', 3, Chase), ('D', 3, Chase), ('D', 3, Chase)],
+        &[
+            ('A', 3, Chase),
+            ('A', 3, Chase),
+            ('B', 3, Chase),
+            ('B', 3, Chase),
+            ('C', 3, Chase),
+            ('C', 3, Chase),
+            ('D', 3, Chase),
+            ('D', 3, Chase),
+        ],
         "TROO_RUN",
     );
-    b.seq("TROO_ATK", "TROO", &[('E', 8, FaceTarget), ('F', 8, FaceTarget), ('G', 6, TroopAttack)], "TROO_RUN");
-    b.seq("TROO_PAIN", "TROO", &[('H', 2, None), ('H', 2, Pain)], "TROO_RUN");
-    b.seq("TROO_DIE", "TROO", &[('I', 8, None), ('J', 8, Scream), ('K', 6, None), ('L', 6, Fall), ('M', -1, None)], "NULL");
+    b.seq(
+        "TROO_ATK",
+        "TROO",
+        &[
+            ('E', 8, FaceTarget),
+            ('F', 8, FaceTarget),
+            ('G', 6, TroopAttack),
+        ],
+        "TROO_RUN",
+    );
+    b.seq(
+        "TROO_PAIN",
+        "TROO",
+        &[('H', 2, None), ('H', 2, Pain)],
+        "TROO_RUN",
+    );
+    b.seq(
+        "TROO_DIE",
+        "TROO",
+        &[
+            ('I', 8, None),
+            ('J', 8, Scream),
+            ('K', 6, None),
+            ('L', 6, Fall),
+            ('M', -1, None),
+        ],
+        "NULL",
+    );
     b.seq("TBALL", "BAL1", &[('a', 4, None), ('b', 4, None)], "TBALL");
-    b.seq("TBALLX", "BAL1", &[('c', 6, None), ('d', 6, None), ('e', 6, None)], "NULL");
-    b.seq("SARG_STND", "SARG", &[('A', 10, Look), ('B', 10, Look)], "SARG_STND");
+    b.seq(
+        "TBALLX",
+        "BAL1",
+        &[('c', 6, None), ('d', 6, None), ('e', 6, None)],
+        "NULL",
+    );
+    b.seq(
+        "SARG_STND",
+        "SARG",
+        &[('A', 10, Look), ('B', 10, Look)],
+        "SARG_STND",
+    );
     b.seq(
         "SARG_RUN",
         "SARG",
-        &[('A', 2, Chase), ('A', 2, Chase), ('B', 2, Chase), ('B', 2, Chase), ('C', 2, Chase), ('C', 2, Chase), ('D', 2, Chase), ('D', 2, Chase)],
+        &[
+            ('A', 2, Chase),
+            ('A', 2, Chase),
+            ('B', 2, Chase),
+            ('B', 2, Chase),
+            ('C', 2, Chase),
+            ('C', 2, Chase),
+            ('D', 2, Chase),
+            ('D', 2, Chase),
+        ],
         "SARG_RUN",
     );
-    b.seq("SARG_ATK", "SARG", &[('E', 8, FaceTarget), ('F', 8, FaceTarget), ('G', 8, SargAttack)], "SARG_RUN");
-    b.seq("SARG_PAIN", "SARG", &[('H', 2, None), ('H', 2, Pain)], "SARG_RUN");
-    b.seq("SARG_DIE", "SARG", &[('I', 8, None), ('J', 8, Scream), ('K', 4, None), ('L', 4, Fall), ('M', 4, None), ('N', -1, None)], "NULL");
+    b.seq(
+        "SARG_ATK",
+        "SARG",
+        &[
+            ('E', 8, FaceTarget),
+            ('F', 8, FaceTarget),
+            ('G', 8, SargAttack),
+        ],
+        "SARG_RUN",
+    );
+    b.seq(
+        "SARG_PAIN",
+        "SARG",
+        &[('H', 2, None), ('H', 2, Pain)],
+        "SARG_RUN",
+    );
+    b.seq(
+        "SARG_DIE",
+        "SARG",
+        &[
+            ('I', 8, None),
+            ('J', 8, Scream),
+            ('K', 4, None),
+            ('L', 4, Fall),
+            ('M', 4, None),
+            ('N', -1, None),
+        ],
+        "NULL",
+    );
     b.anim("BAR1", "BAR1", "AB", 6);
-    b.seq("BEXP", "BEXP", &[('a', 5, None), ('b', 5, Scream), ('c', 5, None), ('d', 10, Explode), ('e', 10, None)], "NULL");
-    b.seq("PUFF", "PUFF", &[('a', 4, None), ('B', 4, None), ('C', 4, None), ('D', 4, None)], "NULL");
-    b.seq("BLOOD", "BLUD", &[('C', 8, None), ('B', 8, None), ('A', 8, None)], "NULL");
+    b.seq(
+        "BEXP",
+        "BEXP",
+        &[
+            ('a', 5, None),
+            ('b', 5, Scream),
+            ('c', 5, None),
+            ('d', 10, Explode),
+            ('e', 10, None),
+        ],
+        "NULL",
+    );
+    b.seq(
+        "PUFF",
+        "PUFF",
+        &[
+            ('a', 4, None),
+            ('B', 4, None),
+            ('C', 4, None),
+            ('D', 4, None),
+        ],
+        "NULL",
+    );
+    b.seq(
+        "BLOOD",
+        "BLUD",
+        &[('C', 8, None), ('B', 8, None), ('A', 8, None)],
+        "NULL",
+    );
     for (name, sprite, frames, tics) in DECOR_ANIMS {
         b.anim(name, sprite, frames, *tics);
     }
@@ -339,7 +619,15 @@ const DECOR_ANIMS: &[(&str, &str, &str, i32)] = &[
 ];
 
 // Default thing-kind row; monster() and the closures in mobjs() fill in the rest.
-fn m(doomednum: i64, name: &'static str, spawn: &str, radius: f64, height: f64, flags: u32, pickup: Option<PickupDef>) -> MobjDef {
+fn m(
+    doomednum: i64,
+    name: &'static str,
+    spawn: &str,
+    radius: f64,
+    height: f64,
+    flags: u32,
+    pickup: Option<PickupDef>,
+) -> MobjDef {
     MobjDef {
         doomednum,
         name,
@@ -362,18 +650,45 @@ fn m(doomednum: i64, name: &'static str, spawn: &str, radius: f64, height: f64, 
 }
 
 // Monster row; its states follow the naming pattern <p>_STND/_RUN/_ATK/_PAIN/_DIE.
-fn monster(doomednum: i64, name: &'static str, p: &str, speed: f64, radius: f64, health: i32, painchance: i32, melee: bool, missile: bool, drop: i64) -> MobjDef {
+fn monster(
+    doomednum: i64,
+    name: &'static str,
+    p: &str,
+    speed: f64,
+    radius: f64,
+    health: i32,
+    painchance: i32,
+    melee: bool,
+    missile: bool,
+    drop: i64,
+) -> MobjDef {
     MobjDef {
         see: format!("{p}_RUN"),
         pain: format!("{p}_PAIN"),
-        melee: if melee { format!("{p}_ATK") } else { "NULL".into() },
-        missile: if missile { format!("{p}_ATK") } else { "NULL".into() },
+        melee: if melee {
+            format!("{p}_ATK")
+        } else {
+            "NULL".into()
+        },
+        missile: if missile {
+            format!("{p}_ATK")
+        } else {
+            "NULL".into()
+        },
         death: format!("{p}_DIE"),
         speed,
         health,
         painchance,
         drop,
-        ..m(doomednum, name, &format!("{p}_STND"), radius, 56.0, SOLID | SHOOTABLE | MONSTER, None)
+        ..m(
+            doomednum,
+            name,
+            &format!("{p}_STND"),
+            radius,
+            56.0,
+            SOLID | SHOOTABLE | MONSTER,
+            None,
+        )
     }
 }
 
@@ -389,8 +704,25 @@ pub fn mobjs() -> Vec<MobjDef> {
         monster(3001, "TROO", "TROO", 8.0, 20.0, 60, 200, true, true, 0),
         monster(3002, "SARG", "SARG", 10.0, 30.0, 150, 180, true, false, 0),
         monster(58, "SARG", "SARG", 10.0, 30.0, 150, 180, true, false, 0),
-        MobjDef { death: "BEXP".into(), health: 20, ..m(2035, "BAR1", "BAR1", 10.0, 42.0, SOLID | SHOOTABLE | NOBLOOD, None) },
-        MobjDef { death: "TBALLX".into(), speed: 10.0, damage: 3, ..m(-1, "TBALL", "TBALL", 6.0, 8.0, MISSILE, None) },
+        MobjDef {
+            death: "BEXP".into(),
+            health: 20,
+            ..m(
+                2035,
+                "BAR1",
+                "BAR1",
+                10.0,
+                42.0,
+                SOLID | SHOOTABLE | NOBLOOD,
+                None,
+            )
+        },
+        MobjDef {
+            death: "TBALLX".into(),
+            speed: 10.0,
+            damage: 3,
+            ..m(-1, "TBALL", "TBALL", 6.0, 8.0, MISSILE, None)
+        },
         m(-2, "PUFF", "PUFF", 1.0, 1.0, NOGRAV, None),
         m(-3, "BLOOD", "BLOOD", 1.0, 1.0, NOGRAV, None),
         deco(2028, "COLU", 16.0, true),
@@ -521,17 +853,35 @@ pub const ATK_HITSCAN: u8 = 1;
 pub const ATK_MELEE: u8 = 2;
 pub const ATK_BALL: u8 = 3;
 
-pub const NO_ATTACK: Attack = Attack { kind: ATK_NONE, pellets: 0, mult: 0, modulo: 1 };
+pub const NO_ATTACK: Attack = Attack {
+    kind: ATK_NONE,
+    pellets: 0,
+    mult: 0,
+    modulo: 1,
+};
 
 fn hitscan(pellets: usize, mult: i32, modulo: i32) -> Attack {
-    Attack { kind: ATK_HITSCAN, pellets, mult, modulo }
+    Attack {
+        kind: ATK_HITSCAN,
+        pellets,
+        mult,
+        modulo,
+    }
 }
 
 fn melee(mult: i32, modulo: i32) -> Attack {
-    Attack { kind: ATK_MELEE, pellets: 0, mult, modulo }
+    Attack {
+        kind: ATK_MELEE,
+        pellets: 0,
+        mult,
+        modulo,
+    }
 }
 
-const BALL: Attack = Attack { kind: ATK_BALL, ..NO_ATTACK };
+const BALL: Attack = Attack {
+    kind: ATK_BALL,
+    ..NO_ATTACK
+};
 
 // Goto labels: which of the thing's states (Info.see, .pain, ...) to jump to.
 pub const G_NONE: u8 = 0;
@@ -598,37 +948,226 @@ pub const KEEP: AiOut = AiOut {
     stop: false,
 };
 
-// Monster AI as rules, keyed by the current state's action (replaces A_Look, A_Chase, etc.).
+// Monster AI as rules, keyed by the current state's action.
 pub fn ai_rules() -> Vec<(Action, Rule<AiOut>)> {
-    use fact::*;
     use Action::*;
-    let r = |prio, mask, out| Rule { prio, mask, want: mask, out };
-    let wake = AiOut { goto: G_SEE, face: true, awake: 1, reaction: 8, ..KEEP };
-    let chase = AiOut { reaction_dec: true, ..KEEP };
+    use fact::*;
+    let r = |prio, mask, out| Rule {
+        prio,
+        mask,
+        want: mask,
+        out,
+    };
+    let wake = AiOut {
+        goto: G_SEE,
+        face: true,
+        awake: 1,
+        reaction: 8,
+        ..KEEP
+    };
+    let chase = AiOut {
+        reaction_dec: true,
+        ..KEEP
+    };
     vec![
         (Look, r(0, DEAD, KEEP)),
         (Look, r(1, HEARD, wake)),
         (Look, r(2, SEES | AHEAD, wake)),
         (Look, r(3, SEES | CLOSE, wake)),
-        (Chase, r(0, DEAD, AiOut { goto: G_SPAWN, awake: -1, ..KEEP })),
-        (Chase, r(1, HAS_MELEE | MELEE_RANGE, AiOut { goto: G_MELEE, face: true, ..chase })),
-        (Chase, r(2, HAS_MISSILE | REACTION0 | SEES | ROLL, AiOut { goto: G_MISSILE, face: true, ..chase })),
+        (
+            Chase,
+            r(
+                0,
+                DEAD,
+                AiOut {
+                    goto: G_SPAWN,
+                    awake: -1,
+                    ..KEEP
+                },
+            ),
+        ),
+        (
+            Chase,
+            r(
+                1,
+                HAS_MELEE | MELEE_RANGE,
+                AiOut {
+                    goto: G_MELEE,
+                    face: true,
+                    ..chase
+                },
+            ),
+        ),
+        (
+            Chase,
+            r(
+                2,
+                HAS_MISSILE | REACTION0 | SEES | ROLL,
+                AiOut {
+                    goto: G_MISSILE,
+                    face: true,
+                    ..chase
+                },
+            ),
+        ),
         (Chase, r(3, 0, AiOut { go: true, ..chase })),
         (FaceTarget, r(0, 0, AiOut { face: true, ..KEEP })),
-        (PosAttack, r(0, 0, AiOut { face: true, attack: hitscan(1, 3, 5), ..KEEP })),
-        (SPosAttack, r(0, 0, AiOut { face: true, attack: hitscan(3, 3, 5), ..KEEP })),
-        (TroopAttack, r(0, MELEE_RANGE, AiOut { attack: melee(3, 8), ..KEEP })),
-        (TroopAttack, r(1, 0, AiOut { face: true, attack: BALL, ..KEEP })),
-        (SargAttack, r(0, MELEE_RANGE, AiOut { attack: melee(4, 10), ..KEEP })),
-        (Fall, r(0, 0, AiOut { clear_solid: true, ..KEEP })),
-        (Explode, r(0, 0, AiOut { explode: true, ..KEEP })),
-        (Hurt, r(0, KILLED, AiOut { goto: G_DEATH, clear_shootable: true, reset: true, ..KEEP })),
-        (Hurt, r(1, PAIN_ROLL, AiOut { goto: G_PAIN, awake: 1, ..KEEP })),
-        (Hurt, r(2, ASLEEP | HAS_SEE, AiOut { goto: G_SEE, awake: 1, reaction: 0, ..KEEP })),
+        (
+            PosAttack,
+            r(
+                0,
+                0,
+                AiOut {
+                    face: true,
+                    attack: hitscan(1, 3, 5),
+                    ..KEEP
+                },
+            ),
+        ),
+        (
+            SPosAttack,
+            r(
+                0,
+                0,
+                AiOut {
+                    face: true,
+                    attack: hitscan(3, 3, 5),
+                    ..KEEP
+                },
+            ),
+        ),
+        (
+            TroopAttack,
+            r(
+                0,
+                MELEE_RANGE,
+                AiOut {
+                    attack: melee(3, 8),
+                    ..KEEP
+                },
+            ),
+        ),
+        (
+            TroopAttack,
+            r(
+                1,
+                0,
+                AiOut {
+                    face: true,
+                    attack: BALL,
+                    ..KEEP
+                },
+            ),
+        ),
+        (
+            SargAttack,
+            r(
+                0,
+                MELEE_RANGE,
+                AiOut {
+                    attack: melee(4, 10),
+                    ..KEEP
+                },
+            ),
+        ),
+        (
+            Fall,
+            r(
+                0,
+                0,
+                AiOut {
+                    clear_solid: true,
+                    ..KEEP
+                },
+            ),
+        ),
+        (
+            Explode,
+            r(
+                0,
+                0,
+                AiOut {
+                    explode: true,
+                    ..KEEP
+                },
+            ),
+        ),
+        (
+            Hurt,
+            r(
+                0,
+                KILLED,
+                AiOut {
+                    goto: G_DEATH,
+                    clear_shootable: true,
+                    reset: true,
+                    ..KEEP
+                },
+            ),
+        ),
+        (
+            Hurt,
+            r(
+                1,
+                PAIN_ROLL,
+                AiOut {
+                    goto: G_PAIN,
+                    awake: 1,
+                    ..KEEP
+                },
+            ),
+        ),
+        (
+            Hurt,
+            r(
+                2,
+                ASLEEP | HAS_SEE,
+                AiOut {
+                    goto: G_SEE,
+                    awake: 1,
+                    reaction: 0,
+                    ..KEEP
+                },
+            ),
+        ),
         (Hurt, r(3, 0, AiOut { awake: 1, ..KEEP })),
-        (Move, Rule { prio: 0, mask: FLYING | CLIP_OK | HIT, want: FLYING | CLIP_OK, out: AiOut { to_clip: true, ..KEEP } }),
-        (Move, r(1, FLYING, AiOut { goto: G_DEATH, stop: true, ..KEEP })),
-        (Move, Rule { prio: 2, mask: GO | CLIP_OK | STAY, want: GO | CLIP_OK, out: AiOut { to_clip: true, face_move: true, ..KEEP } }),
+        (
+            Move,
+            Rule {
+                prio: 0,
+                mask: FLYING | CLIP_OK | HIT,
+                want: FLYING | CLIP_OK,
+                out: AiOut {
+                    to_clip: true,
+                    ..KEEP
+                },
+            },
+        ),
+        (
+            Move,
+            r(
+                1,
+                FLYING,
+                AiOut {
+                    goto: G_DEATH,
+                    stop: true,
+                    ..KEEP
+                },
+            ),
+        ),
+        (
+            Move,
+            Rule {
+                prio: 2,
+                mask: GO | CLIP_OK | STAY,
+                want: GO | CLIP_OK,
+                out: AiOut {
+                    to_clip: true,
+                    face_move: true,
+                    ..KEEP
+                },
+            },
+        ),
     ]
 }
 
@@ -648,16 +1187,51 @@ pub struct WOut {
 
 // Weapon behaviour as rules, keyed by the weapon state's action.
 pub fn weapon_rules() -> Vec<(Action, Rule<WOut>)> {
-    use wfact::*;
     use Action::*;
-    let r = |mask, out| Rule { prio: 0, mask, want: mask, out };
-    let redirect = WOut { redirect: true, pellets: 0 };
+    use wfact::*;
+    let r = |mask, out| Rule {
+        prio: 0,
+        mask,
+        want: mask,
+        out,
+    };
+    let redirect = WOut {
+        redirect: true,
+        pellets: 0,
+    };
     vec![
         (WeaponReady, r(FIRE | ALIVE | AMMO, redirect)),
         (ReFire, r(FIRE | ALIVE | AMMO, redirect)),
-        (FirePistol, r(AMMO, WOut { redirect: false, pellets: 1 })),
-        (FireCGun, r(AMMO, WOut { redirect: false, pellets: 1 })),
-        (FireShotgun, r(AMMO, WOut { redirect: false, pellets: 7 })),
+        (
+            FirePistol,
+            r(
+                AMMO,
+                WOut {
+                    redirect: false,
+                    pellets: 1,
+                },
+            ),
+        ),
+        (
+            FireCGun,
+            r(
+                AMMO,
+                WOut {
+                    redirect: false,
+                    pellets: 1,
+                },
+            ),
+        ),
+        (
+            FireShotgun,
+            r(
+                AMMO,
+                WOut {
+                    redirect: false,
+                    pellets: 7,
+                },
+            ),
+        ),
     ]
 }
 
@@ -682,7 +1256,14 @@ pub struct Special {
 
 // Line special number -> what it does.
 pub fn specials() -> Vec<(usize, Special)> {
-    let s = |act, speed, tagged, key, walk| Special { act, speed, tagged, key, walk, use_: !walk };
+    let s = |act, speed, tagged, key, walk| Special {
+        act,
+        speed,
+        tagged,
+        key,
+        walk,
+        use_: !walk,
+    };
     vec![
         (1, s(MV_DOOR, 2.0, false, 0, false)),
         (26, s(MV_DOOR, 2.0, false, 1, false)),
@@ -717,14 +1298,49 @@ pub fn act_key(kind: u8, dir: i8, act: u8) -> usize {
 
 // Mover activation table: starting a door/lift, or reversing a moving door.
 pub fn activations() -> Vec<(usize, ActOut)> {
-    let door = ActOut { kind: MV_DOOR, dir: 1, init: true, plane: 0, up_lc: 1.0, up_floor: 0.0, down_floor: 1.0, down_lowest: 0.0 };
-    let lift = ActOut { kind: MV_LIFT, dir: -1, init: true, plane: 1, up_lc: 0.0, up_floor: 1.0, down_floor: 0.0, down_lowest: 1.0 };
-    let reverse = |dir| ActOut { kind: MV_DOOR, dir, init: false, ..door };
+    let door = ActOut {
+        kind: MV_DOOR,
+        dir: 1,
+        init: true,
+        plane: 0,
+        up_lc: 1.0,
+        up_floor: 0.0,
+        down_floor: 1.0,
+        down_lowest: 0.0,
+    };
+    let lift = ActOut {
+        kind: MV_LIFT,
+        dir: -1,
+        init: true,
+        plane: 1,
+        up_lc: 0.0,
+        up_floor: 1.0,
+        down_floor: 0.0,
+        down_lowest: 1.0,
+    };
+    let reverse = |dir| ActOut {
+        kind: MV_DOOR,
+        dir,
+        init: false,
+        ..door
+    };
     vec![
         (act_key(MV_IDLE, 0, MV_DOOR), door),
-        (act_key(MV_IDLE, 0, MV_DOOR_STAY), ActOut { kind: MV_DOOR_STAY, ..door }),
+        (
+            act_key(MV_IDLE, 0, MV_DOOR_STAY),
+            ActOut {
+                kind: MV_DOOR_STAY,
+                ..door
+            },
+        ),
         (act_key(MV_IDLE, 0, MV_LIFT), lift),
-        (act_key(MV_IDLE, 0, MV_FLOOR), ActOut { kind: MV_FLOOR, ..lift }),
+        (
+            act_key(MV_IDLE, 0, MV_FLOOR),
+            ActOut {
+                kind: MV_FLOOR,
+                ..lift
+            },
+        ),
         (act_key(MV_DOOR, -1, MV_DOOR), reverse(1)),
         (act_key(MV_DOOR, 0, MV_DOOR), reverse(-1)),
         (act_key(MV_DOOR, 1, MV_DOOR), reverse(-1)),
@@ -755,10 +1371,23 @@ pub fn step_key(kind: u8, dir: i8) -> usize {
 // Per-tic mover behaviour: stop at the top, wait, go back down, reopen if blocked.
 pub fn mover_rules() -> Vec<(usize, Rule<StepOut>)> {
     use mfact::*;
-    let r = |prio, mask, kind, dir, wait, wait_dec| Rule { prio, mask, want: mask, out: StepOut { kind, dir, wait, wait_dec } };
+    let r = |prio, mask, kind, dir, wait, wait_dec| Rule {
+        prio,
+        mask,
+        want: mask,
+        out: StepOut {
+            kind,
+            dir,
+            wait,
+            wait_dec,
+        },
+    };
     vec![
         (step_key(MV_DOOR, 1), r(0, REACHED, MV_DOOR, 0, 150, false)),
-        (step_key(MV_DOOR_STAY, 1), r(0, REACHED, MV_IDLE, 0, -1, false)),
+        (
+            step_key(MV_DOOR_STAY, 1),
+            r(0, REACHED, MV_IDLE, 0, -1, false),
+        ),
         (step_key(MV_DOOR, 0), r(0, EXPIRED, MV_DOOR, -1, -1, false)),
         (step_key(MV_DOOR, 0), r(1, 0, MV_DOOR, 0, -1, true)),
         (step_key(MV_DOOR, -1), r(0, OCCUPIED, MV_DOOR, 1, -1, false)),
@@ -787,8 +1416,19 @@ pub struct ChaseDir {
 // Chase directions in preference order: straight, 45° either way, 90° either way, stay put.
 pub fn chase_dirs() -> Vec<ChaseDir> {
     use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
-    let d = |turn, step| ChaseDir { turn, step, stay: step == 0.0 };
-    vec![d(0.0, 1.0), d(FRAC_PI_4, 1.0), d(-FRAC_PI_4, 1.0), d(FRAC_PI_2, 1.0), d(-FRAC_PI_2, 1.0), d(0.0, 0.0)]
+    let d = |turn, step| ChaseDir {
+        turn,
+        step,
+        stay: step == 0.0,
+    };
+    vec![
+        d(0.0, 1.0),
+        d(FRAC_PI_4, 1.0),
+        d(-FRAC_PI_4, 1.0),
+        d(FRAC_PI_2, 1.0),
+        d(-FRAC_PI_2, 1.0),
+        d(0.0, 0.0),
+    ]
 }
 
 // One player move attempt: which momentum axes it keeps.
@@ -801,7 +1441,11 @@ pub struct Slide {
 
 // Player move attempts in preference order: full move, x only, y only, stay (gives wall sliding).
 pub fn slides() -> Vec<Slide> {
-    let s = |keep_x, keep_y| Slide { keep_x, keep_y, stay: keep_x == 0.0 && keep_y == 0.0 };
+    let s = |keep_x, keep_y| Slide {
+        keep_x,
+        keep_y,
+        stay: keep_x == 0.0 && keep_y == 0.0,
+    };
     vec![s(1.0, 1.0), s(1.0, 0.0), s(0.0, 1.0), s(0.0, 0.0)]
 }
 
@@ -845,9 +1489,19 @@ pub struct NumberSlot {
 
 // Number widgets, indexed by stat.
 pub fn hud_numbers() -> Vec<NumberSlot> {
-    let n = |x, y, font, percent| NumberSlot { x, y, font, digits: 3, percent };
+    let n = |x, y, font, percent| NumberSlot {
+        x,
+        y,
+        font,
+        digits: 3,
+        percent,
+    };
     let ys = [173.0, 179.0, 185.0, 191.0];
-    let mut v = vec![n(44.0, 171.0, FONT_BIG, false), n(90.0, 171.0, FONT_BIG, true), n(221.0, 171.0, FONT_BIG, true)];
+    let mut v = vec![
+        n(44.0, 171.0, FONT_BIG, false),
+        n(90.0, 171.0, FONT_BIG, true),
+        n(221.0, 171.0, FONT_BIG, true),
+    ];
     v.extend(ys.map(|y| n(288.0, y, FONT_YELLOW, false)));
     v.extend(ys.map(|y| n(314.0, y, FONT_YELLOW, false)));
     v
@@ -855,12 +1509,25 @@ pub fn hud_numbers() -> Vec<NumberSlot> {
 
 // Arms panel: weapon slot -> (x, y, digit shown); yellow when owned, grey otherwise.
 pub fn hud_arms() -> Vec<(usize, f64, f64, usize)> {
-    (1..7).map(|w| (w, 111.0 + ((w - 1) % 3) as f64 * 12.0, 172.0 + ((w - 1) / 3) as f64 * 10.0, w + 1)).collect()
+    (1..7)
+        .map(|w| {
+            (
+                w,
+                111.0 + ((w - 1) % 3) as f64 * 12.0,
+                172.0 + ((w - 1) / 3) as f64 * 10.0,
+                w + 1,
+            )
+        })
+        .collect()
 }
 
 // Key cards, indexed by key bit: x, y, lump.
 pub fn hud_keys() -> Vec<(f64, f64, &'static str)> {
-    vec![(239.0, 171.0, "STKEYS0"), (239.0, 181.0, "STKEYS1"), (239.0, 191.0, "STKEYS2")]
+    vec![
+        (239.0, 171.0, "STKEYS0"),
+        (239.0, 181.0, "STKEYS1"),
+        (239.0, 191.0, "STKEYS2"),
+    ]
 }
 
 // Face facts, one bit each.
@@ -887,8 +1554,22 @@ pub struct FaceOut {
 // Face rules: dead, else evil grin on a new weapon, else grimace when hurt, else look around.
 pub fn face_rules() -> Vec<Rule<FaceOut>> {
     use ffact::*;
-    let r = |prio, mask, kind, by_pain, by_look| Rule { prio, mask, want: mask, out: FaceOut { kind, by_pain, by_look } };
-    vec![r(0, DEAD, FACE_DEAD, false, false), r(1, GRIN, FACE_EVIL, true, false), r(2, HURT, FACE_KILL, true, false), r(3, 0, FACE_LOOK, true, true)]
+    let r = |prio, mask, kind, by_pain, by_look| Rule {
+        prio,
+        mask,
+        want: mask,
+        out: FaceOut {
+            kind,
+            by_pain,
+            by_look,
+        },
+    };
+    vec![
+        r(0, DEAD, FACE_DEAD, false, false),
+        r(1, GRIN, FACE_EVIL, true, false),
+        r(2, HURT, FACE_KILL, true, false),
+        r(3, 0, FACE_LOOK, true, true),
+    ]
 }
 
 // Face images: (kind, pain level 0-4, look 0-2) -> lump.
@@ -922,7 +1603,11 @@ pub struct ArmorClass {
 
 // No armor, green (1/3), blue (1/2).
 pub fn armor_classes() -> Vec<ArmorClass> {
-    vec![ArmorClass { num: 0, den: 1 }, ArmorClass { num: 1, den: 3 }, ArmorClass { num: 1, den: 2 }]
+    vec![
+        ArmorClass { num: 0, den: 1 },
+        ArmorClass { num: 1, den: 3 },
+        ArmorClass { num: 1, den: 2 },
+    ]
 }
 
 // Doom's #defines and tuning numbers, as one table row (SQLDoom's doom_constants); code reads it with `consts(db)`.

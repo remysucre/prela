@@ -2692,8 +2692,7 @@ pub trait QueryExt: IntoQuery + Sized {
     /// ```
     ///
     /// `order` is a relation from row to its ORDER BY value; rows it has no
-    /// value for are left out. A row in several partitions gets one output per
-    /// partition. The sort is stable.
+    /// value for are left out. A row in several partitions gets one output per partition. The sort is stable.
     fn window<O, C, F, S>(self, f: F, order: O, cmp: C) -> Window<ROf<Self>, S>
     where
         Self::Q: Drive,
@@ -2708,11 +2707,12 @@ pub trait QueryExt: IntoQuery + Sized {
     {
         let order = order.iq();
         let mut rows: Vec<(usize, ROf<Self>)> = Vec::new();
-        let mut np = 0;
+        let mut np = 0; // number of partitions
         self.iq().drive(|p, r| {
             np = np.max(p.idx() + 1);
             rows.push((p.idx(), r));
         });
+        // compute offsets for each bucket via prefix sum
         let mut offsets = vec![0usize; np + 1];
         for &(p, _) in &rows {
             offsets[p + 1] += 1;
@@ -2720,7 +2720,8 @@ pub trait QueryExt: IntoQuery + Sized {
         for i in 0..np {
             offsets[i + 1] += offsets[i];
         }
-        let mut cursor = offsets[..np].to_vec();
+        let mut cursor = offsets[..np].to_vec(); // next free slot per partition
+        // place values into buckets
         let mut buckets: Vec<ROf<Self>> = rows.iter().map(|&(_, r)| r).collect();
         for &(p, r) in &rows {
             buckets[cursor[p]] = r;
@@ -2733,11 +2734,16 @@ pub trait QueryExt: IntoQuery + Sized {
         for w in offsets.windows(2) {
             let cell = &buckets[w[0]..w[1]];
             sorted.clear();
+            // join key and value
             sorted.extend(cell.iter().filter_map(|&r| order.get(r).map(|k| (k, r))));
             sorted.sort_by(|a, b| cmp(&a.0, &b.0));
             out.clear();
             f(&sorted, &mut out);
-            assert_eq!(out.len(), sorted.len(), "window function must emit one value per row");
+            assert_eq!(
+                out.len(),
+                sorted.len(),
+                "window function must emit one value per row"
+            );
             for (&(_, r), &v) in sorted.iter().zip(&out) {
                 n = n.max(r.idx() + 1);
                 pairs.push((r.idx(), v));
@@ -2748,7 +2754,12 @@ pub trait QueryExt: IntoQuery + Sized {
 
     /// Like `window`, but keyed by partition: partition -> (row value, output),
     /// with the ORDER BY value read off the row by a lambda.
-    fn window_rows<K, O, C, F, S>(self, f: F, order: O, cmp: C) -> HashIdx<DOf<Self>, (ROf<Self>, S)>
+    fn window_rows<K, O, C, F, S>(
+        self,
+        f: F,
+        order: O,
+        cmp: C,
+    ) -> HashIdx<DOf<Self>, (ROf<Self>, S)>
     where
         Self::Q: Drive,
         O: Fn(ROf<Self>) -> K,
@@ -2767,7 +2778,11 @@ pub trait QueryExt: IntoQuery + Sized {
             sorted.sort_by(|a, b| cmp(&a.0, &b.0));
             out.clear();
             f(&sorted, &mut out);
-            assert_eq!(out.len(), sorted.len(), "window function must emit one value per row");
+            assert_eq!(
+                out.len(),
+                sorted.len(),
+                "window function must emit one value per row"
+            );
             idx.entry(p)
                 .or_default()
                 .extend(sorted.iter().zip(&out).map(|(&(_, r), &v)| (r, v)));
@@ -2925,8 +2940,14 @@ mod tests {
         assert_eq!(drive_all(&g), drive_all(&films()));
         assert_eq!(g.get(1), Some(20));
         let to_film: MultiRel<usize, usize> = MultiRel::from_pairs(3, [(0, 1), (0, 2), (2, 1)]);
-        assert_eq!(drive_all(&(&to_film).select(&g)), vec![(0, 20), (0, 30), (2, 20)]);
-        assert_eq!(drive_all(&(&g).and(&f).map(|(a, b): (usize, usize)| a + b)), vec![(0, 20), (1, 40), (2, 60)]);
+        assert_eq!(
+            drive_all(&(&to_film).select(&g)),
+            vec![(0, 20), (0, 30), (2, 20)]
+        );
+        assert_eq!(
+            drive_all(&(&g).and(&f).map(|(a, b): (usize, usize)| a + b)),
+            vec![(0, 20), (1, 40), (2, 60)]
+        );
     }
 
     #[test]
@@ -3006,8 +3027,11 @@ mod tests {
 
     #[test]
     fn expand_emits_each_index() {
-        let spans: VecRel<usize, (i32, i32)> = VecRel::from_pairs(3, [(0, (2, 4)), (1, (5, 5)), (2, (-1, 1))]);
-        let e = (&spans).expand(|(lo, hi): (i32, i32)| (lo, hi)).map(|(_, i)| i);
+        let spans: VecRel<usize, (i32, i32)> =
+            VecRel::from_pairs(3, [(0, (2, 4)), (1, (5, 5)), (2, (-1, 1))]);
+        let e = (&spans)
+            .expand(|(lo, hi): (i32, i32)| (lo, hi))
+            .map(|(_, i)| i);
         assert_eq!(drive_all(&e), vec![(0, 2), (0, 3), (2, -1), (2, 0)]);
         assert!(e.member(0) && !e.member(1));
         assert!(e.probe_any(2, |i| i == 0) && !e.probe_any(0, |i| i == 4));
@@ -3260,9 +3284,11 @@ mod tests {
     fn window_preceding_frame() {
         let part: VecRel<usize, usize> = VecRel::from_pairs(4, [(0, 0), (1, 0), (2, 0), (3, 1)]);
         let x: VecRel<usize, i64> = VecRel::from_pairs(4, [(0, 5), (1, 2), (2, 9), (3, 4)]);
-        let w = Universe::new(4)
-            .group_by(&part)
-            .window(preceding(0, |a: i64, (x, _)| a.max(x)), &x, asc);
+        let w = Universe::new(4).group_by(&part).window(
+            preceding(0, |a: i64, (x, _)| a.max(x)),
+            &x,
+            asc,
+        );
         assert_eq!(drive_all(&w), vec![(0, 2), (1, 0), (2, 5), (3, 0)]);
     }
 
@@ -3283,12 +3309,24 @@ mod tests {
         let lg = rows.group_by(&part).window(lag, &score, desc);
         assert_eq!(
             drive_all(&lg),
-            vec![(0, Some(9)), (1, Some(5)), (2, Some(5)), (3, None), (4, None)]
+            vec![
+                (0, Some(9)),
+                (1, Some(5)),
+                (2, Some(5)),
+                (3, None),
+                (4, None)
+            ]
         );
         let ld = rows.group_by(&part).window(lead, &score, desc);
         assert_eq!(
             drive_all(&ld),
-            vec![(0, Some(5)), (1, Some(3)), (2, None), (3, Some(5)), (4, None)]
+            vec![
+                (0, Some(5)),
+                (1, Some(3)),
+                (2, None),
+                (3, Some(5)),
+                (4, None)
+            ]
         );
         let up = rows.group_by(&part).window(row_number, &score, asc);
         assert_eq!(drive_all(&up), vec![(0, 2), (1, 3), (2, 1), (3, 4), (4, 1)]);
@@ -3306,7 +3344,9 @@ mod tests {
     fn window_skips_rows_without_order() {
         let part: VecRel<usize, usize> = VecRel::from_pairs(3, [(0, 0), (1, 0), (2, 0)]);
         let score = MultiRel::from_pairs(3, [(0, 7i64), (2, 3)]);
-        let w = Universe::new(3).group_by(&part).window(row_number, &score, asc);
+        let w = Universe::new(3)
+            .group_by(&part)
+            .window(row_number, &score, asc);
         assert_eq!(drive_all(&w), vec![(0, 2), (2, 1)]);
     }
 

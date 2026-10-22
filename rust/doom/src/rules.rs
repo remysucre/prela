@@ -34,7 +34,13 @@ rule_tables!(AiRule, WeaponRule, MoverRule, FaceRule);
 // Rule-table lookup: for each row, the highest-priority rule whose conditions match.
 // Rows are (row, rule key, fact bits); `by_key` lists each key's rules; `id` names the row
 // in the result, a dense id below `n`.
-pub fn matching<Q, T, R, F, K>(rows: Q, rules: &R, by_key: &MultiRel<usize, Row<R>>, id: F, n: usize) -> MultiRel<K, (T, Row<R>)>
+pub fn matching<Q, T, R, F, K>(
+    rows: Q,
+    rules: &R,
+    by_key: &MultiRel<usize, Row<R>>,
+    id: F,
+    n: usize,
+) -> MultiRel<K, (T, Row<R>)>
 where
     Q: Drive<R = (T, usize, u32)>,
     T: Copy + 'static,
@@ -60,7 +66,11 @@ where
 }
 
 // Decision table: choice_key(key, facts) -> the best matching rule, for every combination of `bits` fact bits.
-pub fn decisions<R: Rules>(rules: &R, by_key: &MultiRel<usize, Row<R>>, bits: u32) -> MultiRel<usize, Row<R>> {
+pub fn decisions<R: Rules>(
+    rules: &R,
+    by_key: &MultiRel<usize, Row<R>>,
+    bits: u32,
+) -> MultiRel<usize, Row<R>> {
     let n = by_key.n_dom() << bits;
     // Every rule against every fact combination; keep (key, facts) alongside.
     by_key
