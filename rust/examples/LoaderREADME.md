@@ -1,3 +1,12 @@
+
+## Running a query with the loader
+
+See README.md for how to download the dataset of (Customer, Order, Region, Nation, etc.)
+
+Then do 
+```cargo run --release --features regen --example runner```
+
+
 ## Loading Engine
 
 trialLoader.rs implements a loading strategy which works off of a post-order traversal of the query's AST. To achieve this, objects which represent files and columns are created, which are endowed with information obtained from the data files' schemas, and which can support the same Prela syntax as the in-memory version.
