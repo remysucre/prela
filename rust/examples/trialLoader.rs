@@ -1,6 +1,7 @@
 // ===== 0. Header ============================================================
 //
-// Run with: cargo run --release --features regen --example trialLoader
+// Part of the `runner` example: cargo run --release --features regen --example runner
+// (runner.rs has `main`; the schema is in fileSchema.rs).
 //
 // An on-the-fly loader that interprets prela's own query AST (examples/trialLoader.md).
 // A query is written over `ColumnRef` leaves exactly as it would be over the
@@ -14,32 +15,24 @@
 // column is loaded more than once), and `db.to_memory()` gathers the sinks into
 // an in-memory db, so the loaded data can be queried with a different plan.
 //
-// Sections:
+// Sections (5, 6, 6b, 6c are in fileSchema.rs; 11, main, is in runner.rs):
 //   1. KeyFilter          — the filters passed DOWN (and the Blooms passed UP)
 //   3. ParquetType        — Rust value type <-> Arrow column type
 //   4. ColumnRef          — the leaf: (file, key column, value column) + its sink
-//   5. Catalog            — reads footers, hands out checked ColumnRefs
-//   6. Schema             — Region, Nation, Customer, Part, Partsupp over data/tpch/parquet
-//   6b. In-memory schema  — MemRegion, ..., MemTpch: what the sinks become
-//   6c. to_memory / clear
 //   7. Load               — the fourth mode
 //   8. Load for ColumnRef — the only I/O
 //   9. Load for Compose / Restrict / Filter
 //  10. Helpers
-//  11. main               — write your query here
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::fs::File;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
 use arrow::array::{Array, ArrayRef, Float64Array, Int64Array, StringArray};
 use arrow::compute::cast;
-use arrow::datatypes::{DataType, SchemaRef};
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use arrow::datatypes::DataType;
 use prela::engine::*;
 use prela::join_tree::{Bloom, ColumnFilter, scan};
-use prela::loader::{Set, SparseKey, Str};
+use prela::loader::Str;
 
 // ===== 1. KeyFilter: filters passed down, Blooms passed up ====================
 
@@ -175,6 +168,20 @@ impl<E: 'static, T: Copy + 'static> Clone for ColumnRef<E, T> {
 }
 impl<E: 'static, T: Copy + 'static> Copy for ColumnRef<E, T> {}
 
+impl<E: 'static, T: Copy + 'static> ColumnRef<E, T> {
+    /// A column with its own, empty sink. Called by `Catalog::col` (fileSchema.rs)
+    /// after it has checked the columns against the file's footer.
+    pub fn new(path: &'static str, key_col: &'static str, val_col: &'static str) -> Self {
+        ColumnRef {
+            path,
+            key_col,
+            val_col,
+            sink: Box::leak(Box::new(RefCell::new(None))), // one sink per column
+            _t: PhantomData,
+        }
+    }
+}
+
 impl<E: 'static, T: ParquetType> ColumnRef<E, T> {
     /// Forget what was loaded (the leaked rows themselves are not freed).
     pub fn clear(&self) {
@@ -224,327 +231,6 @@ impl<E: 'static, T: Copy + 'static> Probe for ColumnRef<E, T> {
     }
 }
 
-// ===== 5. Catalog: footers -> checked ColumnRefs ==============================
-
-pub struct Catalog {
-    dir: String,
-    footers: HashMap<String, SchemaRef>,
-}
-
-impl Catalog {
-    pub fn open(dir: &str) -> Self {
-        Catalog { dir: dir.to_string(), footers: HashMap::new() }
-    }
-
-    fn path(&self, file: &str) -> String {
-        format!("{}/{file}.parquet", self.dir)
-    }
-
-    // Each file's footer is read once; only the schema is kept.
-    fn footer(&mut self, file: &str) -> SchemaRef {
-        if !self.footers.contains_key(file) {
-            let path = self.path(file);
-            let f = File::open(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
-            let builder = ParquetRecordBatchReaderBuilder::try_new(f).unwrap();
-            self.footers.insert(file.to_string(), builder.schema().clone());
-        }
-        self.footers[file].clone()
-    }
-
-    /// key_col -> val_col in one file, checked against its footer.
-    pub fn col<E: 'static, T: ParquetType>(
-        &mut self,
-        file: &str,
-        key_col: &'static str,
-        val_col: &'static str,
-    ) -> ColumnRef<E, T> {
-        let schema = self.footer(file);
-        check::<Id<E>>(&schema, file, key_col);
-        check::<T>(&schema, file, val_col);
-        ColumnRef {
-            path: leak_str(&self.path(file)),
-            key_col,
-            val_col,
-            sink: Box::leak(Box::new(RefCell::new(None))), // one sink per column
-            _t: PhantomData,
-        }
-    }
-
-    /// The identity relation over the file's key: key_col -> key_col.
-    pub fn key<E: 'static>(&mut self, file: &str, key_col: &'static str) -> ColumnRef<E, Id<E>> {
-        self.col(file, key_col, key_col)
-    }
-}
-
-fn check<T: ParquetType>(schema: &SchemaRef, file: &str, col: &str) {
-    let field = schema
-        .field_with_name(col)
-        .unwrap_or_else(|_| panic!("{file}.parquet has no column {col}"));
-    assert!(
-        T::accepts(field.data_type()),
-        "{file}.parquet: column {col} is {:?}, declared {}",
-        field.data_type(),
-        std::any::type_name::<T>()
-    );
-}
-
-// ===== 6. Schema: data/tpch/parquet ============================================
-//
-// Rule: every column has its file's primary key on one side. An entity's own
-// attributes are keyed by its id (`p_partkey -> p_name`), and a reverse FK ends
-// at the row's id (`ps_partkey -> ps_id`). So a (key, value) pair is exactly one
-// file row, which is what lets `union` merge two loads of a column by comparing
-// pairs. Do not add a shortcut that skips the row's id (e.g. a link table's
-// `movie_id -> company_id`): two different rows could then give the same pair.
-
-#[derive(IntoQuery)]
-pub struct Region {
-    #[primary_key]
-    pub id: ColumnRef<Self, Id<Self>>,
-    pub name: ColumnRef<Self, Str>,
-}
-
-#[derive(IntoQuery)]
-pub struct Nation {
-    #[primary_key]
-    pub id: ColumnRef<Self, Id<Self>>,
-    pub name: ColumnRef<Self, Str>,
-    pub region: ColumnRef<Self, Id<Region>>,
-    pub customers: ColumnRef<Self, Id<Customer>>, // reverse FK: read from customer.parquet
-}
-
-#[derive(IntoQuery)]
-pub struct Customer {
-    #[primary_key]
-    pub id: ColumnRef<Self, Id<Self>>,
-    pub name: ColumnRef<Self, Str>,
-    pub nation: ColumnRef<Self, Id<Nation>>,
-    pub acctbal: ColumnRef<Self, f64>,
-    pub mktsegment: ColumnRef<Self, Str>,
-}
-
-#[derive(IntoQuery)]
-pub struct Part {
-    #[primary_key]
-    pub id: ColumnRef<Self, Id<Self>>,
-    pub name: ColumnRef<Self, Str>,
-    pub retailprice: ColumnRef<Self, f64>,
-    pub supplies: ColumnRef<Self, Id<Partsupp>>, // reverse FK: read from partsupp.parquet
-}
-
-#[derive(IntoQuery)]
-pub struct Partsupp {
-    #[primary_key]
-    pub id: ColumnRef<Self, Id<Self>>,
-    pub supplycost: ColumnRef<Self, f64>,
-    pub part: ColumnRef<Self, Id<Part>>,
-}
-
-pub struct TpchFiles {
-    pub region: Region,
-    pub nation: Nation,
-    pub customer: Customer,
-    pub part: Part,
-    pub partsupp: Partsupp,
-}
-
-pub fn tpch(c: &mut Catalog) -> TpchFiles {
-    TpchFiles {
-        region: Region {
-            id: c.key("region", "r_regionkey"),
-            name: c.col("region", "r_regionkey", "r_name"),
-        },
-        nation: Nation {
-            id: c.key("nation", "n_nationkey"),
-            name: c.col("nation", "n_nationkey", "n_name"),
-            region: c.col("nation", "n_nationkey", "n_regionkey"),
-            customers: c.col("customer", "c_nationkey", "c_custkey"), // reverse FK
-        },
-        customer: Customer {
-            id: c.key("customer", "c_custkey"),
-            name: c.col("customer", "c_custkey", "c_name"),
-            nation: c.col("customer", "c_custkey", "c_nationkey"),
-            acctbal: c.col("customer", "c_custkey", "c_acctbal"),
-            mktsegment: c.col("customer", "c_custkey", "c_mktsegment"),
-        },
-        part: Part {
-            id: c.key("part", "p_partkey"),
-            name: c.col("part", "p_partkey", "p_name"),
-            retailprice: c.col("part", "p_partkey", "p_retailprice"),
-            supplies: c.col("partsupp", "ps_partkey", "ps_id"), // reverse FK
-        },
-        partsupp: Partsupp {
-            id: c.key("partsupp", "ps_id"),
-            supplycost: c.col("partsupp", "ps_id", "ps_supplycost"),
-            part: c.col("partsupp", "ps_id", "ps_partkey"),
-        },
-    }
-}
-
-// ===== 6b. In-memory schema: what the sinks become =============================
-//
-// One struct per table, with the same field names as section 6, so a query
-// over the loaded data reads the same. Write the entity tag explicitly
-// (`Region`), never `Self`: inside `MemRegion`, `Self` is `MemRegion`, and the
-// ids must be the same `Id<Region>` that the ColumnRefs load.
-// `id` is a SparseKey: only the loaded ids exist, and a drive skips the gaps.
-
-#[derive(IntoQuery)]
-pub struct MemRegion {
-    #[primary_key]
-    pub id: SparseKey<Region>,
-    pub name: Set<Region, Str>,
-}
-
-#[derive(IntoQuery)]
-pub struct MemNation {
-    #[primary_key]
-    pub id: SparseKey<Nation>,
-    pub name: Set<Nation, Str>,
-    pub region: Set<Nation, Id<Region>>,
-    pub customers: Set<Nation, Id<Customer>>,
-}
-
-#[derive(IntoQuery)]
-pub struct MemCustomer {
-    #[primary_key]
-    pub id: SparseKey<Customer>,
-    pub name: Set<Customer, Str>,
-    pub nation: Set<Customer, Id<Nation>>,
-    pub acctbal: Set<Customer, f64>,
-    pub mktsegment: Set<Customer, Str>,
-}
-
-#[derive(IntoQuery)]
-pub struct MemPart {
-    #[primary_key]
-    pub id: SparseKey<Part>,
-    pub name: Set<Part, Str>,
-    pub retailprice: Set<Part, f64>,
-    pub supplies: Set<Part, Id<Partsupp>>,
-}
-
-#[derive(IntoQuery)]
-pub struct MemPartsupp {
-    #[primary_key]
-    pub id: SparseKey<Partsupp>,
-    pub supplycost: Set<Partsupp, f64>,
-    pub part: Set<Partsupp, Id<Part>>,
-}
-
-pub struct MemTpch {
-    pub region: MemRegion,
-    pub nation: MemNation,
-    pub customer: MemCustomer,
-    pub part: MemPart,
-    pub partsupp: MemPartsupp,
-}
-
-// ===== 6c. to_memory / clear ===================================================
-
-impl TpchFiles {
-    /// The loaded columns as an in-memory db. An entity's `id` is every key
-    /// loaded by any of its columns. Unloaded columns come back empty, with a
-    /// warning. The sinks are left as they are; only `clear()` resets them.
-    pub fn to_memory(&self) -> MemTpch {
-        MemTpch {
-            region: MemRegion {
-                id: mem_key(&[self.region.id.keys(), self.region.name.keys()].concat()),
-                name: self.region.name.loaded("region.name"),
-            },
-            nation: MemNation {
-                id: mem_key(
-                    &[
-                        self.nation.id.keys(),
-                        self.nation.name.keys(),
-                        self.nation.region.keys(),
-                        self.nation.customers.keys(),
-                    ]
-                    .concat(),
-                ),
-                name: self.nation.name.loaded("nation.name"),
-                region: self.nation.region.loaded("nation.region"),
-                customers: self.nation.customers.loaded("nation.customers"),
-            },
-            customer: MemCustomer {
-                id: mem_key(
-                    &[
-                        self.customer.id.keys(),
-                        self.customer.name.keys(),
-                        self.customer.nation.keys(),
-                        self.customer.acctbal.keys(),
-                        self.customer.mktsegment.keys(),
-                    ]
-                    .concat(),
-                ),
-                name: self.customer.name.loaded("customer.name"),
-                nation: self.customer.nation.loaded("customer.nation"),
-                acctbal: self.customer.acctbal.loaded("customer.acctbal"),
-                mktsegment: self.customer.mktsegment.loaded("customer.mktsegment"),
-            },
-            part: MemPart {
-                id: mem_key(
-                    &[
-                        self.part.id.keys(),
-                        self.part.name.keys(),
-                        self.part.retailprice.keys(),
-                        self.part.supplies.keys(),
-                    ]
-                    .concat(),
-                ),
-                name: self.part.name.loaded("part.name"),
-                retailprice: self.part.retailprice.loaded("part.retailprice"),
-                supplies: self.part.supplies.loaded("part.supplies"),
-            },
-            partsupp: MemPartsupp {
-                id: mem_key(
-                    &[self.partsupp.id.keys(), self.partsupp.supplycost.keys(), self.partsupp.part.keys()]
-                        .concat(),
-                ),
-                supplycost: self.partsupp.supplycost.loaded("partsupp.supplycost"),
-                part: self.partsupp.part.loaded("partsupp.part"),
-            },
-        }
-    }
-
-    /// Empty every sink, before loading the next query.
-    pub fn clear(&self) {
-        self.region.id.clear();
-        self.region.name.clear();
-
-        self.nation.id.clear();
-        self.nation.name.clear();
-        self.nation.region.clear();
-        self.nation.customers.clear();
-
-        self.customer.id.clear();
-        self.customer.name.clear();
-        self.customer.nation.clear();
-        self.customer.acctbal.clear();
-        self.customer.mktsegment.clear();
-
-        self.part.id.clear();
-        self.part.name.clear();
-        self.part.retailprice.clear();
-        self.part.supplies.clear();
-
-        self.partsupp.id.clear();
-        self.partsupp.supplycost.clear();
-        self.partsupp.part.clear();
-    }
-}
-
-// The ids of E present in memory, as a SparseKey over 0..=max id with only
-// these ids valid (as tree_query.rs's `key`). The Bitset is leaked because
-// SparseUniverse holds a `&'static`.
-fn mem_key<E: 'static>(ids: &[usize]) -> SparseKey<E> {
-    let n = ids.iter().max().map_or(0, |&m| m + 1);
-    let mut valid: Bitset<Id<E>> = Bitset::empty(Universe::<Id<E>>::new(n));
-    for &i in ids {
-        valid.set(Id::new(i));
-    }
-    SparseUniverse::new(n, Box::leak(Box::new(valid)))
-}
 
 // ===== 7. Load: the fourth mode ================================================
 
@@ -728,6 +414,26 @@ where
     }
 }
 
+impl<A, B> Load for Prod<A, B>
+where
+    A: Load,
+    B: Load<D = A::D>,
+{
+    type Out = Prod<A::Out, B::Out>;
+    fn load(
+        self,
+        key_filter: KeyFilter,
+        _val_filter: KeyFilter,     // values are (x, y) pairs: fits neither side's scan
+        _preds: Vec<Pred<Self::R>>, // likewise; the final drive applies them exactly
+    ) -> (Self::Out, (KeyFilter, KeyFilter)) {
+        let (a, (ak, _)) = self.a.load(key_filter.clone(), KeyFilter::All, Vec::new());
+        let (b, (bk, _)) = self.b.load(key_filter.and(ak.clone()), KeyFilter::All, Vec::new()); 
+
+        let ab_k = ak.and(bk);
+        (Prod { a, b }, (ab_k, KeyFilter::All)) 
+    }
+}
+
 // ===== 10. Helpers =============================================================
 
 // Join keys as i64, whatever integer width the file stored them in (the same
@@ -739,12 +445,12 @@ fn keys_i64(col: &ArrayRef) -> Vec<i64> {
 
 // `Str` is `&'static str`, but Arrow frees its strings with the batch, so each
 // one is copied into storage that lives for the whole program.
-fn leak_str(s: &str) -> &'static str {
+pub fn leak_str(s: &str) -> &'static str {
     Box::leak(s.to_owned().into_boxed_str())
 }
 
 // Two loads of the same column as one, each (key, value) pair once. Exact by
-// the schema rule (section 6): a pair is one file row, so an equal pair is the
+// the schema rule (fileSchema.rs, section 6): a pair is one file row, so an equal pair is the
 // same row loaded twice. (A NaN value would never compare equal; TPC-H has none.)
 fn union<E: 'static, T: ParquetType>(old: &MultiRel<Id<E>, T>, new: &MultiRel<Id<E>, T>) -> MultiRel<Id<E>, T> {
     let n = old.n_dom().max(new.n_dom());
@@ -763,67 +469,16 @@ fn union<E: 'static, T: ParquetType>(old: &MultiRel<Id<E>, T>, new: &MultiRel<Id
 }
 
 // Drive `q` and print its rows sorted, then the count.
-fn print_rows<E: 'static, Q>(q: &Q)
+pub fn print_rows<E: 'static, Q>(q: &Q)
 where
     Q: Drive<D = Id<E>>,
-    Q::R: std::fmt::Display + PartialOrd,
+    Q::R: std::fmt::Debug + PartialOrd,
 {
     let mut rows = Vec::new();
     q.drive(|k, v| rows.push((k.0, v)));
     rows.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     for (k, v) in &rows {
-        println!("  {k} -> {v}");
+        println!("  {k} -> {v:?}");
     }
     println!("{} rows", rows.len());
-}
-
-// ===== 11. main: write your query here =========================================
-
-fn main() {
-    let mut catalog = Catalog::open("../data/tpch/parquet");
-    // Leaked to `&'static` (like src/main.rs does with its db), so the `&ColumnRef`s
-    // below borrow for the whole program, as `Filter`'s `F: 'static` requires.
-    let db: &'static TpchFiles = Box::leak(Box::new(tpch(&mut catalog)));
-    let Region { name: region_name, .. } = &db.region;
-    let Nation { name: nation_name, region, customers, .. } = &db.nation;
-    let Customer { name: customer_name, nation, acctbal, mktsegment, .. } = &db.customer;
-    let Part { name: part_name, retailprice, supplies, .. } = &db.part;
-    let Partsupp { supplycost, part, .. } = &db.partsupp;
-    let _ = (region_name, region, customer_name, nation, mktsegment, nation_name, customers, acctbal);
-    let _ = (retailprice, part);
-
-    // ----- your query -----
-    // Nations with a customer whose balance is at least 9000, mapped to their name.
-    //let q = db.nation.with(customers.select(acctbal).ge(998.0)).select(nation_name);
-    // Parts with some supplier offering them at a supply cost of at least 900, mapped to their name.
-    let q = db.part.with(supplies.select(supplycost).ge(900.0)).select(part_name).eq("goldenrod lavender spring chocolate lace");
-    //let q = db.part.select(supplies).select(supplycost);
-    // ----------------------
-
-    println!("load:");
-    let (loaded, _) = q.load(KeyFilter::All, KeyFilter::All, Vec::new());
-
-    println!("drive (the loaded plan):");
-    print_rows(&loaded);
-
-    // ===== in memory: the loaded columns, under the same names =====
-    println!("to_memory:");
-    let mem: &'static MemTpch = Box::leak(Box::new(db.to_memory()));
-    let MemRegion { name: region_name, .. } = &mem.region;
-    let MemNation { name: nation_name, region, customers, .. } = &mem.nation;
-    let MemCustomer { name: customer_name, nation, acctbal, mktsegment, .. } = &mem.customer;
-    let MemPart { name: part_name, retailprice, supplies, .. } = &mem.part;
-    let MemPartsupp { supplycost, part, .. } = &mem.partsupp;
-    let _ = (region_name, region, customer_name, nation, mktsegment, nation_name, customers, acctbal);
-    let _ = (retailprice, part);
-
-    // ----- your in-memory plan -----
-    // The same expression as `q`, so its rows must match the loaded plan's.
-    let plan = mem.part.with(supplies.select(supplycost).ge(900.0)).select(part_name).eq("goldenrod lavender spring chocolate lace");
-    // --------------------------------
-
-    println!("drive (the in-memory plan):");
-    print_rows(&plan);
-
-    db.clear();
 }
