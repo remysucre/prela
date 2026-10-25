@@ -214,22 +214,7 @@ impl<E: 'static, T: Copy + 'static> Query for ColumnRef<E, T> {
     type R = T;
 }
 
-// Only here because `QueryExt::with` demands its argument be `Member`
-// (engine.rs:2135), and `Filter`/`Compose` are only Member/Probe when their
-// children are Probe. An unloaded column cannot answer either question.
-impl<E: 'static, T: Copy + 'static> Member for ColumnRef<E, T> {
-    fn member(&self, _: Id<E>) -> bool {
-        unreachable!("{}.{} is not loaded", self.path, self.val_col)
-    }
-}
-impl<E: 'static, T: Copy + 'static> Probe for ColumnRef<E, T> {
-    fn probe<K: FnMut(T)>(&self, _: Id<E>, _: K) {
-        unreachable!("{}.{} is not loaded", self.path, self.val_col)
-    }
-    fn probe_any<K: FnMut(T) -> bool>(&self, _: Id<E>, _: K) -> bool {
-        unreachable!("{}.{} is not loaded", self.path, self.val_col)
-    }
-}
+
 
 
 // ===== 7. Load: the fourth mode ================================================

@@ -2131,8 +2131,6 @@ pub trait QueryExt: IntoQuery + Sized {
     /// ```
     #[inline(always)]
     fn with<S: IntoQuery>(self, s: S) -> Restrict<Self::Q, S::Q>
-    where
-        S::Q: Member<D = ROf<Self>>,
     {
         Restrict {
             a: self.iq(),
