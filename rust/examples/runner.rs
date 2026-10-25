@@ -40,8 +40,16 @@ fn main() {
     let _ = (region_name, region, customer_name, nation, mktsegment, nation_name, customers, acctbal);
     let _ = (retailprice, part);
 
+    /*load:
+  scan lineitem.parquet          l_id -> l_shipdate    kept 9484 of 60175 rows
+  scan lineitem.parquet          l_id -> l_discount    kept 2566 of 60175 rows
+  scan lineitem.parquet          l_id -> l_quantity    kept 1191 of 60175 rows
+  scan lineitem.parquet          l_id -> l_id          kept 1191 of 60175 rows
+  scan lineitem.parquet          l_id -> l_extendedprice kept 1191 of 60175 rows
+  scan lineitem.parquet          l_id -> l_discount    kept 1191 of 60175 rows*/
 
-    // query plan definition
+
+    // query plan definition -- from query6 in common.rs
     let q = db.lineitem
         .with(shipdate.during("1994-01-01", "1995-01-01")
          .and(discount.between(0.05, 0.07))
@@ -52,7 +60,7 @@ fn main() {
     let (loaded, _) = q.load(KeyFilter::All, KeyFilter::All, Vec::new());
 
     println!("drive (the loaded plan):");
-    print_rows(&loaded);
+    //print_rows(&loaded);
 
     // ===== in memory: the loaded columns, under the same names =====
     println!("to_memory:");
@@ -78,7 +86,7 @@ fn main() {
     
 
     println!("drive (the in-memory plan):");
-    print_rows(&plan);
+    //print_rows(&plan);
 
     db.clear();
 }
