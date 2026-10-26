@@ -201,15 +201,21 @@ impl<E: 'static> Dense for Id<E> {
     }
 }
 
-pub struct VecRel<D: Dense, R: Copy> {
-    pub v: Vec<R>,
+pub struct VecRel<D, R: Copy + 'static> {
+    pub v: Cow<'static, [R]>,
     pub _d: PhantomData<D>,
 }
 
 impl<D: Dense, R: Copy> VecRel<D, R> {
     pub fn new(values: Vec<R>) -> Self {
         VecRel {
-            v: values,
+            v: Cow::Owned(values),
+            _d: PhantomData,
+        }
+    }
+    pub fn borrowed(values: &'static [R]) -> Self {
+        VecRel {
+            v: Cow::Borrowed(values),
             _d: PhantomData,
         }
     }
@@ -414,7 +420,7 @@ where
 // over codes and then tests each pair by bit lookup, instead of once per
 // pair.
 
-pub struct DictRel<D: Dense, R: Copy> {
+pub struct DictRel<D: Dense, R: Copy + 'static> {
     pub codes: VecRel<D, usize>,
     pub table: VecRel<usize, R>,
 }
@@ -3272,12 +3278,12 @@ mod tests {
         // Person: non-dense external ids {100,205,9899} → rows {0,1,2}; names.
         let person_table = DictTable::<Person>::from_keys(&[100, 205, 9899]);
         let person_name: VecRel<Id<Person>, &str> = VecRel {
-            v: vec!["Nolan", "Kubrick", "Tarkovsky"],
+            v: vec!["Nolan", "Kubrick", "Tarkovsky"].into(),
             _d: PhantomData,
         };
         // Movie.director : FK storing the EXTERNAL person key.
         let director: VecRel<Id<Movie>, Key<Person>> = VecRel {
-            v: vec![Key::new(205), Key::new(100), Key::new(9899)],
+            v: vec![Key::new(205), Key::new(100), Key::new(9899)].into(),
             _d: PhantomData,
         };
         let movies = Universe::<Id<Movie>>::new(3);
@@ -3295,7 +3301,7 @@ mod tests {
         // A DANGLING key (no such person) drops out via the table's probe miss;
         // the table works in `with` (semijoin) position too.
         let director2: VecRel<Id<Movie>, Key<Person>> = VecRel {
-            v: vec![Key::new(205), Key::new(404), Key::new(9899)],
+            v: vec![Key::new(205), Key::new(404), Key::new(9899)].into(),
             _d: PhantomData,
         };
         let live = (&movies).with((&director2).select(&person_table));
@@ -3314,11 +3320,11 @@ mod tests {
         struct Person;
         let person_table = DictTable::<Person>::from_keys(&[100, 205, 9899]);
         let country: VecRel<Id<Person>, &str> = VecRel {
-            v: vec!["US", "UK", "RU"],
+            v: vec!["US", "UK", "RU"].into(),
             _d: PhantomData,
         };
         let director: VecRel<Id<Movie>, Key<Person>> = VecRel {
-            v: vec![Key::new(205), Key::new(100), Key::new(9899), Key::new(100)],
+            v: vec![Key::new(205), Key::new(100), Key::new(9899), Key::new(100)].into(),
             _d: PhantomData,
         };
         let movies = Universe::<Id<Movie>>::new(4);
@@ -3339,14 +3345,14 @@ mod tests {
         struct Movie;
         struct Person;
         let name: VecRel<Id<Person>, &str> = VecRel {
-            v: vec!["Nolan", "Kubrick"],
+            v: vec!["Nolan", "Kubrick"].into(),
             _d: PhantomData,
         };
         let movies = Universe::<Id<Movie>>::new(2);
 
         // dense: FK stores the row Id directly; entity table is Ident.
         let fk_dense: VecRel<Id<Movie>, Id<Person>> = VecRel {
-            v: vec![Id::from_idx(1), Id::from_idx(0)],
+            v: vec![Id::from_idx(1), Id::from_idx(0)].into(),
             _d: PhantomData,
         };
         let mut d = Vec::new();
@@ -3360,7 +3366,7 @@ mod tests {
         // non-dense: same logical mapping via external keys + a DictTable.
         let table = DictTable::<Person>::from_keys(&[100, 205]); // row0=key100, row1=key205
         let fk_keys: VecRel<Id<Movie>, Key<Person>> = VecRel {
-            v: vec![Key::new(205), Key::new(100)],
+            v: vec![Key::new(205), Key::new(100)].into(),
             _d: PhantomData,
         };
         let mut nd = Vec::new();
