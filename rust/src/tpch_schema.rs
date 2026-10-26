@@ -1,5 +1,5 @@
 use crate::engine::{Id, IntoQuery};
-use crate::loader::{Col, Key, Loader, SparseKey, Str, sparse_key};
+use crate::loader::{Col, Dict8, Key, Loader, Str};
 use std::path::Path;
 
 // =====================================================================
@@ -15,10 +15,8 @@ use std::path::Path;
 // `db.part.select(..)` resolves by autoref on `&Part`. Reach for
 // `db.part.id` itself when you want the `Universe`, e.g. for its `.n`.
 //
-// `Order` is the exception: TPC-H leaves the orderkey range gappy, so its
-// primary key is a `SparseKey` — `0..n` with the holes masked out, so a drive
-// never emits one. Its `.n` counts slots INCLUDING holes (about 4× the live
-// orders), which is what a `dense_fold` over orders is sized by.
+// TPC-H leaves the orderkey range gappy, so regen numbers orders densely in
+// orderkey order; `Order.key` holds the raw orderkey.
 
 #[derive(IntoQuery)]
 pub struct Region {
@@ -91,7 +89,8 @@ pub struct PartSupp {
 #[derive(IntoQuery)]
 pub struct Order {
     #[primary_key]
-    pub id: SparseKey<Self>,
+    pub id: Key<Self>,
+    pub key: Col<Self, i64>,
     pub customer: Col<Self, Id<Customer>>,
     pub status: Col<Self, Str>,
     pub totalprice: Col<Self, f64>,
@@ -114,13 +113,13 @@ pub struct Lineitem {
     pub extendedprice: Col<Self, f64>,
     pub discount: Col<Self, f64>,
     pub tax: Col<Self, f64>,
-    pub returnflag: Col<Self, Str>,
-    pub status: Col<Self, Str>,
+    pub returnflag: Dict8<Self, Str>,
+    pub status: Dict8<Self, Str>,
     pub shipdate: Col<Self, i64>,
     pub commitdate: Col<Self, i64>,
     pub receiptdate: Col<Self, i64>,
-    pub shipinstruct: Col<Self, Str>,
-    pub shipmode: Col<Self, Str>,
+    pub shipinstruct: Dict8<Self, Str>,
+    pub shipmode: Dict8<Self, Str>,
     pub comment: Col<Self, Str>,
 }
 
@@ -194,21 +193,17 @@ fn build(l: &mut Loader) -> Tpch {
             supplycost: l.f64s("PartSupp_supplycost"),
             comment: l.strs("PartSupp_comment"),
         },
-        order: {
-            // A hole is a slot whose customer FK regen filled with NO_ID;
-            // the id space is that column's domain with those masked out.
-            let customer = l.ids("Order_customer");
-            Order {
-                id: sparse_key(&customer),
-                customer,
-                status: l.strs("Order_status"),
-                totalprice: l.f64s("Order_totalprice"),
-                date: l.i64s("Order_date"),
-                priority: l.strs("Order_priority"),
-                clerk: l.strs("Order_clerk"),
-                shippriority: l.i64s("Order_shippriority"),
-                comment: l.strs("Order_comment"),
-            }
+        order: Order {
+            id: l.key("Order_key"),
+            key: l.i64s("Order_key"),
+            customer: l.ids("Order_customer"),
+            status: l.strs("Order_status"),
+            totalprice: l.f64s("Order_totalprice"),
+            date: l.i64s("Order_date"),
+            priority: l.strs("Order_priority"),
+            clerk: l.strs("Order_clerk"),
+            shippriority: l.i64s("Order_shippriority"),
+            comment: l.strs("Order_comment"),
         },
         lineitem: Lineitem {
             id: l.key("Lineitem_order"),
@@ -220,13 +215,13 @@ fn build(l: &mut Loader) -> Tpch {
             extendedprice: l.f64s("Lineitem_extendedprice"),
             discount: l.f64s("Lineitem_discount"),
             tax: l.f64s("Lineitem_tax"),
-            returnflag: l.strs("Lineitem_returnflag"),
-            status: l.strs("Lineitem_status"),
+            returnflag: l.dict8("Lineitem_returnflag", "Lineitem_returnflag_dict"),
+            status: l.dict8("Lineitem_status", "Lineitem_status_dict"),
             shipdate: l.i64s("Lineitem_shipdate"),
             commitdate: l.i64s("Lineitem_commitdate"),
             receiptdate: l.i64s("Lineitem_receiptdate"),
-            shipinstruct: l.strs("Lineitem_shipinstruct"),
-            shipmode: l.strs("Lineitem_shipmode"),
+            shipinstruct: l.dict8("Lineitem_shipinstruct", "Lineitem_shipinstruct_dict"),
+            shipmode: l.dict8("Lineitem_shipmode", "Lineitem_shipmode_dict"),
             comment: l.strs("Lineitem_comment"),
         },
     }
