@@ -30,8 +30,8 @@
 // alongside it.
 
 use crate::cache;
-use crate::engine::{Bitset, Dense, DictMultiRel, DictRel, Id, MultiRel, SparseUniverse, Universe, VecRel};
-use crate::format::{KIND_CSR_STR, KIND_CSR_WORDS, KIND_DENSE_F64, KIND_DENSE_I64, KIND_DENSE_STR};
+use crate::engine::{Bitset, Dense, DictMultiRel, DictRel, Id, MultiRel, SparseUniverse, StrCol, Universe, VecRel};
+use crate::format::{KIND_CSR_STR, KIND_CSR_WORDS, KIND_DENSE_F64, KIND_DENSE_I64, KIND_DENSE_STR, KIND_DENSE_U8};
 use std::path::Path;
 
 
@@ -41,7 +41,23 @@ pub type Str = &'static str;
 
 /// A scalar column of entity `E`. Spelled entity-first so a field reads
 /// `Col<Lineitem, i64>` rather than the bare `VecRel<Id<Lineitem>, i64>`.
-pub type Col<E, T> = VecRel<Id<E>, T>;
+pub type Col<E, T> = <T as ColVal>::Col<Id<E>>;
+
+pub trait ColVal: Copy + 'static {
+    type Col<D>;
+}
+impl ColVal for i64 {
+    type Col<D> = VecRel<D, i64>;
+}
+impl ColVal for f64 {
+    type Col<D> = VecRel<D, f64>;
+}
+impl<T: 'static> ColVal for Id<T> {
+    type Col<D> = VecRel<D, Id<T>>;
+}
+impl ColVal for Str {
+    type Col<D> = StrCol<D>;
+}
 /// A set-valued (CSR) column of entity `E`.
 pub type Set<E, T> = MultiRel<Id<E>, T>;
 /// The primary key of a densely-addressed entity `E`: its ids, `0..n`.
@@ -52,6 +68,7 @@ pub type SparseKey<E> = SparseUniverse<Id<E>>;
 /// lookup table (`kind_type`) is here just a `T`-valued column, stored as
 /// codes plus a table.
 pub type Dict<E, T> = DictRel<Id<E>, T>;
+pub type Dict8<E, T> = DictRel<Id<E>, T, u8>;
 /// A set-valued dictionary-encoded column of entity `E`.
 pub type DictSet<E, T> = DictMultiRel<Id<E>, T>;
 
@@ -142,8 +159,8 @@ impl<'a> Loader<'a> {
 
     pub fn strs<E: 'static>(&mut self, name: &str) -> Col<E, Str> {
         match self.note(name, KIND_DENSE_STR) {
-            Some(dir) => cache::load_strs_in(dir, name),
-            None => VecRel::new(Vec::new()),
+            Some(dir) => cache::load_str_col_in(dir, name),
+            None => StrCol::new(&[0], &[]),
         }
     }
 
@@ -184,6 +201,14 @@ impl<'a> Loader<'a> {
     pub fn dict<E: 'static, T: Scalar>(&mut self, codes: &str, table: &str) -> Dict<E, T> {
         let c = match self.note(codes, KIND_DENSE_I64) {
             Some(dir) => cache::load_words_in(dir, codes),
+            None => VecRel::new(Vec::new()),
+        };
+        DictRel::new(c, self.table(table))
+    }
+
+    pub fn dict8<E: 'static, T: Scalar>(&mut self, codes: &str, table: &str) -> Dict8<E, T> {
+        let c = match self.note(codes, KIND_DENSE_U8) {
+            Some(dir) => cache::load_u8_in(dir, codes),
             None => VecRel::new(Vec::new()),
         };
         DictRel::new(c, self.table(table))
@@ -230,7 +255,7 @@ impl<'a> Loader<'a> {
     }
 }
 
-/// A CSR relation over zero keys. `MultiRel` borrows `&'static` slices (in
+/// A CSR relation over zero keys. `MultiRel` can borrow `&'static` slices (in
 /// production they point into the leaked mmap); an empty slice literal is
 /// already `'static` for any element type, so probe mode allocates nothing.
 fn empty_csr<D: Dense, R: Copy + 'static>() -> MultiRel<D, R> {
