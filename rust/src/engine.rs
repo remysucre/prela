@@ -1652,6 +1652,19 @@ pub fn lead<O: Copy, R>(g: &[(O, R)], out: &mut Vec<Option<O>>) {
     }
 }
 
+pub fn preceding<O, R: Copy, S: Copy>(
+    init: S,
+    op: impl Fn(S, R) -> S,
+) -> impl Fn(&[(O, R)], &mut Vec<S>) {
+    move |g, out| {
+        let mut acc = init;
+        for &(_, r) in g {
+            out.push(acc);
+            acc = op(acc, r);
+        }
+    }
+}
+
 // ===== DenseFold ==================
 //
 // Drop-in replacement for `Fold` when `D = usize` and the key range is a
