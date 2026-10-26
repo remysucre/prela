@@ -267,7 +267,7 @@ fn q9(db: &'static Tpch) -> String {
         .fold(0.0_f64, |a, (((e, dc), q), cost)| {
             a + e * (1.0 - dc) - cost * q
         })
-        .drive(|(id, d), v| rows.push(((db.nation.name.v[id.idx()], d), v)));
+        .drive(|(id, d), v| rows.push(((db.nation.name.get(id.idx()).unwrap(), d), v)));
 
     rows.sort_by(|((n1, y1), _), ((n2, y2), _)| n1.cmp(n2).then(y2.cmp(y1)));
     join_lines(
@@ -435,12 +435,12 @@ fn q18(db: &'static Tpch) -> String {
     });
     rows.truncate(100);
     join_lines(rows.iter().map(|(o, (sum_q, ((tp, dt), (name, cust))))| {
-        // natural custkey / orderkey = internal id + 1
+        // natural custkey = internal id + 1
         format!(
             "{}|{}|{}|{}|{}|{}",
             name,
             cust.idx() + 1,
-            o.idx() + 1,
+            db.order.key.v[o.idx()],
             fmt_yyyymmdd(*dt),
             f(*tp),
             f(*sum_q)

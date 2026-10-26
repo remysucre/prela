@@ -275,8 +275,7 @@ fn q3(db: &'static Tpch) -> String {
     });
     rows.truncate(10);
     join_lines(rows.iter().map(|(((o, d), sp), r)| {
-        // natural orderkey = internal id + 1 (formatting edge only)
-        format!("{}|{}|{}|{}", o.idx() + 1, f(*r), fmt_yyyymmdd(*d), sp)
+        format!("{}|{}|{}|{}", db.order.key.v[o.idx()], f(*r), fmt_yyyymmdd(*d), sp)
     }))
 }
 
@@ -709,8 +708,6 @@ fn q12(db: &'static Tpch) -> String {
 // ---------- Q13 — customer distribution (LEFT JOIN) ----------
 
 fn q13(db: &'static Tpch) -> String {
-    // `&db.order` is a SPARSE universe — driving it skips the orderkey-gap
-    // holes, so the group key is the bare customer FK, no per-row validity guard.
     let Order {
         comment: o_comment,
         customer: o_customer,
@@ -885,12 +882,12 @@ fn q18(db: &'static Tpch) -> String {
     });
     rows.truncate(100);
     join_lines(rows.iter().map(|(o, (sum_q, ((tp, dt), (name, cust))))| {
-        // natural custkey / orderkey = internal id + 1
+        // natural custkey = internal id + 1
         format!(
             "{}|{}|{}|{}|{}|{}",
             name,
             cust.idx() + 1,
-            o.idx() + 1,
+            db.order.key.v[o.idx()],
             fmt_yyyymmdd(*dt),
             f(*tp),
             f(*sum_q)
