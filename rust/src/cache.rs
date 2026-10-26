@@ -124,6 +124,13 @@ pub fn load_strs_in<D: Dense>(dir: &Path, name: &str) -> VecRel<D, &'static str>
     VecRel::new(strs_from_offsets(offsets, data))
 }
 
+pub fn load_str_col_in<D: Dense>(dir: &Path, name: &str) -> StrCol<D> {
+    let (n, m, bytes) = open_in(dir, name, KIND_DENSE_STR);
+    let offsets = cast_slice::<u32>(bytes, HEADER_LEN, n + 1);
+    let data = cast_slice::<u8>(bytes, HEADER_LEN + (n + 1) * 4, m);
+    StrCol::new(offsets, data)
+}
+
 /// Dense id column under `../cache`, untyped keys and values — survives
 /// only as the cross-check side of job_schema's typed-vs-untyped test.
 #[cfg(test)]
