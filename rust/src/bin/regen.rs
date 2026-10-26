@@ -350,8 +350,9 @@ fn str_col<'a>(batch: &'a RecordBatch, pos: usize) -> StrCol<'a> {
 // strings become ""). Key spaces: suppkey /
 // custkey / partkey / orderkey / synthetic ps_id / l_id are 1-based in
 // the parquet (internal = raw − 1); regionkey / nationkey are 0-based
-// (internal = raw). The orderkey space is sparse — the dense scatter
-// fills the holes (NO_ID for FKs, 0/"" otherwise).
+// (internal = raw). The orderkey space is sparse, so orders are renumbered
+// densely in orderkey order (`order_ids`); `Order_key` keeps the raw key and
+// `Lineitem_order` stores the dense id.
 
 /// "YYYY-MM-DD" → packed i64 YYYYMMDD (numeric compare preserves lexical
 /// order). The runtime never parses dates — only this regen path does.
@@ -368,8 +369,9 @@ fn parse_yyyymmdd(s: &str) -> i64 {
 }
 
 /// What a TPC-H value column holds → how it becomes an 8-byte word.
-enum TVal {
+enum TVal<'a> {
     Id { delta: i64 }, // FK: internal id = raw + delta
+    IdMap(&'a [u64]),  // FK: internal id = map[raw]
     I64,
     F64,
     Date,
@@ -379,6 +381,10 @@ enum TVal {
 /// `key_delta` maps the raw key to the internal id (−1 for 1-based keys,
 /// 0 for regionkey/nationkey).
 fn tpch_dense(out: &Path, parquet: &Path, key: &str, val: &str, key_delta: i64, tv: TVal) {
+    tpch_dense_by(out, parquet, key, val, &|k| k + key_delta, tv)
+}
+
+fn tpch_dense_by(out: &Path, parquet: &Path, key: &str, val: &str, km: &dyn Fn(i64) -> i64, tv: TVal) {
     let (reader, pos) = open_named(parquet, &[key, val]);
     let mut col = ColW::new();
     let mut kind = KIND_DENSE_I64;
@@ -391,13 +397,20 @@ fn tpch_dense(out: &Path, parquet: &Path, key: &str, val: &str, key_delta: i64, 
                 fill = NO_ID_WORD;
                 let v = int_col(&batch, pos[1]);
                 for i in 0..batch.num_rows() {
-                    col.push(k.get(i).unwrap() + key_delta, (v.get(i).unwrap() + delta) as u64);
+                    col.push(km(k.get(i).unwrap()), (v.get(i).unwrap() + delta) as u64);
+                }
+            }
+            TVal::IdMap(map) => {
+                fill = NO_ID_WORD;
+                let v = int_col(&batch, pos[1]);
+                for i in 0..batch.num_rows() {
+                    col.push(km(k.get(i).unwrap()), map[v.get(i).unwrap() as usize]);
                 }
             }
             TVal::I64 => {
                 let v = int_col(&batch, pos[1]);
                 for i in 0..batch.num_rows() {
-                    col.push(k.get(i).unwrap() + key_delta, v.get(i).unwrap() as u64);
+                    col.push(km(k.get(i).unwrap()), v.get(i).unwrap() as u64);
                 }
             }
             TVal::F64 => {
@@ -405,14 +418,14 @@ fn tpch_dense(out: &Path, parquet: &Path, key: &str, val: &str, key_delta: i64, 
                 let v = batch.column(pos[1]).as_any().downcast_ref::<Float64Array>()
                     .unwrap_or_else(|| panic!("{val}: expected Float64"));
                 for i in 0..batch.num_rows() {
-                    col.push(k.get(i).unwrap() + key_delta, v.value(i).to_bits());
+                    col.push(km(k.get(i).unwrap()), v.value(i).to_bits());
                 }
             }
             TVal::Date => {
                 let v = str_col(&batch, pos[1]);
                 for i in 0..batch.num_rows() {
                     let d = parse_yyyymmdd(v.get(i).unwrap_or(""));
-                    col.push(k.get(i).unwrap() + key_delta, d as u64);
+                    col.push(km(k.get(i).unwrap()), d as u64);
                 }
             }
         }
@@ -423,6 +436,10 @@ fn tpch_dense(out: &Path, parquet: &Path, key: &str, val: &str, key_delta: i64, 
 
 /// One per-field pass for a dense string column.
 fn tpch_dense_str(out: &Path, parquet: &Path, key: &str, val: &str, key_delta: i64) {
+    tpch_dense_str_by(out, parquet, key, val, &|k| k + key_delta)
+}
+
+fn tpch_dense_str_by(out: &Path, parquet: &Path, key: &str, val: &str, km: &dyn Fn(i64) -> i64) {
     let (reader, pos) = open_named(parquet, &[key, val]);
     let mut col = ColS::new();
     for batch in reader {
@@ -430,11 +447,68 @@ fn tpch_dense_str(out: &Path, parquet: &Path, key: &str, val: &str, key_delta: i
         let k = int_col(&batch, pos[0]);
         let v = str_col(&batch, pos[1]);
         for i in 0..batch.num_rows() {
-            col.push(k.get(i).unwrap() + key_delta, v.get(i).unwrap_or(""));
+            col.push(km(k.get(i).unwrap()), v.get(i).unwrap_or(""));
         }
     }
     let n = col.n_from_keys();
     col.write_dense(out, n);
+}
+
+fn tpch_dict8_str(codes_out: &Path, table_out: &Path, parquet: &Path, key: &str, val: &str, key_delta: i64) {
+    let (reader, pos) = open_named(parquet, &[key, val]);
+    let mut seen: HashMap<String, u8> = HashMap::new();
+    let mut pairs: Vec<(u32, u8)> = Vec::new();
+    for batch in reader {
+        let batch = batch.unwrap();
+        let k = int_col(&batch, pos[0]);
+        let v = str_col(&batch, pos[1]);
+        for i in 0..batch.num_rows() {
+            let s = v.get(i).unwrap_or("");
+            let next = seen.len();
+            let c = *seen.entry(s.to_string()).or_insert_with(|| {
+                assert!(next < u8::MAX as usize, "{val}: more than 255 distinct values");
+                next as u8
+            });
+            pairs.push((internal_key(k.get(i).unwrap() + key_delta), c));
+        }
+    }
+    let mut table: Vec<(&String, u8)> = seen.iter().map(|(s, &c)| (s, c)).collect();
+    table.sort();
+    let mut remap = vec![0u8; table.len()];
+    let mut t = ColS::new();
+    for (code, &(s, old)) in table.iter().enumerate() {
+        remap[old as usize] = code as u8;
+        t.push(code as i64, s);
+    }
+    t.write_dense(table_out, table.len());
+    let n = pairs.iter().map(|&(k, _)| k as usize + 1).max().unwrap_or(0);
+    let mut codes = vec![u8::MAX; n];
+    for (k, c) in pairs {
+        codes[k as usize] = remap[c as usize];
+    }
+    let mut f = out_file(codes_out, KIND_DENSE_U8, n, 0);
+    f.write_all(&codes).unwrap();
+}
+
+fn order_ids(out: &Path, parquet: &Path) -> Vec<u64> {
+    let (reader, pos) = open_named(parquet, &["o_orderkey"]);
+    let mut keys: Vec<i64> = Vec::new();
+    for batch in reader {
+        let batch = batch.unwrap();
+        let k = int_col(&batch, pos[0]);
+        keys.extend((0..batch.num_rows()).map(|i| k.get(i).unwrap()));
+    }
+    keys.sort_unstable();
+    let max = keys.last().map_or(0, |&k| k as usize);
+    let mut map = vec![NO_ID_WORD; max + 1];
+    let mut col = ColW::new();
+    for (id, &k) in keys.iter().enumerate() {
+        assert_eq!(map[k as usize], NO_ID_WORD, "duplicate orderkey {k}");
+        map[k as usize] = id as u64;
+        col.push(id as i64, k as u64);
+    }
+    col.write_dense(out, keys.len(), KIND_DENSE_I64, 0);
+    map
 }
 
 fn run_tpch(parquet_dir: &Path, cache_dir: &Path) {
@@ -496,20 +570,22 @@ fn run_tpch(parquet_dir: &Path, cache_dir: &Path) {
     t!(tpch_dense(&o("PartSupp_supplycost"), &p("partsupp"), "ps_id", "ps_supplycost", -1, F64));
     t!(tpch_dense_str(&o("PartSupp_comment"), &p("partsupp"), "ps_id", "ps_comment",   -1));
 
-    // Orders (sparse orderkey — dense files carry the holes)
+    // Orders: dense ids in orderkey order (see `order_ids`)
     eprintln!("orders");
-    t!(tpch_dense(&o("Order_customer"),     &p("orders"), "o_orderkey", "o_custkey",     -1, Id { delta: -1 }));
-    t!(tpch_dense_str(&o("Order_status"),   &p("orders"), "o_orderkey", "o_orderstatus", -1));
-    t!(tpch_dense(&o("Order_totalprice"),   &p("orders"), "o_orderkey", "o_totalprice",  -1, F64));
-    t!(tpch_dense(&o("Order_date"),         &p("orders"), "o_orderkey", "o_orderdate",   -1, Date));
-    t!(tpch_dense_str(&o("Order_priority"), &p("orders"), "o_orderkey", "o_orderpriority", -1));
-    t!(tpch_dense_str(&o("Order_clerk"),    &p("orders"), "o_orderkey", "o_clerk",       -1));
-    t!(tpch_dense(&o("Order_shippriority"), &p("orders"), "o_orderkey", "o_shippriority", -1, I64));
-    t!(tpch_dense_str(&o("Order_comment"),  &p("orders"), "o_orderkey", "o_comment",     -1));
+    let omap = order_ids(&o("Order_key"), &p("orders"));
+    let ok = |k: i64| omap[k as usize] as i64;
+    t!(tpch_dense_by(&o("Order_customer"),     &p("orders"), "o_orderkey", "o_custkey",     &ok, Id { delta: -1 }));
+    t!(tpch_dense_str_by(&o("Order_status"),   &p("orders"), "o_orderkey", "o_orderstatus", &ok));
+    t!(tpch_dense_by(&o("Order_totalprice"),   &p("orders"), "o_orderkey", "o_totalprice",  &ok, F64));
+    t!(tpch_dense_by(&o("Order_date"),         &p("orders"), "o_orderkey", "o_orderdate",   &ok, Date));
+    t!(tpch_dense_str_by(&o("Order_priority"), &p("orders"), "o_orderkey", "o_orderpriority", &ok));
+    t!(tpch_dense_str_by(&o("Order_clerk"),    &p("orders"), "o_orderkey", "o_clerk",       &ok));
+    t!(tpch_dense_by(&o("Order_shippriority"), &p("orders"), "o_orderkey", "o_shippriority", &ok, I64));
+    t!(tpch_dense_str_by(&o("Order_comment"),  &p("orders"), "o_orderkey", "o_comment",     &ok));
 
     // Lineitem (synthetic l_id 1..N)
     eprintln!("lineitem");
-    t!(tpch_dense(&o("Lineitem_order"),         &p("lineitem"), "l_id", "l_orderkey",     -1, Id { delta: -1 }));
+    t!(tpch_dense(&o("Lineitem_order"),         &p("lineitem"), "l_id", "l_orderkey",     -1, IdMap(&omap)));
     t!(tpch_dense(&o("Lineitem_part"),          &p("lineitem"), "l_id", "l_partkey",      -1, Id { delta: -1 }));
     t!(tpch_dense(&o("Lineitem_supplier"),      &p("lineitem"), "l_id", "l_suppkey",      -1, Id { delta: -1 }));
     t!(tpch_dense(&o("Lineitem_number"),        &p("lineitem"), "l_id", "l_linenumber",   -1, I64));
@@ -517,13 +593,13 @@ fn run_tpch(parquet_dir: &Path, cache_dir: &Path) {
     t!(tpch_dense(&o("Lineitem_extendedprice"), &p("lineitem"), "l_id", "l_extendedprice", -1, F64));
     t!(tpch_dense(&o("Lineitem_discount"),      &p("lineitem"), "l_id", "l_discount",     -1, F64));
     t!(tpch_dense(&o("Lineitem_tax"),           &p("lineitem"), "l_id", "l_tax",          -1, F64));
-    t!(tpch_dense_str(&o("Lineitem_returnflag"), &p("lineitem"), "l_id", "l_returnflag",  -1));
-    t!(tpch_dense_str(&o("Lineitem_status"),    &p("lineitem"), "l_id", "l_linestatus",   -1));
+    t!(tpch_dict8_str(&o("Lineitem_returnflag"), &o("Lineitem_returnflag_dict"), &p("lineitem"), "l_id", "l_returnflag", -1));
+    t!(tpch_dict8_str(&o("Lineitem_status"),     &o("Lineitem_status_dict"),     &p("lineitem"), "l_id", "l_linestatus", -1));
     t!(tpch_dense(&o("Lineitem_shipdate"),      &p("lineitem"), "l_id", "l_shipdate",     -1, Date));
     t!(tpch_dense(&o("Lineitem_commitdate"),    &p("lineitem"), "l_id", "l_commitdate",   -1, Date));
     t!(tpch_dense(&o("Lineitem_receiptdate"),   &p("lineitem"), "l_id", "l_receiptdate",  -1, Date));
-    t!(tpch_dense_str(&o("Lineitem_shipinstruct"), &p("lineitem"), "l_id", "l_shipinstruct", -1));
-    t!(tpch_dense_str(&o("Lineitem_shipmode"),  &p("lineitem"), "l_id", "l_shipmode",     -1));
+    t!(tpch_dict8_str(&o("Lineitem_shipinstruct"), &o("Lineitem_shipinstruct_dict"), &p("lineitem"), "l_id", "l_shipinstruct", -1));
+    t!(tpch_dict8_str(&o("Lineitem_shipmode"),     &o("Lineitem_shipmode_dict"),     &p("lineitem"), "l_id", "l_shipmode",     -1));
     t!(tpch_dense_str(&o("Lineitem_comment"),   &p("lineitem"), "l_id", "l_comment",      -1));
 
     verify_manifest(cache_dir, &written.into_inner(), prela::tpch_schema::manifest(), "tpch");
