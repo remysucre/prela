@@ -1,6 +1,7 @@
 use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use regex::Regex;
 use smallvec::SmallVec;
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -107,9 +108,8 @@ impl<T: Member + ?Sized> Member for &T {
 // `Default`: 0 / 0.0 / "".)
 // `MultiRel<usize, R>` — multi-valued / partial; CSR over the dense domain:
 // row i = `v[offsets[i]..offsets[i+1]]`, empty range for a domain element
-// with no rows. The slices are `&'static` — in production they point into the
-// leaked cache mmap (zero-copy); `from_pairs` (tests, examples) leaks two small
-// Vecs to the same effect.
+// with no rows. The slices are `Cow<'static>` — in production they borrow the
+// leaked cache mmap (zero-copy); `from_pairs` and `collect` own their Vecs.
 
 pub const NO_ID: usize = usize::MAX;
 
@@ -274,8 +274,8 @@ where
 
 pub struct MultiRel<D: Dense, R: Copy + 'static> {
     pub _d: PhantomData<D>,
-    pub offsets: &'static [u32],
-    pub v: &'static [R],
+    pub offsets: Cow<'static, [u32]>,
+    pub v: Cow<'static, [R]>,
 }
 
 impl<D: Dense, R: Copy + Default> VecRel<D, R> {
@@ -295,8 +295,8 @@ impl<D: Dense, R: Copy + 'static> MultiRel<D, R> {
         assert!(!offsets.is_empty(), "CSR offsets must have length n+1");
         assert_eq!(*offsets.last().unwrap() as usize, values.len());
         MultiRel {
-            offsets,
-            v: values,
+            offsets: Cow::Borrowed(offsets),
+            v: Cow::Borrowed(values),
             _d: PhantomData,
         }
     }
@@ -308,31 +308,36 @@ impl<D: Dense, R: Copy + 'static> MultiRel<D, R> {
     }
 
     /// Build from explicit `(id, value)` pairs over the domain `0..n`;
-    /// an id may appear any number of times. Leaks the two backing Vecs
-    /// to obtain the `&'static` slices — for tests and examples only.
+    /// an id may appear any number of times. For tests and examples only.
     pub fn from_pairs(n: usize, pairs: impl IntoIterator<Item = (usize, R)>) -> Self {
-        let mut buckets: Vec<Vec<R>> = (0..n).map(|_| Vec::new()).collect();
-        for (k, v) in pairs {
-            if k < n {
-                buckets[k].push(v);
-            }
+        let pairs: Vec<(usize, R)> = pairs.into_iter().filter(|&(k, _)| k < n).collect();
+        Self::from_owned_pairs(n, pairs)
+    }
+
+    fn from_owned_pairs(n: usize, pairs: Vec<(usize, R)>) -> Self {
+        let mut offsets = vec![0u32; n + 1];
+        for &(k, _) in &pairs {
+            offsets[k + 1] += 1;
         }
-        let mut offsets = Vec::with_capacity(n + 1);
-        let mut values = Vec::new();
-        offsets.push(0u32);
-        for b in &buckets {
-            values.extend_from_slice(b);
-            offsets.push(values.len() as u32);
+        for i in 0..n {
+            offsets[i + 1] += offsets[i];
         }
+        let mut cursor: Vec<u32> = offsets[..n].to_vec();
+        let mut perm = vec![0usize; pairs.len()];
+        for (j, &(k, _)) in pairs.iter().enumerate() {
+            perm[cursor[k] as usize] = j;
+            cursor[k] += 1;
+        }
+        let values: Vec<R> = perm.iter().map(|&j| pairs[j].1).collect();
         MultiRel {
-            offsets: Vec::leak(offsets),
-            v: Vec::leak(values),
+            offsets: Cow::Owned(offsets),
+            v: Cow::Owned(values),
             _d: PhantomData,
         }
     }
 
     #[inline(always)]
-    fn row(&self, x: usize) -> &'static [R] {
+    fn row(&self, x: usize) -> &[R] {
         if x < self.offsets.len() - 1 {
             &self.v[self.offsets[x] as usize..self.offsets[x + 1] as usize]
         } else {
