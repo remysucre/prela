@@ -278,6 +278,66 @@ where
     }
 }
 
+pub struct StrCol<D> {
+    pub offsets: &'static [u32],
+    pub data: &'static [u8],
+    pub _d: PhantomData<D>,
+}
+
+impl<D: Dense> StrCol<D> {
+    pub fn new(offsets: &'static [u32], data: &'static [u8]) -> Self {
+        assert!(!offsets.is_empty(), "string offsets must have length n+1");
+        StrCol {
+            offsets,
+            data,
+            _d: PhantomData,
+        }
+    }
+    pub fn n_dom(&self) -> usize {
+        self.offsets.len() - 1
+    }
+    #[inline(always)]
+    fn at(&self, i: usize) -> &'static str {
+        let s = &self.data[self.offsets[i] as usize..self.offsets[i + 1] as usize];
+        unsafe { std::str::from_utf8_unchecked(s) }
+    }
+    #[inline(always)]
+    pub fn get(&self, i: usize) -> Option<&'static str> {
+        (i < self.n_dom()).then(|| self.at(i))
+    }
+}
+
+impl<D: Dense> Query for StrCol<D> {
+    type D = D;
+    type R = &'static str;
+}
+impl<D: Dense> Drive for StrCol<D> {
+    #[inline(always)]
+    fn drive<K: FnMut(D, &'static str)>(&self, mut k: K) {
+        for i in 0..self.n_dom() {
+            k(D::from_idx(i), self.at(i));
+        }
+    }
+}
+impl<D: Dense> Member for StrCol<D> {
+    #[inline(always)]
+    fn member(&self, x: D) -> bool {
+        x.idx() < self.n_dom()
+    }
+}
+impl<D: Dense> Probe for StrCol<D> {
+    #[inline(always)]
+    fn probe<K: FnMut(&'static str)>(&self, x: D, mut k: K) {
+        if let Some(s) = self.get(x.idx()) {
+            k(s);
+        }
+    }
+    #[inline(always)]
+    fn probe_any<K: FnMut(&'static str) -> bool>(&self, x: D, k: K) -> bool {
+        self.get(x.idx()).is_some_and(k)
+    }
+}
+
 pub struct MultiRel<D: Dense, R: Copy + 'static> {
     pub _d: PhantomData<D>,
     pub offsets: Cow<'static, [u32]>,
