@@ -9,7 +9,7 @@
 // Strings and CSR payloads are returned as `&'static` borrows — the mmap
 // is leaked, so the bytes live for the program. No per-string allocation.
 
-use crate::engine::{Dense, Id, MultiRel, VecRel};
+use crate::engine::{Dense, Id, MultiRel, StrCol, VecRel};
 use crate::format::*;
 use memmap2::Mmap;
 use std::fs::File;
@@ -85,7 +85,7 @@ fn cast_slice<T>(bytes: &'static [u8], off: usize, len: usize) -> &'static [T] {
 /// Dense i64 column (scalars; dates are pre-parsed yyyymmdd).
 pub fn load_i64_in<D: Dense>(dir: &Path, name: &str) -> VecRel<D, i64> {
     let (n, _, bytes) = open_in(dir, name, KIND_DENSE_I64);
-    VecRel::new(cast_slice::<i64>(bytes, HEADER_LEN, n).to_vec())
+    VecRel::borrowed(cast_slice::<i64>(bytes, HEADER_LEN, n))
 }
 
 /// Dense id column (FKs): same payload kind as i64, but the words are
@@ -95,7 +95,7 @@ pub fn load_i64_in<D: Dense>(dir: &Path, name: &str) -> VecRel<D, i64> {
 /// cache words as tagged ids with no per-element conversion.
 pub fn load_ids_in<D: Dense, T: 'static>(dir: &Path, name: &str) -> VecRel<D, Id<T>> {
     let (n, _, bytes) = open_in(dir, name, KIND_DENSE_I64);
-    VecRel::new(cast_slice::<Id<T>>(bytes, HEADER_LEN, n).to_vec())
+    VecRel::borrowed(cast_slice::<Id<T>>(bytes, HEADER_LEN, n))
 }
 
 /// A foreign-key column into entity `T`, storing `T::Fk` — `Id<T>` for a dense
@@ -106,13 +106,13 @@ pub fn load_fk_in<D: Dense, T: crate::engine::EntityKind>(
     name: &str,
 ) -> VecRel<D, T::Fk> {
     let (n, _, bytes) = open_in(dir, name, KIND_DENSE_I64);
-    VecRel::new(cast_slice::<T::Fk>(bytes, HEADER_LEN, n).to_vec())
+    VecRel::borrowed(cast_slice::<T::Fk>(bytes, HEADER_LEN, n))
 }
 
 /// Dense f64 column.
 pub fn load_f64_in<D: Dense>(dir: &Path, name: &str) -> VecRel<D, f64> {
     let (n, _, bytes) = open_in(dir, name, KIND_DENSE_F64);
-    VecRel::new(cast_slice::<f64>(bytes, HEADER_LEN, n).to_vec())
+    VecRel::borrowed(cast_slice::<f64>(bytes, HEADER_LEN, n))
 }
 
 /// Dense string column: one pass over the offsets builds the
@@ -129,7 +129,7 @@ pub fn load_strs_in<D: Dense>(dir: &Path, name: &str) -> VecRel<D, &'static str>
 #[cfg(test)]
 pub fn load_ids(name: &str) -> VecRel<usize, usize> {
     let (n, _, bytes) = open(name, KIND_DENSE_I64);
-    VecRel::new(cast_slice::<usize>(bytes, HEADER_LEN, n).to_vec())
+    VecRel::borrowed(cast_slice::<usize>(bytes, HEADER_LEN, n))
 }
 
 /// Dense string column under `../cache`, untyped keys (test cross-check).
@@ -155,7 +155,7 @@ fn strs_from_offsets(offsets: &'static [u32], data: &'static [u8]) -> Vec<&'stat
 /// `strs` table); `NO_ID` holes stay `NO_ID` and fail the lookup.
 pub fn load_words_in<D: Dense>(dir: &Path, name: &str) -> VecRel<D, usize> {
     let (n, _, bytes) = open_in(dir, name, KIND_DENSE_I64);
-    VecRel::new(cast_slice::<usize>(bytes, HEADER_LEN, n).to_vec())
+    VecRel::borrowed(cast_slice::<usize>(bytes, HEADER_LEN, n))
 }
 
 /// CSR with 8-byte word values read as raw `usize` codes.
