@@ -124,6 +124,11 @@ pub fn load_strs_in<D: Dense>(dir: &Path, name: &str) -> VecRel<D, &'static str>
     VecRel::new(strs_from_offsets(offsets, data))
 }
 
+pub fn load_u8_in<D: Dense>(dir: &Path, name: &str) -> VecRel<D, u8> {
+    let (n, _, bytes) = open_in(dir, name, KIND_DENSE_U8);
+    VecRel::borrowed(cast_slice::<u8>(bytes, HEADER_LEN, n))
+}
+
 pub fn load_str_col_in<D: Dense>(dir: &Path, name: &str) -> StrCol<D> {
     let (n, m, bytes) = open_in(dir, name, KIND_DENSE_STR);
     let offsets = cast_slice::<u32>(bytes, HEADER_LEN, n + 1);

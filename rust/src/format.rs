@@ -31,6 +31,8 @@
 //                            [(m+1) × u32 byte-offsets][bytes]      m = total strings
 //                  row i = strings off[i]..off[i+1]; string j =
 //                  bytes[boff[j]..boff[j+1]]
+//   5  DENSE_U8    payload = [n × u8]                               m = 0
+//                  one byte per id: dictionary codes, u8::MAX in the holes
 //
 // Anything that is not one of these files fails loudly at the magic check
 // rather than being read as garbage.
@@ -43,6 +45,7 @@ pub const KIND_DENSE_F64: u32 = 1;
 pub const KIND_DENSE_STR: u32 = 2;
 pub const KIND_CSR_WORDS: u32 = 3;
 pub const KIND_CSR_STR: u32 = 4;
+pub const KIND_DENSE_U8: u32 = 5;
 
 /// Hole word for id/FK dense columns: the on-disk image of `engine::NO_ID`.
 #[allow(dead_code)] // writer-side only (regen); the reader copies words as-is
