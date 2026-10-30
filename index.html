@@ -315,12 +315,12 @@ q10</a>:</p>
 class="sourceCode rust"><code class="sourceCode rust"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> returns <span class="op">=</span> lineitem<span class="op">.</span>with(returnflag<span class="op">.</span>eq(<span class="st">&quot;R&quot;</span>)</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>                       <span class="op">.</span>and(order<span class="op">.</span>s(date)<span class="op">.</span>during(<span class="dv">19931001</span><span class="op">,</span> <span class="dv">19940101</span>)))</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> customer_info <span class="op">=</span> <span class="pp">Customer::</span>name</span>
-<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>               <span class="op">.</span>and(<span class="pp">Customer::</span>acctbal)</span>
-<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>               <span class="op">.</span>and(<span class="pp">Customer::</span>nation<span class="op">.</span>s(name))</span>
-<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>               <span class="op">.</span>and(<span class="pp">Customer::</span>address)</span>
-<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>               <span class="op">.</span>and(<span class="pp">Customer::</span>phone)</span>
-<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>               <span class="op">.</span>and(<span class="pp">Customer::</span>comment)</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> customer_info <span class="op">=</span>name</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>               <span class="op">.</span>and(acctbal)</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>               <span class="op">.</span>and(nation<span class="op">.</span>s(name))</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>               <span class="op">.</span>and(address)</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>               <span class="op">.</span>and(phone)</span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>               <span class="op">.</span>and(comment)</span>
 <span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a>returns<span class="op">.</span>group_by(order<span class="op">.</span>s(customer))</span>
 <span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a>         <span class="op">.</span>select(extendedprice<span class="op">.</span>and(discount))</span>
