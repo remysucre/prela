@@ -21,6 +21,11 @@ arrow    = { version = "53", optional = true }
 default = []
 # `regen` binary needs parquet+arrow; everything else is dep-free.
 regen   = ["parquet", "arrow"]
+# The loaded TPC-H suite (tpch_queries::common_loaded, `prela tpch_loaded`).
+# Separate from `regen` while that suite doesn't compile yet.
+loaded  = ["regen"]
+# The loaded JOB suite (job_queries::queries_loaded, `prela job_loaded`).
+job_loaded = ["regen"]
 
 [[bin]]
 name = "prela"
@@ -37,6 +42,10 @@ required-features = ["regen"]
 
 [[example]]
 name = "testing"
+required-features = ["regen"]
+
+[[example]]
+name = "runner"
 required-features = ["regen"]
 
 [profile.release]
