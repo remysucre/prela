@@ -9,6 +9,9 @@
 
 pub mod helpers;
 mod queries;
+// queries.rs over the IMDB Parquet files, via the loader (feature `job_loaded`).
+#[cfg(feature = "job_loaded")]
+pub mod queries_loaded;
 pub mod sets;
 
 pub type Entry = (&'static str, &'static str, Box<dyn Fn(&'static crate::job_schema::Job) -> String>);

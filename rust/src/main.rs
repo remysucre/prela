@@ -14,6 +14,10 @@ fn main() {
 
     match suite {
         "tpch" => run_tpch(),
+        #[cfg(feature = "loaded")]
+        "tpch_loaded" => run_tpch_loaded(),
+        #[cfg(feature = "job_loaded")]
+        "job_loaded" => run_job_loaded(),
         _ => run_job(),
     }
 }
@@ -108,6 +112,39 @@ fn run_job() {
         db,
         &qs,
         |round, name, dt, got| {
+            if round >= 1  || dt > 0.5 {
+                println!("{:<5} ok  {:>8.4}s  {}", name, dt, got);
+            }
+        },
+        |name, dt, got, oracle| {
+            println!("{:<5} DIFF {:>8.4}s  {}", name, dt, got);
+            println!("        oracle: {oracle}");
+        },
+    );
+}
+
+/// The JOB queries of queries_loaded.rs, run straight off the Parquet files
+/// in ../data/imdb/parquet (made by bench/get_imdb.sh): each query loads what
+/// it needs with the on-the-fly loader, then drives the loaded result.
+#[cfg(feature = "job_loaded")]
+fn run_job_loaded() {
+    use prela::file_schema::Catalog;
+    use prela::job_file_schema::{JobFiles, job};
+
+    let t = std::time::Instant::now();
+    // Only the footers are read here; the data is read by each query's `load`.
+    let mut catalog = Catalog::open("../data/imdb/parquet");
+    // Leaked for the same reason as `run_job`'s db.
+    let db: &'static JobFiles = Box::leak(Box::new(job(&mut catalog)));
+    eprintln!("schema: {:.2}s", t.elapsed().as_secs_f32());
+
+    let qs = job_queries::queries_loaded::entries(db);
+    eprintln!("{} queries registered (loaded)", qs.len());
+
+    run_suite(
+        db,
+        &qs,
+        |round, name, dt, got| {
             if round == 2 || dt > 0.5 {
                 println!("{:<5} ok  {:>8.4}s  {}", name, dt, got);
             }
@@ -150,25 +187,54 @@ fn run_tpch() {
         db,
         &qs,
         |_, name, dt, _| println!("{:<5} ok    {:>8.4}s", name, dt),
-        |name, dt, got, oracle| {
-            println!("{:<5} DIFF  {:>8.4}s", name, dt);
-            // Write to /tmp for offline diff
-            let _ = std::fs::write(format!("/tmp/tpch_got_{name}.txt"), got);
-            let _ = std::fs::write(format!("/tmp/tpch_oracle_{name}.txt"), oracle);
-            let got_lines: Vec<_> = got.lines().collect();
-            let oracle_lines: Vec<_> = oracle.lines().collect();
-            for i in 0..got_lines.len().max(oracle_lines.len()) {
-                let g = got_lines.get(i).unwrap_or(&"");
-                let o = oracle_lines.get(i).unwrap_or(&"");
-                if g != o {
-                    println!("        line {}:", i + 1);
-                    println!("          got:    {g:?}");
-                    println!("          oracle: {o:?}");
-                    if i >= 3 {
-                        break;
-                    }
-                }
-            }
-        },
+        tpch_on_diff,
     );
+}
+
+/// The TPC-H queries of common_loaded.rs, run straight off the Parquet files
+/// in ../data/tpch/parquet: each query loads what it needs with the
+/// on-the-fly loader, then folds and drives the loaded result.
+#[cfg(feature = "loaded")]
+fn run_tpch_loaded() {
+    use prela::file_schema::{Catalog, TpchFiles, tpch};
+
+    let t = std::time::Instant::now();
+    // Only the footers are read here; the data is read by each query's `load`.
+    let mut catalog = Catalog::open("../data/tpch/parquet");
+    // Leaked for the same reason as `run_tpch`'s db.
+    let db: &'static TpchFiles = Box::leak(Box::new(tpch(&mut catalog)));
+    eprintln!("schema: {:.2}s", t.elapsed().as_secs_f32());
+
+    let qs = tpch_queries::common_loaded::base();
+    eprintln!("{} TPC-H queries registered (loaded)", qs.len());
+
+    run_suite(
+        db,
+        &qs,
+        |_, name, dt, _| println!("{:<5} ok    {:>8.4}s", name, dt),
+        tpch_on_diff,
+    );
+}
+
+/// A TPC-H query's output differs from its oracle: report the first few
+/// differing lines, and write both to /tmp for an offline diff.
+fn tpch_on_diff(name: &str, dt: f64, got: &str, oracle: &str) {
+    println!("{:<5} DIFF  {:>8.4}s", name, dt);
+    // Write to /tmp for offline diff
+    let _ = std::fs::write(format!("/tmp/tpch_got_{name}.txt"), got);
+    let _ = std::fs::write(format!("/tmp/tpch_oracle_{name}.txt"), oracle);
+    let got_lines: Vec<_> = got.lines().collect();
+    let oracle_lines: Vec<_> = oracle.lines().collect();
+    for i in 0..got_lines.len().max(oracle_lines.len()) {
+        let g = got_lines.get(i).unwrap_or(&"");
+        let o = oracle_lines.get(i).unwrap_or(&"");
+        if g != o {
+            println!("        line {}:", i + 1);
+            println!("          got:    {g:?}");
+            println!("          oracle: {o:?}");
+            if i >= 3 {
+                break;
+            }
+        }
+    }
 }

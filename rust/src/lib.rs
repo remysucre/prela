@@ -54,6 +54,18 @@ pub mod job_schema;
 #[cfg(feature = "regen")]
 pub mod join_tree;
 pub mod loader;
+// The on-the-fly Parquet loader and its TPC-H file schema. They live in
+// examples/ (the `runner` example includes them too) and are compiled into
+// the lib here so `tpch_queries::common_loaded` can use them.
+#[cfg(feature = "regen")]
+#[path = "../examples/trialLoader.rs"]
+pub mod trial_loader;
+#[cfg(feature = "regen")]
+#[path = "../examples/fileSchema.rs"]
+pub mod file_schema;
+#[cfg(feature = "regen")]
+#[path = "../examples/jobFileSchema.rs"]
+pub mod job_file_schema;
 pub mod tpch_queries;
 pub mod tpch_schema;
 

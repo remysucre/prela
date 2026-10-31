@@ -217,6 +217,7 @@ impl<E: 'static, T: Copy + 'static> Query for ColumnRef<E, T> {
 
 
 
+
 // ===== 7. Load: the fourth mode ================================================
 
 // Like `Drive`, one case per node. `load` scans what the node needs under the
@@ -224,7 +225,7 @@ impl<E: 'static, T: Copy + 'static> Query for ColumnRef<E, T> {
 //   - the same node over in-memory relations (`Out`), and
 //   - (keys Bloom, values Bloom): which of its keys / values survived.
 pub trait Load: Query {
-    type Out: Drive<D = Self::D, R = Self::R> + Probe;
+    type Out: Query<D = Self::D, R = Self::R> ;
     /// `preds`: closure predicates on this node's VALUES, passed down to the
     /// leaf that owns them, which applies them during its scan.
     fn load(
@@ -257,6 +258,14 @@ fn to_predicate<T: ParquetType>(column: &'static str, p: Pred<T>) -> ColumnFilte
         }),
     }
 }
+// movie.select(cast).select(person)
+//                    select 
+//            select          Person
+//        movies      cast
+
+
+// movie.select(title.eq("A"))
+// movie.with(title.eq("A"))
 
 impl<E: 'static, T: ParquetType> Load for ColumnRef<E, T> {
     type Out = MultiRel<Id<E>, T>;
@@ -335,10 +344,13 @@ impl<E: 'static, T: ParquetType> Load for &ColumnRef<E, T> {
 // ===== 9. Load for Compose / Restrict / Filter =================================
 
 // a.select(b) — a: D -> M, b: M -> R, joined on a.2 = b.1.
+
+// movie.select(title).eq("A")
 impl<A, B> Load for Compose<A, B>
 where
     A: Load,
     B: Load<D = A::R>,
+    B::Out: Probe,
 {
     type Out = Compose<A::Out, B::Out>;
     fn load(
@@ -347,9 +359,32 @@ where
         val_filter: KeyFilter,
         preds: Vec<Pred<Self::R>>,
     ) -> (Self::Out, (KeyFilter, KeyFilter)) {
-        let (a, (ak, av)) = self.a.load(key_filter, KeyFilter::All, Vec::new()); // top-down: a first
-        let (b, (_bk, bv)) = self.b.load(av, val_filter, preds); // b's KEYS ⊆ a's VALUES; preds follow the values
+        // doing a rhs load first 
+        let (b, (bk, bv)) = self.b.load(KeyFilter::All, val_filter, preds);
+        let (a, (ak, _av)) = self.a.load(key_filter, bk, Vec::new());
+        //let (a, (ak, av)) = self.a.load(key_filter, KeyFilter::All, Vec::new()); // top-down: a first
+        //let (b, (_bk, bv)) = self.b.load(av, val_filter, preds); // b's KEYS ⊆ a's VALUES; preds follow the values
         (Compose { a, b }, (ak, bv)) // my D-side is a's, my R-side is b's
+    }
+}
+
+// A `Lookup` field used by reference (`let Movie { kind, .. } = &db.movie;`,
+// jobFileSchema.rs). Compose isn't Copy, but its halves are (two ColumnRefs):
+// copy them into an owned Compose and load that.
+impl<A, B> Load for &Compose<A, B>
+where
+    A: Load + Copy,
+    B: Load<D = A::R> + Copy,
+    B::Out: Probe,
+{
+    type Out = Compose<A::Out, B::Out>;
+    fn load(
+        self,
+        key_filter: KeyFilter,
+        val_filter: KeyFilter,
+        preds: Vec<Pred<Self::R>>,
+    ) -> (Self::Out, (KeyFilter, KeyFilter)) {
+        Compose { a: self.a, b: self.b }.load(key_filter, val_filter, preds)
     }
 }
 
@@ -358,6 +393,7 @@ impl<A, B> Load for Restrict<A, B>
 where
     A: Load,
     B: Load<D = A::R>,
+    B::Out: Member,
 {
     type Out = Restrict<A::Out, B::Out>;
     fn load(
@@ -371,6 +407,43 @@ where
         (Restrict { a, b }, (ak, av)) // result is a's columns
     }
 }
+
+// movie.with(title.eq("A").group_by(year).select(title)
+// year.inv().select(title.eq("A"))
+
+// movie.group_by(cast.select(person))
+// year.inv().select(title)
+
+impl<K,S> Load for GroupBy<K,S>
+where
+    K: Load,
+    S: Load<R = K::D>,
+    K::R: Eq + std::hash::Hash,
+    K::Out: Probe,
+{
+    type Out = GroupBy<K::Out, S::Out>;
+    fn load(self, key_filter:KeyFilter, val_filter:KeyFilter, preds:Vec<Pred<Self::R>>) -> (Self::Out, (KeyFilter, KeyFilter)){
+        let (key, (key_bloom, val_bloom)) = self.key.load(KeyFilter::All, key_filter, Vec::new());
+        let (set, (keyset_bloom, valset_bloom)) = self.set.load(KeyFilter::All, val_filter.and(key_bloom.clone()), preds);
+
+        (GroupBy{ key, set}, (val_bloom, valset_bloom))
+    }
+}
+
+impl<Q> Load for InvStream<Q>
+where 
+Q: Load,
+Q::R: Eq + std::hash::Hash,
+{
+    type Out = InvStream<Q::Out>;
+    fn load (self, key_filter:KeyFilter, val_filter:KeyFilter, preds:Vec<Pred<Self::R>>) -> (Self::Out, (KeyFilter, KeyFilter)){
+        // 
+        let (rel, (keyb, valb)) = self.q.load(val_filter, key_filter, Vec::new());
+
+        (InvStream{q:rel}, (valb, keyb))
+    }
+}
+
 
 // a.eq(..) / .ge(..) / .rx(..) / ... — add the closure to the predicates
 // collected from above and pass them all down to the leaf that owns our
@@ -403,6 +476,7 @@ impl<A, B> Load for Prod<A, B>
 where
     A: Load,
     B: Load<D = A::D>,
+    B::Out: Probe,
 {
     type Out = Prod<A::Out, B::Out>;
     fn load(

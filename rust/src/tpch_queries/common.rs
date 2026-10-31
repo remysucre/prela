@@ -484,7 +484,8 @@ fn q16(db: &'static Tpch) -> String {
         .with(ps_part.with(brand.ne("Brand#45")
                              .and(p_ty.filt(|s: &str| !s.starts_with("MEDIUM POLISHED")))
                              .and(size.is_in([49, 14, 23, 45, 19, 3, 36, 9])))
-         .and(ps_supplier.select(s_comment).nrx("Customer.*Complaints")))
+         .and(ps_supplier.select(s_comment)
+         .nrx("Customer.*Complaints")))
         .group_by(ps_part.select(brand.and(p_ty).and(size)))
         .select(ps_supplier)
         .count_distinct();

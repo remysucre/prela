@@ -8,6 +8,9 @@
 // the optimized variant overlays only the queries it rewrites on the base registry.
 
 pub mod common;
+// common.rs's queries over the Parquet files, via the loader (feature `loaded`).
+#[cfg(feature = "loaded")]
+pub mod common_loaded;
 pub mod idiomatic;
 pub mod optimized;
 
