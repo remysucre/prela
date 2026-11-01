@@ -179,4 +179,19 @@ load: 2.59s  (movie n=2528312, person n=4167491)
 run 1: 1/114 ok  total 0.43s
 --- run 2 ---
 6a    ok    0.0094s  marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert
-run 2: 1/114 ok  total 0.01s```
+run 2: 1/114 ok  total 0.01s
+```
+
+
+### Timing Loads vs Execs
+(Round 2 data)
+
+| Query | job_loaded load | job_loaded exec | job exec | job_loaded exec vs job exec |
+|-------|----------------:|----------------:|---------:|:----------------------------|
+| 1a    | 0.7385 s        | 0.0056 s        | 0.0161 s | 2.9× faster                 |
+| 2a    | 1.1782 s        | 0.0422 s        | 0.0334 s | 1.3× slower                 |
+| 3a    | 3.3626 s        | 0.0065 s        | 0.2762 s | 42.5× faster                |
+| 5c    | 3.5116 s        | 0.0149 s        | 0.0856 s | 5.7× faster                 |
+| 6a    | 2.8272 s        | 0.0052 s        | 0.0183 s | 3.5× faster                 |
+| **Total** | **11.6181 s** | **0.0744 s**  | **0.4296 s** | **5.8× faster**         |
+

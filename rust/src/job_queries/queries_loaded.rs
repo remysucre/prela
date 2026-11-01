@@ -17,6 +17,9 @@
 // the closures can be boxed as `'static` runners and the plans they return
 // carry no lifetime.
 
+use std::cell::Cell;
+use std::time::Instant;
+
 use crate::engine::*;
 use crate::job_queries::helpers::{Row, min_row};
 use crate::job_queries::sets::{
@@ -28,20 +31,38 @@ use crate::trial_loader::{KeyFilter, Load};
 /// `job_queries::Entry`, over the files instead of the cache.
 pub type Entry = (&'static str, &'static str, Box<dyn Fn(&'static JobFiles) -> String>);
 
-/// As queries.rs's `entry`, plus: the columns' sinks are cleared after each
-/// run, so loaded rows don't pile up across the 113 queries.
+thread_local! {
+    /// Seconds the running query has spent in `loaded` (its scans), for `entry`.
+    static LOAD_SECS: Cell<f64> = const { Cell::new(0.0) };
+}
+
+/// As queries.rs's `entry`, plus:
+///   - each run prints its time split in two:
+///       load — the `.load()` (scans + building the in-memory relations);
+///       exec — the rest of the run: building the plan, then `min_row`'s drive
+///              over the loaded relations. This is what main.rs's per-query
+///              time measures for `job` (which drives the cache instead).
+///   - the columns' sinks are cleared after each run, so loaded rows don't pile
+///     up across the 113 queries (outside the split; main.rs's time includes it).
 fn entry(name: &'static str, oracle: &'static str, q: impl Fn() -> String + 'static) -> Entry {
     (name, oracle, Box::new(move |db: &'static JobFiles| {
+        let t = Instant::now();
         let got = q();
+        let total = t.elapsed().as_secs_f64();
+        let load = LOAD_SECS.with(|s| s.replace(0.0));
+        println!("{name:<5} load {load:>8.4}s  exec {:>8.4}s", total - load);
         db.clear();
         got
     }))
 }
 
 /// Load a query's tree from the files, unreduced from above, and return the
-/// loaded (in-memory) plan for `min_row` to drive.
+/// loaded (in-memory) plan for `min_row` to drive. Its time goes to `LOAD_SECS`.
 fn loaded<Q: Load>(q: Q) -> Q::Out {
-    q.load(KeyFilter::All, KeyFilter::All, Vec::new()).0
+    let t = Instant::now();
+    let out = q.load(KeyFilter::All, KeyFilter::All, Vec::new()).0;
+    LOAD_SECS.with(|s| s.set(s.get() + t.elapsed().as_secs_f64()));
+    out
 }
 
 /// The result of a query that can't be loaded yet: its tree has a node with no
