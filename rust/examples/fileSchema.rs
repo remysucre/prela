@@ -19,7 +19,9 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use prela::engine::*;
 use prela::loader::{Set, SparseKey, Str};
 
-use crate::trial_loader::{ColumnRef, ParquetType, leak_str};
+// `super`, not `crate`: the sibling loader module, so equivChecker.rs can
+// include this schema twice, once next to each loader.
+use super::trial_loader::{ColumnRef, ParquetType, leak_str};
 
 // ===== 5. Catalog: footers -> checked ColumnRefs ==============================
 
@@ -452,31 +454,13 @@ impl TpchFiles {
     pub fn to_memory(&self) -> MemTpch {
         MemTpch {
             region: MemRegion {
-                id: mem_key(
-                    &[
-                        self.region.id.keys(),
-                        self.region.name.keys(),
-                        self.region.comment.keys(),
-                        self.region.nations.keys(),
-                    ]
-                    .concat(),
-                ),
+                id: mem_key(&self.region.id.keys()),
                 name: self.region.name.loaded("region.name"),
                 comment: self.region.comment.loaded("region.comment"),
                 nations: self.region.nations.loaded("region.nations"),
             },
             nation: MemNation {
-                id: mem_key(
-                    &[
-                        self.nation.id.keys(),
-                        self.nation.name.keys(),
-                        self.nation.region.keys(),
-                        self.nation.comment.keys(),
-                        self.nation.customers.keys(),
-                        self.nation.suppliers.keys(),
-                    ]
-                    .concat(),
-                ),
+                id: mem_key(&self.nation.id.keys()),
                 name: self.nation.name.loaded("nation.name"),
                 region: self.nation.region.loaded("nation.region"),
                 comment: self.nation.comment.loaded("nation.comment"),
@@ -484,20 +468,7 @@ impl TpchFiles {
                 suppliers: self.nation.suppliers.loaded("nation.suppliers"),
             },
             supplier: MemSupplier {
-                id: mem_key(
-                    &[
-                        self.supplier.id.keys(),
-                        self.supplier.name.keys(),
-                        self.supplier.address.keys(),
-                        self.supplier.nation.keys(),
-                        self.supplier.phone.keys(),
-                        self.supplier.acctbal.keys(),
-                        self.supplier.comment.keys(),
-                        self.supplier.supplies.keys(),
-                        self.supplier.lineitems.keys(),
-                    ]
-                    .concat(),
-                ),
+                id: mem_key(&self.supplier.id.keys()),
                 name: self.supplier.name.loaded("supplier.name"),
                 address: self.supplier.address.loaded("supplier.address"),
                 nation: self.supplier.nation.loaded("supplier.nation"),
@@ -508,20 +479,7 @@ impl TpchFiles {
                 lineitems: self.supplier.lineitems.loaded("supplier.lineitems"),
             },
             customer: MemCustomer {
-                id: mem_key(
-                    &[
-                        self.customer.id.keys(),
-                        self.customer.name.keys(),
-                        self.customer.address.keys(),
-                        self.customer.nation.keys(),
-                        self.customer.phone.keys(),
-                        self.customer.acctbal.keys(),
-                        self.customer.mktsegment.keys(),
-                        self.customer.comment.keys(),
-                        self.customer.orders.keys(),
-                    ]
-                    .concat(),
-                ),
+                id: mem_key(&self.customer.id.keys()),
                 name: self.customer.name.loaded("customer.name"),
                 address: self.customer.address.loaded("customer.address"),
                 nation: self.customer.nation.loaded("customer.nation"),
@@ -532,22 +490,7 @@ impl TpchFiles {
                 orders: self.customer.orders.loaded("customer.orders"),
             },
             part: MemPart {
-                id: mem_key(
-                    &[
-                        self.part.id.keys(),
-                        self.part.name.keys(),
-                        self.part.mfgr.keys(),
-                        self.part.brand.keys(),
-                        self.part.ty.keys(),
-                        self.part.size.keys(),
-                        self.part.container.keys(),
-                        self.part.retailprice.keys(),
-                        self.part.comment.keys(),
-                        self.part.supplies.keys(),
-                        self.part.lineitems.keys(),
-                    ]
-                    .concat(),
-                ),
+                id: mem_key(&self.part.id.keys()),
                 name: self.part.name.loaded("part.name"),
                 mfgr: self.part.mfgr.loaded("part.mfgr"),
                 brand: self.part.brand.loaded("part.brand"),
@@ -560,17 +503,7 @@ impl TpchFiles {
                 lineitems: self.part.lineitems.loaded("part.lineitems"),
             },
             partsupp: MemPartsupp {
-                id: mem_key(
-                    &[
-                        self.partsupp.id.keys(),
-                        self.partsupp.part.keys(),
-                        self.partsupp.supplier.keys(),
-                        self.partsupp.availqty.keys(),
-                        self.partsupp.supplycost.keys(),
-                        self.partsupp.comment.keys(),
-                    ]
-                    .concat(),
-                ),
+                id: mem_key(&self.partsupp.id.keys()),
                 part: self.partsupp.part.loaded("partsupp.part"),
                 supplier: self.partsupp.supplier.loaded("partsupp.supplier"),
                 availqty: self.partsupp.availqty.loaded("partsupp.availqty"),
@@ -578,21 +511,7 @@ impl TpchFiles {
                 comment: self.partsupp.comment.loaded("partsupp.comment"),
             },
             order: MemOrder {
-                id: mem_key(
-                    &[
-                        self.order.id.keys(),
-                        self.order.customer.keys(),
-                        self.order.status.keys(),
-                        self.order.totalprice.keys(),
-                        self.order.date.keys(),
-                        self.order.priority.keys(),
-                        self.order.clerk.keys(),
-                        self.order.shippriority.keys(),
-                        self.order.comment.keys(),
-                        self.order.lineitems.keys(),
-                    ]
-                    .concat(),
-                ),
+                id: mem_key(&self.order.id.keys()),
                 customer: self.order.customer.loaded("order.customer"),
                 status: self.order.status.loaded("order.status"),
                 totalprice: self.order.totalprice.loaded("order.totalprice"),
@@ -604,28 +523,7 @@ impl TpchFiles {
                 lineitems: self.order.lineitems.loaded("order.lineitems"),
             },
             lineitem: MemLineitem {
-                id: mem_key(
-                    &[
-                        self.lineitem.id.keys(),
-                        self.lineitem.order.keys(),
-                        self.lineitem.part.keys(),
-                        self.lineitem.supplier.keys(),
-                        self.lineitem.number.keys(),
-                        self.lineitem.quantity.keys(),
-                        self.lineitem.extendedprice.keys(),
-                        self.lineitem.discount.keys(),
-                        self.lineitem.tax.keys(),
-                        self.lineitem.returnflag.keys(),
-                        self.lineitem.status.keys(),
-                        self.lineitem.shipdate.keys(),
-                        self.lineitem.commitdate.keys(),
-                        self.lineitem.receiptdate.keys(),
-                        self.lineitem.shipinstruct.keys(),
-                        self.lineitem.shipmode.keys(),
-                        self.lineitem.comment.keys(),
-                    ]
-                    .concat(),
-                ),
+                id: mem_key(&self.lineitem.id.keys()),
                 order: self.lineitem.order.loaded("lineitem.order"),
                 part: self.lineitem.part.loaded("lineitem.part"),
                 supplier: self.lineitem.supplier.loaded("lineitem.supplier"),

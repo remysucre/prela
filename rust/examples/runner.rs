@@ -8,7 +8,7 @@
 //   fileSchema.rs  — the schema: Catalog, the ColumnRef structs, the Mem structs
 //
 // `#[path]` keeps the files' names while giving the modules snake_case names.
-#[path = "trialLoader.rs"]
+#[path = "LeftRightLoader.rs"]
 mod trial_loader;
 #[path = "fileSchema.rs"]
 mod file_schema;
@@ -16,7 +16,7 @@ mod file_schema;
 use prela::engine::*;
 
 use file_schema::*;
-use trial_loader::{KeyFilter, Load, print_rows};
+use trial_loader::{KeyFilter, Load, print_rows, KeyLoad};
 
 // ===== 11. main: write your query here =========================================
 
@@ -50,14 +50,18 @@ fn main() {
 
 
     // query plan definition -- from query6 in common.rs
-    let q = db.lineitem
+    /*let q = db.lineitem
         .with(shipdate.during("1994-01-01", "1995-01-01")
          .and(discount.between(0.05, 0.07))
          .and(quantity.lt(24.0)))
         .select(extendedprice.and(discount));
-
+*/
+    let q = db.lineitem.with(shipdate.le("1998-09-02"))
+            .group_by(returnflag.and(l_status)) 
+          .select(quantity.and(extendedprice).and(discount).and(tax));
     println!("load:");
     let (loaded, _) = q.load(KeyFilter::All, KeyFilter::All, Vec::new());
+    
 
     println!("drive (the loaded plan):");
     //print_rows(&loaded);
@@ -78,11 +82,14 @@ fn main() {
     let _ = (retailprice, part);
 
     // in-memory query plan -- identical to the other one but call on mem instead of db
-    let plan = &mem.lineitem
+    /*let plan = &mem.lineitem
         .with(shipdate.during("1994-01-01", "1995-01-01")
          .and(discount.between(0.05, 0.07))
          .and(quantity.lt(24.0)))
-        .select(extendedprice.and(discount));
+        .select(extendedprice.and(discount));*/
+    let plan = &mem.lineitem.with(shipdate.le("1998-09-02"))
+            .group_by(returnflag.and(l_status)) 
+          .select(quantity.and(extendedprice).and(discount).and(tax));
     
 
     println!("drive (the in-memory plan):");

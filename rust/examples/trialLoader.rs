@@ -411,8 +411,7 @@ where
 // movie.with(title.eq("A").group_by(year).select(title)
 // year.inv().select(title.eq("A"))
 
-// movie.group_by(cast.select(person))
-// year.inv().select(title)
+// movie.group_by(year.eq)
 
 impl<K,S> Load for GroupBy<K,S>
 where
@@ -437,7 +436,7 @@ Q::R: Eq + std::hash::Hash,
 {
     type Out = InvStream<Q::Out>;
     fn load (self, key_filter:KeyFilter, val_filter:KeyFilter, preds:Vec<Pred<Self::R>>) -> (Self::Out, (KeyFilter, KeyFilter)){
-        // 
+        
         let (rel, (keyb, valb)) = self.q.load(val_filter, key_filter, Vec::new());
 
         (InvStream{q:rel}, (valb, keyb))
