@@ -6,6 +6,42 @@ use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+// The heartbeat: a global counter the clock thread bumps once per interval.
+static BEAT: AtomicU64 = AtomicU64::new(0);
+
+// Current beat count; a loop notices a beat when this differs from the value it last saw.
+#[inline(always)]
+pub fn beat() -> u64 {
+    BEAT.load(Ordering::Relaxed)
+}
+
+// Start the clock thread (first call wins): sleep to the next deadline, bump BEAT, repeat.
+pub fn start_clock(interval: Duration) {
+    static STARTED: OnceLock<()> = OnceLock::new();
+    STARTED.get_or_init(|| {
+        std::thread::Builder::new()
+            .name("prela-clock".into())
+            .spawn(move || {
+                let mut next = Instant::now() + interval;
+                loop {
+                    std::thread::sleep(next.saturating_duration_since(Instant::now()));
+                    BEAT.fetch_add(1, Ordering::Relaxed);
+                    next += interval;
+                }
+            })
+            .unwrap();
+    });
+}
+
+// Heartbeat interval from `PRELA_BEAT_US` (default 100µs).
+fn beat_interval() -> Duration {
+    let us = std::env::var("PRELA_BEAT_US")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100);
+    Duration::from_micros(us)
+}
+
 // Task states: waiting in the queue, claimed by some thread, finished with a result.
 const PENDING: u8 = 0;
 const TAKEN: u8 = 1;
@@ -180,5 +216,67 @@ impl<T: Send> Handle<'_, T> {
 impl<T: Send> Drop for Handle<'_, T> {
     fn drop(&mut self) {
         self.wait();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn clock_ticks_near_interval() {
+        start_clock(Duration::from_micros(100));
+        let (b0, t0) = (beat(), Instant::now());
+        std::thread::sleep(Duration::from_millis(200));
+        let (n, dt) = (beat() - b0, t0.elapsed());
+        let us = dt.as_secs_f64() * 1e6 / n as f64;
+        eprintln!("{n} beats in {dt:?}: {us:.1}µs per beat");
+        assert!(n > 400, "{n} beats in {dt:?}");
+    }
+
+    fn sum(pool: &'static Pool, xs: &[u64]) -> u64 {
+        if xs.len() <= 1024 {
+            return xs.iter().sum();
+        }
+        let (l, r) = xs.split_at(xs.len() / 2);
+        let (a, b) = pool.join2(|| sum(pool, l), || sum(pool, r));
+        a + b
+    }
+
+    #[test]
+    fn recursive_sum_matches_sequential() {
+        let xs: Vec<u64> = (1..=1_000_000).collect();
+        let want: u64 = xs.iter().sum();
+        assert_eq!(sum(Pool::new(4), &xs), want);
+        assert_eq!(sum(Pool::new(1), &xs), want);
+    }
+
+    #[test]
+    fn tasks_run_on_other_threads() {
+        let pool = Pool::new(4);
+        let seen = Mutex::new(HashSet::new());
+        let hs: Vec<_> = (0..8)
+            .map(|_| unsafe {
+                pool.spawn(|| {
+                    std::thread::sleep(Duration::from_millis(10));
+                    seen.lock().unwrap().insert(std::thread::current().id());
+                })
+            })
+            .collect();
+        for h in hs {
+            h.join();
+        }
+        assert!(seen.lock().unwrap().len() > 1);
+    }
+
+    #[test]
+    fn dropped_handle_waits_for_task() {
+        let pool = Pool::new(2);
+        let mut x = 0u64;
+        {
+            let _h = unsafe { pool.spawn(|| x = 42) };
+        }
+        assert_eq!(x, 42);
     }
 }
