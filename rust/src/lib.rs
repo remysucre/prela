@@ -58,7 +58,7 @@ pub mod loader;
 // examples/ (the `runner` example includes them too) and are compiled into
 // the lib here so `tpch_queries::common_loaded` can use them.
 #[cfg(feature = "regen")]
-#[path = "../examples/trialLoader.rs"]
+#[path = "../examples/LeftRightLoader.rs"]
 pub mod trial_loader;
 #[cfg(feature = "regen")]
 #[path = "../examples/fileSchema.rs"]
