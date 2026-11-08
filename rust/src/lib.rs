@@ -51,6 +51,7 @@ pub mod format;
 pub mod job_queries;
 pub mod job_schema;
 pub mod loader;
+pub mod par_engine;
 pub mod sched;
 pub mod tpch_queries;
 pub mod tpch_schema;
