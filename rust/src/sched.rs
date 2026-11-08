@@ -215,6 +215,180 @@ impl<T: Send> Drop for Handle<'_, T> {
     }
 }
 
+pub trait Reduce<A>: Sync {
+    fn init(&self) -> A;
+    fn merge(&self, acc: &mut A, later: A);
+}
+
+/// a pair of closures is a reduction
+impl<A, I: Fn() -> A + Sync, M: Fn(&mut A, A) + Sync> Reduce<A> for (I, M) {
+    fn init(&self) -> A {
+        (self.0)()
+    }
+    fn merge(&self, acc: &mut A, later: A) {
+        (self.1)(acc, later)
+    }
+}
+
+/// splittable: a running loop
+trait Split {
+    fn try_split(&self) -> bool;
+}
+
+thread_local! {
+    /// running `Interval`s, from outermost to innermost
+    static LOOPS: RefCell<Vec<*const dyn Split>> = const { RefCell::new(Vec::new()) };
+    /// The last beat this thread acted on, so nested loops split once per beat, not once each.
+    static LAST: Cell<u64> = const { Cell::new(0) };
+}
+
+/// total number of splits across all threads
+static SPLITS: AtomicUsize = AtomicUsize::new(0);
+
+pub fn splits() -> usize {
+    SPLITS.load(Ordering::Relaxed)
+}
+
+/// a piece of the loop.
+/// `pending` stores the pieces handed off so far
+struct Interval<'a, A: Send, Rd, S, B> {
+    cur: Cell<usize>,
+    hi: Cell<usize>,
+    pending: RefCell<Vec<Handle<'a, A>>>,
+    pool: &'static Pool,
+    rd: &'a Rd,
+    start: &'a S,
+    body: &'a B,
+}
+
+/// intervals are splittable
+impl<'a, A, Rd, C, S, B> Split for Interval<'a, A, Rd, S, B>
+where
+    A: Send + 'a,
+    Rd: Reduce<A>,
+    S: Fn(usize) -> C + Sync,
+    B: Fn(&mut A, &mut C, usize) + Sync,
+{
+    fn try_split(&self) -> bool {
+        let (cur, hi) = (self.cur.get(), self.hi.get());
+        if cur >= hi {
+            return false;
+        }
+        let mid = cur + (hi - cur) / 2;
+        self.hi.set(mid); // keep lower half
+        let (pool, rd, start, body) = (self.pool, self.rd, self.start, self.body);
+        // handle for upper half task
+        let h = unsafe {
+            pool.spawn(move || {
+                let mut a = rd.init(); // acc set to reduction init
+                run_interval_in(pool, rd, &mut a, mid, hi, start, body);
+                a
+            })
+        };
+        self.pending.borrow_mut().push(h);
+        SPLITS.fetch_add(1, Ordering::Relaxed);
+        true
+    }
+}
+
+/// registers an interval on thread-local `LOOPS` stack and pops it when `Registered` goes out of
+/// scope
+struct Registered;
+
+impl Registered {
+    /// push `frame` onto thread-local `LOOPS` stack
+    fn new<'a>(frame: &'a (dyn Split + 'a)) -> Registered {
+        let p: *const (dyn Split + 'a) = frame;
+        let p: *const (dyn Split + 'static) = unsafe { std::mem::transmute(p) };
+        LOOPS.with(|ls| ls.borrow_mut().push(p));
+        Registered
+    }
+}
+
+impl Drop for Registered {
+    fn drop(&mut self) {
+        LOOPS.with(|ls| ls.borrow_mut().pop());
+    }
+}
+
+/// split the outermost loop with work left
+/// checks whether LAST == b so we don't split more than once
+#[cold]
+fn on_beat(b: u64) {
+    if LAST.with(|l| l.replace(b)) == b {
+        return;
+    }
+    LOOPS.with(|ls| {
+        for &f in ls.borrow().iter() {
+            if unsafe { (*f).try_split() } {
+                break;
+            }
+        }
+    });
+}
+
+/// runs `body` over `lo..hi`, splitting on beats and reducing `acc` with `rd`
+pub fn run_interval<A, Rd, C, S, B>(rd: &Rd, acc: &mut A, lo: usize, hi: usize, start: S, body: B)
+where
+    A: Send,
+    Rd: Reduce<A>,
+    S: Fn(usize) -> C + Sync,
+    B: Fn(&mut A, &mut C, usize) + Sync,
+{
+    run_interval_in(pool(), rd, acc, lo, hi, &start, &body);
+}
+
+/// loops over the `lo..hi` interval
+/// creates a frame for the current interval, registers it in LOOPS
+/// applies `body` to `i` in `cur..high` checking for a beat at each iteration
+/// if beat, split
+/// once done with the interval, join all pending frames
+fn run_interval_in<A, Rd, C, S, B>(
+    pool: &'static Pool,
+    rd: &Rd,
+    acc: &mut A,
+    lo: usize,
+    hi: usize,
+    start: &S,
+    body: &B,
+) where
+    A: Send,
+    Rd: Reduce<A>,
+    S: Fn(usize) -> C + Sync,
+    B: Fn(&mut A, &mut C, usize) + Sync,
+{
+    let frame = Interval {
+        cur: Cell::new(lo),
+        hi: Cell::new(hi),
+        pending: RefCell::new(Vec::new()),
+        pool,
+        rd,
+        start,
+        body,
+    };
+    let mut c = start(lo);
+    {
+        let _reg = Registered::new(&frame);
+        let mut seen = beat();
+        loop {
+            let i = frame.cur.get();
+            if i >= frame.hi.get() {
+                break;
+            }
+            frame.cur.set(i + 1);
+            body(acc, &mut c, i);
+            let b = beat();
+            if b != seen {
+                seen = b;
+                on_beat(b);
+            }
+        }
+    }
+    for h in frame.pending.take().into_iter().rev() {
+        rd.merge(acc, h.join());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
