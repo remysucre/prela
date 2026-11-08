@@ -440,6 +440,107 @@ mod tests {
         assert!(seen.lock().unwrap().len() > 1);
     }
 
+    fn sum_rd() -> impl Reduce<u64> {
+        (|| 0u64, |a: &mut u64, b: u64| *a += b)
+    }
+
+    #[test]
+    fn interval_sum_splits_and_matches() {
+        start_clock(Duration::from_micros(100));
+        let xs: Vec<u64> = (0..5_000_000).collect();
+        let want: u64 = xs.iter().sum();
+        let before = splits();
+        let mut acc = 0;
+        run_interval_in(
+            Pool::new(4),
+            &sum_rd(),
+            &mut acc,
+            0,
+            xs.len(),
+            &|_| (),
+            &|a, _, i| *a += xs[i],
+        );
+        assert_eq!(acc, want);
+        assert!(splits() > before);
+    }
+
+    #[test]
+    fn interval_single_thread_pool_still_correct() {
+        start_clock(Duration::from_micros(100));
+        let xs: Vec<u64> = (0..2_000_000).collect();
+        let want: u64 = xs.iter().sum();
+        let mut acc = 0;
+        run_interval_in(
+            Pool::new(1),
+            &sum_rd(),
+            &mut acc,
+            0,
+            xs.len(),
+            &|_| (),
+            &|a, _, i| *a += xs[i],
+        );
+        assert_eq!(acc, want);
+    }
+
+    #[test]
+    fn interval_keeps_range_order_across_threads() {
+        start_clock(Duration::from_micros(100));
+        let n = 1_000_000;
+        let rd = (Vec::new, |a: &mut Vec<_>, b: Vec<_>| a.extend(b));
+        let mut acc = Vec::new();
+        run_interval_in(Pool::new(4), &rd, &mut acc, 0, n, &|_| (), &|a, _, i| {
+            a.push((i, std::thread::current().id()))
+        });
+        assert!(acc.iter().map(|&(i, _)| i).eq(0..n));
+        let threads: HashSet<_> = acc.iter().map(|&(_, t)| t).collect();
+        assert!(threads.len() > 1);
+    }
+
+    #[test]
+    fn interval_nested_loops() {
+        start_clock(Duration::from_micros(100));
+        let pool = Pool::new(4);
+        let n = 2000u64;
+        let rd = sum_rd();
+        let mut acc = 0;
+        run_interval_in(pool, &rd, &mut acc, 0, n as usize, &|_| (), &|a, _, i| {
+            run_interval_in(pool, &rd, a, 0, n as usize, &|_| (), &|a, _, j| {
+                *a += (i * j) as u64
+            })
+        });
+        let s = n * (n - 1) / 2;
+        assert_eq!(acc, s * s);
+    }
+
+    #[test]
+    fn interval_cursor_walks_rows() {
+        start_clock(Duration::from_micros(100));
+        let mut offsets = vec![0usize];
+        for r in 0..200_000 {
+            offsets.push(offsets[r] + r % 7);
+        }
+        let n = *offsets.last().unwrap();
+        let row_of = |i: usize| offsets.partition_point(|&o| o <= i) - 1;
+        let rd = (Vec::new, |a: &mut Vec<_>, b: Vec<_>| a.extend(b));
+        let mut acc = Vec::new();
+        run_interval_in(
+            Pool::new(4),
+            &rd,
+            &mut acc,
+            0,
+            n,
+            &row_of,
+            &|a, row: &mut usize, i| {
+                while offsets[*row + 1] <= i {
+                    *row += 1;
+                }
+                a.push((*row, i));
+            },
+        );
+        let want: Vec<_> = (0..n).map(|i| (row_of(i), i)).collect();
+        assert_eq!(acc, want);
+    }
+
     #[test]
     fn dropped_handle_waits_for_task() {
         let pool = Pool::new(2);
