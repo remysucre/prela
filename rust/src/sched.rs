@@ -1,21 +1,18 @@
-use std::cell::UnsafeCell;
+use std::cell::{Cell, RefCell, UnsafeCell};
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-// The heartbeat: a global counter the clock thread bumps once per interval.
 static BEAT: AtomicU64 = AtomicU64::new(0);
 
-// Current beat count; a loop notices a beat when this differs from the value it last saw.
 #[inline(always)]
 pub fn beat() -> u64 {
     BEAT.load(Ordering::Relaxed)
 }
 
-// Start the clock thread (first call wins): sleep to the next deadline, bump BEAT, repeat.
 pub fn start_clock(interval: Duration) {
     static STARTED: OnceLock<()> = OnceLock::new();
     STARTED.get_or_init(|| {
@@ -33,7 +30,7 @@ pub fn start_clock(interval: Duration) {
     });
 }
 
-// Heartbeat interval from `PRELA_BEAT_US` (default 100µs).
+/// get heartbeat interval from env
 fn beat_interval() -> Duration {
     let us = std::env::var("PRELA_BEAT_US")
         .ok()
@@ -42,28 +39,28 @@ fn beat_interval() -> Duration {
     Duration::from_micros(us)
 }
 
-// Task states: waiting in the queue, claimed by some thread, finished with a result.
+/// task states
 const PENDING: u8 = 0;
 const TAKEN: u8 = 1;
 const DONE: u8 = 2;
 
-// A type-erased task as the queue sees it: anyone may try to run it, only the first claimer does.
+/// try-runnable abstraction over tasks
 trait Job: Send + Sync {
     fn try_run(&self) -> bool;
 }
 
-// One unit of work: its state, the closure to run (taken once), and the slot its result lands in.
+/// a unit of (potentially parallel) work
 struct Task<'a, T> {
     state: AtomicU8,
     job: UnsafeCell<Option<Box<dyn FnOnce() -> T + Send + 'a>>>,
     out: UnsafeCell<Option<T>>,
 }
 
-// Sharing is safe because `job` and `out` are only touched by the single thread that won the claim.
+/// safe bc Task is only touched by the (unique) thread that wins the claim
 unsafe impl<T: Send> Sync for Task<'_, T> {}
 
 impl<T: Send> Job for Task<'_, T> {
-    // Claim the task (PENDING → TAKEN), run it, store the result, mark DONE; false if already claimed.
+    /// try to claim task, and run it if successful. Result stored in task.out
     fn try_run(&self) -> bool {
         if self
             .state
@@ -80,7 +77,7 @@ impl<T: Send> Job for Task<'_, T> {
     }
 }
 
-// Worker threads plus the shared queue they take tasks from; `threads` counts the calling thread too.
+/// shared deque since promotions are sparse
 pub struct Pool {
     queue: Mutex<VecDeque<Arc<dyn Job>>>,
     ready: Condvar,
@@ -88,7 +85,7 @@ pub struct Pool {
 }
 
 impl Pool {
-    // Leak a pool and start `threads - 1` workers on it (the caller is the remaining one).
+    /// init Pool with fresh deque and spawn `threads - 1` threads
     pub fn new(threads: usize) -> &'static Pool {
         let threads = threads.max(1);
         let pool: &'static Pool = Box::leak(Box::new(Pool {
@@ -105,12 +102,11 @@ impl Pool {
         pool
     }
 
-    // Total thread count, including the caller.
     pub fn threads(&self) -> usize {
         self.threads
     }
 
-    // Worker loop: sleep until the queue is non-empty, take the oldest task, try to run it, repeat.
+    /// sleep while deque empty; when non-empty, take oldest task and try to run it; repeat
     fn work(&self) {
         loop {
             let job = {
@@ -126,12 +122,12 @@ impl Pool {
         }
     }
 
-    // Take the oldest queued task without waiting, for a joiner that wants to help.
+    /// try to take oldest queued task without waiting (steal)
     fn pop(&self) -> Option<Arc<dyn Job>> {
         self.queue.lock().unwrap().pop_front()
     }
 
-    // Queue `f` and return its handle; unsafe because the handle must not be leaked while `f` borrows `'a`.
+    /// add f to the work-sharing queue; return a handle to the task
     pub unsafe fn spawn<'a, T, F>(&'static self, f: F) -> Handle<'a, T>
     where
         T: Send + 'a,
@@ -153,7 +149,7 @@ impl Pool {
         }
     }
 
-    // Safe fork-join: offer `fb` to the pool, run `fa` here, then join `fb`.
+    /// queue fb, run fa, join fb
     pub fn join2<A, B, FA, FB>(&'static self, fa: FA, fb: FB) -> (A, B)
     where
         A: Send,
@@ -167,7 +163,7 @@ impl Pool {
     }
 }
 
-// The global pool, created on first use with `PRELA_THREADS` threads (default 1); starts the clock if > 1.
+/// global pool; starts clock
 pub fn pool() -> &'static Pool {
     static POOL: OnceLock<&'static Pool> = OnceLock::new();
     POOL.get_or_init(|| {
@@ -182,7 +178,7 @@ pub fn pool() -> &'static Pool {
     })
 }
 
-// The spawner's side of a task; joining or dropping it waits until the task is done.
+/// joinable wrapper around a task for the spawner to wait on
 pub struct Handle<'a, T: Send> {
     task: Arc<Task<'a, T>>,
     pool: &'static Pool,
@@ -190,7 +186,7 @@ pub struct Handle<'a, T: Send> {
 }
 
 impl<T: Send> Handle<'_, T> {
-    // Run the task here if nobody claimed it; otherwise run other queued tasks (or spin) until it's done.
+    /// run task if unclaimed, otherwise try running other queued tasks
     fn wait(&self) {
         if self.task.try_run() {
             return;
@@ -205,14 +201,14 @@ impl<T: Send> Handle<'_, T> {
         }
     }
 
-    // Wait for the task and take its result.
+    /// wait on task and take result
     pub fn join(self) -> T {
         self.wait();
         unsafe { (*self.task.out.get()).take().unwrap() }
     }
 }
 
-// Dropping without joining still waits, so the task can't outlive what it borrows.
+/// dropping waits so task doesn't outlive handle
 impl<T: Send> Drop for Handle<'_, T> {
     fn drop(&mut self) {
         self.wait();
