@@ -8,15 +8,26 @@
 //   fileSchema.rs  — the schema: Catalog, the ColumnRef structs, the Mem structs
 //
 // `#[path]` keeps the files' names while giving the modules snake_case names.
-#[path = "LeftRightLoader.rs"]
-mod trial_loader;
-#[path = "fileSchema.rs"]
-mod file_schema;
+#[path = "."]
+mod old {
+    #[path = "trialLoader.rs"]
+    pub mod trial_loader;
+    #[path = "fileSchema.rs"]
+    pub mod file_schema;
+}
+#[path = "."]
+mod stump {
+    #[path = "LeftRightLoader.rs"]
+    pub mod trial_loader;
+    #[path = "fileSchema.rs"]
+    pub mod file_schema;
+}
 
 use prela::engine::*;
 
-use file_schema::*;
-use trial_loader::{KeyFilter, Load, print_rows, KeyLoad};
+// The stump loader is the default; the old one is used by its full path (old::...).
+use stump::file_schema::*;
+use stump::trial_loader::{KeyFilter, Load, print_rows, KeyLoad};
 
 // ===== 11. main: write your query here =========================================
 
@@ -40,31 +51,41 @@ fn main() {
     let _ = (region_name, region, customer_name, nation, mktsegment, nation_name, customers, acctbal);
     let _ = (retailprice, part);
 
-    /*load:
-  scan lineitem.parquet          l_id -> l_shipdate    kept 9484 of 60175 rows
-  scan lineitem.parquet          l_id -> l_discount    kept 2566 of 60175 rows
-  scan lineitem.parquet          l_id -> l_quantity    kept 1191 of 60175 rows
-  scan lineitem.parquet          l_id -> l_id          kept 1191 of 60175 rows
-  scan lineitem.parquet          l_id -> l_extendedprice kept 1191 of 60175 rows
-  scan lineitem.parquet          l_id -> l_discount    kept 1191 of 60175 rows*/
 
-
-    // query plan definition -- from query6 in common.rs
-    /*let q = db.lineitem
-        .with(shipdate.during("1994-01-01", "1995-01-01")
-         .and(discount.between(0.05, 0.07))
-         .and(quantity.lt(24.0)))
-        .select(extendedprice.and(discount));
-*/
     let q = db.lineitem.with(shipdate.le("1998-09-02"))
             .group_by(returnflag.and(l_status)) 
           .select(quantity.and(extendedprice).and(discount).and(tax));
-    println!("load:");
-    let (loaded, _) = q.load(KeyFilter::All, KeyFilter::All, Vec::new());
-    
 
-    println!("drive (the loaded plan):");
-    //print_rows(&loaded);
+    // The same query again for the old loader. It needs its own db: old::file_schema's
+    // columns are the old loader's ColumnRef type, which only has the old Load.
+    // (A query is also used up by .load, so `q` can't be loaded twice anyway.)
+    let old_db: &'static old::file_schema::TpchFiles =
+        Box::leak(Box::new(old::file_schema::tpch(&mut old::file_schema::Catalog::open("../data/tpch/parquet"))));
+    let ol = &old_db.lineitem;
+    let q_old = old_db.lineitem.with(ol.shipdate.le("1998-09-02"))
+            .group_by(ol.returnflag.and(ol.status))
+          .select(ol.quantity.and(ol.extendedprice).and(ol.discount).and(ol.tax));
+
+
+    println!("load: trialLoader");
+    let (loaded, _) = old::trial_loader::Load::load(
+        q_old, old::trial_loader::KeyFilter::All, old::trial_loader::KeyFilter::All, Vec::new());
+
+    println!("load: stump");
+    let (loaded_stump, _) = q.load(KeyFilter::All, KeyFilter::All, Vec::new());
+
+
+    println!("trial_Loader:");
+    let mut t = std::time::Instant::now();
+
+    print_rows(&loaded);
+    println!("Exec time: {}", t.elapsed().as_secs_f64());
+
+    t = std::time::Instant::now();
+    println!("stump:");
+    print_rows(&loaded_stump);
+    println!("Exec time: {}", t.elapsed().as_secs_f64());
+
 
     // ===== in memory: the loaded columns, under the same names =====
     println!("to_memory:");
@@ -81,19 +102,16 @@ fn main() {
     let _ = (region_name, region, customer_name, nation, mktsegment, nation_name, customers, acctbal);
     let _ = (retailprice, part);
 
-    // in-memory query plan -- identical to the other one but call on mem instead of db
-    /*let plan = &mem.lineitem
-        .with(shipdate.during("1994-01-01", "1995-01-01")
-         .and(discount.between(0.05, 0.07))
-         .and(quantity.lt(24.0)))
-        .select(extendedprice.and(discount));*/
-    let plan = &mem.lineitem.with(shipdate.le("1998-09-02"))
+
+    let q_nowith = (&mem.lineitem)
             .group_by(returnflag.and(l_status)) 
           .select(quantity.and(extendedprice).and(discount).and(tax));
     
 
-    println!("drive (the in-memory plan):");
-    //print_rows(&plan);
+    println!("nowith plan :");
+    t = std::time::Instant::now();
+    print_rows(&q_nowith);
+    println!("Exec time: {}", t.elapsed().as_secs_f64());
 
     db.clear();
 }

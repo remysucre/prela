@@ -316,13 +316,13 @@ impl<E: 'static, T: ParquetType> Load for ColumnRef<E, T> {
             T::from_array(batch.column_by_name(self.val_col).unwrap(), &mut vals);
         }
         let file = self.path.rsplit('/').next().unwrap();
-        println!(
+        /*println!(
             "  scan {file:<17} {:>12} -> {:<13} kept {:>4} of {:>4} rows",
             self.key_col,
             self.val_col,
             keys.len(),
             row_count
-        );
+        );*/
 
         let blooms = if selective {
             let kb = KeyFilter::from_keys(row_count, keys.iter().copied());
@@ -548,18 +548,20 @@ fn union<E: 'static, T: ParquetType>(old: &MultiRel<Id<E>, T>, new: &MultiRel<Id
     MultiRel::from_pairs(n, pairs)
 }
 
-// Drive `q` and print its rows sorted, then the count.
-pub fn print_rows<E: 'static, Q>(q: &Q)
+// Drive `q` and print its rows sorted, then the count. Any key type, so it also
+// prints a group_by's (tuple-keyed) rows.
+pub fn print_rows<Q>(q: &Q)
 where
-    Q: Drive<D = Id<E>>,
+    Q: Drive,
+    Q::D: std::fmt::Debug + PartialOrd,
     Q::R: std::fmt::Debug + PartialOrd,
 {
     let mut rows = Vec::new();
-    q.drive(|k, v| rows.push((k.0, v)));
+    q.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    for (k, v) in &rows {
-        println!("  {k} -> {v:?}");
-    }
+    //for (k, v) in &rows {
+    //    println!("  {k:?} -> {v:?}");
+    //}
     println!("{} rows", rows.len());
 }
 
@@ -627,13 +629,13 @@ impl<E: 'static, T: ParquetType> KeyLoad for ColumnRef<E, T> {
             keys.extend(keys_i64(batch.unwrap().column_by_name(self.key_col).unwrap()));
         }
         let file = self.path.rsplit('/').next().unwrap();
-        println!(
+        /*println!(
             "  keys {file:<17} {:>12} -> {:<13} kept {:>4} of {:>4} rows",
             self.key_col,
             self.val_col,
             keys.len(),
             row_count
-        );
+        );*/
         // Always built, even unfiltered: `movie.with(company)` still keeps only
         // the movies that have a movie_companies row.
         exact_from_keys(&keys)
