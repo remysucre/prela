@@ -163,19 +163,30 @@ impl Pool {
     }
 }
 
-/// global pool; starts clock
-pub fn pool() -> &'static Pool {
-    static POOL: OnceLock<&'static Pool> = OnceLock::new();
+static POOL: OnceLock<&'static Pool> = OnceLock::new();
+
+/// create the global pool with `threads` threads (starting the clock if > 1)
+pub fn init(threads: usize, interval: Duration) -> &'static Pool {
     POOL.get_or_init(|| {
-        let n = std::env::var("PRELA_THREADS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(1);
-        if n > 1 {
-            start_clock(beat_interval());
+        if threads > 1 {
+            start_clock(interval);
         }
-        Pool::new(n)
+        Pool::new(threads)
     })
+}
+
+/// global pool; created from `PRELA_THREADS` / `PRELA_BEAT_US` if `init` wasn't called
+pub fn pool() -> &'static Pool {
+    match POOL.get() {
+        Some(p) => p,
+        None => {
+            let n = std::env::var("PRELA_THREADS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(1);
+            init(n, beat_interval())
+        }
+    }
 }
 
 /// joinable wrapper around a task for the spawner to wait on
