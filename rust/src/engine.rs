@@ -297,7 +297,7 @@ impl<D: Dense> StrCol<D> {
         self.offsets.len() - 1
     }
     #[inline(always)]
-    fn at(&self, i: usize) -> &'static str {
+    pub(crate) fn at(&self, i: usize) -> &'static str {
         let s = &self.data[self.offsets[i] as usize..self.offsets[i + 1] as usize];
         unsafe { std::str::from_utf8_unchecked(s) }
     }
