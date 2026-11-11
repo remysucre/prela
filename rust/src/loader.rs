@@ -30,7 +30,10 @@
 // alongside it.
 
 use crate::cache;
-use crate::engine::{Bitset, Dense, DictMultiRel, DictRel, Row, MultiRel, SparseUniverse, Universe, VecRel};
+use crate::engine::{
+    Bitset, Compose, Dense, DictMultiRel, DictRel, Drive, Key, MultiRel, NO_ID, PkIndex, Row,
+    SparseUniverse, Universe, VecRel,
+};
 use crate::format::{KIND_CSR_STR, KIND_CSR_WORDS, KIND_DENSE_F64, KIND_DENSE_I64, KIND_DENSE_STR};
 use std::path::Path;
 
@@ -54,6 +57,15 @@ pub type SparseRows<E> = SparseUniverse<Row<E>>;
 pub type Dict<E, T> = DictRel<Row<E>, T>;
 /// A set-valued dictionary-encoded column of entity `E`.
 pub type DictSet<E, T> = DictMultiRel<Row<E>, T>;
+
+/// A foreign key from `E` into `T`. The column stores `T`'s KEYS, and
+/// every probe resolves the key to a row through `T`'s `PkIndex` (a
+/// `BTreeMap`), so a join pays a real index lookup rather than using the
+/// key as a row pointer. It is still a `Query<D = Row<E>, R = Row<T>>`, so
+/// it composes onto `T`'s columns exactly as a row-valued column would.
+pub type Fk<E, T> = Compose<Col<E, Key<T>>, &'static PkIndex<T>>;
+/// A set-valued foreign key from `E` into `T`, resolved the same way.
+pub type FkSet<E, T> = Compose<Set<E, Key<T>>, &'static PkIndex<T>>;
 
 /// A dense payload type the cache can hold, with its physical kind and
 /// reader. This is what lets `l.dict(..)` pick the table reader from the
@@ -138,6 +150,15 @@ impl<'a> Loader<'a> {
         }
     }
 
+    /// The primary-key index of an entity: key → row for every row its
+    /// primary key emits. Built once at load and leaked, so the FK columns
+    /// that resolve through it can hold it as `&'static` (the same reason
+    /// `MultiRel` holds `&'static` slices). Nothing is recorded: the index
+    /// is derived, not read.
+    pub fn pk<E: 'static, Q: Drive<D = Row<E>>>(&self, rows: Q) -> &'static PkIndex<E> {
+        Box::leak(Box::new(PkIndex::of_rows(rows)))
+    }
+
     // ===== dense columns ================================================
 
     pub fn strs<E: 'static>(&mut self, name: &str) -> Col<E, Str> {
@@ -174,6 +195,29 @@ impl<'a> Loader<'a> {
             Some(dir) => cache::load_ids_in(dir, name),
             None => VecRel::new(Vec::new()),
         }
+    }
+
+    /// A foreign key into `T`, resolved through `T`'s primary-key index.
+    /// The cache words are read as `Key<T>` (`NO_ID` holes miss the index).
+    pub fn fk<T: 'static, E: 'static>(&mut self, name: &str, pk: &'static PkIndex<T>) -> Fk<E, T> {
+        let keys = match self.note(name, KIND_DENSE_I64) {
+            Some(dir) => cache::load_keys_in(dir, name),
+            None => VecRel::new(Vec::new()),
+        };
+        Compose { a: keys, b: pk }
+    }
+
+    /// A set-valued foreign key into `T`, resolved through `T`'s index.
+    pub fn multi_fk<T: 'static, E: 'static>(
+        &mut self,
+        name: &str,
+        pk: &'static PkIndex<T>,
+    ) -> FkSet<E, T> {
+        let keys = match self.note(name, KIND_CSR_WORDS) {
+            Some(dir) => cache::load_multi_keys_in(dir, name),
+            None => empty_csr(),
+        };
+        Compose { a: keys, b: pk }
     }
 
     // ===== dictionary-encoded columns ===================================
@@ -237,22 +281,21 @@ fn empty_csr<D: Dense, R: Copy + 'static>() -> MultiRel<D, R> {
     MultiRel::from_csr(&[0u32], &[])
 }
 
-/// Validity mask for a SPARSE entity — one whose dense id space carries
-/// holes, like TPC-H `Order` over the gappy orderkey range. A slot is live
-/// iff its foreign key is a real target rather than `NO_ID`.
-///
-/// The result is leaked because `SparseUniverse` holds `&'static Bitset`
-/// (engine.rs:1069): a lifetime there would propagate into every query
-/// type built over it. Callers cache it in a `OnceLock` so it is built
-/// once per process.
 /// The primary key of an entity whose id range has holes:
-/// `SparseRows<E>` over the slots `0..fk.n_dom()`, masked to those
-/// whose foreign key `fk` is a real target (`NO_ID` marks a hole). One pass
-/// over `fk` at load; the mask is leaked because `SparseUniverse` holds
+/// `SparseRows<E>` over the slots `0..fk.n_dom()`, masked to those whose
+/// foreign key `fk` holds a real key (`NO_ID` marks a hole). One pass over
+/// `fk` at load; the mask is leaked because `SparseUniverse` holds
 /// `&'static Bitset` (the same reason `MultiRel` holds `&'static` slices).
-pub fn sparse_rows<E: 'static, T: Dense>(fk: &VecRel<Row<E>, T>) -> SparseRows<E> {
-    let mask: &'static Bitset<Row<E>> = Box::leak(Box::new(Bitset::validity(&fk.v)));
-    SparseUniverse::new(fk.n_dom(), mask)
+pub fn sparse_rows<E: 'static, T: 'static>(fk: &Fk<E, T>) -> SparseRows<E> {
+    let keys = &fk.a;
+    let mut mask = Bitset::empty(Universe::<Row<E>>::new(keys.n_dom()));
+    for (i, k) in keys.v.iter().enumerate() {
+        if k.0 != NO_ID as u64 {
+            mask.set(Row::new(i));
+        }
+    }
+    let mask: &'static Bitset<Row<E>> = Box::leak(Box::new(mask));
+    SparseUniverse::new(keys.n_dom(), mask)
 }
 
 // =====================================================================

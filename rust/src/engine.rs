@@ -1,6 +1,7 @@
 use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use regex::Regex;
 use smallvec::SmallVec;
+use rustc_hash::FxBuildHasher;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::hash::Hash;
@@ -797,6 +798,75 @@ impl<E: 'static> Probe for DictTable<E> {
     #[inline]
     fn probe_any<K: FnMut(Row<E>) -> bool>(&self, x: Key<E>, mut k: K) -> bool {
         self.map.get(&x).is_some_and(|&r| k(r))
+    }
+}
+
+/// The primary-key index of entity `E`: key → row through a hash table
+/// (`hashbrown` with the Fx hasher).
+///
+/// This is what an FK column resolves through (`loader::Fk`), so a join
+/// pays a real key lookup instead of reading the row index straight off the
+/// FK value. The suites' keys happen to be contiguous `0..n`, which is what
+/// let FK columns double as row pointers before; going through an index
+/// makes the join cost independent of that.
+///
+/// The index has to stay updatable, and it only ever answers "which row has
+/// this key" (no range scans), so it is a hash table. Per probe it measured
+/// 5–15× faster than a B+ tree (std `BTreeMap`, brie-tree): a lookup is one
+/// hash and usually one cache line, where a tree walks a chain of dependent
+/// node reads. Fx is a single multiply — fast, and not DoS-resistant, which
+/// an embedded engine doesn't need.
+pub struct PkIndex<E: 'static> {
+    map: hashbrown::HashMap<u64, Row<E>, FxBuildHasher>,
+}
+
+impl<E: 'static> PkIndex<E> {
+    /// Index every row `q` emits, under its own id as the key.
+    pub fn of_rows<Q: Drive<D = Row<E>>>(q: Q) -> Self {
+        let mut idx = PkIndex {
+            map: hashbrown::HashMap::with_hasher(FxBuildHasher),
+        };
+        q.drive(|x, _| idx.insert(x.0 as u64, x));
+        idx
+    }
+    /// Add (or re-point) key `k`. `u64::MAX` is `NO_ID`, the FK hole, and
+    /// is never a key.
+    pub fn insert(&mut self, k: u64, r: Row<E>) {
+        assert!(k != u64::MAX, "u64::MAX is reserved (NO_ID)");
+        self.map.insert(k, r);
+    }
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+    /// The row under key `x`, if any.
+    #[inline]
+    pub fn lookup(&self, x: u64) -> Option<Row<E>> {
+        self.map.get(&x).copied()
+    }
+}
+impl<E: 'static> Query for PkIndex<E> {
+    type D = Key<E>;
+    type R = Row<E>;
+}
+impl<E: 'static> Member for PkIndex<E> {
+    #[inline]
+    fn member(&self, x: Key<E>) -> bool {
+        self.lookup(x.0).is_some()
+    }
+}
+impl<E: 'static> Probe for PkIndex<E> {
+    #[inline]
+    fn probe<K: FnMut(Row<E>)>(&self, x: Key<E>, mut k: K) {
+        if let Some(r) = self.lookup(x.0) {
+            k(r);
+        }
+    }
+    #[inline]
+    fn probe_any<K: FnMut(Row<E>) -> bool>(&self, x: Key<E>, mut k: K) -> bool {
+        self.lookup(x.0).is_some_and(|r| k(r))
     }
 }
 
@@ -3487,6 +3557,30 @@ mod tests {
             drive_all(&(&f).map(|v| v * 2)),
             vec![(0, 20), (1, 40), (2, 60)]
         );
+    }
+
+    // The index finds every key it was built from, at every size, and
+    // misses everything else — gaps, both edges, and the reserved MAX.
+    #[test]
+    fn pk_index_finds_exactly_its_keys() {
+        struct E;
+        for n in [0usize, 1, 7, 8, 9, 72, 73, 81, 1000, 5000] {
+            // keys 3, 5, 7, ... with row i at key 2i+3
+            let rows: Vec<Row<E>> = (0..n).map(|i| Row::new(2 * i + 3)).collect();
+            let bits = {
+                let mut b = Bitset::empty(Universe::<Row<E>>::new(2 * n + 4));
+                rows.iter().for_each(|&r| b.set(r));
+                b
+            };
+            let idx = PkIndex::<E>::of_rows(&bits);
+            assert_eq!(idx.len(), n);
+            for x in 0..(2 * n as u64 + 10) {
+                let want = (x >= 3 && x % 2 == 1 && ((x - 3) / 2) < n as u64).then(|| Row::new(x as usize));
+                assert_eq!(idx.lookup(x), want, "n={n} x={x}");
+            }
+            assert_eq!(idx.lookup(u64::MAX), None);
+            assert_eq!(idx.lookup(u64::MAX - 1), None);
+        }
     }
 
     // ===== non-dense entities (Key<E> + DictTable) =======================

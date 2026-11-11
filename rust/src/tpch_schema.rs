@@ -1,5 +1,5 @@
-use crate::engine::{Row, IntoQuery};
-use crate::loader::{Col, Rows, Loader, SparseRows, Str, sparse_rows};
+use crate::engine::IntoQuery;
+use crate::loader::{Col, Fk, Loader, Rows, SparseRows, Str, sparse_rows};
 use std::path::Path;
 
 // =====================================================================
@@ -33,7 +33,7 @@ pub struct Nation {
     #[primary_key]
     pub id: Rows<Self>,
     pub name: Col<Self, Str>,
-    pub region: Col<Self, Row<Region>>,
+    pub region: Fk<Self, Region>,
     pub comment: Col<Self, Str>,
 }
 
@@ -43,7 +43,7 @@ pub struct Supplier {
     pub id: Rows<Self>,
     pub name: Col<Self, Str>,
     pub address: Col<Self, Str>,
-    pub nation: Col<Self, Row<Nation>>,
+    pub nation: Fk<Self, Nation>,
     pub phone: Col<Self, Str>,
     pub acctbal: Col<Self, f64>,
     pub comment: Col<Self, Str>,
@@ -55,7 +55,7 @@ pub struct Customer {
     pub id: Rows<Self>,
     pub name: Col<Self, Str>,
     pub address: Col<Self, Str>,
-    pub nation: Col<Self, Row<Nation>>,
+    pub nation: Fk<Self, Nation>,
     pub phone: Col<Self, Str>,
     pub acctbal: Col<Self, f64>,
     pub mktsegment: Col<Self, Str>,
@@ -81,8 +81,8 @@ pub struct Part {
 pub struct PartSupp {
     #[primary_key]
     pub id: Rows<Self>,
-    pub part: Col<Self, Row<Part>>,
-    pub supplier: Col<Self, Row<Supplier>>,
+    pub part: Fk<Self, Part>,
+    pub supplier: Fk<Self, Supplier>,
     pub availqty: Col<Self, i64>,
     pub supplycost: Col<Self, f64>,
     pub comment: Col<Self, Str>,
@@ -92,7 +92,7 @@ pub struct PartSupp {
 pub struct Order {
     #[primary_key]
     pub id: SparseRows<Self>,
-    pub customer: Col<Self, Row<Customer>>,
+    pub customer: Fk<Self, Customer>,
     pub status: Col<Self, Str>,
     pub totalprice: Col<Self, f64>,
     pub date: Col<Self, i64>,
@@ -106,9 +106,9 @@ pub struct Order {
 pub struct Lineitem {
     #[primary_key]
     pub id: Rows<Self>,
-    pub order: Col<Self, Row<Order>>,
-    pub part: Col<Self, Row<Part>>,
-    pub supplier: Col<Self, Row<Supplier>>,
+    pub order: Fk<Self, Order>,
+    pub part: Fk<Self, Part>,
+    pub supplier: Fk<Self, Supplier>,
     pub number: Col<Self, i64>,
     pub quantity: Col<Self, f64>,
     pub extendedprice: Col<Self, f64>,
@@ -144,39 +144,58 @@ pub struct Tpch {
 // =====================================================================
 
 fn build(l: &mut Loader) -> Tpch {
+    // Every entity an FK points at gets a primary-key index (key → row),
+    // built from its primary key before any FK column that resolves
+    // through it. `Order`'s comes from its sparse slots, so only live
+    // orders are keys; a hole's `NO_ID` misses.
+    let region_id = l.rows("Region_name");
+    let nation_id = l.rows("Nation_name");
+    let supplier_id = l.rows("Supplier_name");
+    let customer_id = l.rows("Customer_name");
+    let part_id = l.rows("Part_name");
+    let region_pk = l.pk(region_id);
+    let nation_pk = l.pk(nation_id);
+    let supplier_pk = l.pk(supplier_id);
+    let customer_pk = l.pk(customer_id);
+    let part_pk = l.pk(part_id);
+    // A hole is a slot whose customer FK regen filled with NO_ID; the id
+    // space is that column's domain with those masked out.
+    let order_customer = l.fk("Order_customer", customer_pk);
+    let order_id = sparse_rows(&order_customer);
+    let order_pk = l.pk(order_id);
     Tpch {
         region: Region {
-            id: l.rows("Region_name"),
+            id: region_id,
             name: l.strs("Region_name"),
             comment: l.strs("Region_comment"),
         },
         nation: Nation {
-            id: l.rows("Nation_name"),
+            id: nation_id,
             name: l.strs("Nation_name"),
-            region: l.ids("Nation_region"),
+            region: l.fk("Nation_region", region_pk),
             comment: l.strs("Nation_comment"),
         },
         supplier: Supplier {
-            id: l.rows("Supplier_name"),
+            id: supplier_id,
             name: l.strs("Supplier_name"),
             address: l.strs("Supplier_address"),
-            nation: l.ids("Supplier_nation"),
+            nation: l.fk("Supplier_nation", nation_pk),
             phone: l.strs("Supplier_phone"),
             acctbal: l.f64s("Supplier_acctbal"),
             comment: l.strs("Supplier_comment"),
         },
         customer: Customer {
-            id: l.rows("Customer_name"),
+            id: customer_id,
             name: l.strs("Customer_name"),
             address: l.strs("Customer_address"),
-            nation: l.ids("Customer_nation"),
+            nation: l.fk("Customer_nation", nation_pk),
             phone: l.strs("Customer_phone"),
             acctbal: l.f64s("Customer_acctbal"),
             mktsegment: l.strs("Customer_mktsegment"),
             comment: l.strs("Customer_comment"),
         },
         part: Part {
-            id: l.rows("Part_name"),
+            id: part_id,
             name: l.strs("Part_name"),
             mfgr: l.strs("Part_mfgr"),
             brand: l.strs("Part_brand"),
@@ -188,19 +207,16 @@ fn build(l: &mut Loader) -> Tpch {
         },
         partsupp: PartSupp {
             id: l.rows("PartSupp_part"),
-            part: l.ids("PartSupp_part"),
-            supplier: l.ids("PartSupp_supplier"),
+            part: l.fk("PartSupp_part", part_pk),
+            supplier: l.fk("PartSupp_supplier", supplier_pk),
             availqty: l.i64s("PartSupp_availqty"),
             supplycost: l.f64s("PartSupp_supplycost"),
             comment: l.strs("PartSupp_comment"),
         },
         order: {
-            // A hole is a slot whose customer FK regen filled with NO_ID;
-            // the id space is that column's domain with those masked out.
-            let customer = l.ids("Order_customer");
             Order {
-                id: sparse_rows(&customer),
-                customer,
+                id: order_id,
+                customer: order_customer,
                 status: l.strs("Order_status"),
                 totalprice: l.f64s("Order_totalprice"),
                 date: l.i64s("Order_date"),
@@ -212,9 +228,9 @@ fn build(l: &mut Loader) -> Tpch {
         },
         lineitem: Lineitem {
             id: l.rows("Lineitem_order"),
-            order: l.ids("Lineitem_order"),
-            part: l.ids("Lineitem_part"),
-            supplier: l.ids("Lineitem_supplier"),
+            order: l.fk("Lineitem_order", order_pk),
+            part: l.fk("Lineitem_part", part_pk),
+            supplier: l.fk("Lineitem_supplier", supplier_pk),
             number: l.i64s("Lineitem_number"),
             quantity: l.f64s("Lineitem_quantity"),
             extendedprice: l.f64s("Lineitem_extendedprice"),

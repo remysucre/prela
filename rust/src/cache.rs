@@ -9,7 +9,7 @@
 // Strings and CSR payloads are returned as `&'static` borrows — the mmap
 // is leaked, so the bytes live for the program. No per-string allocation.
 
-use crate::engine::{Dense, Row, MultiRel, VecRel};
+use crate::engine::{Dense, Key, Row, MultiRel, VecRel};
 use crate::format::*;
 use memmap2::Mmap;
 use std::fs::File;
@@ -98,6 +98,14 @@ pub fn load_ids_in<D: Dense, T: 'static>(dir: &Path, name: &str) -> VecRel<D, Ro
     VecRel::new(cast_slice::<Row<T>>(bytes, HEADER_LEN, n).to_vec())
 }
 
+/// Dense FK column read as KEYS of `T` (not rows): same bytes as
+/// `load_ids_in`, reinterpreted through `Key<T>`'s `repr(transparent)`
+/// layout. Resolving a key to a row is the `PkIndex`'s job.
+pub fn load_keys_in<D: Dense, T: 'static>(dir: &Path, name: &str) -> VecRel<D, Key<T>> {
+    let (n, _, bytes) = open_in(dir, name, KIND_DENSE_I64);
+    VecRel::new(cast_slice::<Key<T>>(bytes, HEADER_LEN, n).to_vec())
+}
+
 /// A foreign-key column into entity `T`, storing `T::Fk` — `Row<T>` for a dense
 /// entity, `Key<T>` for a non-dense one (both `repr(transparent)` 8-byte ids,
 /// so the same `KIND_DENSE_I64` bytes reinterpret to whichever `T` declares).
@@ -169,6 +177,12 @@ pub fn load_multi_words_in<D: Dense>(dir: &Path, name: &str) -> MultiRel<D, usiz
 /// and values are slices into the leaked mmap.
 pub fn load_multi_ids_in<D: Dense, T: 'static>(dir: &Path, name: &str) -> MultiRel<D, Row<T>> {
     let (offsets, values) = csr_words::<Row<T>>(dir, name);
+    MultiRel::from_csr(offsets, values)
+}
+
+/// CSR with 8-byte word values, read as KEYS of `T` (zero-copy).
+pub fn load_multi_keys_in<D: Dense, T: 'static>(dir: &Path, name: &str) -> MultiRel<D, Key<T>> {
+    let (offsets, values) = csr_words::<Key<T>>(dir, name);
     MultiRel::from_csr(offsets, values)
 }
 
