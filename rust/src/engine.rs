@@ -710,10 +710,33 @@ pub struct Compose<A, B> {
     pub b: B,
 }
 
+pub struct ComposeLeft<A,B> {
+    pub a: A,
+    pub b: B,
+}
+
+pub struct ComposeRight<A,B> {
+    pub a: A,
+    pub b: B,
+}
+
+
 impl<A: Query, B: Query<D = A::R>> Query for Compose<A, B> {
     type D = A::D;
     type R = B::R;
 }
+
+impl<A: Query, B: Query<D = A::R>> Query for ComposeLeft<A, B> {
+    type D = A::D;
+    type R = B::R;
+}
+
+impl<A: Query, B: Query<D = A::R>> Query for ComposeRight<A, B> {
+    type D = A::D;
+    type R = B::R;
+}
+
+
 impl<A: Drive, B: Probe<D = A::R>> Drive for Compose<A, B> {
     #[inline(always)]
     fn drive<K: FnMut(A::D, B::R)>(&self, mut k: K) {
@@ -898,6 +921,16 @@ impl<A: Drive, B: Drive<D = A::D, R = A::R>> Drive for Union<A, B> {
 pub struct Prod<A, B> {
     pub a: A,
     pub b: B,
+}
+
+pub struct ProdRight<A, B> {
+    pub a: A,
+    pub b: B,
+}
+
+impl<A: Query, B: Query<D = A::D>> Query for ProdRight<A, B> {
+    type D = A::D;
+    type R = (A::R, B::R);
 }
 
 impl<A: Query, B: Query<D = A::D>> Query for Prod<A, B> {
@@ -1767,6 +1800,39 @@ pub trait QueryExt: IntoQuery + Sized {
         B::Q: Query<D = ROf<Self>>,
     {
         Compose {
+            a: self.iq(),
+            b: b.iq(),
+        }
+    }
+
+    #[inline(always)]
+    fn select_left<B: IntoQuery>(self, b: B) -> ComposeLeft<Self::Q, B::Q>
+    where
+        B::Q: Query<D = ROf<Self>>,
+    {
+        ComposeLeft {
+            a: self.iq(),
+            b: b.iq(),
+        }
+    }
+
+    #[inline(always)]
+    fn select_right<B: IntoQuery>(self, b: B) -> ComposeRight<Self::Q, B::Q>
+    where
+        B::Q: Query<D = ROf<Self>>,
+    {
+        ComposeRight {
+            a: self.iq(),
+            b: b.iq(),
+        }
+    }
+
+      #[inline(always)]
+    fn and_right<B: IntoQuery>(self, b: B) -> ProdRight<Self::Q, B::Q>
+    where
+        B::Q: Query<D = ROf<Self>>,
+    {
+        ProdRight {
             a: self.iq(),
             b: b.iq(),
         }

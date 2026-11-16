@@ -87,7 +87,7 @@ pub fn entries(db: &'static JobFiles) -> Vec<Entry> {
 
     let q1a = move || {
         db.movie.with(data.select(data_ty).eq("top 250 rank"))
-                .select(company.with(company_ty.eq("production companies"))
+                .select_left(company.with(company_ty.eq("production companies"))
                                .select(company_note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)")
                                                    .rx(r"\(co-production\)|\(presents\)"))
                         .and(title)

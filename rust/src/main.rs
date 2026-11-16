@@ -18,6 +18,8 @@ fn main() {
         "tpch_loaded" => run_tpch_loaded(),
         #[cfg(feature = "job_loaded")]
         "job_loaded" => run_job_loaded(),
+        #[cfg(feature = "job_loaded_optim")]
+        "job_loaded_optim" => run_job_loaded_optim(),
         _ => run_job(),
     }
 }
@@ -140,6 +142,36 @@ fn run_job_loaded() {
 
     let qs = job_queries::queries_loaded::entries(db);
     eprintln!("{} queries registered (loaded)", qs.len());
+
+    run_suite(
+        db,
+        &qs,
+        |round, name, dt, got| {
+            if round == 2 || dt > 0.5 {
+                println!("{:<5} ok  {:>8.4}s  {}", name, dt, got);
+            }
+        },
+        |name, dt, got, oracle| {
+            println!("{:<5} DIFF {:>8.4}s  {}", name, dt, got);
+            println!("        oracle: {oracle}");
+        },
+    );
+}
+
+/// As `run_job_loaded`, over queries_loaded_optimized.rs: the same queries with
+/// hand-chosen load plans (select_left / select_right, ...). Same readout.
+#[cfg(feature = "job_loaded_optim")]
+fn run_job_loaded_optim() {
+    use prela::file_schema::Catalog;
+    use prela::job_file_schema::{JobFiles, job};
+
+    let t = std::time::Instant::now();
+    let mut catalog = Catalog::open("../data/imdb/parquet");
+    let db: &'static JobFiles = Box::leak(Box::new(job(&mut catalog)));
+    eprintln!("schema: {:.2}s", t.elapsed().as_secs_f32());
+
+    let qs = job_queries::queries_loaded_optimized::entries(db);
+    eprintln!("{} queries registered (loaded, optimized)", qs.len());
 
     run_suite(
         db,

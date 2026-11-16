@@ -28,7 +28,7 @@ use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use arrow::array::{Array, ArrayRef, Float64Array, Int64Array, StringArray};
+use arrow::array::{Array, ArrayRef, BooleanArray, Float64Array, Int64Array, StringArray};
 use arrow::compute::cast;
 use arrow::datatypes::DataType;
 use prela::engine::*;
@@ -121,6 +121,13 @@ pub trait ParquetType: Copy + PartialEq + 'static {
     fn as_key(self) -> Option<i64> {
         None
     }
+    /// Filter: one bool per row, `p` on the row's value. Nothing is kept, so by
+    /// default it just decodes (fine for numbers: copied, not allocated).
+    fn test_array(a: &ArrayRef, p: &Pred<Self>) -> BooleanArray {
+        let mut vals = Vec::new();
+        Self::from_array(a, &mut vals);
+        vals.into_iter().map(|v| Some(p(v))).collect()
+    }
 }
 
 impl ParquetType for i64 {
@@ -148,6 +155,22 @@ impl ParquetType for Str {
     fn from_array(a: &ArrayRef, out: &mut Vec<Self>) {
         let strings = a.as_any().downcast_ref::<StringArray>().unwrap();
         out.extend((0..strings.len()).map(|i| leak_str(strings.value(i))));
+    }
+    // Test the strings where they are (in the batch) instead of leaking a copy
+    // of each, as `from_array` must for strings that are kept.
+    fn test_array(a: &ArrayRef, p: &Pred<Self>) -> BooleanArray {
+        let strings = a.as_any().downcast_ref::<StringArray>().unwrap();
+        strings
+            .iter() // Option<&str>: None for a NULL, which stays None = row not selected
+            .map(|s| {
+                s.map(|s| {
+                    // SAFETY: `s` borrows from the batch, which outlives this call, and
+                    // `p` only reads it and returns (eq, rx, is_in, ...); it never keeps it.
+                    let s: &'static str = unsafe { std::mem::transmute::<&str, &'static str>(s) };
+                    p(s)
+                })
+            })
+            .collect()
     }
 }
 
@@ -274,15 +297,11 @@ pub type Pred<T> = Arc<dyn Fn(T) -> bool + Send + Sync>;
 // A closure predicate as a ColumnFilter on `column`: decode the column into
 // Rust values and call `p` on each row. Unlike a PredicateExpr this is one call
 // per row, but it works for any predicate (eq, ge, rx, filt, ...).
-// Caveat: for `Str` columns, `from_array` leaks every string, rejected rows included.
+// `test_array` reads `Str` values in place, so testing leaks nothing.
 fn to_predicate<T: ParquetType>(column: &'static str, p: Pred<T>) -> ColumnFilter {
     ColumnFilter {
         columns: vec![column.to_string()], // decode only this column to evaluate me
-        eval: Box::new(move |batch| {
-            let mut vals: Vec<T> = Vec::new();
-            T::from_array(batch.column_by_name(column).unwrap(), &mut vals);
-            Ok(vals.into_iter().map(|v| Some(p(v))).collect()) // one bool per row
-        }),
+        eval: Box::new(move |batch| Ok(T::test_array(batch.column_by_name(column).unwrap(), &p))),
     }
 }
 
@@ -325,9 +344,12 @@ impl<E: 'static, T: ParquetType> Load for ColumnRef<E, T> {
         );*/
 
         let blooms = if selective {
-            let kb = KeyFilter::from_keys(row_count, keys.iter().copied());
+            //let kb = KeyFilter::from_keys(row_count, keys.iter().copied());
+            let kb = KeyFilter::exact(exact_from_keys::<usize>(&keys));
             let vb = if T::IS_KEY {
-                KeyFilter::from_keys(row_count, vals.iter().filter_map(|v| v.as_key()))
+                //KeyFilter::from_keys(row_count, vals.iter().filter_map(|v| v.as_key()))
+                let ids: Vec<i64> = vals.iter().filter_map(|v| v.as_key()).collect();
+                KeyFilter::exact(exact_from_keys::<usize>(&ids))
             } else {
                 KeyFilter::All
             };
@@ -366,6 +388,28 @@ impl<E: 'static, T: ParquetType> Load for &ColumnRef<E, T> {
 // a.select(b) — a: D -> M, b: M -> R, joined on a.2 = b.1.
 
 // movie.select(title).eq("A")
+impl<A, B> Load for ComposeRight<A, B>
+where
+    A: Load,
+    B: Load<D = A::R>,
+    B::Out: Probe,
+{
+    type Out = Compose<A::Out, B::Out>;
+    fn load(
+        self,
+        key_filter: KeyFilter,
+        val_filter: KeyFilter,
+        preds: Vec<Pred<Self::R>>,
+    ) -> (Self::Out, (KeyFilter, KeyFilter)) {
+        // doing a rhs load first 
+        let (b, (bk, bv)) = self.b.load(KeyFilter::All, val_filter, preds);
+        let (a, (ak, _av)) = self.a.load(key_filter, bk, Vec::new());
+        //let (a, (ak, av)) = self.a.load(key_filter, KeyFilter::All, Vec::new()); // top-down: a first
+        //let (b, (_bk, bv)) = self.b.load(av, val_filter, preds); // b's KEYS ⊆ a's VALUES; preds follow the values
+        (Compose { a, b }, (ak, bv)) // my D-side is a's, my R-side is b's
+    }
+}
+
 impl<A, B> Load for Compose<A, B>
 where
     A: Load,
@@ -388,6 +432,25 @@ where
     }
 }
 
+impl<A, B> Load for ComposeLeft<A, B>
+where
+    A: Load,
+    B: Load<D = A::R>,
+    B::Out: Probe,
+{
+    type Out = Compose<A::Out, B::Out>;
+    fn load(
+        self,
+        key_filter: KeyFilter,
+        val_filter: KeyFilter,
+        preds: Vec<Pred<Self::R>>,
+    ) -> (Self::Out, (KeyFilter, KeyFilter)) {
+        let (a, (ak, av)) = self.a.load(key_filter, KeyFilter::All, Vec::new()); // top-down: a first
+        let (b, (_bk, bv)) = self.b.load(av, val_filter, preds); // b's KEYS ⊆ a's VALUES; preds follow the values
+        (Compose { a, b }, (ak, bv)) // my D-side is a's, my R-side is b's
+    }
+}
+
 // A `Lookup` field used by reference (`let Movie { kind, .. } = &db.movie;`,
 // jobFileSchema.rs). Compose isn't Copy, but its halves are (two ColumnRefs):
 // copy them into an owned Compose and load that.
@@ -404,7 +467,47 @@ where
         val_filter: KeyFilter,
         preds: Vec<Pred<Self::R>>,
     ) -> (Self::Out, (KeyFilter, KeyFilter)) {
+        if preds.is_empty() && matches!(val_filter, KeyFilter::All) {
+        // nothing to filter the names by: follow the keys (top-down)
+        ComposeLeft { a: self.a, b: self.b }.load(key_filter, val_filter, preds)
+    } else {
+        // a predicate on the name: find the few ids first (bottom-up)
         Compose { a: self.a, b: self.b }.load(key_filter, val_filter, preds)
+    }
+    }
+}
+
+impl<A, B> Load for &ComposeLeft<A, B>
+where
+    A: Load + Copy,
+    B: Load<D = A::R> + Copy,
+    B::Out: Probe,
+{
+    type Out = Compose<A::Out, B::Out>;
+    fn load(
+        self,
+        key_filter: KeyFilter,
+        val_filter: KeyFilter,
+        preds: Vec<Pred<Self::R>>,
+    ) -> (Self::Out, (KeyFilter, KeyFilter)) {
+        ComposeLeft { a: self.a, b: self.b }.load(key_filter, val_filter, preds)
+    }
+}
+
+impl<A, B> Load for &ComposeRight<A, B>
+where
+    A: Load + Copy,
+    B: Load<D = A::R> + Copy,
+    B::Out: Probe,
+{
+    type Out = Compose<A::Out, B::Out>;
+    fn load(
+        self,
+        key_filter: KeyFilter,
+        val_filter: KeyFilter,
+        preds: Vec<Pred<Self::R>>,
+    ) -> (Self::Out, (KeyFilter, KeyFilter)) {
+        ComposeRight { a: self.a, b: self.b }.load(key_filter, val_filter, preds)
     }
 }
 
@@ -508,6 +611,29 @@ where
     ) -> (Self::Out, (KeyFilter, KeyFilter)) {
         let (a, (ak, _)) = self.a.load(key_filter.clone(), KeyFilter::All, Vec::new());
         let (b, (bk, _)) = self.b.load(key_filter.and(ak.clone()), KeyFilter::All, Vec::new()); 
+
+        let ab_k = ak.and(bk);
+        (Prod { a, b }, (ab_k, KeyFilter::All)) 
+    }
+}
+
+impl<A, B> Load for ProdRight<A, B>
+where
+    A: Load,
+    B: Load<D = A::D>,
+    B::Out: Probe,
+{
+    type Out = Prod<A::Out, B::Out>;
+    fn load(
+        self,
+        key_filter: KeyFilter,
+        _val_filter: KeyFilter,     // values are (x, y) pairs: fits neither side's scan
+        _preds: Vec<Pred<Self::R>>, // likewise; the final drive applies them exactly
+    ) -> (Self::Out, (KeyFilter, KeyFilter)) {
+        // and itself isn't really symmetric in context so we provide this method we can use explicitly 
+        // when there is an end predicate on the right
+        let (b, (bk, _)) = self.b.load(key_filter.clone(), KeyFilter::All, Vec::new()); 
+        let (a, (ak, _)) = self.a.load(key_filter.and(bk.clone()), KeyFilter::All, Vec::new());
 
         let ab_k = ak.and(bk);
         (Prod { a, b }, (ab_k, KeyFilter::All)) 
@@ -712,3 +838,5 @@ where
         self.b.keyload(key_filter.and(KeyFilter::exact(ka)), KeyFilter::All, Vec::new())
     }
 }
+
+

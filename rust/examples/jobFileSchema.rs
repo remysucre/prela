@@ -20,14 +20,15 @@
 // `movie_id -> keyword_id`), `Movie.aka` (aka_title's `movie_id -> title`) and
 // `Person.alias` (aka_name's `person_id -> name`). Two rows can then give the
 // same pair, and `union` keeps it once. That cannot change a JOB answer, which
-// is a MIN over sets of values, and nothing here rebuilds an in-memory db
-// from the sinks (there is no `to_memory`).
+// is a MIN over sets of values. `to_memory` (below) rebuilds an in-memory db
+// from the sinks, for plans that load first and then query in memory
+// (job_queries/queries_loaded_optimized.rs).
 //
 // Ids are the raw file ids (regen's cache shifts them to 0-based; the loader
 // does not), and JOB's answers contain no ids, so nothing needs shifting.
 
 use prela::engine::*;
-use prela::loader::Str;
+use prela::loader::{Set, SparseKey, Str};
 
 use crate::file_schema::Catalog;
 use crate::trial_loader::ColumnRef;
@@ -273,6 +274,220 @@ pub fn job(c: &mut Catalog) -> JobFiles {
             },
         },
     }
+}
+
+// ===== In memory: what the sinks become (to_memory) ==============================
+//
+// As fileSchema.rs's Mem structs: one struct per entity, the same field names,
+// so a query over the loaded data reads the same. Entity tags are written out
+// (`Movie`, not `Self`), so the ids are the `Id<Movie>` the ColumnRefs load.
+// A Lookup stays two relations composed.
+
+pub type MemLookup<E, L, T> = Compose<Set<E, Id<L>>, Set<L, T>>;
+
+#[derive(IntoQuery)]
+pub struct MemMovie {
+    #[primary_key]
+    pub id: SparseKey<Movie>,
+    pub title: Set<Movie, Str>,
+    pub kind: MemLookup<Movie, KindType, Str>,
+    pub production_year: Set<Movie, i64>,
+    pub episode_nr: Set<Movie, i64>,
+    pub keyword: MemLookup<Movie, Keyword, Str>,
+    pub company: Set<Movie, Id<Company>>,
+    pub cast: Set<Movie, Id<Cast>>,
+    pub info: Set<Movie, Id<Info>>,
+    pub data: Set<Movie, Id<Data>>,
+    pub complete_cast: Set<Movie, Id<CompleteCast>>,
+    pub link: Set<Movie, Id<MovieLink>>,
+    pub linked_by: Set<Movie, Id<MovieLink>>,
+    pub aka: Set<Movie, Str>,
+}
+
+#[derive(IntoQuery)]
+pub struct MemCast {
+    #[primary_key]
+    pub id: SparseKey<Cast>,
+    pub person: Set<Cast, Id<Person>>,
+    pub role: MemLookup<Cast, RoleType, Str>,
+    pub note: Set<Cast, Str>,
+    pub character: MemLookup<Cast, CharName, Str>,
+}
+
+#[derive(IntoQuery)]
+pub struct MemPerson {
+    #[primary_key]
+    pub id: SparseKey<Person>,
+    pub name: Set<Person, Str>,
+    pub gender: Set<Person, Str>,
+    pub alias: Set<Person, Str>,
+    pub bio: Set<Person, Id<PersonInfo>>,
+    pub name_pcode_cf: Set<Person, Str>,
+}
+
+#[derive(IntoQuery)]
+pub struct MemCompany {
+    #[primary_key]
+    pub id: SparseKey<Company>,
+    pub name: MemLookup<Company, CompanyName, Str>,
+    pub country: MemLookup<Company, CompanyName, Str>,
+    pub note: Set<Company, Str>,
+    pub ty: MemLookup<Company, CompanyType, Str>,
+}
+
+#[derive(IntoQuery)]
+pub struct MemInfo {
+    #[primary_key]
+    pub id: SparseKey<Info>,
+    pub info: Set<Info, Str>,
+    pub ty: MemLookup<Info, InfoType, Str>,
+    pub note: Set<Info, Str>,
+}
+
+#[derive(IntoQuery)]
+pub struct MemData {
+    #[primary_key]
+    pub id: SparseKey<Data>,
+    pub text: Set<Data, Str>,
+    pub ty: MemLookup<Data, InfoType, Str>,
+}
+
+#[derive(IntoQuery)]
+pub struct MemPersonInfo {
+    #[primary_key]
+    pub id: SparseKey<PersonInfo>,
+    pub info: Set<PersonInfo, Str>,
+    pub ty: MemLookup<PersonInfo, InfoType, Str>,
+    pub note: Set<PersonInfo, Str>,
+}
+
+#[derive(IntoQuery)]
+pub struct MemMovieLink {
+    #[primary_key]
+    pub id: SparseKey<MovieLink>,
+    pub target: Set<MovieLink, Id<Movie>>,
+    pub ty: MemLookup<MovieLink, LinkType, Str>,
+}
+
+#[derive(IntoQuery)]
+pub struct MemCompleteCast {
+    #[primary_key]
+    pub id: SparseKey<CompleteCast>,
+    pub status: MemLookup<CompleteCast, CompCastType, Str>,
+    pub subject: MemLookup<CompleteCast, CompCastType, Str>,
+}
+
+pub struct MemJob {
+    pub movie: MemMovie,
+    pub cast: MemCast,
+    pub person: MemPerson,
+    pub company: MemCompany,
+    pub info: MemInfo,
+    pub data: MemData,
+    pub person_info: MemPersonInfo,
+    pub movie_link: MemMovieLink,
+    pub complete_cast: MemCompleteCast,
+}
+
+impl JobFiles {
+    /// The loaded columns as an in-memory db. An entity's `id` is exactly its
+    /// id column's loaded keys (not the union of every column's keys), so a
+    /// plan driving `mem.movie` drives only the movies the load kept.
+    /// Unloaded columns come back empty (quietly: a JOB plan loads a handful
+    /// of the ~60 columns). The sinks are left as they are; `clear()` resets them.
+    pub fn to_memory(&self) -> MemJob {
+        let (m, c, p) = (&self.movie, &self.cast, &self.person);
+        let (co, i, d) = (&self.company, &self.info, &self.data);
+        let (pi, ml, cc) = (&self.person_info, &self.movie_link, &self.complete_cast);
+        MemJob {
+            movie: MemMovie {
+                id: mem_key(&m.id.keys()),
+                title: mem(&m.title),
+                kind: mem_lookup(&m.kind),
+                production_year: mem(&m.production_year),
+                episode_nr: mem(&m.episode_nr),
+                keyword: mem_lookup(&m.keyword),
+                company: mem(&m.company),
+                cast: mem(&m.cast),
+                info: mem(&m.info),
+                data: mem(&m.data),
+                complete_cast: mem(&m.complete_cast),
+                link: mem(&m.link),
+                linked_by: mem(&m.linked_by),
+                aka: mem(&m.aka),
+            },
+            cast: MemCast {
+                id: mem_key(&c.id.keys()),
+                person: mem(&c.person),
+                role: mem_lookup(&c.role),
+                note: mem(&c.note),
+                character: mem_lookup(&c.character),
+            },
+            person: MemPerson {
+                id: mem_key(&p.id.keys()),
+                name: mem(&p.name),
+                gender: mem(&p.gender),
+                alias: mem(&p.alias),
+                bio: mem(&p.bio),
+                name_pcode_cf: mem(&p.name_pcode_cf),
+            },
+            company: MemCompany {
+                id: mem_key(&co.id.keys()),
+                name: mem_lookup(&co.name),
+                country: mem_lookup(&co.country),
+                note: mem(&co.note),
+                ty: mem_lookup(&co.ty),
+            },
+            info: MemInfo {
+                id: mem_key(&i.id.keys()),
+                info: mem(&i.info),
+                ty: mem_lookup(&i.ty),
+                note: mem(&i.note),
+            },
+            data: MemData { id: mem_key(&d.id.keys()), text: mem(&d.text), ty: mem_lookup(&d.ty) },
+            person_info: MemPersonInfo {
+                id: mem_key(&pi.id.keys()),
+                info: mem(&pi.info),
+                ty: mem_lookup(&pi.ty),
+                note: mem(&pi.note),
+            },
+            movie_link: MemMovieLink {
+                id: mem_key(&ml.id.keys()),
+                target: mem(&ml.target),
+                ty: mem_lookup(&ml.ty),
+            },
+            complete_cast: MemCompleteCast {
+                id: mem_key(&cc.id.keys()),
+                status: mem_lookup(&cc.status),
+                subject: mem_lookup(&cc.subject),
+            },
+        }
+    }
+}
+
+// A column's sink as a relation: a view of the loaded rows (no copy), or
+// empty if the column wasn't loaded. (`ColumnRef::loaded` without its warning.)
+fn mem<E: 'static, T: Copy + 'static>(c: &ColumnRef<E, T>) -> Set<E, T> {
+    match &*c.sink.borrow() {
+        Some(rel) => MultiRel::from_csr(rel.offsets, rel.v),
+        None => MultiRel::from_pairs(0, []),
+    }
+}
+
+fn mem_lookup<E: 'static, L: 'static, T: Copy + 'static>(l: &Lookup<E, L, T>) -> MemLookup<E, L, T> {
+    Compose { a: mem(&l.a), b: mem(&l.b) }
+}
+
+// The ids of E present in memory, as a SparseKey over 0..=max id with only
+// these ids valid (as fileSchema.rs's `mem_key`). The Bitset is leaked because
+// SparseUniverse holds a `&'static`.
+fn mem_key<E: 'static>(ids: &[usize]) -> SparseKey<E> {
+    let n = ids.iter().max().map_or(0, |&m| m + 1);
+    let mut valid: Bitset<Id<E>> = Bitset::empty(Universe::<Id<E>>::new(n));
+    for &i in ids {
+        valid.set(Id::new(i));
+    }
+    SparseUniverse::new(n, Box::leak(Box::new(valid)))
 }
 
 // ===== clear =====================================================================
