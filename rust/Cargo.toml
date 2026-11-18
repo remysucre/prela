@@ -14,8 +14,8 @@ memchr   = "2"
 memmap2  = "0.9"
 regex    = "1.10"
 smallvec = "1"
-parquet  = { version = "53", features = ["arrow"], optional = true }
-arrow    = { version = "53", optional = true }
+parquet  = { version = "60", features = ["arrow"], optional = true }
+arrow    = { version = "60", optional = true }
 
 [features]
 default = []

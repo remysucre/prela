@@ -35,6 +35,16 @@ use prela::engine::*;
 use prela::join_tree::{Bloom, ColumnFilter, scan};
 use prela::loader::Str;
 
+use std::fs::File;
+use arrow::record_batch::RecordBatch;
+use parquet::arrow::arrow_reader::{
+    ArrowPredicate, ArrowPredicateFn, ArrowReaderOptions, ParquetRecordBatchReader,
+    ParquetRecordBatchReaderBuilder, RowFilter, RowSelection, RowSelector,
+};
+use parquet::file::metadata::PageIndexPolicy;
+use arrow::datatypes::{DataType, Field};
+use parquet::arrow::RowNumber;
+
 // ===== 1. KeyFilter: filters passed down, Blooms passed up ====================
 
 // A filter on one column of join keys. `All` lets every key through; `Blooms`
@@ -230,6 +240,24 @@ pub struct ColumnRef<E: 'static, T: Copy + 'static> {
     _t: PhantomData<(E, T)>,
 }
 
+// This should effectively just be an inherticance of columnRef
+pub struct PrimaryColRef<E: 'static, T: Copy + 'static> {
+    pub path: &'static str,
+    pub key_col: &'static str,
+    pub val_col: &'static str,
+    pub sink: &'static Sink<E, T>,
+    _t: PhantomData<(E, T)>,
+}
+
+pub struct ForeignColRef<E: 'static, T: Copy + 'static> {
+    pub path: &'static str,
+    pub foreignpath: &'static str, // This foreign key should know which file it points to
+    pub key_col: &'static str,
+    pub val_col: &'static str,
+    pub sink: &'static Sink<E, T>,
+    _t: PhantomData<(E, T)>,
+}
+
 // Written by hand: `#[derive(Clone, Copy)]` would demand `E: Copy`, and the
 // entity tags (`Nation`, ...) are not.
 impl<E: 'static, T: Copy + 'static> Clone for ColumnRef<E, T> {
@@ -326,7 +354,7 @@ fn to_predicate<T: ParquetType>(column: &'static str, p: Pred<T>) -> ColumnFilte
     }
 }
 
-
+// This is for a general value Column which just need sto output MultiRel(physical row_ids, values)
 impl<E: 'static, T: ParquetType> Load for ColumnRef<E, T> {
     type Out = MultiRel<Id<E>, T>;
     fn load(self, key_filter: KeyFilter, val_filter: KeyFilter, preds: Vec<Pred<T>>) -> (Self::Out, (KeyFilter, KeyFilter)) {
@@ -352,6 +380,8 @@ impl<E: 'static, T: ParquetType> Load for ColumnRef<E, T> {
         for batch in reader {
             let batch = batch.unwrap();
             // no longer reading keys we need to extract the physical IDs
+            let rows = batch.column_by_name("row_number").unwrap();   // Int64Array of file positions
+            keys.extend(keys_i64(rows).values().iter().copied());
             T::from_array(batch.column_by_name(self.val_col).unwrap(), &mut vals);
         }
         let file = self.path.rsplit('/').next().unwrap();
@@ -394,6 +424,153 @@ impl<E: 'static, T: ParquetType> Load for ColumnRef<E, T> {
         (rel, blooms)
     }
 }
+
+
+
+
+impl<E: 'static, T: ParquetType> Load for PrimaryColRef<E, T> {
+    type Out = HashMap<Id<E>, T>;
+    fn load(self, key_filter: KeyFilter, val_filter: KeyFilter, preds: Vec<Pred<T>>) -> (Self::Out, (KeyFilter, KeyFilter)) {
+        let mut filters = Vec::new();
+
+        // rather than pushing the key filter we turn it into a selection key_filter.push_filters(self.key_col, &mut filters);
+
+        val_filter.push_filters(self.val_col, &mut filters);
+        // trying to change the order
+        for p in preds {
+            filters.push(to_predicate(self.val_col, p));
+        }
+        // With no filters every row survives, and a Bloom over all keys rules out nothing.
+        let selective = !filters.is_empty();
+        let rows = key_filter.to_selection();
+
+        let mut cols = vec![self.val_col.to_string()]; // we're only ever readindg just this col
+        let (reader, row_count) = scan(self.path, filters, rows, &cols);
+
+        // Only rows passing all filters arrive here.
+        let mut keys: Vec<i64> = Vec::new(); 
+        let mut vals: Vec<T> = Vec::new();
+        for batch in reader {
+            let batch = batch.unwrap();
+            // no longer reading keys we need to extract the physical IDs
+            let rows = batch.column_by_name("row_number").unwrap();   // Int64Array of file positions
+            keys.extend(keys_i64(rows).values().iter().copied());
+            T::from_array(batch.column_by_name(self.val_col).unwrap(), &mut vals);
+        }
+        let file = self.path.rsplit('/').next().unwrap();
+
+
+        // the bloom filter here is a bit finnicky
+
+        let n = keys.iter().max().map_or(0, |&m| m as usize + 1);
+        // up to this ppint it's all the same except that rather than returning (row_id, table_ids)
+        // it should be the other way around: Hashmap(table_ids, row_id)
+        
+        let rel = HashMap::from_pairs(n, (vals, keys));
+
+
+        // Also keep the rows in this column's sink, for `to_memory`. A column
+        // loaded again (another occurrence in the query) is merged, not replaced.
+        let mut slot = self.sink.borrow_mut();
+        let merged = match slot.take() {
+            None => HashMap::from_csr(rel.offsets, rel.v), // same slices as `rel`, no copy
+            Some(old) => union(&old, &rel),
+        };
+        *slot = Some(merged);
+        drop(slot);
+
+        (rel, blooms)
+    }
+}
+
+
+
+
+impl<E: 'static, T: ParquetType> Load for ForeignColRef<E, T> {
+    type Out = HashMap<Id<E>, T>;
+    fn load(self, key_filter: KeyFilter, val_filter: KeyFilter, preds: Vec<Pred<T>>) -> (Self::Out, (KeyFilter, KeyFilter)) {
+        let mut filters = Vec::new();
+
+        // This needs a hop-load: first we load our table IDs
+        // then we go ahead and load the foreign key IDs from our foreign path 
+        // by filtering on them as predicates 
+        // so we want to have (row_ids from table 1,row_ids corresponding in table 2)
+
+        val_filter.push_filters(self.val_col, &mut filters);
+        for p in preds {
+            filters.push(to_predicate(self.val_col, p));
+        }
+        // With no filters every row survives, and a Bloom over all keys rules out nothing.
+        let selective = !filters.is_empty();
+        let rows = key_filter.to_selection();
+
+        let mut cols = vec![self.val_col.to_string()]; // we're only ever readindg just this col
+        let (reader, row_count) = scan(self.path, filters, rows, &cols);
+
+        // Only rows passing all filters arrive here.
+        let mut keys: Vec<i64> = Vec::new(); 
+        let mut vals: Vec<T> = Vec::new();
+        for batch in reader {
+            let batch = batch.unwrap();
+            // no longer reading keys we need to extract the physical IDs
+            let rows = batch.column_by_name("row_number").unwrap();   // Int64Array of file positions
+            keys.extend(keys_i64(rows).values().iter().copied());
+            T::from_array(batch.column_by_name(self.val_col).unwrap(), &mut vals);
+        }
+        
+        // we have obtained our physical keys, now we need to go ahead and load them 
+
+        let fk_filter = KeyFilter::exact(vals); // this is the bitset of vals --fks to keep 
+
+        f_keys = Vec::new();
+        cols = vec![self.foreign_col.to_string()];
+        let (foreign_reader, forein_row_count) = scan(self.foreign_path, fk_filter, None, &cols);
+        for f_batch in foreign_reader {
+            let f_batch = f_batch.unwrap();
+            // no longer reading keys we need to extract the physical IDs
+            let f_rows = f_batch.column_by_name("row_number").unwrap();   // Int64Array of file positions
+            f_keys.extend(keys_i64(rows).values().iter().copied());
+            //T::from_array(batch.column_by_name(self.val_col).unwrap(), &mut vals); we dont acc care about foreign physical IDs
+        }
+
+
+        let blooms = if selective {
+            //let kb = KeyFilter::from_keys(row_count, keys.iter().copied());
+            let kb = KeyFilter::exact(exact_from_keys::<usize>(&keys));
+            let vb = if T::IS_KEY {
+                //KeyFilter::from_keys(row_count, vals.iter().filter_map(|v| v.as_key()))
+                let ids: Vec<i64> = vals.iter().filter_map(|v| v.as_key()).collect();
+                KeyFilter::exact(exact_from_keys::<usize>(&ids))
+            } else {
+                KeyFilter::All
+            };
+            (kb, vb)
+        } else {
+            (KeyFilter::All, KeyFilter::All)
+        };
+
+        let n = keys.iter().max().map_or(0, |&m| m as usize + 1);
+        // up to this ppint it's all the same except that rather than returning (row_id, table_ids)
+        // it should be the other way around: Hashmap(table_ids, row_id)
+        
+        let rel = HashMap::from_pairs(n, (vals, keys));
+
+
+        // Also keep the rows in this column's sink, for `to_memory`. A column
+        // loaded again (another occurrence in the query) is merged, not replaced.
+        let mut slot = self.sink.borrow_mut();
+        let merged = match slot.take() {
+            None => HashMap::from_csr(rel.offsets, rel.v), // same slices as `rel`, no copy
+            Some(old) => union(&old, &rel),
+        };
+        *slot = Some(merged);
+        drop(slot);
+
+        (rel, blooms)
+    }
+}
+
+
 
 // Queries hold leaves by reference (`let Nation { name, .. } = &db.nation;`).
 impl<E: 'static, T: ParquetType> Load for &ColumnRef<E, T> {
@@ -873,10 +1050,16 @@ pub fn scan(
 ) -> (ParquetRecordBatchReader, usize) {
     let file = File::open(path).expect(path);
     // The page index lets Parquet skip whole pages that a filter rules out.
-    let options = ArrowReaderOptions::new().with_page_index(true);
+    let row_number = Arc::new(
+    Field::new("row_number", DataType::Int64, false).with_extension_type(RowNumber),
+    );
+
+    let mut options = ArrowReaderOptions::new().with_page_index(true);
+    options.ArrowReaderOptions.with_virtual_columns(vec![row_number]);
+
     
     let builder = ParquetRecordBatchReaderBuilder::try_new_with_options(file, options).unwrap();
-    builder = builder.with_row_selection(rows);
+    
     let row_count = footer_rows(&builder);
 
     let mut predicates: Vec<Box<dyn ArrowPredicate>> = Vec::new();
@@ -888,6 +1071,7 @@ pub fn scan(
     let out_mask = mask(&builder, cols);
     let reader = builder
         .with_projection(out_mask)
+        .with_row_selection(rows)
         .with_row_filter(RowFilter::new(predicates))
         .build()
         .unwrap();
