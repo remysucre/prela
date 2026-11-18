@@ -1,3 +1,89 @@
+- fix predicate pushdown 
+- change to a mutating design 
+- remove weird restrictions 
+- add a right and a left load (later)
+
+
+
+
+
+
+
+
+movie.select(company.select(country).eq("USA))
+
+movie.with(company.with(country.eq("USA")))
+.select(title.and(cast.select(person).select(name)))
+
+
+
+movie.select(company).select(country)       (company_id, country) 
+
+movie.select(movie_company).select(company_id_to_company_row).select(company_country).select(country_id_to_country_row)
+
+
+(movie_id, company_id)
+
+
+                        Compose
+                 Restrict           title.and(cast.select(person).select(name))
+                                            
+
+            movie       company.with(country.eq("USA"))  
+
+
+cast.select(person).select(name)
+
+                        compose
+                  compose              name
+            cast            person
+
+movie.with(title.eq("H"))
+        Eq
+    
+
+struct Col:
+    - source: file and column name it comes from
+    - sink: buffer for the col data
+
+
+Load(Restrict, BloomFilter) ->BloomFilter:
+    lhs, rhs = Restrict.left, Restrict.right
+    rbf = Load(rhs, True)
+    lbf = Load(lhs, rbf)
+
+Load(Select, BloomFilter) ->BloomFilter:
+    lhs, rhs = Select.left, Select.right
+    lbf = Load(lhs, True)
+    rbf = Load(rhs, lbf)
+
+Load(Col, BloomFilter) -> BloomFilter:
+    - loads in the column with BloomFIlter predicates added, populates sink 
+
+Load(Eq, BloomFilter) ->BloomFilter:
+        literal = Eq.literal
+        col = Eq.col
+
+        newbloom = create_bloom(eq literal)
+        bloom += new-bloom
+
+        load(column, bloom)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+The goal is to create a File object with Columns from just reading the schema and traversing the query syntax should be sufficient to populate/construct the join tree. The slight issue is mappings/keys between two tables. Ideally we would like to join based on the values but this won't always work so for now we need to give the File object an explicit mapping, which doesn't explicitly come from reading the schema itself.
+
 ```
 class Column:
     - headFile   # what we need to reduce with anything we are inside of an argument

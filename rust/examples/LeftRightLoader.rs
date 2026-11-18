@@ -105,6 +105,27 @@ impl KeyFilter {
             KeyFilter::Exact(set) => out.push(exact_filter(column, set.clone())),
         }
     }
+    // a row selector takes in how many sequential rows to keep and how 
+    // many to leave -- for now just operates on exact bitsets
+    fn to_selection(&self) ->RowSelection {
+        match self {
+            KeyFilter::Exact(set) => {
+                let mut runs = Vec::new();
+                let mut i = 0;
+                while i < set.n {
+                    let keep = set.member(i);
+                    let mut j = i;
+                    while j < set.n && set.member(j) == keep {
+                        j += 1;
+                    }
+                    runs.push( if keep {RowSelector::select(j-i)} else {RowSelect::skip(j - i)});
+                    i = j
+
+                }
+                RowSelection::from(runs)
+            }
+        }
+    }
 }
 
 // ===== 3. ParquetType: Rust value type <-> Arrow column type ===================
@@ -311,27 +332,26 @@ impl<E: 'static, T: ParquetType> Load for ColumnRef<E, T> {
     fn load(self, key_filter: KeyFilter, val_filter: KeyFilter, preds: Vec<Pred<T>>) -> (Self::Out, (KeyFilter, KeyFilter)) {
         let mut filters = Vec::new();
 
+        // rather than pushing the key filter we turn it into a selection key_filter.push_filters(self.key_col, &mut filters);
+
+        val_filter.push_filters(self.val_col, &mut filters);
+        // trying to change the order
         for p in preds {
             filters.push(to_predicate(self.val_col, p));
         }
-
-        key_filter.push_filters(self.key_col, &mut filters);
-        val_filter.push_filters(self.val_col, &mut filters);
         // With no filters every row survives, and a Bloom over all keys rules out nothing.
         let selective = !filters.is_empty();
+        let rows = key_filter.to_selection();
 
-        let mut cols = vec![self.key_col.to_string()];
-        if self.val_col != self.key_col {
-            cols.push(self.val_col.to_string());
-        }
-        let (reader, row_count) = scan(self.path, filters, &cols);
+        let mut cols = vec![self.val_col.to_string()]; // we're only ever readindg just this col
+        let (reader, row_count) = scan(self.path, filters, rows, &cols);
 
         // Only rows passing all filters arrive here.
-        let mut keys: Vec<i64> = Vec::new();
+        let mut keys: Vec<i64> = Vec::new(); 
         let mut vals: Vec<T> = Vec::new();
         for batch in reader {
             let batch = batch.unwrap();
-            keys.extend(keys_i64(batch.column_by_name(self.key_col).unwrap()));
+            // no longer reading keys we need to extract the physical IDs
             T::from_array(batch.column_by_name(self.val_col).unwrap(), &mut vals);
         }
         let file = self.path.rsplit('/').next().unwrap();
@@ -839,4 +859,38 @@ where
     }
 }
 
+
+
+
+
+//–––––––––––
+
+pub fn scan(
+    path: &str,
+    filters: Vec<ColumnFilter>,
+    rows: RowSelection,
+    cols: &[String],
+) -> (ParquetRecordBatchReader, usize) {
+    let file = File::open(path).expect(path);
+    // The page index lets Parquet skip whole pages that a filter rules out.
+    let options = ArrowReaderOptions::new().with_page_index(true);
+    
+    let builder = ParquetRecordBatchReaderBuilder::try_new_with_options(file, options).unwrap();
+    builder = builder.with_row_selection(rows);
+    let row_count = footer_rows(&builder);
+
+    let mut predicates: Vec<Box<dyn ArrowPredicate>> = Vec::new();
+    for ColumnFilter { columns, mut eval } in filters {
+        let f = move |batch: RecordBatch| eval(&batch);
+        predicates.push(Box::new(ArrowPredicateFn::new(mask(&builder, &columns), f)));
+    }
+
+    let out_mask = mask(&builder, cols);
+    let reader = builder
+        .with_projection(out_mask)
+        .with_row_filter(RowFilter::new(predicates))
+        .build()
+        .unwrap();
+    (reader, row_count)
+}
 

@@ -195,3 +195,135 @@ run 2: 1/114 ok  total 0.01s
 | 6a    | 2.8272 s        | 0.0052 s        | 0.0183 s | 3.5× faster                 |
 | **Total** | **11.6181 s** | **0.0744 s**  | **0.4296 s** | **5.8× faster**         |
 
+
+
+
+### Load vs Exec raw data 
+
+schema: 0.01s
+114 queries registered (loaded)
+--- run 1 ---
+  scan movie_companies.parquet           id -> note          kept 28889 of 2609129 rows
+  scan company_type.parquet           id -> kind          kept    1 of    4 rows
+  scan movie_companies.parquet           id -> company_type_id kept 1334883 of 2609129 rows
+  scan movie_companies.parquet     movie_id -> id            kept 28659 of 2609129 rows
+  scan title.parquet               id -> title         kept 18684 of 2528312 rows
+  scan title.parquet               id -> production_year kept 18684 of 2528312 rows
+  scan info_type.parquet           id -> info          kept    1 of  113 rows
+  scan movie_info_idx.parquet           id -> info_type_id  kept  250 of 1380035 rows
+  scan movie_info_idx.parquet     movie_id -> id            kept  250 of 1380035 rows
+  scan title.parquet               id -> id            kept  105 of 2528312 rows
+1a    load   0.8418s  exec   0.0066s
+1a    ok    0.8485s  (A Warner Bros.-First National Picture) (presents) || A Clockwork Orange || 1934
+  scan title.parquet               id -> title         kept 2528312 of 2528312 rows
+  scan keyword.parquet             id -> keyword       kept    1 of 134170 rows
+  scan movie_keyword.parquet     movie_id -> keyword_id    kept 41840 of 4523930 rows
+  scan company_name.parquet           id -> country_code  kept 9775 of 234997 rows
+  scan movie_companies.parquet           id -> company_id    kept 148133 of 2609129 rows
+  scan movie_companies.parquet     movie_id -> id            kept 7835 of 2609129 rows
+  scan title.parquet               id -> id            kept 4377 of 2528312 rows
+2a    load   1.0602s  exec   0.0108s
+2a    ok    1.0709s  'Doc'
+  scan title.parquet               id -> title         kept 2528312 of 2528312 rows
+  scan keyword.parquet             id -> keyword       kept   30 of 134170 rows
+  scan movie_keyword.parquet     movie_id -> keyword_id    kept 12951 of 4523930 rows
+  scan movie_info.parquet           id -> info          kept 153897 of 14835720 rows
+  scan movie_info.parquet     movie_id -> id            kept 1533 of 14835720 rows
+  scan title.parquet               id -> production_year kept  105 of 2528312 rows
+  scan title.parquet               id -> id            kept  105 of 2528312 rows
+3a    load   3.7230s  exec   0.0111s
+3a    ok    3.7341s  2 Days in New York
+  scan title.parquet               id -> title         kept 2528312 of 2528312 rows
+  scan company_type.parquet           id -> kind          kept    1 of    4 rows
+  scan movie_companies.parquet           id -> company_type_id kept 1334883 of 2609129 rows
+  scan movie_companies.parquet           id -> note          kept 1632 of 2609129 rows
+  scan movie_companies.parquet     movie_id -> id            kept 1632 of 2609129 rows
+  scan movie_info.parquet           id -> info          kept 716210 of 14835720 rows
+  scan movie_info.parquet     movie_id -> id            kept 1490 of 14835720 rows
+  scan title.parquet               id -> production_year kept  867 of 2528312 rows
+  scan title.parquet               id -> id            kept  867 of 2528312 rows
+5c    load   4.0943s  exec   0.0389s
+5c    ok    4.1336s  11,830,420
+  scan keyword.parquet             id -> keyword       kept    1 of 134170 rows
+  scan movie_keyword.parquet     movie_id -> keyword_id    kept   14 of 4523930 rows
+  scan title.parquet               id -> title         kept   14 of 2528312 rows
+  scan name.parquet                id -> name          kept    2 of 4167491 rows
+  scan cast_info.parquet           id -> person_id     kept  486 of 36244344 rows
+  scan cast_info.parquet     movie_id -> id            kept    6 of 36244344 rows
+  scan title.parquet               id -> production_year kept 391666 of 2528312 rows
+  scan title.parquet               id -> id            kept    4 of 2528312 rows
+6a    load   3.0678s  exec   0.0057s
+6a    ok    3.0735s  marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert
+run 1: 5/114 ok  total 12.86s
+--- run 2 ---
+  scan movie_companies.parquet           id -> note          kept 28889 of 2609129 rows
+  scan company_type.parquet           id -> kind          kept    1 of    4 rows
+  scan movie_companies.parquet           id -> company_type_id kept 1334883 of 2609129 rows
+  scan movie_companies.parquet     movie_id -> id            kept 28659 of 2609129 rows
+  scan title.parquet               id -> title         kept 18684 of 2528312 rows
+  scan title.parquet               id -> production_year kept 18684 of 2528312 rows
+  scan info_type.parquet           id -> info          kept    1 of  113 rows
+  scan movie_info_idx.parquet           id -> info_type_id  kept  250 of 1380035 rows
+  scan movie_info_idx.parquet     movie_id -> id            kept  250 of 1380035 rows
+  scan title.parquet               id -> id            kept  105 of 2528312 rows
+1a    load   0.7385s  exec   0.0056s
+1a    ok    0.7441s  (A Warner Bros.-First National Picture) (presents) || A Clockwork Orange || 1934
+  scan title.parquet               id -> title         kept 2528312 of 2528312 rows
+  scan keyword.parquet             id -> keyword       kept    1 of 134170 rows
+  scan movie_keyword.parquet     movie_id -> keyword_id    kept 41840 of 4523930 rows
+  scan company_name.parquet           id -> country_code  kept 9775 of 234997 rows
+  scan movie_companies.parquet           id -> company_id    kept 148133 of 2609129 rows
+  scan movie_companies.parquet     movie_id -> id            kept 7835 of 2609129 rows
+  scan title.parquet               id -> id            kept 4377 of 2528312 rows
+2a    load   1.1782s  exec   0.0422s
+2a    ok    1.2205s  'Doc'
+  scan title.parquet               id -> title         kept 2528312 of 2528312 rows
+  scan keyword.parquet             id -> keyword       kept   30 of 134170 rows
+  scan movie_keyword.parquet     movie_id -> keyword_id    kept 12951 of 4523930 rows
+  scan movie_info.parquet           id -> info          kept 153897 of 14835720 rows
+  scan movie_info.parquet     movie_id -> id            kept 1533 of 14835720 rows
+  scan title.parquet               id -> production_year kept  105 of 2528312 rows
+  scan title.parquet               id -> id            kept  105 of 2528312 rows
+3a    load   3.3626s  exec   0.0065s
+3a    ok    3.3692s  2 Days in New York
+  scan title.parquet               id -> title         kept 2528312 of 2528312 rows
+  scan company_type.parquet           id -> kind          kept    1 of    4 rows
+  scan movie_companies.parquet           id -> company_type_id kept 1334883 of 2609129 rows
+  scan movie_companies.parquet           id -> note          kept 1632 of 2609129 rows
+  scan movie_companies.parquet     movie_id -> id            kept 1632 of 2609129 rows
+  scan movie_info.parquet           id -> info          kept 716210 of 14835720 rows
+  scan movie_info.parquet     movie_id -> id            kept 1490 of 14835720 rows
+  scan title.parquet               id -> production_year kept  867 of 2528312 rows
+  scan title.parquet               id -> id            kept  867 of 2528312 rows
+5c    load   3.5116s  exec   0.0149s
+5c    ok    3.5265s  11,830,420
+  scan keyword.parquet             id -> keyword       kept    1 of 134170 rows
+  scan movie_keyword.parquet     movie_id -> keyword_id    kept   14 of 4523930 rows
+  scan title.parquet               id -> title         kept   14 of 2528312 rows
+  scan name.parquet                id -> name          kept    2 of 4167491 rows
+  scan cast_info.parquet           id -> person_id     kept  486 of 36244344 rows
+  scan cast_info.parquet     movie_id -> id            kept    6 of 36244344 rows
+  scan title.parquet               id -> production_year kept 391666 of 2528312 rows
+  scan title.parquet               id -> id            kept    4 of 2528312 rows
+6a    load   2.8272s  exec   0.0052s
+6a    ok    2.8324s  marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert
+run 2: 5/114 ok  total 11.69s
+(base) kat@Kats-MacBook-Pro rust % 
+
+
+load: 4.13s  (movie n=2528312, person n=4167491)
+114 queries registered
+--- run 1 ---
+1a    ok    0.2510s  (A Warner Bros.-First National Picture) (presents) || A Clockwork Orange || 1934
+2a    ok    0.5876s  'Doc'
+3a    ok    1.1213s  2 Days in New York
+5c    ok    0.1378s  11,830,420
+6a    ok    0.2060s  marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert
+run 1: 5/114 ok  total 2.30s
+--- run 2 ---
+1a    ok    0.0161s  (A Warner Bros.-First National Picture) (presents) || A Clockwork Orange || 1934
+2a    ok    0.0334s  'Doc'
+3a    ok    0.2762s  2 Days in New York
+5c    ok    0.0856s  11,830,420
+6a    ok    0.0183s  marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert
+run 2: 5/114 ok  total 0.43s

@@ -26,6 +26,9 @@ regen   = ["parquet", "arrow"]
 loaded  = ["regen"]
 # The loaded JOB suite (job_queries::queries_loaded, `prela job_loaded`).
 job_loaded = ["regen"]
+# The hand-optimized loaded JOB case studies (job_queries::queries_loaded_optimized,
+# `prela job_loaded_optim`).
+job_loaded_optim = ["regen"]
 
 [[bin]]
 name = "prela"
@@ -34,10 +37,6 @@ path = "src/main.rs"
 [[bin]]
 name = "regen"
 path = "src/bin/regen.rs"
-required-features = ["regen"]
-
-[[example]]
-name = "tree_query"
 required-features = ["regen"]
 
 [[example]]
