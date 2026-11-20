@@ -1,20 +1,16 @@
 #![cfg_attr(rustfmt, rustfmt_skip)]
-// Case studies in optimizing a query's load (`prela job_loaded_optim`, feature
-// `job_loaded_optim`): queries_loaded.rs, with hand-chosen load plans for some
-// queries. Run and read out exactly like `job_loaded`:
+// Hand-optimised loads of the JOB queries (`prela job_loaded_optim`, feature
+// `job_loaded_optim`). Run and read out exactly like `job_loaded`:
 //
-//     PRELA_ONLY=6c,6d ROUNDS=2 cargo run --release --features job_loaded_optim -- job_loaded_optim
+//     PRELA_ONLY=1a,6d ROUNDS=2 cargo run --release --features job_loaded_optim -- job_loaded_optim
 //
-// Every query not listed below is queries_loaded.rs's, unchanged. The case
-// studies are in "Optimized load plans" (after `pending`); each one is
-// registered under its JOB name (6c, 6d), and the plans it was compared
-// against under suffixed names (6c_tree, 6c_l1, ...), so one build times all.
+// 1a–16c are optimised (section "Optimised plans" below): each query is split
+// into a LOAD PLAN, one tree over the files that decides what is checked while
+// reading, and an IN-MEMORY PLAN, the query over the loaded rows. 16d–33c are
+// queries_loaded.rs's, unchanged (in `entries`), as is the timing readout:
+// load = reading the files into memory, exec = the query over memory.
 //
-// What follows is queries_loaded.rs's description, which still holds for the
-// unchanged queries:
-//
-// The 113 JOB queries of queries.rs, plus the method-chain demo, run over the
-// IMDB Parquet files with the on-the-fly loader (examples/trialLoader.rs).
+// queries_loaded.rs's description, which still holds for the unchanged queries:
 //
 // The queries are queries.rs's, character for character; only their leaves
 // differ. The columns destructured at the top of `entries` are `ColumnRef`s
@@ -22,14 +18,6 @@
 // that `.load()` reads and reduces. The one other change is in the
 // registry: `min_row(q1a())` is `min_row(loaded(q1a()))`, which loads the
 // tree and then drives the loaded result.
-//
-// The columns are destructured once at the top of `entries` under one unique
-// name each (`title`, `company_name`, `info_ty`, ...), and every query is a
-// closure over them, in name order, written out in full so that each reads
-// on its own; a sub-query that a query needs in both its with and its select
-// is a local closure. `db` is `&'static` (main leaks it once), which is why
-// the closures can be boxed as `'static` runners and the plans they return
-// carry no lifetime.
 
 use std::cell::Cell;
 use std::time::Instant;
@@ -37,11 +25,10 @@ use std::time::Instant;
 use crate::engine::*;
 use crate::job_queries::helpers::{Row, min_row};
 use crate::job_queries::sets::{
-    genre6, horror2, kw7, kw8, kw10, link3, murder4, nordic8, nordic9, nordic10, voice3, voice4, writer5,
+    genre6, horror2, kw7, kw8, kw10, link3, murder4, nordic8, nordic10, voice3, voice4, writer5,
 };
 use crate::job_file_schema::*;
-use crate::loader::{Set, Str};
-use crate::trial_loader::{ColumnRef, KeyFilter, KeyLoad, Load, Pred};
+use crate::trial_loader::{KeyFilter, Load};
 
 /// `job_queries::Entry`, over the files instead of the cache.
 pub type Entry = (&'static str, &'static str, Box<dyn Fn(&'static JobFiles) -> String>);
@@ -88,36 +75,47 @@ fn pending(what: &str) -> String {
     format!("(pending: {what})")
 }
 
-// ===== Optimized load plans ==================================================
+// ===== Optimised plans: 1a–16c ==================================================
 //
-// Shape of a case study: a hand-written load PLAN fills the columns' sinks,
-// `db.to_memory()` turns the sinks into an in-memory db (MemJob), and the
-// query - queries.rs's text, unchanged - runs over that. Load time = plan +
-// to_memory; exec time = the in-memory query. The answer is exact as long as
-// every row the query needs was loaded (the plan may load MORE; the in-memory
-// query re-applies every predicate).
+// Each query is split in two, and each half is a list in query order:
 //
-// What the plans exploit (measured with examples/optimProbe.rs, warm, best of 3):
+//   load_plan(db, "1a")  ONE tree over the files, `.load()`ed. It decides which
+//                        conditions are checked while reading, and in which
+//                        order, and fills the columns' sinks with every row the
+//                        answer needs.
+//   mem_plan(mem, "1a")  the query over `db.to_memory()` (those sinks): it
+//                        checks what the load left to it and returns the answer.
 //
-//   1. Exact filters, never Blooms, on the big files. The loader sizes a Bloom
-//      from its source file's row count (cast_info: 36M rows -> a 45 MB Bloom,
-//      SipHash + 3 cache misses per probe). Loading cast_info.person_id under
-//      such a Bloom took 2610 ms; under an exact Bitset of the same 33 ids,
-//      606 ms. The tree plans (`.load()` of the query) pass Blooms between
-//      nodes; a plan here passes exact sets: a keyload's Bitset, or the ids a
-//      loaded relation actually holds (`exact_keys` / `exact_vals`).
-//   2. Expensive predicates where they are cheap. A leaf applies its
-//      predicates BEFORE its key filter, so `person_name.rx(..)` decodes and
-//      matches all 4.1M names (257 ms) even under an exact filter of 2 ids
-//      (27 ms without the regex). When the key set is already small, the plan
-//      loads the column unfiltered by the predicate and the in-memory query
-//      applies it.
-//   3. The order chosen per query, by where the selective predicate is:
-//      top-down from the root when the root's `with` is selective (6c,
-//      select_left all the way), from the deep predicate when it is (6d).
-//   4. Cast.person (id -> person_id) is a MultiRel over cast ids, sized by the
-//      largest one (~36M slots), so even an exact load of it costs ~0.6 s:
-//      load it only for the handful of cast rows that reach the answer.
+// `optimised` runs the two, timed like queries_loaded.rs: load = load plan +
+// to_memory, exec = the in-memory plan. The oracle is queries_loaded.rs's.
+//
+// How the load plans are chosen (the numbers in the comments are the
+// selectivities in data/imdb/parquet):
+//
+//   1. A root `with` is read key-only and exactly, so `mem.movie` (the movies
+//      the load kept) already satisfies it: the in-memory plan drops it.
+//   2. `select_left` (top-down) when what is already loaded is small, e.g. the
+//      250 movies of 1a; `select` (bottom-up) when the deep predicate is the
+//      selective part, e.g. the 2 Downeys of 6d.
+//   3. In `.and`, the leg that keeps the fewest movies goes first: the later
+//      legs are read only for its movies. Only a filter or a bottom-up `select`
+//      narrows them, though: a `select_left` leg passes on the keys of its
+//      first hop (e.g. every movie with a company row), so it goes later.
+//   4. A `with` inside the select is read key-only over the WHOLE file (it gets
+//      no filter from above). When the rows above it are few, the load plan
+//      reads its columns top-down instead (`x.select_left(pred.and(..))`), and
+//      the in-memory plan restores it as `x.with(<that column>)`.
+//   5. A predicate checked while loading is not checked again in memory: each
+//      column is loaded once per plan, so its sink holds only the rows that
+//      passed. (A key-only `with` argument fills no sink at all.)
+//   6. A cheap but unselective root predicate (year > 2000: 55% of movies) is
+//      read for the few movies the select leaves rather than for all 2.5M, and
+//      checked in memory as `with(production_year)`.
+
+/// Load a plan's tree. Its in-memory result is not used: the sinks are.
+fn load<Q: Load>(q: Q) {
+    q.load(KeyFilter::All, KeyFilter::All, Vec::new());
+}
 
 /// Run `f` as part of the query's load time (`LOAD_SECS`).
 fn timed_load<T>(f: impl FnOnce() -> T) -> T {
@@ -127,906 +125,498 @@ fn timed_load<T>(f: impl FnOnce() -> T) -> T {
     out
 }
 
-/// An exact filter over these raw ids.
-fn exact(ids: &[usize]) -> KeyFilter {
-    let n = ids.iter().max().map_or(0, |&m| m + 1);
-    let mut b: Bitset = Bitset { bs: vec![0; n.div_ceil(64)], n, _d: std::marker::PhantomData };
-    for &i in ids {
-        b.set(i);
-    }
-    KeyFilter::exact(b)
-}
-
-/// The exact set of a loaded relation's keys.
-fn exact_keys<Q: Drive>(q: &Q) -> KeyFilter where Q::D: Dense {
-    let mut ids = Vec::new();
-    q.drive(|d, _| ids.push(d.idx()));
-    exact(&ids)
-}
-
-/// The exact set of a loaded relation's values (ids of the next entity).
-fn exact_vals<Q: Drive>(q: &Q) -> KeyFilter where Q::R: Dense {
-    let mut ids = Vec::new();
-    q.drive(|_, r| ids.push(r.idx()));
-    exact(&ids)
-}
-
-fn pred<T>(f: impl Fn(T) -> bool + Send + Sync + 'static) -> Pred<T> {
-    std::sync::Arc::new(f)
-}
-
-/// Plan + to_memory, timed as load; the in-memory db is leaked to `'static`
-/// (as runner.rs does), which the query's `Filter`s need.
-fn load_into_memory(db: &'static JobFiles, plan: fn(&'static JobFiles)) -> &'static MemJob {
-    timed_load(|| {
-        plan(db);
+/// `q`'s load plan, then its in-memory plan over what was loaded. The
+/// in-memory db is leaked to `'static`, which the query's `Filter`s need.
+fn optimised(db: &'static JobFiles, q: &str) -> String {
+    let mem: &'static MemJob = timed_load(|| {
+        load_plan(db, q);
         Box::leak(Box::new(db.to_memory()))
-    })
+    });
+    mem_plan(mem, q)
 }
 
-/// As `load_into_memory`, for a plan that also returns a relation of its own
-/// (one outside the schema, e.g. `movie_person`).
-fn load_into_memory_with<R>(db: &'static JobFiles, plan: impl FnOnce() -> R) -> (&'static MemJob, R) {
-    timed_load(|| {
-        let r = plan();
-        let mem: &'static MemJob = Box::leak(Box::new(db.to_memory()));
-        (mem, r)
-    })
-}
+const PROD: &str = "production companies";
+const MGM: &str = r"\(as Metro-Goldwyn-Mayer Pictures\)";
+const CNIT: &str = "character-name-in-title";
+const MARVEL: &str = "marvel-cinematic-universe";
+const DOWNEY: &str = r"Downey.*Robert";
 
-/// `cast.select(person)` read in ONE scan: cast_info's `movie_id -> person_id`.
-/// The two hops are two columns of the same cast_info row (movie_id -> id,
-/// then id -> person_id), so composing them is exactly this relation, row for
-/// row. What it saves: a second cast_info scan, and Cast.person's MultiRel,
-/// which is indexed by cast id (~31M slots for Downey's 486 rows, 563 ms of the
-/// load); this one is indexed by movie id (2.5M slots). Not a schema field (the
-/// queries' text goes through Cast), so it is built here, once, with its own sink.
-fn movie_person(db: &'static JobFiles) -> ColumnRef<Movie, Id<Person>> {
-    ColumnRef::new(db.movie.cast.path, "movie_id", "person_id")
-}
+// ----- Load plans ----------------------------------------------------------------
 
-// ----- 6c -----------------------------------------------------------------------
-//
-// Selectivity (data/imdb/parquet):
-//   year > 2014                          438 of 2,528,312 movies   <- the root is selective
-//   ... with keyword marvel-c-u            2 movies
-//   cast rows of those 2 movies           33 (of 36,244,344)
-//   names matching Downey.*Robert          2 persons (of 4,167,491)
-// The root's with already narrows to 438 movies, so the plan goes TOP-DOWN,
-// as `select_left` at every level would: root -> keyword -> cast -> person ->
-// name, each step under the exact ids of the step before. The regex is left
-// to the in-memory query (it would scan all 4.1M names; the plan loads ~20).
-//
-// The tree plans for comparison: 6c_tree (queries_loaded's: b first
-// everywhere), 6c_l1 (select_left at the root only), 6c_l2 (select_left in
-// the cast chain too). They pass Blooms, which is what makes them slow.
-//
-// Attempt 1 (6c_v1): this order, every hop of the query loaded as written.
-// Attempt 2 (6c): the same order, with cast.select(person) read in one scan
-// (`movie_person`).
-fn plan_6c_v1(db: &'static JobFiles) {
-    use KeyFilter::All;
-    let (m, c, p) = (&db.movie, &db.cast, &db.person);
-    // 1. The root's with: 438 movies (loaded, not only keyed: the in-memory
-    //    query re-checks it).
-    let (years, _) = m.production_year.load(All, All, vec![pred(|y: i64| y > 2014)]);
-    // 2. The keyword leg under them: the keyword's id, then its movie_keyword
-    //    rows among the 438 movies -> 2 movies.
-    let (kw, _) = m.keyword.b.load(All, All, vec![pred(|s: Str| s == "marvel-cinematic-universe")]);
-    let (mk, _) = m.keyword.a.load(exact_keys(&years), exact_keys(&kw), vec![]);
-    let movies = exact_keys(&mk);
-    // 3. The cast chain, top-down: their 33 cast rows -> persons -> names.
-    let (cast, _) = m.cast.load(movies.clone(), All, vec![]);
-    let (person, _) = c.person.load(exact_vals(&cast), All, vec![]);
-    p.name.load(exact_vals(&person), All, vec![]);
-    // 4. The rest of the select, and the root itself, on the 2 movies.
-    m.title.load(movies.clone(), All, vec![]);
-    m.id.load(All, movies, vec![]);
-}
-
-/*let q6c = move || {
-        db.movie.with(production_year.gt(2014))
-                .select(keyword.eq("marvel-cinematic-universe")
-                        .and(title)
-                        .and(cast.select(person).select(person_name).rx(r"Downey.*Robert")))
-    };*/
-
-fn plan_6c_myplan(db: &'static JobFiles) {
-    use KeyFilter::All;
-    // I want to first load the selective version and then 
-    let (m, c, p) = (&db.movie, &db.cast, &db.person);
-    m.with(m.production_year.gt(2014))
-    .select_left((&m.keyword).eq("marvel-cinematic-universe")
-    .and(m.title)
-    .and(m.cast.select_left(c.person).select_left(p.name)))
-    .load(All,All,Vec::new());
-    
-}
-
-fn run_6c_myplan(mem: &'static MemJob) -> String {
-    let MemMovie { title, production_year, keyword, cast, .. } = &mem.movie;
-    let MemCast { person, .. } = &mem.cast;
-    let MemPerson { name: person_name, .. } = &mem.person;
-    // only apply in-memory the regex predicate and everything else should be checked..
-    min_row(mem.movie.select(keyword).and(title).and(cast.select(person).select(person_name).rx(r"Downey.*Robert")))
-
-}
-
-
-fn run_6c_v1(mem: &'static MemJob) -> String {
-    let MemMovie { title, production_year, keyword, cast, .. } = &mem.movie;
-    let MemCast { person, .. } = &mem.cast;
-    let MemPerson { name: person_name, .. } = &mem.person;
-    min_row(mem.movie.with(production_year.gt(2014))
-                .select(keyword.eq("marvel-cinematic-universe")
-                        .and(title)
-                        .and(cast.select(person).select(person_name).rx(r"Downey.*Robert"))))
-}
-
-fn plan_6c(db: &'static JobFiles, cast_person: ColumnRef<Movie, Id<Person>>) -> Set<Movie, Id<Person>> {
-    use KeyFilter::All;
-    let (m, p) = (&db.movie, &db.person);
-    cast_person.clear(); // not in JobFiles, so db.clear() doesn't reset it
-    // 1. The root's with: 438 movies.
-    let (years, _) = m.production_year.load(All, All, vec![pred(|y: i64| y > 2014)]);
-    // 2. The keyword leg under them -> 2 movies.
-    let (kw, _) = m.keyword.b.load(All, All, vec![pred(|s: Str| s == "marvel-cinematic-universe")]);
-    let (mk, _) = m.keyword.a.load(exact_keys(&years), exact_keys(&kw), vec![]);
-    let movies = exact_keys(&mk);
-    // 3. cast.select(person) in one cast_info scan: their 33 (movie, person) rows,
-    //    then those persons' names (no regex: in memory).
-    let (persons, _) = cast_person.load(movies.clone(), All, vec![]);
-    p.name.load(exact_vals(&persons), All, vec![]);
-    // 4. The rest of the select, and the root itself, on the 2 movies.
-    m.title.load(movies.clone(), All, vec![]);
-    m.id.load(All, movies, vec![]);
-    persons
-}
-
-// queries.rs's 6c, with `cast.select(person)` as the one-scan relation.
-fn run_6c(mem: &'static MemJob, cast_person: Set<Movie, Id<Person>>) -> String {
-    let MemMovie { title, production_year, keyword, .. } = &mem.movie;
-    let MemPerson { name: person_name, .. } = &mem.person;
-    min_row(mem.movie.with(production_year.gt(2014))
-                .select(keyword.eq("marvel-cinematic-universe")
-                        .and(title)
-                        .and(cast_person.select(person_name).rx(r"Downey.*Robert"))))
-}
-
-// ----- 6d -----------------------------------------------------------------------
-//
-// Selectivity:
-//   year > 2000                    1,381,453 movies                <- the root is NOT selective
-//   movies with a kw8 keyword         29,863 (any year), 11,843 after 2000
-//   names matching Downey.*Robert          2 persons               <- the selective predicate
-//   their cast rows                      486, in 433 movies
-//   kw8 movie AND Downey                  53 movies, 37 after 2000
-// The selective predicate is deep in the select (the person's name), so the
-// plan starts there, key-only and exact: 2 persons -> 486 cast rows; then
-// meets the keyword side on cast_info (cast rows of a kw8 movie that are
-// Downey's: 41). The year is left to the in-memory query (keying 1.4M movies
-// would cost more than loading the year of the few that are left).
-//
-// Attempt 1 (6d_v1): this order, every hop of the query loaded as written.
-// Attempt 2 (6d): Downey first, then cast.select(person) in one scan
-// (`movie_person`) filtered on person_id, then the keyword side under the
-// movies that gives (433), instead of all 29,863 kw8 movies.
-
-/*
-let q6d = move || {
-        db.movie.with(production_year.gt(2000))
-                .select(keyword.is_in(kw8())
-                        .and(title)
-                        .and(cast.select(person).select(person_name).rx(r"Downey.*Robert")))
-    };
-*/
-
-fn plan_6d_v1(db: &'static JobFiles) {
-    use KeyFilter::All;
-    let (m, c, p) = (&db.movie, &db.cast, &db.person);
-    // 1. The keyword side: the 8 keywords' ids, their movie_keyword rows.
-    let kws = kw8();
-    let (kw, _) = m.keyword.b.load(All, All, vec![pred(move |s: Str| kws.contains(&s))]);
-    let (mk, _) = m.keyword.a.load(All, exact_keys(&kw), vec![]);
-    // 2. The Downey side, key-only: 2 persons -> their 486 cast rows.
-    let re = regex::Regex::new(r"Downey.*Robert").unwrap();
-    let downey = p.name.keyload(All, All, vec![pred(move |s: Str| re.is_match(s))]);
-    let downey_casts = c.person.keyload(All, KeyFilter::exact(downey), vec![]);
-    // 3. Where they meet: cast rows of a kw8 movie that are Downey's.
-    let (cast, _) = m.cast.load(exact_keys(&mk), KeyFilter::exact(downey_casts), vec![]);
-    let movies = exact_keys(&cast);
-    // 4. The rest, on those rows and movies only (no regex: in memory).
-    let (person, _) = c.person.load(exact_vals(&cast), All, vec![]);
-    p.name.load(exact_vals(&person), All, vec![]);
-    m.title.load(movies.clone(), All, vec![]);
-    m.production_year.load(movies.clone(), All, vec![]);
-    m.id.load(All, movies, vec![]);
-}
-
-fn run_6d_v1(mem: &'static MemJob) -> String {
-    let MemMovie { title, production_year, keyword, cast, .. } = &mem.movie;
-    let MemCast { person, .. } = &mem.cast;
-    let MemPerson { name: person_name, .. } = &mem.person;
-    min_row(mem.movie.with(production_year.gt(2000))
-                .select(keyword.is_in(kw8())
-                        .and(title)
-                        .and(cast.select(person).select(person_name).rx(r"Downey.*Robert"))))
-}
-
-fn plan_6d(db: &'static JobFiles, cast_person: ColumnRef<Movie, Id<Person>>) -> Set<Movie, Id<Person>> {
-    use KeyFilter::All;
-    let (m, p) = (&db.movie, &db.person);
-    cast_person.clear();
-    // 1. The selective predicate, key-only: the 2 persons named Downey.*Robert.
-    let re = regex::Regex::new(r"Downey.*Robert").unwrap();
-    let downey = p.name.keyload(All, All, vec![pred(move |s: Str| re.is_match(s))]);
-    // 2. cast.select(person) in one cast_info scan, filtered on person_id (the
-    //    column cast_info is sorted by, so cheap to decode): Downey's 486 rows,
-    //    433 movies.
-    let (persons, _) = cast_person.load(All, KeyFilter::exact(downey), vec![]);
-    let movies = exact_keys(&persons);
-    // 3. The keyword side, under those movies: the 8 keywords' ids, then their
-    //    movie_keyword rows among the 433 movies (53 movies have one).
-    let kws = kw8();
-    let (kw, _) = m.keyword.b.load(All, All, vec![pred(move |s: Str| kws.contains(&s))]);
-    let (mk, _) = m.keyword.a.load(movies, exact_keys(&kw), vec![]);
-    let movies = exact_keys(&mk);
-    // 4. The rest, on those 53 movies (the year and the regex: in memory).
-    p.name.load(exact_vals(&persons), All, vec![]);
-    m.title.load(movies.clone(), All, vec![]);
-    m.production_year.load(movies.clone(), All, vec![]);
-    m.id.load(All, movies, vec![]);
-    persons
-}
-
-// queries.rs's 6d, with `cast.select(person)` as the one-scan relation.
-fn run_6d(mem: &'static MemJob, cast_person: Set<Movie, Id<Person>>) -> String {
-    let MemMovie { title, production_year, keyword, .. } = &mem.movie;
-    let MemPerson { name: person_name, .. } = &mem.person;
-    min_row(mem.movie.with(production_year.gt(2000))
-                .select(keyword.is_in(kw8())
-                        .and(title)
-                        .and(cast_person.select(person_name).rx(r"Downey.*Robert"))))
-}
-
-
-///–––––––– My own attempt to write some more optimised queries
-
-/*let q1a = move || {
-        db.movie.with(data.select(data_ty).eq("top 250 rank"))
-                .select_left(company.with(company_ty.eq("production companies"))
-                               .select(company_note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)")
-                                                   .rx(r"\(co-production\)|\(presents\)"))
-                        .and(title)
-                        .and(production_year))
-    };*/
-fn myplan_1a(db: &'static JobFiles) {
-    use KeyFilter::All;
-    let (m, d, co) = (&db.movie, &db.data, &db.company);
-    m.with(m.data.select(&(d.ty)).eq("top 250 rank"))
-    .select_left(m.company.with((&co.ty).eq("production companies"))
-    .select_left(co.note))
-    .and(m.title)
-    .and(m.production_year)
-    .load(All,All, Vec::new());
-
-}
-
-fn run_myplan_1a(mem: &'static MemJob) -> String {
-    let MemMovie { title, production_year, company, .. } = &mem.movie;
-    let MemCompany { note: company_note, .. } = &mem.company;
-
-    min_row(mem.movie.select(company.select(company_note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)")
-                                                   .rx(r"\(co-production\)|\(presents\)"))
-                        .and(title)
-                        .and(production_year)))
-
-}
-
-/*    let q9d = move || {
-        db.movie.with(company.select(country).eq("[us]"))
-                .select(cast.with(cast_note.is_in(voice4())
-                                  .and(role.eq("actress")))
-                            .select(person.with(gender.eq("f")).select(alias.and(person_name))
-                                    .and(character))
-                        .and(title))
-    };*/
-
-fn myplan_9d(db: &'static JobFiles) {
-    use KeyFilter::All;
-    let (m, c, p, co) = (&db.movie, &db.cast, &db.person, &db.company);
-    m.with(m.company.select(&co.country).eq("[us]"))                          // 571k movies (keyload)
-     .select_left(m.cast.with(c.note.is_in(voice4()).and((&c.role).eq("actress")))  // 276k ids → cast loads 83,890 rows
-                     .select_left(c.person.select_left(p.alias.and(p.name).and(p.gender))  // 16k persons → alias first (5.3k), then name and gender
-                                  .and(&c.character))                        // your &Compose rule: top-down here
-                  .and(m.title))                                             // the surviving movies only
-     .load(All, All, Vec::new());
-}
-
-fn run_myplan_9d(mem: &'static MemJob) -> String {
-    let MemMovie { title, cast, .. } = &mem.movie;
-    let MemCast { person, character, .. } = &mem.cast;
-    let MemPerson { name: person_name, alias, gender, .. } = &mem.person;
-    min_row(mem.movie.select(cast.select(person.with(gender.eq("f")).select(alias.and(person_name))
-                                         .and(character))
-                             .and(title)))
-}
-
-/*let q5a = move || {
-        db.movie.with(company.with(company_ty.eq("production companies")
-                                   .and(company_note.rx(r"\(theatrical\)").rx(r"\(France\)")))
-                      .and(info.select(info_info).is_in(nordic8()))
-                      .and(production_year.gt(2005)))
-                .select(title)
-    };*/
-
-fn myplan_5a(db: &'static JobFiles) {
-    use KeyFilter::All;
-    let (m, i, co) = (&db.movie, &db.info, &db.company);
-    m.with(m.info.select(i.info).is_in(nordic8())                    // keyload: 102,977 movies
-            .and(m.production_year.gt(2005)))                         // keyload under those → 28,951
-     .select_left(m.company.with((&co.ty).eq("production companies"))  // their production-company rows (type applied here)
-                           .select_left(co.note)                      // LOADED: those rows' notes, no regex
-                  .and(m.title))                                      // titles of movies that have such a row
-     .load(All, All, Vec::new());
-}
-
-fn run_myplan_5a(mem: &'static MemJob) -> String {
-    let MemMovie { title, company, .. } = &mem.movie;
-    let MemCompany { note: company_note, .. } = &mem.company;
-    min_row(mem.movie.with(company.select(company_note.rx(r"\(theatrical\)").rx(r"\(France\)")))
-                     .select(title))
-}
-
-
-pub fn entries(db: &'static JobFiles) -> Vec<Entry> {
+fn load_plan(db: &'static JobFiles, q: &str) {
     let Movie { title, kind, production_year, episode_nr, keyword, aka,
-                company, cast, info, data, complete_cast, link, linked_by, .. } = &db.movie;
+                company, cast, info, data, link, linked_by, .. } = &db.movie;
     let Cast { person, role, note: cast_note, character, .. } = &db.cast;
     let Person { name: person_name, gender, alias, bio, name_pcode_cf, .. } = &db.person;
     let Company { name: company_name, country, note: company_note, ty: company_ty, .. } = &db.company;
     let Info { info: info_info, ty: info_ty, note: info_note, .. } = &db.info;
     let Data { text: data_text, ty: data_ty, .. } = &db.data;
     let PersonInfo { info: personinfo_info, ty: personinfo_ty, note: personinfo_note, .. } = &db.person_info;
+    let MovieLink { ty: link_ty, .. } = &db.movie_link;
+
+    match q {
+        // Root: 250 movies; their 8.3k company rows, top-down (the note regex
+        // then runs on those rows only, not on all 2.6M).
+        "1a" => load(db.movie.with(data.select(data_ty).eq("top 250 rank"))
+                             .select_left(company.select_left(company_note.nrx(MGM).rx(r"\(co-production\)|\(presents\)")
+                                                              .and(company_ty.eq(PROD)))
+                                          .and(title)
+                                          .and(production_year))),
+        // Root: 10 movies, 120 company rows. The year first: it keeps fewest.
+        "1b" => load(db.movie.with(data.select(data_ty).eq("bottom 10 rank"))
+                             .select_left(production_year.between(2005, 2010)
+                                          .and(company.select_left(company_note.nrx(MGM).and(company_ty.eq(PROD))))
+                                          .and(title))),
+        "1c" => load(db.movie.with(data.select(data_ty).eq("top 250 rank"))
+                             .select_left(production_year.gt(2010)
+                                          .and(company.select_left(company_note.nrx(MGM).rx(r"\(co-production\)")
+                                                                   .and(company_ty.eq(PROD))))
+                                          .and(title))),
+        "1d" => load(db.movie.with(data.select(data_ty).eq("bottom 10 rank"))
+                             .select_left(production_year.gt(2000)
+                                          .and(company.select_left(company_note.nrx(MGM).and(company_ty.eq(PROD))))
+                                          .and(title))),
+
+        // The with first (key-only), then only its movies' titles (the tree
+        // plan reads all 2.5M titles first). Its smaller conjunct leads.
+        "2a" => load(db.movie.with(keyword.eq(CNIT).and(company.select(country).eq("[de]"))).select_left(title)),
+        "2b" => load(db.movie.with(company.select(country).eq("[nl]").and(keyword.eq(CNIT))).select_left(title)),
+        "2c" => load(db.movie.with(company.select(country).eq("[sm]").and(keyword.eq(CNIT))).select_left(title)),
+        "2d" => load(db.movie.with(keyword.eq(CNIT).and(company.select(country).eq("[us]"))).select_left(title)),
+
+        // Keyword and year leave 1.5k / 309 / 6.1k movies; their movie_info rows
+        // (69k / 18k / 205k) are read top-down, instead of testing all 14.8M
+        // info strings key-only.
+        "3a" => load(db.movie.with(keyword.rx("sequel").and(production_year.gt(2005)))
+                             .select_left(info.select_left(info_info.is_in(nordic8())).and(title))),
+        "3b" => load(db.movie.with(keyword.rx("sequel").and(production_year.gt(2010)))
+                             .select_left(info.select_left(info_info.eq("Bulgaria")).and(title))),
+        "3c" => load(db.movie.with(keyword.rx("sequel").and(production_year.gt(1990)))
+                             .select_left(info.select_left(info_info.is_in(["Sweden", "Norway", "Germany", "Denmark", "Swedish",
+                                                                            "Denish", "Norwegian", "German", "USA", "American"]))
+                                          .and(title))),
+
+        // queries.rs's rx_dict is a regex on a dictionary column: here, `rx`.
+        // Keyword and year: 1.5k / 309 / 6.1k movies, then their ratings top-down.
+        "4a" => load(db.movie.with(keyword.rx("sequel").and(production_year.gt(2005)))
+                             .select_left(data.select_left(data_ty.eq("rating").and(data_text.gt("5.0"))).and(title))),
+        "4b" => load(db.movie.with(keyword.rx("sequel").and(production_year.gt(2010)))
+                             .select_left(data.select_left(data_ty.eq("rating").and(data_text.gt("9.0"))).and(title))),
+        "4c" => load(db.movie.with(keyword.rx("sequel").and(production_year.gt(1990)))
+                             .select_left(data.select_left(data_ty.eq("rating").and(data_text.gt("2.0"))).and(title))),
+
+        // The company conjunct is the selective one (0 / 0 / 783 movies) and
+        // reads only movie_companies; the info test moves to the select, top-down.
+        "5a" => load(db.movie.with(company.with(company_ty.eq(PROD).and(company_note.rx(r"\(theatrical\)").rx(r"\(France\)")))
+                                   .and(production_year.gt(2005)))
+                             .select_left(info.select_left(info_info.is_in(nordic8())).and(title))),
+        "5b" => load(db.movie.with(company.with(company_ty.eq(PROD).and(company_note.rx(r"\(VHS\)").rx(r"\(USA\)").rx(r"\(1994\)")))
+                                   .and(production_year.gt(2010)))
+                             .select_left(info.select_left(info_info.is_in(["USA", "America"])).and(title))),
+        "5c" => load(db.movie.with(company.with(company_ty.eq(PROD).and(company_note.nrx(r"\(TV\)").rx(r"\(USA\)")))
+                                   .and(production_year.gt(1990)))
+                             .select_left(info.select_left(info_info.is_in(nordic10())).and(title))),
+
+        // marvel-c-u: 14 movies, so it leads; the year (15%) is read for those
+        // only; the cast chain top-down from the 11 left (the Downey regex then
+        // runs on a few names, not on 4.2M).
+        "6a" => load(db.movie.select(keyword.eq(MARVEL)
+                                     .and(production_year.gt(2010))
+                                     .and(title)
+                                     .and(cast.select_left(person).select_left(person_name).rx(DOWNEY)))),
+        // year > 2014: 438 movies, so the root leads; the rest top-down.
+        "6b" => load(db.movie.with(production_year.gt(2014))
+                             .select_left(keyword.is_in(kw8())
+                                          .and(title)
+                                          .and(cast.select_left(person).select_left(person_name).rx(DOWNEY)))),
+        "6c" => load(db.movie.with(production_year.gt(2014))
+                             .select_left(keyword.eq(MARVEL)
+                                          .and(title)
+                                          .and(cast.select_left(person).select_left(person_name).rx(DOWNEY)))),
+        // Downey is the selective part (2 persons, 486 cast rows, 433 movies):
+        // bottom-up from the name; then kw8 and the year for those movies.
+        "6d" => load(db.movie.select(cast.select(person).select(person_name).rx(DOWNEY)
+                                     .and(keyword.is_in(kw8()))
+                                     .and(production_year.gt(2000))
+                                     .and(title))),
+        "6e" => load(db.movie.select(keyword.eq(MARVEL)
+                                     .and(production_year.gt(2000))
+                                     .and(title)
+                                     .and(cast.select_left(person).select_left(person_name).rx(DOWNEY)))),
+        // No name filter: kw8 and year (11.8k movies), then their 584k cast rows.
+        "6f" => load(db.movie.select(keyword.is_in(kw8())
+                                     .and(production_year.gt(2000))
+                                     .and(title)
+                                     .and(cast.select_left(person).select_left(person_name)))),
+
+        // Root: 820 / 247 movies; their cast rows' persons top-down. The bio test
+        // leads, bottom-up (only 64 persons have a mini biography by Volker
+        // Boehm), so the other person tests are read for those few persons. The
+        // gender/name disjunction can't be loaded: gender and name are, and the
+        // `or` runs in memory.
+        "7a" => load(db.movie.with(linked_by.select(link_ty).eq("features").and(production_year.between(1980, 1995)))
+                             .select_left(cast.select_left(person)
+                                              .select_left(bio.select(personinfo_note.eq("Volker Boehm")
+                                                                      .and(personinfo_ty.eq("mini biography")))
+                                                           .and(alias.rx(r"a"))
+                                                           .and(name_pcode_cf.between("A", "F"))
+                                                           .and(gender)
+                                                           .and(person_name))
+                                          .and(title))),
+        "7b" => load(db.movie.with(linked_by.select(link_ty).eq("features").and(production_year.between(1980, 1984)))
+                             .select_left(cast.select_left(person)
+                                              .select_left(bio.select(personinfo_note.eq("Volker Boehm")
+                                                                      .and(personinfo_ty.eq("mini biography")))
+                                                           .and(alias.rx(r"a"))
+                                                           .and(name_pcode_cf.rx(r"^D"))
+                                                           .and(gender.eq("m"))
+                                                           .and(person_name))
+                                          .and(title))),
+        // Root: 8k movies, 228k persons. No bio filter is selective here (any
+        // note), and the bios are long texts: the bio leg goes last, top-down,
+        // so they are read only for the persons that passed the alias and code.
+        "7c" => load(db.movie.with(linked_by.select(link_ty).is_in(["references", "referenced in", "features", "featured in"])
+                                   .and(production_year.between(1980, 2010)))
+                             .select_left(cast.select_left(person)
+                                              .select_left(alias.rx(r"a|^A")
+                                                           .and(name_pcode_cf.between("A", "F"))
+                                                           .and(gender)
+                                                           .and(person_name)
+                                                           .and(bio.select_left(personinfo_note
+                                                                                .and(personinfo_ty.eq("mini biography"))
+                                                                                .and(personinfo_info)))))),
+
+        // Root: 36k jp movies. The cast `with` (93k voice-English rows, role
+        // first: an int column) is key-only, so m.cast reads just those rows;
+        // persons and names top-down from them.
+        "8a" => load(db.movie.with(company.with(country.eq("[jp]").and(company_note.rx(r"\(Japan\)").nrx(r"\(USA\)"))))
+                             .select_left(cast.with(role.eq("actress").and(cast_note.eq("(voice: English version)")))
+                                              .select_left(person.select_left(person_name.rx(r"Yo").nrx(r"Yu").and(alias)))
+                                          .and(title))),
+        // Root: 3.2k movies, and the title regex keeps 39 movies of all 2.5M:
+        // it leads, and the cast tests run top-down on those few movies' rows.
+        "8b" => load(db.movie.with(company.with(country.eq("[jp]")
+                                                .and(company_note.rx(r"\(Japan\)").nrx(r"\(USA\)").rx(r"\(2006\)|\(2007\)")))
+                                   .and(production_year.between(2006, 2007)))
+                             .select_left(title.rx(r"^One Piece|^Dragon Ball Z")
+                                          .and(cast.select_left(cast_note.eq("(voice: English version)")
+                                                                .and(role.eq("actress"))
+                                                                .and(person.select_left(person_name.rx(r"Yo").nrx(r"Yu").and(alias)))))) ),
+        // Root: 572k [us] movies. The role `with` is key-only, so m.cast reads only
+        // writer rows (836k of us movies), then persons and aliases top-down.
+        "8c" => load(db.movie.with(company.select(country).eq("[us]"))
+                             .select_left(cast.with(role.eq("writer")).select_left(person).select_left(alias)
+                                          .and(title))),
+        "8d" => load(db.movie.with(company.select(country).eq("[us]"))
+                             .select_left(cast.with(role.eq("costume designer")).select_left(person).select_left(alias)
+                                          .and(title))),
+
+        // Root: 120k / 40k / 572k / 572k movies. The cast `with` (276k / 223k
+        // voice-actress rows) is key-only, role first; m.cast then reads only
+        // those rows of the root's movies (21k / 5k / 84k / 84k); the person
+        // tests top-down from them, then the character of the cast rows left.
+        "9a" => load(db.movie.with(company.with(country.eq("[us]").and(company_note.rx(r"\(USA\)|\(worldwide\)")))
+                                   .and(production_year.between(2005, 2015)))
+                             .select_left(cast.with(role.eq("actress").and(cast_note.is_in(voice4())))
+                                              .select_left(person.select_left(gender.eq("f").and(person_name.rx(r"Ang")).and(alias))
+                                                           .and(character))
+                                          .and(title))),
+        "9b" => load(db.movie.with(company.with(country.eq("[us]").and(company_note.rx(r"\(200.*\)").rx(r"\(USA\)|\(worldwide\)")))
+                                   .and(production_year.between(2007, 2010)))
+                             .select_left(cast.with(role.eq("actress").and(cast_note.eq("(voice)")))
+                                              .select_left(person.select_left(gender.eq("f").and(person_name.rx(r"Angel")).and(alias))
+                                                           .and(character))
+                                          .and(title))),
+        "9c" => load(db.movie.with(company.select(country).eq("[us]"))
+                             .select_left(cast.with(role.eq("actress").and(cast_note.is_in(voice4())))
+                                              .select_left(person.select_left(gender.eq("f").and(person_name.rx(r"An")).and(alias))
+                                                           .and(character))
+                                          .and(title))),
+        "9d" => load(db.movie.with(company.select(country).eq("[us]"))
+                             .select_left(cast.with(role.eq("actress").and(cast_note.is_in(voice4())))
+                                              .select_left(person.select_left(gender.eq("f").and(alias).and(person_name))
+                                                           .and(character))
+                                          .and(title))),
+
+        // Root: 3k / 817 movies, 170k / 37k cast rows: the note regex runs on
+        // those rows (top-down), not on all 36M notes.
+        "10a" => load(db.movie.with(company.select(country).eq("[ru]").and(production_year.gt(2005)))
+                              .select_left(cast.select_left(cast_note.rx(r"\(voice\)").rx(r"\(uncredited\)")
+                                                            .and(role.eq("actor"))
+                                                            .and(character))
+                                           .and(title))),
+        "10b" => load(db.movie.with(company.select(country).eq("[ru]").and(production_year.gt(2010)))
+                              .select_left(cast.select_left(cast_note.rx(r"\(producer\)")
+                                                            .and(role.eq("actor"))
+                                                            .and(character))
+                                           .and(title))),
+        // Root: 316k movies (too many cast rows to go top-down): the (producer)
+        // `with` is key-only, m.cast reads its 342k rows of root movies, and
+        // only 6 of those have a character.
+        "10c" => load(db.movie.with(company.select(country).eq("[us]").and(production_year.gt(1990)))
+                              .select_left(cast.with(cast_note.rx(r"\(producer\)")).select_left(character)
+                                           .and(title))),
+
+        // Root: 26 / 5 movies. The company rows are read top-down. A movie's
+        // company rows WITHOUT a note are wanted (`minus(company_note)`), so the
+        // note is loaded (NULL = no row) and the `minus` runs in memory; that leg
+        // goes last so that it narrows no other leg's movies.
+        "11a" => load(db.movie.with(link.and(keyword.eq("sequel")).and(production_year.between(1950, 2000)))
+                              .select_left(link.select_left(link_ty.rx(r"follow"))
+                                           .and(title)
+                                           .and(company.select_left(company_name.rx(r"Film|Warner")
+                                                                    .and(company_ty.eq(PROD))
+                                                                    .and(country.ne("[pl]"))
+                                                                    .and(company_note))))),
+        "11b" => load(db.movie.with(link.and(keyword.eq("sequel")).and(production_year.eq(1998)))
+                              .select_left(title.rx(r"Money")
+                                           .and(link.select_left(link_ty.rx(r"follows")))
+                                           .and(company.select_left(company_name.rx(r"Film|Warner")
+                                                                    .and(company_ty.eq(PROD))
+                                                                    .and(country.ne("[pl]"))
+                                                                    .and(company_note))))),
+        // Root: 181 movies; their company rows top-down.
+        "11c" => load(db.movie.with(link.and(keyword.is_in(["sequel", "revenge", "based-on-novel"])).and(production_year.gt(1950)))
+                              .select_left(company.select_left(company_name.rx(r"^20th Century Fox|^Twentieth Century Fox")
+                                                               .and(company_ty.ne(PROD))
+                                                               .and(country.ne("[pl]"))
+                                                               .and(company_note))
+                                           .and(title))),
+        "11d" => load(db.movie.with(link.and(keyword.is_in(["sequel", "revenge", "based-on-novel"])).and(production_year.gt(1950)))
+                              .select_left(company.select_left(company_ty.ne(PROD)
+                                                               .and(country.ne("[pl]"))
+                                                               .and(company_name)
+                                                               .and(company_note))
+                                           .and(title))),
+
+        // Root: 36k / 102k movies. The rating leg leads, bottom-up (rating > 8.0:
+        // 16k movies of all 2.5M), so that the company leg is read only for the
+        // root movies it leaves.
+        "12a" => load(db.movie.with(info.with(info_ty.eq("genres").and(info_info.is_in(["Drama", "Horror"])))
+                                    .and(production_year.between(2005, 2008)))
+                              .select_left(data.select(data_ty.eq("rating").and(data_text.gt("8.0")))
+                                           .and(company.select_left(country.eq("[us]").and(company_ty.eq(PROD)).and(company_name)))
+                                           .and(title))),
+        // Root: 6 movies (bottom 10 rank leads); the title regex, then the budget
+        // rows of what is left, top-down (not all 14.8M info rows key-only).
+        "12b" => load(db.movie.with(data.select(data_ty).eq("bottom 10 rank")
+                                    .and(production_year.gt(2000))
+                                    .and(company.with(country.eq("[us]").and(company_ty.is_in([PROD, "distributors"])))))
+                              .select_left(title.rx(r"^Birdemic|Movie")
+                                           .and(info.select_left(info_ty.eq("budget").and(info_info))))),
+        "12c" => load(db.movie.with(info.with(info_ty.eq("genres").and(info_info.is_in(["Drama", "Horror", "Western", "Family"])))
+                                    .and(production_year.between(2000, 2010)))
+                              .select_left(data.select(data_ty.eq("rating").and(data_text.gt("7.0")))
+                                           .and(company.select_left(country.eq("[us]").and(company_ty.eq(PROD)).and(company_name)))
+                                           .and(title))),
+
+        // Root: 24.6k movies. Their release dates: the info type is an int
+        // column, so the `with` is key-only and m.info reads just the 79k
+        // release-date rows of root movies.
+        "13a" => load(db.movie.with(company.with(country.eq("[de]").and(company_ty.eq(PROD))).and(kind.eq("movie")))
+                              .select_left(data.select_left(data_ty.eq("rating").and(data_text))
+                                           .and(info.with(info_ty.eq("release dates")).select_left(info_info))
+                                           .and(title))),
+        // The title regex keeps 295 / 58 of the 663k movies: it leads, and the
+        // release-date test moves from the root to them (top-down).
+        "13b" => load(db.movie.with(kind.eq("movie"))
+                              .select_left(title.ne("").rx(r"Champion|Loser")
+                                           .and(info.select_left(info_ty.eq("release dates")))
+                                           .and(company.select_left(country.eq("[us]").and(company_ty.eq(PROD)).and(company_name)))
+                                           .and(data.select_left(data_ty.eq("rating").and(data_text))))),
+        "13c" => load(db.movie.with(kind.eq("movie"))
+                              .select_left(title.ne("").rx(r"^Champion|^Loser")
+                                           .and(info.select_left(info_ty.eq("release dates")))
+                                           .and(company.select_left(country.eq("[us]").and(company_ty.eq(PROD)).and(company_name)))
+                                           .and(data.select_left(data_ty.eq("rating").and(data_text))))),
+        // Root: 465k movies; the result is large (59k movies), so all of it is read.
+        "13d" => load(db.movie.with(kind.eq("movie").and(info.select(info_ty).eq("release dates")))
+                              .select_left(data.select_left(data_ty.eq("rating").and(data_text))
+                                           .and(company.select_left(country.eq("[us]").and(company_ty.eq(PROD)).and(company_name)))
+                                           .and(title))),
+
+        // Keyword, year and kind: 1.9k / ~1k / 7k movies; their country rows top-down.
+        "14a" => load(db.movie.with(keyword.is_in(murder4()).and(production_year.gt(2010)).and(kind.eq("movie")))
+                              .select_left(info.select_left(info_ty.eq("countries")
+                                                            .and(info_info.is_in(["Sweden", "Norway", "Germany", "Denmark", "Swedish",
+                                                                                  "Denish", "Norwegian", "German", "USA", "American"])))
+                                           .and(data.select_left(data_ty.eq("rating").and(data_text.lt("8.5"))))
+                                           .and(title))),
+        "14b" => load(db.movie.with(keyword.is_in(["murder", "murder-in-title"]).and(production_year.gt(2010)).and(kind.eq("movie")))
+                              .select_left(title.rx(r"murder|Murder|Mord")
+                                           .and(info.select_left(info_ty.eq("countries")
+                                                                 .and(info_info.is_in(["Sweden", "Norway", "Germany", "Denmark", "Swedish",
+                                                                                       "Denish", "Norwegian", "German", "USA", "American"]))))
+                                           .and(data.select_left(data_ty.eq("rating").and(data_text.gt("6.0")))))),
+        "14c" => load(db.movie.with(keyword.is_in(murder4()).and(production_year.gt(2005)).and(kind.is_in(["movie", "episode"])))
+                              .select_left(info.select_left(info_ty.eq("countries").and(info_info.is_in(nordic10())))
+                                           .and(data.select_left(data_ty.eq("rating").and(data_text.lt("8.5"))))
+                                           .and(title))),
+
+        // Root: 2.4k / 17 movies; their release dates top-down.
+        "15a" => load(db.movie.with(company.with(country.eq("[us]").and(company_note.rx(r"\(200.*\)").rx(r"\(worldwide\)")))
+                                    .and(aka).and(keyword).and(production_year.gt(2000)))
+                              .select_left(info.select_left(info_note.rx(r"internet")
+                                                            .and(info_ty.eq("release dates"))
+                                                            .and(info_info.rx(r"^USA:.* 200")))
+                                           .and(title))),
+        "15b" => load(db.movie.with(company.with(company_name.eq("YouTube")
+                                                 .and(country.eq("[us]"))
+                                                 .and(company_note.rx(r"\(200.*\)").rx(r"\(worldwide\)")))
+                                    .and(aka).and(keyword).and(production_year.between(2005, 2010)))
+                              .select_left(info.select_left(info_note.rx(r"internet")
+                                                            .and(info_ty.eq("release dates"))
+                                                            .and(info_info.rx(r"^USA:.* 200")))
+                                           .and(title))),
+        // Root: 28k movies (2.8M info rows: too many top-down). The internet
+        // note keeps 10.7k info rows: key-only, then m.info reads just those.
+        "15c" => load(db.movie.with(company.select(country).eq("[us]").and(aka).and(keyword).and(production_year.gt(1990)))
+                              .select_left(info.with(info_note.rx(r"internet"))
+                                               .select_left(info_ty.eq("release dates").and(info_info.rx(r"^USA:.* 199|^USA:.* 200")))
+                                           .and(title))),
+        // The internet release dates (10.6k movies) lead the root.
+        "15d" => load(db.movie.with(info.with(info_note.rx(r"internet").and(info_ty.eq("release dates")))
+                                    .and(company.select(country).eq("[us]"))
+                                    .and(keyword)
+                                    .and(production_year.gt(1990)))
+                              .select_left(aka.and(title))),
+
+        // Root: 17 / 24.6k / 3.9k movies; their cast, persons, aliases top-down
+        // (the tree plan starts from all 901k aliases).
+        "16a" => load(db.movie.with(keyword.eq(CNIT).and(episode_nr.ge(50).lt(100)).and(company.select(country).eq("[us]")))
+                              .select_left(cast.select_left(person).select_left(alias).and(title))),
+        "16b" => load(db.movie.with(keyword.eq(CNIT).and(company.select(country).eq("[us]")))
+                              .select_left(cast.select_left(person).select_left(alias).and(title))),
+        "16c" => load(db.movie.with(keyword.eq(CNIT).and(episode_nr.lt(100)).and(company.select(country).eq("[us]")))
+                              .select_left(cast.select_left(person).select_left(alias).and(title))),
+
+        _ => unreachable!("no load plan for {q}"),
+    }
+}
+
+// ----- In-memory plans -----------------------------------------------------------
+//
+// queries.rs's query, over the loaded rows, minus what the load already
+// checked: the root `with`s (rule 1) and every loaded predicate (rule 5). A
+// `with` the load turned top-down comes back as `with(<loaded column>)`.
+
+fn mem_plan(mem: &'static MemJob, q: &str) -> String {
+    let MemMovie { title, production_year, keyword, aka, company, cast, info, data, link, .. } = &mem.movie;
+    let MemCast { person, role, note: cast_note, character, .. } = &mem.cast;
+    let MemPerson { name: person_name, gender, alias, bio, name_pcode_cf, .. } = &mem.person;
+    let MemCompany { name: company_name, country, note: company_note, ty: company_ty, .. } = &mem.company;
+    let MemInfo { info: info_info, ty: info_ty, note: info_note, .. } = &mem.info;
+    let MemData { text: data_text, ty: data_ty, .. } = &mem.data;
+    let MemPersonInfo { info: personinfo_info, ty: personinfo_ty, note: personinfo_note, .. } = &mem.person_info;
+    let MemMovieLink { ty: link_ty, .. } = &mem.movie_link;
+
+    match q {
+        "1a" | "1b" | "1c" | "1d" =>
+            min_row(mem.movie.select(company.with(company_ty).select(company_note)
+                                     .and(title)
+                                     .and(production_year))),
+
+        "2a" | "2b" | "2c" | "2d" => min_row(mem.movie.select(title)),
+
+        "3a" | "3b" | "3c" => min_row(mem.movie.with(info.select(info_info)).select(title)),
+
+        "4a" | "4b" | "4c" => min_row(mem.movie.select(data.with(data_ty).select(data_text).and(title))),
+
+        "5a" | "5b" | "5c" => min_row(mem.movie.with(info.select(info_info)).select(title)),
+
+        "6a" | "6d" | "6e" | "6f" =>
+            min_row(mem.movie.with(production_year)
+                             .select(keyword.and(title).and(cast.select(person).select(person_name)))),
+        "6b" | "6c" => min_row(mem.movie.select(keyword.and(title).and(cast.select(person).select(person_name)))),
+
+        "7a" => min_row(mem.movie.select(cast.select(person.with(alias
+                                                                 .and(name_pcode_cf)
+                                                                 .and(gender.eq("m").or(gender.eq("f").and(person_name.rx(r"^B"))))
+                                                                 .and(bio.with(personinfo_ty.and(personinfo_note)))))
+                                              .select(person_name)
+                                         .and(title))),
+        "7b" => min_row(mem.movie.select(cast.select(person.with(alias
+                                                                 .and(name_pcode_cf)
+                                                                 .and(gender)
+                                                                 .and(bio.with(personinfo_ty.and(personinfo_note)))))
+                                              .select(person_name)
+                                         .and(title))),
+        "7c" => min_row(mem.movie.select(cast.select(person.with(alias
+                                                                 .and(name_pcode_cf)
+                                                                 .and(gender.eq("m").or(gender.eq("f").and(person_name.rx(r"^A"))))))
+                                              .select(person_name.and(bio.with(personinfo_ty.and(personinfo_note))
+                                                                         .select(personinfo_info))))),
+
+        "8a" => min_row(mem.movie.select(cast.select(person.with(person_name)).select(alias).and(title))),
+        "8b" => min_row(mem.movie.select(cast.with(cast_note.and(role)).select(person.with(person_name)).select(alias)
+                                         .and(title))),
+        "8c" | "8d" => min_row(mem.movie.select(cast.select(person).select(alias).and(title))),
+
+        "9a" => min_row(mem.movie.select(cast.select(person.with(gender.and(person_name)).select(alias)
+                                                     .and(character))
+                                         .and(title))),
+        "9b" | "9c" | "9d" =>
+            min_row(mem.movie.select(cast.select(person.with(gender).select(alias.and(person_name))
+                                                 .and(character))
+                                     .and(title))),
+
+        "10a" | "10b" => min_row(mem.movie.select(cast.with(cast_note.and(role)).select(character).and(title))),
+        "10c" => min_row(mem.movie.select(cast.select(character).and(title))),
+
+        "11a" | "11b" =>
+            min_row(mem.movie.select(company.with(company_name.and(company_ty).and(country).minus(company_note))
+                                            .select(company_name)
+                                     .and(link.select(link_ty))
+                                     .and(title))),
+        "11c" | "11d" =>
+            min_row(mem.movie.select(company.with(company_ty.and(country)).select(company_name.and(company_note))
+                                     .and(title))),
+
+        "12a" | "12c" =>
+            min_row(mem.movie.select(company.with(country.and(company_ty)).select(company_name)
+                                     .and(data.with(data_ty).select(data_text))
+                                     .and(title))),
+        "12b" => min_row(mem.movie.select(info.with(info_ty).select(info_info).and(title))),
+
+        "13a" => min_row(mem.movie.select(info.select(info_info)
+                                          .and(data.with(data_ty).select(data_text))
+                                          .and(title))),
+        "13b" | "13c" =>
+            min_row(mem.movie.with(info.select(info_ty))
+                             .select(title
+                                     .and(company.with(country.and(company_ty)).select(company_name))
+                                     .and(data.with(data_ty).select(data_text)))),
+        "13d" =>
+            min_row(mem.movie.select(company.with(country.and(company_ty)).select(company_name)
+                                     .and(data.with(data_ty).select(data_text))
+                                     .and(title))),
+
+        "14a" | "14b" | "14c" =>
+            min_row(mem.movie.with(info.with(info_ty).select(info_info))
+                             .select(data.with(data_ty).select(data_text).and(title))),
+
+        "15a" | "15b" => min_row(mem.movie.select(info.with(info_note.and(info_ty)).select(info_info).and(title))),
+        "15c" => min_row(mem.movie.select(info.with(info_ty).select(info_info).and(title))),
+        "15d" => min_row(mem.movie.select(aka.and(title))),
+
+        "16a" | "16b" | "16c" => min_row(mem.movie.select(cast.select(person).select(alias).and(title))),
+
+        _ => unreachable!("no in-memory plan for {q}"),
+    }
+}
+
+// 16d–33c: queries_loaded.rs's tree plans, unchanged; then the registry.
+pub fn entries(db: &'static JobFiles) -> Vec<Entry> {
+    let Movie { title, kind, production_year, episode_nr, keyword,
+                company, cast, info, data, complete_cast, link, .. } = &db.movie;
+    let Cast { person, role, note: cast_note, character, .. } = &db.cast;
+    let Person { name: person_name, gender, alias, bio, .. } = &db.person;
+    let Company { name: company_name, country, note: company_note, ty: company_ty, .. } = &db.company;
+    let Info { info: info_info, ty: info_ty, note: info_note, .. } = &db.info;
+    let Data { text: data_text, ty: data_ty, .. } = &db.data;
+    let PersonInfo { ty: personinfo_ty, .. } = &db.person_info;
     let MovieLink { target, ty: link_ty, .. } = &db.movie_link;
     let CompleteCast { status, subject, .. } = &db.complete_cast;
-    // For the case studies: cast.select(person) as one column (see `movie_person`).
-    let cast_person = movie_person(db);
-
-    let q1a = move || {
-        db.movie.with(data.select(data_ty).eq("top 250 rank"))
-                .select(company.with(company_ty.eq("production companies"))
-                               .select(company_note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)")
-                                                   .rx(r"\(co-production\)|\(presents\)"))
-                        .and(title)
-                        .and(production_year))
-    };
-
-    let q1b = move || {
-        db.movie.with(data.select(data_ty).eq("bottom 10 rank"))
-                .select(company.with(company_ty.eq("production companies"))
-                               .select(company_note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)"))
-                        .and(title)
-                        .and(production_year.between(2005, 2010)))
-    };
-
-    let q1c = move || {
-        db.movie.with(data.select(data_ty).eq("top 250 rank"))
-                .select(company.with(company_ty.eq("production companies"))
-                               .select(company_note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)")
-                                                   .rx(r"\(co-production\)"))
-                        .and(title)
-                        .and(production_year.gt(2010)))
-    };
-
-    let q1d = move || {
-        db.movie.with(data.select(data_ty).eq("bottom 10 rank"))
-                .select(company.with(company_ty.eq("production companies"))
-                               .select(company_note.nrx(r"\(as Metro-Goldwyn-Mayer Pictures\)"))
-                        .and(title)
-                        .and(production_year.gt(2000)))
-    };
-
-    let q2a = move || {
-        db.movie.with(keyword.eq("character-name-in-title")
-                      .and(company.select(country).eq("[de]")))
-                .select(title)
-    };
-
-    let q2b = move || {
-        db.movie.with(keyword.eq("character-name-in-title")
-                      .and(company.select(country).eq("[nl]")))
-                .select(title)
-    };
-
-    let q2c = move || {
-        db.movie.with(keyword.eq("character-name-in-title")
-                      .and(company.select(country).eq("[sm]")))
-                .select(title)
-    };
-
-    let q2d = move || {
-        db.movie.with(keyword.eq("character-name-in-title")
-                      .and(company.select(country).eq("[us]")))
-                .select(title)
-    };
-
-    let q3a = move || {
-        db.movie.with(keyword.rx(r"sequel")
-                      .and(info.select(info_info).is_in(nordic8()))
-                      .and(production_year.gt(2005)))
-                .select(title)
-    };
-
-    let q3b = move || {
-        db.movie.with(keyword.rx(r"sequel")
-                      .and(info.select(info_info).eq("Bulgaria"))
-                      .and(production_year.gt(2010)))
-                .select(title)
-    };
-
-    let q3c = move || {
-        db.movie.with(keyword.rx(r"sequel")
-                      .and(info.select(info_info).is_in(["Sweden", "Norway", "Germany", "Denmark", "Swedish",
-                                                   "Denish", "Norwegian", "German", "USA", "American"]))
-                      .and(production_year.gt(1990)))
-                .select(title)
-    };
-
-    #[cfg(any())] // pending: rx_dict
-    let q4a = move || {
-        db.movie.with(keyword.rx_dict(r"sequel")
-                      .and(production_year.gt(2005)))
-                .select(data.with(data_ty.eq("rating")).select(data_text.gt("5.0"))
-                        .and(title))
-    };
-
-    #[cfg(any())] // pending: rx_dict
-    let q4b = move || {
-        db.movie.with(keyword.rx_dict(r"sequel")
-                      .and(production_year.gt(2010)))
-                .select(data.with(data_ty.eq("rating")).select(data_text.gt("9.0"))
-                        .and(title))
-    };
-
-    #[cfg(any())] // pending: rx_dict
-    let q4c = move || {
-        db.movie.with(keyword.rx_dict(r"sequel")
-                      .and(production_year.gt(1990)))
-                .select(data.with(data_ty.eq("rating")).select(data_text.gt("2.0"))
-                        .and(title))
-    };
-
-    let q5a = move || {
-        db.movie.with(company.with(company_ty.eq("production companies")
-                                   .and(company_note.rx(r"\(theatrical\)").rx(r"\(France\)")))
-                      .and(info.select(info_info).is_in(nordic8()))
-                      .and(production_year.gt(2005)))
-                .select(title)
-    };
-
-    let q5b = move || {
-        db.movie.with(company.with(company_ty.eq("production companies")
-                                   .and(company_note.rx(r"\(VHS\)").rx(r"\(USA\)").rx(r"\(1994\)")))
-                      .and(info.select(info_info).is_in(["USA", "America"]))
-                      .and(production_year.gt(2010)))
-                .select(title)
-    };
-
-    let q5c = move || {
-        db.movie.with(company.with(company_ty.eq("production companies")
-                                   .and(company_note.nrx(r"\(TV\)").rx(r"\(USA\)")))
-                      .and(info.select(info_info).is_in(nordic10()))
-                      .and(production_year.gt(1990)))
-                .select(title)
-    };
-
-    let q6a = move || {
-        db.movie.with(production_year.gt(2010))
-                .select(keyword.eq("marvel-cinematic-universe")
-                        .and(title)
-                        .and(cast.select(person).select(person_name).rx(r"Downey.*Robert")))
-    };
-
-    let q6b = move || {
-        db.movie.with(production_year.gt(2014))
-                .select(keyword.is_in(kw8())
-                        .and(title)
-                        .and(cast.select(person).select(person_name).rx(r"Downey.*Robert")))
-    };
-
-    let q6c = move || {
-        db.movie.with(production_year.gt(2014))
-                .select(keyword.eq("marvel-cinematic-universe")
-                        .and(title)
-                        .and(cast.select(person).select(person_name).rx(r"Downey.*Robert")))
-    };
-
-    let q6d = move || {
-        db.movie.with(production_year.gt(2000))
-                .select(keyword.is_in(kw8())
-                        .and(title)
-                        .and(cast.select(person).select(person_name).rx(r"Downey.*Robert")))
-    };
-
-    // 6c's tree plans with select_left (compared against plan_6c, see above):
-    // the root's with first, then the select under its Bloom ...
-    let q6c_l1 = move || {
-        db.movie.with(production_year.gt(2014))
-                .select_left(keyword.eq("marvel-cinematic-universe")
-                             .and(title)
-                             .and(cast.select(person).select(person_name).rx(r"Downey.*Robert")))
-    };
-    // ... and top-down through the cast chain as well.
-    let q6c_l2 = move || {
-        db.movie.with(production_year.gt(2014))
-                .select_left(keyword.eq("marvel-cinematic-universe")
-                             .and(title)
-                             .and(cast.select_left(person).select_left(person_name).rx(r"Downey.*Robert")))
-    };
-
-    let q6e = move || {
-        db.movie.with(production_year.gt(2000))
-                .select(keyword.eq("marvel-cinematic-universe")
-                        .and(title)
-                        .and(cast.select(person).select(person_name).rx(r"Downey.*Robert")))
-    };
-
-    let q6f = move || {
-        db.movie.with(production_year.gt(2000))
-                .select(keyword.is_in(kw8())
-                        .and(title)
-                        .and(cast.select(person).select(person_name)))
-    };
-
-    #[cfg(any())] // pending: Disj
-    let q7a = move || {
-        db.movie.with(production_year.between(1980, 1995)
-                      .and(linked_by.select(link_ty).eq("features")))
-                .select(cast.select(person.with(alias.rx(r"a")
-                                                .and(name_pcode_cf.between("A", "F"))
-                                                .and(gender.eq("m")
-                                                     .or(gender.eq("f").and(person_name.rx(r"^B"))))
-                                                .and(bio.with(personinfo_ty.eq("mini biography")
-                                                              .and(personinfo_note.eq("Volker Boehm")))))
-                                          .select(person_name))
-                        .and(title))
-    };
-
-    let q7b = move || {
-        db.movie.with(production_year.between(1980, 1984)
-                      .and(linked_by.select(link_ty).eq("features")))
-                .select(cast.select(person.with(alias.rx(r"a")
-                                                .and(name_pcode_cf.rx(r"^D"))
-                                                .and(gender.eq("m"))
-                                                .and(bio.with(personinfo_ty.eq("mini biography")
-                                                              .and(personinfo_note.eq("Volker Boehm")))))
-                                          .select(person_name))
-                        .and(title))
-    };
-
-    #[cfg(any())] // pending: Disj
-    let q7c = move || {
-        db.movie.with(production_year.between(1980, 2010)
-                      .and(linked_by.select(link_ty).is_in(["references", "referenced in", "features", "featured in"])))
-                .select(cast.select(person.with(alias.rx(r"a|^A")
-                                                .and(name_pcode_cf.between("A", "F"))
-                                                .and(gender.eq("m")
-                                                     .or(gender.eq("f").and(person_name.rx(r"^A")))))
-                                          .select(person_name
-                                                  .and(bio.with(personinfo_ty.eq("mini biography")
-                                                                .and(personinfo_note))
-                                                          .select(personinfo_info)))))
-    };
-
-    let q8a = move || {
-        db.movie.with(company.with(country.eq("[jp]")
-                                   .and(company_note.rx(r"\(Japan\)").nrx(r"\(USA\)"))))
-                .select(cast.with(cast_note.eq("(voice: English version)")
-                                  .and(role.eq("actress")))
-                            .select(person.with(person_name.rx(r"Yo").nrx(r"Yu"))).select(alias)
-                        .and(title))
-    };
-
-    let q8b = move || {
-        db.movie.with(company.with(country.eq("[jp]")
-                                   .and(company_note.rx(r"\(Japan\)").nrx(r"\(USA\)").rx(r"\(2006\)|\(2007\)")))
-                      .and(production_year.between(2006, 2007)))
-                .select(cast.with(cast_note.eq("(voice: English version)")
-                                  .and(role.eq("actress")))
-                            .select(person.with(person_name.rx(r"Yo").nrx(r"Yu"))).select(alias)
-                        .and(title.rx(r"^One Piece|^Dragon Ball Z")))
-    };
-
-    let q8c = move || {
-        db.movie.with(company.select(country).eq("[us]"))
-                .select(cast.with(role.eq("writer")).select(person).select(alias)
-                        .and(title))
-    };
-
-    let q8d = move || {
-        db.movie.with(company.select(country).eq("[us]"))
-                .select(cast.with(role.eq("costume designer")).select(person).select(alias)
-                        .and(title))
-    };
-
-    let q9a = move || {
-        db.movie.with(company.with(country.eq("[us]")
-                                   .and(company_note.rx(r"\(USA\)|\(worldwide\)")))
-                      .and(production_year.between(2005, 2015)))
-                .select(cast.with(cast_note.is_in(voice4())
-                                  .and(role.eq("actress")))
-                            .select(person.with(gender.eq("f").and(person_name.rx(r"Ang"))).select(alias)
-                                    .and(character))
-                        .and(title))
-    };
-
-    let q9b = move || {
-        db.movie.with(company.with(country.eq("[us]")
-                                   .and(company_note.rx(r"\(200.*\)").rx(r"\(USA\)|\(worldwide\)")))
-                      .and(production_year.between(2007, 2010)))
-                .select(cast.with(cast_note.eq("(voice)")
-                                  .and(role.eq("actress")))
-                            .select(person.with(gender.eq("f")).select(alias.and(person_name.rx(r"Angel")))
-                                    .and(character))
-                        .and(title))
-    };
-
-    let q9c = move || {
-        db.movie.with(company.select(country).eq("[us]"))
-                .select(cast.with(cast_note.is_in(voice4())
-                                  .and(role.eq("actress")))
-                            .select(person.with(gender.eq("f")).select(alias.and(person_name.rx(r"An")))
-                                    .and(character))
-                        .and(title))
-    };
-
-    let q9d = move || {
-        db.movie.with(company.select(country).eq("[us]"))
-                .select(cast.with(cast_note.is_in(voice4())
-                                  .and(role.eq("actress")))
-                            .select(person.with(gender.eq("f")).select(alias.and(person_name))
-                                    .and(character))
-                        .and(title))
-    };
-
-    let q10a = move || {
-        db.movie.with(company.select(country).eq("[ru]")
-                      .and(production_year.gt(2005)))
-                .select(cast.with(cast_note.rx(r"\(voice\)").rx(r"\(uncredited\)")
-                                  .and(role.eq("actor")))
-                            .select(character)
-                        .and(title))
-    };
-
-    let q10b = move || {
-        db.movie.with(company.select(country).eq("[ru]")
-                      .and(production_year.gt(2010)))
-                .select(cast.with(cast_note.rx(r"\(producer\)")
-                                  .and(role.eq("actor")))
-                            .select(character)
-                        .and(title))
-    };
-
-    let q10c = move || {
-        db.movie.with(company.select(country).eq("[us]")
-                      .and(production_year.gt(1990)))
-                .select(cast.with(cast_note.rx(r"\(producer\)")).select(character)
-                        .and(title))
-    };
-
-    #[cfg(any())] // pending: Diff
-    let q11a = move || {
-        db.movie.with(link.and(keyword.eq("sequel"))
-                      .and(production_year.between(1950, 2000)))
-                .select(company.with(country.ne("[pl]")
-                                     .and(company_name.rx(r"Film|Warner"))
-                                     .and(company_ty.eq("production companies"))
-                                     .minus(company_note))
-                               .select(company_name)
-                        .and(link.select(link_ty).rx(r"follow"))
-                        .and(title))
-    };
-
-    #[cfg(any())] // pending: Diff
-    let q11b = move || {
-        db.movie.with(link.and(keyword.eq("sequel"))
-                      .and(production_year.eq(1998)))
-                .select(company.with(country.ne("[pl]")
-                                     .and(company_name.rx(r"Film|Warner"))
-                                     .and(company_ty.eq("production companies"))
-                                     .minus(company_note))
-                               .select(company_name)
-                        .and(link.select(link_ty).rx(r"follows"))
-                        .and(title.rx(r"Money")))
-    };
-
-    let q11c = move || {
-        db.movie.with(link.and(keyword.is_in(["sequel", "revenge", "based-on-novel"]))
-                      .and(production_year.gt(1950)))
-                .select(company.with(country.ne("[pl]")
-                                     .and(company_name.rx(r"^20th Century Fox|^Twentieth Century Fox"))
-                                     .and(company_ty.ne("production companies")))
-                               .select(company_name.and(company_note))
-                        .and(title))
-    };
-
-    let q11d = move || {
-        db.movie.with(link.and(keyword.is_in(["sequel", "revenge", "based-on-novel"]))
-                      .and(production_year.gt(1950)))
-                .select(company.with(country.ne("[pl]")
-                                     .and(company_ty.ne("production companies")))
-                               .select(company_name.and(company_note))
-                        .and(title))
-    };
-
-    let q12a = move || {
-        db.movie.with(info.with(info_ty.eq("genres")
-                                .and(info_info.is_in(["Drama", "Horror"])))
-                      .and(production_year.between(2005, 2008)))
-                .select(company.with(country.eq("[us]")
-                                     .and(company_ty.eq("production companies")))
-                               .select(company_name)
-                        .and(data.with(data_ty.eq("rating")).select(data_text.gt("8.0")))
-                        .and(title))
-    };
-
-    let q12b = move || {
-        db.movie.with(company.with(country.eq("[us]")
-                                   .and(company_ty.is_in(["production companies", "distributors"])))
-                      .and(data.select(data_ty).eq("bottom 10 rank"))
-                      .and(production_year.gt(2000)))
-                .select(info.with(info_ty.eq("budget")).select(info_info)
-                        .and(title.rx(r"^Birdemic|Movie")))
-    };
-
-    let q12c = move || {
-        db.movie.with(info.with(info_ty.eq("genres")
-                                .and(info_info.is_in(["Drama", "Horror", "Western", "Family"])))
-                      .and(production_year.between(2000, 2010)))
-                .select(company.with(country.eq("[us]")
-                                     .and(company_ty.eq("production companies")))
-                               .select(company_name)
-                        .and(data.with(data_ty.eq("rating")).select(data_text.gt("7.0")))
-                        .and(title))
-    };
-
-    let q13a = move || {
-        db.movie.with(company.with(country.eq("[de]")
-                                   .and(company_ty.eq("production companies")))
-                      .and(kind.eq("movie")))
-                .select(info.with(info_ty.eq("release dates")).select(info_info)
-                        .and(data.with(data_ty.eq("rating")).select(data_text))
-                        .and(title))
-    };
-
-    let q13b = move || {
-        db.movie.with(kind.eq("movie")
-                      .and(info.select(info_ty).eq("release dates")))
-                .select(title.ne("").rx(r"Champion|Loser")
-                        .and(company.with(country.eq("[us]")
-                                          .and(company_ty.eq("production companies")))
-                                    .select(company_name))
-                        .and(data.with(data_ty.eq("rating")).select(data_text)))
-    };
-
-    let q13c = move || {
-        db.movie.with(kind.eq("movie")
-                      .and(info.select(info_ty).eq("release dates")))
-                .select(title.ne("").rx(r"^Champion|^Loser")
-                        .and(company.with(country.eq("[us]")
-                                          .and(company_ty.eq("production companies")))
-                                    .select(company_name))
-                        .and(data.with(data_ty.eq("rating")).select(data_text)))
-    };
-
-    let q13d = move || {
-        db.movie.with(kind.eq("movie")
-                      .and(info.select(info_ty).eq("release dates")))
-                .select(company.with(country.eq("[us]")
-                                     .and(company_ty.eq("production companies")))
-                               .select(company_name)
-                        .and(data.with(data_ty.eq("rating")).select(data_text))
-                        .and(title))
-    };
-
-    let q14a = move || {
-        db.movie.with(keyword.is_in(murder4())
-                      .and(kind.eq("movie"))
-                      .and(info.with(info_ty.eq("countries")
-                                     .and(info_info.is_in(["Sweden", "Norway", "Germany", "Denmark", "Swedish",
-                                                           "Denish", "Norwegian", "German", "USA", "American"]))))
-                      .and(production_year.gt(2010)))
-                .select(data.with(data_ty.eq("rating")).select(data_text.lt("8.5"))
-                        .and(title))
-    };
-
-    let q14b = move || {
-        db.movie.with(keyword.is_in(["murder", "murder-in-title"])
-                      .and(kind.eq("movie"))
-                      .and(info.with(info_ty.eq("countries")
-                                     .and(info_info.is_in(["Sweden", "Norway", "Germany", "Denmark", "Swedish",
-                                                           "Denish", "Norwegian", "German", "USA", "American"]))))
-                      .and(production_year.gt(2010)))
-                .select(data.with(data_ty.eq("rating")).select(data_text.gt("6.0"))
-                        .and(title.rx(r"murder|Murder|Mord")))
-    };
-
-    let q14c = move || {
-        db.movie.with(keyword.is_in(murder4())
-                      .and(kind.is_in(["movie", "episode"]))
-                      .and(info.with(info_ty.eq("countries").and(info_info.is_in(nordic10()))))
-                      .and(production_year.gt(2005)))
-                .select(data.with(data_ty.eq("rating")).select(data_text.lt("8.5"))
-                        .and(title))
-    };
-
-    let q15a = move || {
-        db.movie.with(production_year.gt(2000)
-                      .and(company.with(country.eq("[us]")
-                                        .and(company_note.rx(r"\(200.*\)").rx(r"\(worldwide\)"))))
-                      .and(keyword)
-                      .and(aka))
-                .select(info.with(info_ty.eq("release dates")
-                                  .and(info_note.rx(r"internet")))
-                            .select(info_info.rx(r"^USA:.* 200"))
-                        .and(title))
-    };
-
-    let q15b = move || {
-        db.movie.with(company.with(country.eq("[us]")
-                                   .and(company_name.eq("YouTube"))
-                                   .and(company_note.rx(r"\(200.*\)").rx(r"\(worldwide\)")))
-                      .and(keyword)
-                      .and(aka)
-                      .and(production_year.between(2005, 2010)))
-                .select(info.with(info_ty.eq("release dates")
-                                  .and(info_note.rx(r"internet")))
-                            .select(info_info.rx(r"^USA:.* 200"))
-                        .and(title))
-    };
-
-    let q15c = move || {
-        db.movie.with(company.select(country).eq("[us]")
-                      .and(keyword)
-                      .and(aka)
-                      .and(production_year.gt(1990)))
-                .select(info.with(info_ty.eq("release dates")
-                                  .and(info_note.rx(r"internet")))
-                            .select(info_info.rx(r"^USA:.* 199|^USA:.* 200"))
-                        .and(title))
-    };
-
-    let q15d = move || {
-        db.movie.with(company.select(country).eq("[us]")
-                      .and(keyword)
-                      .and(info.with(info_ty.eq("release dates").and(info_note.rx(r"internet"))))
-                      .and(production_year.gt(1990)))
-                .select(aka.and(title))
-    };
-
-    let q16a = move || {
-        db.movie.with(company.select(country).eq("[us]")
-                      .and(keyword.eq("character-name-in-title"))
-                      .and(episode_nr.ge(50).lt(100)))
-                .select(cast.select(person).select(alias)
-                        .and(title))
-    };
-
-    let q16b = move || {
-        db.movie.with(company.select(country).eq("[us]")
-                      .and(keyword.eq("character-name-in-title")))
-                .select(cast.select(person).select(alias)
-                        .and(title))
-    };
-
-    let q16c = move || {
-        db.movie.with(company.select(country).eq("[us]")
-                      .and(keyword.eq("character-name-in-title"))
-                      .and(episode_nr.lt(100)))
-                .select(cast.select(person).select(alias)
-                        .and(title))
-    };
 
     let q16d = move || {
         db.movie.with(company.select(country).eq("[us]")
@@ -1667,88 +1257,68 @@ pub fn entries(db: &'static JobFiles) -> Vec<Entry> {
     };
 
     vec![
-        entry("1a", "(A Warner Bros.-First National Picture) (presents) || A Clockwork Orange || 1934", move || min_row(loaded(q1a()))),
-        entry("1a_mine", "(A Warner Bros.-First National Picture) (presents) || A Clockwork Orange || 1934",
-      move || run_myplan_1a(load_into_memory(db, myplan_1a))),
-
-        entry("1b", "(Set Decoration Rentals) (uncredited) || Disaster Movie || 2008", move || min_row(loaded(q1b()))),
-        entry("1c", "(co-production) || Intouchables || 2011", move || min_row(loaded(q1c()))),
-        entry("1d", "(Set Decoration Rentals) (uncredited) || Disaster Movie || 2004", move || min_row(loaded(q1d()))),
-        entry("2a", "'Doc'", move || min_row(loaded(q2a()))),
-        entry("2b", "'Doc'", move || min_row(loaded(q2b()))),
-        entry("2c", "(empty)", move || min_row(loaded(q2c()))),
-        entry("2d", "& Teller", move || min_row(loaded(q2d()))),
-        entry("3a", "2 Days in New York", move || min_row(loaded(q3a()))),
-        entry("3b", "300: Rise of an Empire", move || min_row(loaded(q3b()))),
-        entry("3c", "& Teller 2", move || min_row(loaded(q3c()))),
-        entry("4a", "5.1 || & Teller 2", move || pending("rx_dict")),
-        entry("4b", "9.1 || Batman: Arkham City", move || pending("rx_dict")),
-        entry("4c", "2.1 || & Teller 2", move || pending("rx_dict")),
-        entry("5a", "(empty)", move || min_row(loaded(q5a()))),
-        entry("5a_mine", "(empty)", move || run_myplan_5a(load_into_memory(db, myplan_5a))),
-        entry("5b", "(empty)", move || min_row(loaded(q5b()))),
-        entry("5c", "11,830,420", move || min_row(loaded(q5c()))),
-        entry("6a", "marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert", move || min_row(loaded(q6a()))),
-        entry("6b", "based-on-comic || The Avengers 2 || Downey Jr., Robert", move || min_row(loaded(q6b()))),
-        // Case studies: hand-written plan + to_memory + queries.rs's query in memory.
-        //entry("6c", "marvel-cinematic-universe || The Avengers 2 || Downey Jr., Robert", move || {
-        //    let (mem, persons) = load_into_memory_with(db, || plan_6c(db, cast_person));
-        //    run_6c(mem, persons)
-        //}),
-        entry("6c", "marvel-cinematic-universe || The Avengers 2 || Downey Jr., Robert", move || min_row(loaded(q6c()))),
-        entry("6d", "based-on-comic || 2008 MTV Movie Awards || Downey Jr., Robert", move || {
-            let (mem, persons) = load_into_memory_with(db, || plan_6d(db, cast_person));
-            run_6d(mem, persons)
-        }),
-        entry("6c_myplan", "marvel-cinematic-universe || The Avengers 2 || Downey Jr., Robert", move || run_6c_myplan(load_into_memory(db, plan_6c_myplan))),
-        // ... the first attempts (every hop as written) ...
-        entry("6c_v1", "marvel-cinematic-universe || The Avengers 2 || Downey Jr., Robert", move || run_6c_v1(load_into_memory(db, plan_6c_v1))),
-        entry("6d_v1", "based-on-comic || 2008 MTV Movie Awards || Downey Jr., Robert", move || run_6d_v1(load_into_memory(db, plan_6d_v1))),
-        // ... and the tree plans they were compared with.
-        entry("6c_tree", "marvel-cinematic-universe || The Avengers 2 || Downey Jr., Robert", move || min_row(loaded(q6c()))),
-        entry("6c_l1", "marvel-cinematic-universe || The Avengers 2 || Downey Jr., Robert", move || min_row(loaded(q6c_l1()))),
-        entry("6c_l2", "marvel-cinematic-universe || The Avengers 2 || Downey Jr., Robert", move || min_row(loaded(q6c_l2()))),
-        entry("6d_tree", "based-on-comic || 2008 MTV Movie Awards || Downey Jr., Robert", move || min_row(loaded(q6d()))),
-        entry("6e", "marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert", move || min_row(loaded(q6e()))),
-        entry("6f", "based-on-comic || & Teller 2 || \"Steff\", Stefanie Oxmann Mcgaha", move || min_row(loaded(q6f()))),
-        entry("7a", "Antonioni, Michelangelo || Dressed to Kill", move || pending("Disj")),
-        entry("7b", "De Palma, Brian || Dressed to Kill", move || min_row(loaded(q7b()))),
+        // 1a–16c: optimised (load plan + in-memory plan, see above).
+        entry("1a", "(A Warner Bros.-First National Picture) (presents) || A Clockwork Orange || 1934", move || optimised(db, "1a")),
+        entry("1b", "(Set Decoration Rentals) (uncredited) || Disaster Movie || 2008", move || optimised(db, "1b")),
+        entry("1c", "(co-production) || Intouchables || 2011", move || optimised(db, "1c")),
+        entry("1d", "(Set Decoration Rentals) (uncredited) || Disaster Movie || 2004", move || optimised(db, "1d")),
+        entry("2a", "'Doc'", move || optimised(db, "2a")),
+        entry("2b", "'Doc'", move || optimised(db, "2b")),
+        entry("2c", "(empty)", move || optimised(db, "2c")),
+        entry("2d", "& Teller", move || optimised(db, "2d")),
+        entry("3a", "2 Days in New York", move || optimised(db, "3a")),
+        entry("3b", "300: Rise of an Empire", move || optimised(db, "3b")),
+        entry("3c", "& Teller 2", move || optimised(db, "3c")),
+        entry("4a", "5.1 || & Teller 2", move || optimised(db, "4a")),
+        entry("4b", "9.1 || Batman: Arkham City", move || optimised(db, "4b")),
+        entry("4c", "2.1 || & Teller 2", move || optimised(db, "4c")),
+        entry("5a", "(empty)", move || optimised(db, "5a")),
+        entry("5b", "(empty)", move || optimised(db, "5b")),
+        entry("5c", "11,830,420", move || optimised(db, "5c")),
+        entry("6a", "marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert", move || optimised(db, "6a")),
+        entry("6b", "based-on-comic || The Avengers 2 || Downey Jr., Robert", move || optimised(db, "6b")),
+        entry("6c", "marvel-cinematic-universe || The Avengers 2 || Downey Jr., Robert", move || optimised(db, "6c")),
+        entry("6d", "based-on-comic || 2008 MTV Movie Awards || Downey Jr., Robert", move || optimised(db, "6d")),
+        entry("6e", "marvel-cinematic-universe || Iron Man 3 || Downey Jr., Robert", move || optimised(db, "6e")),
+        entry("6f", "based-on-comic || & Teller 2 || \"Steff\", Stefanie Oxmann Mcgaha", move || optimised(db, "6f")),
+        entry("7a", "Antonioni, Michelangelo || Dressed to Kill", move || optimised(db, "7a")),
+        entry("7b", "De Palma, Brian || Dressed to Kill", move || optimised(db, "7b")),
         entry("7c",
               "50 Cent || \"Boo\" Arnold was born Earl Arnold in Hattiesburg, Mississippi in 1966. His father gave him the nickname 'Boo' early in life and it stuck through grade school, high school, and college. He is still known as \"Boo\" to family and friends.  Raised in central Texas, Arnold played baseball at Texas Tech University where he graduated with a BA in Advertising and Marketing. While at Texas Tech he was also a member of the Texas Epsilon chapter of Phi Delta Theta fraternity. After college he worked with Young Life, an outreach to high school students, in San Antonio, Texas.  While with Young Life Arnold began taking extension courses through Fuller Theological Seminary and ultimately went full-time to Gordon-Conwell Theological Seminary in Boston, Massachusetts. At Gordon-Conwell he completed a Master's Degree in Divinity studying Theology, Philosophy, Church History, Biblical Languages (Hebrew & Greek), and Exegetical Methods. Following seminary he was involved with reconciliation efforts in the former Yugoslavia shortly after the war ended there in1995.  Arnold started acting in his early thirties in Texas. After an encouraging visit to Los Angeles where he spent time with childhood friend George Eads (of CSI Las Vegas) he decided to move to Los Angeles in 2001 to pursue acting full-time. While in Los Angeles he has studied acting with Judith Weston at Judith Weston Studio for Actors and Directors.  Arnold's acting career has been one of steady development, booking co-star and guest-star roles in nighttime television. He guest-starred opposite of Jane Seymour on the night time television drama Justice. He played the lead, Michael Hollister, in the film The Seer, written and directed by Patrick Masset (Friday Night Lights).  He was nominated Best Actor in the168 Film Festival for the role of Phil Stevens in the short-film Useless. In Useless he played a US Marshal who must choose between mercy and justice as he confronts the man who murdered his father. Arnold's performance in Useless confirmed his ability to carry lead roles, and he continues to work toward solidifying himself as a male lead in film and television.  Arnold married fellow Texan Stacy Rudd of San Antonio in 2003 and they are now raising their three children in the Los Angeles area.",
-              move || pending("Disj")),
-        entry("8a", "Chambers, Linda || .hack//Quantum", move || min_row(loaded(q8a()))),
-        entry("8b", "Chambers, Linda || Dragon Ball Z: Shin Budokai", move || min_row(loaded(q8b()))),
-        entry("8c", "\"A.J.\" || #1 Cheerleader Camp", move || min_row(loaded(q8c()))),
-        entry("8d", "\"Jenny from the Block\" || #1 Cheerleader Camp", move || min_row(loaded(q8d()))),
-        entry("9a", "AJ || Airport Announcer || Blue Harvest", move || min_row(loaded(q9a()))),
-        entry("9b", "AJ || Bassett, Angela || Airport Announcer || Blue Harvest", move || min_row(loaded(q9b()))),
-        entry("9c", "'Annette' || Alborg, Ana Esther || 2nd Balladeer || (1975-01-20)", move || min_row(loaded(q9c()))),
-        entry("9d", "!!!, Toy || Aaron, Caroline || \"Cockamamie's\" Salesgirl || $15,000.00 Error", move || min_row(loaded(q9d()))),
-        entry("9d_mine", "!!!, Toy || Aaron, Caroline || \"Cockamamie's\" Salesgirl || $15,000.00 Error", move || run_myplan_9d(load_into_memory(db, myplan_9d))),
-        entry("10a", "Actor || 12 Rounds", move || min_row(loaded(q10a()))),
-        entry("10b", "(empty)", move || min_row(loaded(q10b()))),
-        entry("10c", "Himself || Evil Eyes: Behind the Scenes", move || min_row(loaded(q10c()))),
-        entry("11a", "Churchill Films || followed by || Batman Beyond", move || pending("Diff")),
-        entry("11b", "Filmlance International AB || follows || The Money Man", move || pending("Diff")),
-        entry("11c", "20th Century Fox Home Entertainment || (1997-2002) (worldwide) (all media) || 24", move || min_row(loaded(q11c()))),
-        entry("11d", "13th Street || (1954) (UK) (TV) || ...denn sie wissen nicht, was sie tun", move || min_row(loaded(q11d()))),
-        entry("12a", "10th Grade Reunion Films || 8.1 || 3:20", move || min_row(loaded(q12a()))),
-        entry("12b", "$10,000 || Birdemic: Shock and Terror", move || min_row(loaded(q12b()))),
-        entry("12c", "\"Oh That Gus!\" || 7.1 || $1.11", move || min_row(loaded(q12c()))),
-        entry("13a", "Afghanistan:24 June 2012 || 1.0 || &Me", move || min_row(loaded(q13a()))),
-        entry("13b", "5 Time Champion || 501audio || 1.8", move || min_row(loaded(q13b()))),
-        entry("13c", "Champion || DL Sites || 1.8", move || min_row(loaded(q13c()))),
-        entry("13d", "\"O\" Films || 1.0 || #54 Meets #47", move || min_row(loaded(q13d()))),
-        entry("14a", "1.0 || $lowdown", move || min_row(loaded(q14a()))),
-        entry("14b", "6.4 || Of Dolls and Murder", move || min_row(loaded(q14b()))),
-        entry("14c", "1.0 || $lowdown", move || min_row(loaded(q14c()))),
-        entry("15a", "USA:1 June 2007 || Battlestar Galactica: The Resistance", move || min_row(loaded(q15a()))),
-        entry("15b", "USA:27 April 2007 || RoboCop vs Terminator", move || min_row(loaded(q15b()))),
-        entry("15c", "USA:1 April 2003 || 24: Day Six - Debrief", move || min_row(loaded(q15c()))),
-        entry("15d", "(Not So) Instant Photo || 06/05", move || min_row(loaded(q15d()))),
-        entry("16a", "Adams, Stan || Carol Burnett vs. Anthony Perkins", move || min_row(loaded(q16a()))),
-        entry("16b", "!!!, Toy || & Teller", move || min_row(loaded(q16b()))),
-        entry("16c", "\"Brooklyn\" Tony Danza || (#1.5)", move || min_row(loaded(q16c()))),
+              move || optimised(db, "7c")),
+        entry("8a", "Chambers, Linda || .hack//Quantum", move || optimised(db, "8a")),
+        entry("8b", "Chambers, Linda || Dragon Ball Z: Shin Budokai", move || optimised(db, "8b")),
+        entry("8c", "\"A.J.\" || #1 Cheerleader Camp", move || optimised(db, "8c")),
+        entry("8d", "\"Jenny from the Block\" || #1 Cheerleader Camp", move || optimised(db, "8d")),
+        entry("9a", "AJ || Airport Announcer || Blue Harvest", move || optimised(db, "9a")),
+        entry("9b", "AJ || Bassett, Angela || Airport Announcer || Blue Harvest", move || optimised(db, "9b")),
+        entry("9c", "'Annette' || Alborg, Ana Esther || 2nd Balladeer || (1975-01-20)", move || optimised(db, "9c")),
+        entry("9d", "!!!, Toy || Aaron, Caroline || \"Cockamamie's\" Salesgirl || $15,000.00 Error", move || optimised(db, "9d")),
+        entry("10a", "Actor || 12 Rounds", move || optimised(db, "10a")),
+        entry("10b", "(empty)", move || optimised(db, "10b")),
+        entry("10c", "Himself || Evil Eyes: Behind the Scenes", move || optimised(db, "10c")),
+        entry("11a", "Churchill Films || followed by || Batman Beyond", move || optimised(db, "11a")),
+        entry("11b", "Filmlance International AB || follows || The Money Man", move || optimised(db, "11b")),
+        entry("11c", "20th Century Fox Home Entertainment || (1997-2002) (worldwide) (all media) || 24", move || optimised(db, "11c")),
+        entry("11d", "13th Street || (1954) (UK) (TV) || ...denn sie wissen nicht, was sie tun", move || optimised(db, "11d")),
+        entry("12a", "10th Grade Reunion Films || 8.1 || 3:20", move || optimised(db, "12a")),
+        entry("12b", "$10,000 || Birdemic: Shock and Terror", move || optimised(db, "12b")),
+        entry("12c", "\"Oh That Gus!\" || 7.1 || $1.11", move || optimised(db, "12c")),
+        entry("13a", "Afghanistan:24 June 2012 || 1.0 || &Me", move || optimised(db, "13a")),
+        entry("13b", "5 Time Champion || 501audio || 1.8", move || optimised(db, "13b")),
+        entry("13c", "Champion || DL Sites || 1.8", move || optimised(db, "13c")),
+        entry("13d", "\"O\" Films || 1.0 || #54 Meets #47", move || optimised(db, "13d")),
+        entry("14a", "1.0 || $lowdown", move || optimised(db, "14a")),
+        entry("14b", "6.4 || Of Dolls and Murder", move || optimised(db, "14b")),
+        entry("14c", "1.0 || $lowdown", move || optimised(db, "14c")),
+        entry("15a", "USA:1 June 2007 || Battlestar Galactica: The Resistance", move || optimised(db, "15a")),
+        entry("15b", "USA:27 April 2007 || RoboCop vs Terminator", move || optimised(db, "15b")),
+        entry("15c", "USA:1 April 2003 || 24: Day Six - Debrief", move || optimised(db, "15c")),
+        entry("15d", "(Not So) Instant Photo || 06/05", move || optimised(db, "15d")),
+        entry("16a", "Adams, Stan || Carol Burnett vs. Anthony Perkins", move || optimised(db, "16a")),
+        entry("16b", "!!!, Toy || & Teller", move || optimised(db, "16b")),
+        entry("16c", "\"Brooklyn\" Tony Danza || (#1.5)", move || optimised(db, "16c")),
+        // 16d–33c: queries_loaded.rs's tree plans, unchanged.
         entry("16d", "\"Brooklyn\" Tony Danza || (#1.5)", move || min_row(loaded(q16d()))),
         entry("17a", "B, Khaz", move || min_row(loaded(q17a()))),
         entry("17b", "Z'Dar, Robert", move || min_row(loaded(q17b()))),

@@ -31,7 +31,7 @@ use prela::engine::*;
 use prela::loader::{Set, SparseKey, Str};
 
 use crate::file_schema::Catalog;
-use crate::trial_loader::ColumnRef;
+use crate::trial_loader::{ColumnRef, RowIndex};
 
 /// A code column looked up in its lookup table: `E -> L` in one file, then
 /// `L -> T` in L's file.
@@ -168,39 +168,52 @@ pub struct JobFiles {
 }
 
 pub fn job(c: &mut Catalog) -> JobFiles {
+
+    let title = RowIndex::new(c.path("title"));
+    let name = RowIndex::new(c.path("name"));
+    let char_name = RowIndex::new(c.path("char_name"));
+    let company_name = RowIndex::new(c.path("company_name"));
+    let keyword = RowIndex::new(c.path("keyword"));
+    let kind_type = RowIndex::new(c.path("kind_type"));
+    let role_type = RowIndex::new(c.path("role_type"));
+    let company_type = RowIndex::new(c.path("company_type"));
+    let info_type = RowIndex::new(c.path("info_type"));
+    let link_type = RowIndex::new(c.path("link_type"));
+    let comp_cast_type = RowIndex::new(c.path("comp_cast_type"));
+
     JobFiles {
         movie: Movie {
             id: c.key("title", "id"),
             title: c.col("title", "id", "title"),
             kind: Compose {
-                a: c.col("title", "id", "kind_id"),
+                a: c.col("title", "id", "kind_id").val_via(kind_type),
                 b: c.col("kind_type", "id", "kind"),
             },
             production_year: c.col("title", "id", "production_year"),
             episode_nr: c.col("title", "id", "episode_nr"),
             keyword: Compose {
-                a: c.col("movie_keyword", "movie_id", "keyword_id"),
+                a: c.col("movie_keyword", "movie_id", "keyword_id").key_via(title).val_via(keyword),
                 b: c.col("keyword", "id", "keyword"),
             },
-            company: c.col("movie_companies", "movie_id", "id"), // reverse FK
-            cast: c.col("cast_info", "movie_id", "id"), // reverse FK
-            info: c.col("movie_info", "movie_id", "id"), // reverse FK
-            data: c.col("movie_info_idx", "movie_id", "id"), // reverse FK
-            complete_cast: c.col("complete_cast", "movie_id", "id"), // reverse FK
-            link: c.col("movie_link", "movie_id", "id"), // reverse FK
-            linked_by: c.col("movie_link", "linked_movie_id", "id"), // reverse FK
-            aka: c.col("aka_title", "movie_id", "title"),
+            company: c.col("movie_companies", "movie_id", "id").key_via(title), // reverse FK
+            cast: c.col("cast_info", "movie_id", "id").key_via(title), // reverse FK
+            info: c.col("movie_info", "movie_id", "id").key_via(title), // reverse FK
+            data: c.col("movie_info_idx", "movie_id", "id").key_via(title), // reverse FK
+            complete_cast: c.col("complete_cast", "movie_id", "id").key_via(title), // reverse FK
+            link: c.col("movie_link", "movie_id", "id").key_via(title), // reverse FK
+            linked_by: c.col("movie_link", "linked_movie_id", "id").key_via(title), // reverse FK
+            aka: c.col("aka_title", "movie_id", "title").key_via(title),
         },
         cast: Cast {
             id: c.key("cast_info", "id"),
-            person: c.col("cast_info", "id", "person_id"),
+            person: c.col("cast_info", "id", "person_id").val_via(name),
             role: Compose {
-                a: c.col("cast_info", "id", "role_id"),
+                a: c.col("cast_info", "id", "role_id").val_via(role_type),
                 b: c.col("role_type", "id", "role"),
             },
             note: c.col("cast_info", "id", "note"),
             character: Compose {
-                a: c.col("cast_info", "id", "person_role_id"),
+                a: c.col("cast_info", "id", "person_role_id").val_via(char_name),
                 b: c.col("char_name", "id", "name"),
             },
         },
@@ -208,23 +221,23 @@ pub fn job(c: &mut Catalog) -> JobFiles {
             id: c.key("name", "id"),
             name: c.col("name", "id", "name"),
             gender: c.col("name", "id", "gender"),
-            alias: c.col("aka_name", "person_id", "name"),
-            bio: c.col("person_info", "person_id", "id"), // reverse FK
+            alias: c.col("aka_name", "person_id", "name").key_via(name),
+            bio: c.col("person_info", "person_id", "id").key_via(name), // reverse FK
             name_pcode_cf: c.col("name", "id", "name_pcode_cf"),
         },
         company: Company {
             id: c.key("movie_companies", "id"),
             name: Compose {
-                a: c.col("movie_companies", "id", "company_id"),
+                a: c.col("movie_companies", "id", "company_id").val_via(company_name),
                 b: c.col("company_name", "id", "name"),
             },
             country: Compose {
-                a: c.col("movie_companies", "id", "company_id"),
+                a: c.col("movie_companies", "id", "company_id").val_via(company_name),
                 b: c.col("company_name", "id", "country_code"),
             },
             note: c.col("movie_companies", "id", "note"),
             ty: Compose {
-                a: c.col("movie_companies", "id", "company_type_id"),
+                a: c.col("movie_companies", "id", "company_type_id").val_via(company_type),
                 b: c.col("company_type", "id", "kind"),
             },
         },
@@ -232,7 +245,7 @@ pub fn job(c: &mut Catalog) -> JobFiles {
             id: c.key("movie_info", "id"),
             info: c.col("movie_info", "id", "info"),
             ty: Compose {
-                a: c.col("movie_info", "id", "info_type_id"),
+                a: c.col("movie_info", "id", "info_type_id").val_via(info_type),
                 b: c.col("info_type", "id", "info"),
             },
             note: c.col("movie_info", "id", "note"),
@@ -241,7 +254,7 @@ pub fn job(c: &mut Catalog) -> JobFiles {
             id: c.key("movie_info_idx", "id"),
             text: c.col("movie_info_idx", "id", "info"),
             ty: Compose {
-                a: c.col("movie_info_idx", "id", "info_type_id"),
+                a: c.col("movie_info_idx", "id", "info_type_id").val_via(info_type),
                 b: c.col("info_type", "id", "info"),
             },
         },
@@ -249,27 +262,27 @@ pub fn job(c: &mut Catalog) -> JobFiles {
             id: c.key("person_info", "id"),
             info: c.col("person_info", "id", "info"),
             ty: Compose {
-                a: c.col("person_info", "id", "info_type_id"),
+                a: c.col("person_info", "id", "info_type_id").val_via(info_type),
                 b: c.col("info_type", "id", "info"),
             },
             note: c.col("person_info", "id", "note"),
         },
         movie_link: MovieLink {
             id: c.key("movie_link", "id"),
-            target: c.col("movie_link", "id", "linked_movie_id"),
+            target: c.col("movie_link", "id", "linked_movie_id").val_via(title),
             ty: Compose {
-                a: c.col("movie_link", "id", "link_type_id"),
+                a: c.col("movie_link", "id", "link_type_id").val_via(link_type),
                 b: c.col("link_type", "id", "link"),
             },
         },
         complete_cast: CompleteCast {
             id: c.key("complete_cast", "id"),
             status: Compose {
-                a: c.col("complete_cast", "id", "status_id"),
+                a: c.col("complete_cast", "id", "status_id").val_via(comp_cast_type),
                 b: c.col("comp_cast_type", "id", "kind"),
             },
             subject: Compose {
-                a: c.col("complete_cast", "id", "subject_id"),
+                a: c.col("complete_cast", "id", "subject_id").val_via(comp_cast_type),
                 b: c.col("comp_cast_type", "id", "kind"),
             },
         },

@@ -26,13 +26,13 @@
 //  12. KeyLoad            — the key-only mode for with-arguments (exact Bitsets)
 use std::cell::RefCell;
 use std::marker::PhantomData;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use arrow::array::{Array, ArrayRef, BooleanArray, Float64Array, Int64Array, StringArray};
 use arrow::compute::cast;
-use arrow::datatypes::DataType;
+use arrow::datatypes::{DataType, Field};
 use prela::engine::*;
-use prela::join_tree::{Bloom, ColumnFilter, scan};
+use prela::join_tree::{Bloom, ColumnFilter};
 use prela::loader::Str;
 
 use std::fs::File;
@@ -41,9 +41,10 @@ use parquet::arrow::arrow_reader::{
     ArrowPredicate, ArrowPredicateFn, ArrowReaderOptions, ParquetRecordBatchReader,
     ParquetRecordBatchReaderBuilder, RowFilter, RowSelection, RowSelector,
 };
-use parquet::file::metadata::PageIndexPolicy;
-use arrow::datatypes::{DataType, Field};
-use parquet::arrow::RowNumber;
+
+use parquet::arrow::{ProjectionMask, RowNumber};
+
+const MISSING: u32 = u32::MAX;
 
 // ===== 1. KeyFilter: filters passed down, Blooms passed up ====================
 
@@ -115,26 +116,35 @@ impl KeyFilter {
             KeyFilter::Exact(set) => out.push(exact_filter(column, set.clone())),
         }
     }
-    // a row selector takes in how many sequential rows to keep and how 
-    // many to leave -- for now just operates on exact bitsets
-    fn to_selection(&self) ->RowSelection {
-        match self {
-            KeyFilter::Exact(set) => {
-                let mut runs = Vec::new();
-                let mut i = 0;
-                while i < set.n {
-                    let keep = set.member(i);
-                    let mut j = i;
-                    while j < set.n && set.member(j) == keep {
-                        j += 1;
-                    }
-                    runs.push( if keep {RowSelector::select(j-i)} else {RowSelect::skip(j - i)});
-                    i = j
-
-                }
-                RowSelection::from(runs)
+    
+    fn to_selection(&self) -> Option<RowSelection> {
+        let KeyFilter::Exact(set) = self else { return None };
+        let mut runs = Vec::new();
+        let mut i = 0;
+        while i < set.n {
+            let keep = set.member(i);
+            let mut j = i;
+            while j < set.n && set.member(j) == keep {
+                j += 1;
             }
+            runs.push(if keep { RowSelector::select(j - i) } else { RowSelector::skip(j - i) });
+            i = j;
         }
+        Some(RowSelection::from(runs))
+    }
+
+    /// A filter on rows of ANOTHER file, tested on `column`, which stores that
+    /// file's ids: look each id up in `index`, then test its row.
+    fn push_via(&self, column: &'static str, index: &'static [u32], out: &mut Vec<ColumnFilter>) {
+        let KeyFilter::Exact(set) = self else { return };
+        let set = set.clone();
+        out.push(ColumnFilter {
+            columns: vec![column.to_string()],
+            eval: Box::new(move |batch| {
+                let ids = ints(batch.column_by_name(column).unwrap());
+                Ok(ids.into_iter().map(|id| Some(row_in(index, id).is_some_and(|r| set.member(r)))).collect())
+            }),
+        })
     }
 }
 
@@ -145,7 +155,7 @@ pub trait ParquetType: Copy + PartialEq + 'static {
     /// Startup check against the footer.
     fn accepts(t: &DataType) -> bool;
     /// Load: Arrow column -> Rust values, appended to `out`.
-    fn from_array(a: &ArrayRef, out: &mut Vec<Self>);
+    fn from_array(a: &ArrayRef, out: &mut Vec<Option<Self>>);
     /// Whether values of this type are join keys, so a Bloom over them is useful.
     const IS_KEY: bool = false;
     /// The value as a join key (raw file value, widened to i64).
@@ -157,7 +167,11 @@ pub trait ParquetType: Copy + PartialEq + 'static {
     fn test_array(a: &ArrayRef, p: &Pred<Self>) -> BooleanArray {
         let mut vals = Vec::new();
         Self::from_array(a, &mut vals);
-        vals.into_iter().map(|v| Some(p(v))).collect()
+        vals.into_iter().map(|v| v.map(|v| p(v))).collect()
+    }
+
+    fn from_row(_row: usize) -> Self {
+        unreachable!("only an id column points at rows")
     }
 }
 
@@ -165,27 +179,27 @@ impl ParquetType for i64 {
     fn accepts(t: &DataType) -> bool {
         matches!(t, DataType::Int32 | DataType::Int64)
     }
-    fn from_array(a: &ArrayRef, out: &mut Vec<Self>) {
-        out.extend(keys_i64(a));
-    }
+    fn from_array(a: &ArrayRef, out: &mut Vec<Option<Self>>) {
+        out.extend(ints(a));
+}
 }
 
 impl ParquetType for f64 {
     fn accepts(t: &DataType) -> bool {
         matches!(t, DataType::Float64)
     }
-    fn from_array(a: &ArrayRef, out: &mut Vec<Self>) {
-        out.extend(a.as_any().downcast_ref::<Float64Array>().unwrap().values().iter());
-    }
+    fn from_array(a: &ArrayRef, out: &mut Vec<Option<Self>>) {
+        out.extend(a.as_any().downcast_ref::<Float64Array>().unwrap().iter());
+}
 }
 
 impl ParquetType for Str {
     fn accepts(t: &DataType) -> bool {
         matches!(t, DataType::Utf8)
     }
-    fn from_array(a: &ArrayRef, out: &mut Vec<Self>) {
+    fn from_array(a: &ArrayRef, out: &mut Vec<Option<Self>>) {
         let strings = a.as_any().downcast_ref::<StringArray>().unwrap();
-        out.extend((0..strings.len()).map(|i| leak_str(strings.value(i))));
+        out.extend(strings.iter().map(|s| s.map(leak_str)));
     }
     // Test the strings where they are (in the batch) instead of leaking a copy
     // of each, as `from_array` must for strings that are kept.
@@ -212,13 +226,54 @@ impl<E: 'static> ParquetType for Id<E> {
     fn accepts(t: &DataType) -> bool {
         matches!(t, DataType::Int32 | DataType::Int64)
     }
-    fn from_array(a: &ArrayRef, out: &mut Vec<Self>) {
-        out.extend(keys_i64(a).into_iter().map(|k| Id::new(k as usize)));
+    fn from_array(a: &ArrayRef, out: &mut Vec<Option<Self>>) {
+        out.extend(ints(a).into_iter().map(|k| k.map(|k| Id::new(k as usize))));
     }
     const IS_KEY: bool = true;
     fn as_key(self) -> Option<i64> {
         Some(self.0 as i64)
     }
+    fn from_row(row: usize) -> Self {
+        Id::new(row)
+    }
+}
+
+
+/// id -> row of one file: `rows[id]` is the row holding that id (MISSING if none).
+/// Read on first use and kept: it never changes. A Vec, not a HashMap: ids are dense.
+pub struct RowIndex {
+    path: &'static str,
+    rows: OnceLock<Vec<u32>>,
+}
+
+impl RowIndex {
+    pub fn new(path: String) -> &'static RowIndex {
+        Box::leak(Box::new(RowIndex { path: leak_str(&path), rows: OnceLock::new() }))
+    }
+
+    fn rows(&'static self) -> &'static [u32] {
+        self.rows.get_or_init(|| {
+            let mut rows = Vec::new();
+            for batch in scan_rows(self.path, Vec::new(), None, &["id".to_string()]) {
+                let batch = batch.unwrap();
+                let ids = ints(batch.column_by_name("id").unwrap());
+                let nums = ints(batch.column_by_name("row_number").unwrap());
+                for (id, row) in ids.into_iter().zip(nums) {
+                    let id = id.unwrap() as usize;
+                    if id >= rows.len() {
+                        rows.resize(id + 1, MISSING);
+                    }
+                    rows[id] = row.unwrap() as u32;
+                }
+            }
+            rows
+        })
+    }
+}
+
+fn row_in(index: &[u32], id: Option<i64>) -> Option<usize> {
+    let row = *index.get(id? as usize)?;
+    (row != MISSING).then_some(row as usize)
 }
 
 // ===== 4. ColumnRef: the leaf ==================================================
@@ -227,33 +282,20 @@ impl<E: 'static> ParquetType for Id<E> {
 /// column in the loaded query. `None` = not loaded since the last `clear()`.
 pub type Sink<E, T> = RefCell<Option<MultiRel<Id<E>, T>>>;
 
-// The relation key_col -> val_col of one Parquet file. It holds names plus a
-// REFERENCE to its sink, so it stays Copy (which `#[derive(IntoQuery)]` needs
-// for the primary key) and every copy of it, including the temporary one
-// inside `load`, fills the same sink. `RefCell` is what allows writing to the
-// sink through the shared `&'static TpchFiles`.
+
+#[derive(Clone, Copy)]
+pub enum Side {
+    Row,                    // this file's row number (the column is the file's `id`): read nothing
+    Via(&'static RowIndex), // an id of another file: read the column, look up the row
+    Value,                  // a plain value (title, note, ...): read the column
+}
+
 pub struct ColumnRef<E: 'static, T: Copy + 'static> {
     pub path: &'static str,
     pub key_col: &'static str,
     pub val_col: &'static str,
-    pub sink: &'static Sink<E, T>,
-    _t: PhantomData<(E, T)>,
-}
-
-// This should effectively just be an inherticance of columnRef
-pub struct PrimaryColRef<E: 'static, T: Copy + 'static> {
-    pub path: &'static str,
-    pub key_col: &'static str,
-    pub val_col: &'static str,
-    pub sink: &'static Sink<E, T>,
-    _t: PhantomData<(E, T)>,
-}
-
-pub struct ForeignColRef<E: 'static, T: Copy + 'static> {
-    pub path: &'static str,
-    pub foreignpath: &'static str, // This foreign key should know which file it points to
-    pub key_col: &'static str,
-    pub val_col: &'static str,
+    pub key: Side,
+    pub val: Side,
     pub sink: &'static Sink<E, T>,
     _t: PhantomData<(E, T)>,
 }
@@ -268,17 +310,26 @@ impl<E: 'static, T: Copy + 'static> Clone for ColumnRef<E, T> {
 impl<E: 'static, T: Copy + 'static> Copy for ColumnRef<E, T> {}
 
 impl<E: 'static, T: Copy + 'static> ColumnRef<E, T> {
-    /// A column with its own, empty sink. Called by `Catalog::col` (fileSchema.rs)
-    /// after it has checked the columns against the file's footer.
+
     pub fn new(path: &'static str, key_col: &'static str, val_col: &'static str) -> Self {
+        let side = |col: &str| if col == "id" { Side::Row } else { Side::Value };
         ColumnRef {
-            path,
-            key_col,
-            val_col,
-            sink: Box::leak(Box::new(RefCell::new(None))), // one sink per column
+            path, key_col, val_col,
+            key: side(key_col),
+            val: side(val_col),
+            sink: Box::leak(Box::new(RefCell::new(None))),
             _t: PhantomData,
         }
     }
+    pub fn key_via(mut self, index: &'static RowIndex) -> Self {
+        self.key = Side::Via(index);
+        self
+    }
+    pub fn val_via(mut self, index: &'static RowIndex) -> Self {
+        self.val = Side::Via(index);
+        self
+    }
+
 }
 
 impl<E: 'static, T: ParquetType> ColumnRef<E, T> {
@@ -306,13 +357,29 @@ impl<E: 'static, T: ParquetType> ColumnRef<E, T> {
         }
         ids
     }
+
+    fn filters(&self, key_filter: KeyFilter, val_filter: KeyFilter, preds: Vec<Pred<T>>)
+        -> (Vec<ColumnFilter>, Option<RowSelection>) {
+        let mut on_rows = KeyFilter::All;
+        let mut filters = Vec::new();
+        for (side, col, f) in [(self.key, self.key_col, key_filter), (self.val, self.val_col, val_filter)] {
+            match side {
+                Side::Row => on_rows = on_rows.and(f),
+                Side::Via(index) => f.push_via(col, index.rows(), &mut filters),
+                Side::Value => assert!(!T::IS_KEY, "{col} stores ids: give it .val_via(..) in the schema"),
+            }
+        }
+        for p in preds {
+            filters.push(to_predicate(self.val_col, p));
+        }
+        (filters, on_rows.to_selection())
+    }
 }
 
 impl<E: 'static, T: Copy + 'static> Query for ColumnRef<E, T> {
     type D = Id<E>;
     type R = T;
 }
-
 
 
 
@@ -354,52 +421,44 @@ fn to_predicate<T: ParquetType>(column: &'static str, p: Pred<T>) -> ColumnFilte
     }
 }
 
-// This is for a general value Column which just need sto output MultiRel(physical row_ids, values)
 impl<E: 'static, T: ParquetType> Load for ColumnRef<E, T> {
     type Out = MultiRel<Id<E>, T>;
     fn load(self, key_filter: KeyFilter, val_filter: KeyFilter, preds: Vec<Pred<T>>) -> (Self::Out, (KeyFilter, KeyFilter)) {
-        let mut filters = Vec::new();
+        let (filters, selection) = self.filters(key_filter, val_filter, preds);
+        let selective = !filters.is_empty() || selection.is_some();
 
-        // rather than pushing the key filter we turn it into a selection key_filter.push_filters(self.key_col, &mut filters);
+        // Read only the columns a side is stored in; a Row side is `row_number`, which always comes.
+        let mut cols = Vec::new();
+        if !matches!(self.key, Side::Row) { cols.push(self.key_col.to_string()); }
+        if !matches!(self.val, Side::Row) { cols.push(self.val_col.to_string()); }
 
-        val_filter.push_filters(self.val_col, &mut filters);
-        // trying to change the order
-        for p in preds {
-            filters.push(to_predicate(self.val_col, p));
-        }
-        // With no filters every row survives, and a Bloom over all keys rules out nothing.
-        let selective = !filters.is_empty();
-        let rows = key_filter.to_selection();
-
-        let mut cols = vec![self.val_col.to_string()]; // we're only ever readindg just this col
-        let (reader, row_count) = scan(self.path, filters, rows, &cols);
-
-        // Only rows passing all filters arrive here.
-        let mut keys: Vec<i64> = Vec::new(); 
+        let mut keys: Vec<usize> = Vec::new();
         let mut vals: Vec<T> = Vec::new();
-        for batch in reader {
+        for batch in scan_rows(self.path, filters, selection, &cols) {
             let batch = batch.unwrap();
-            // no longer reading keys we need to extract the physical IDs
-            let rows = batch.column_by_name("row_number").unwrap();   // Int64Array of file positions
-            keys.extend(keys_i64(rows).values().iter().copied());
-            T::from_array(batch.column_by_name(self.val_col).unwrap(), &mut vals);
+            let ks = rows_of(&batch, self.key, self.key_col);
+            let vs: Vec<Option<T>> = match self.val {
+                Side::Value => {
+                    let mut v = Vec::new();
+                    T::from_array(batch.column_by_name(self.val_col).unwrap(), &mut v);
+                    v
+                }
+                _ => rows_of(&batch, self.val, self.val_col).into_iter().map(|r| r.map(T::from_row)).collect(),
+            };
+            for (k, v) in ks.into_iter().zip(vs) {
+                if let (Some(k), Some(v)) = (k, v) {
+                    keys.push(k);
+                    vals.push(v);
+                }
+            }
         }
-        let file = self.path.rsplit('/').next().unwrap();
-        /*println!(
-            "  scan {file:<17} {:>12} -> {:<13} kept {:>4} of {:>4} rows",
-            self.key_col,
-            self.val_col,
-            keys.len(),
-            row_count
-        );*/
 
+        // From here on as before, only now in rows.
         let blooms = if selective {
-            //let kb = KeyFilter::from_keys(row_count, keys.iter().copied());
             let kb = KeyFilter::exact(exact_from_keys::<usize>(&keys));
             let vb = if T::IS_KEY {
-                //KeyFilter::from_keys(row_count, vals.iter().filter_map(|v| v.as_key()))
-                let ids: Vec<i64> = vals.iter().filter_map(|v| v.as_key()).collect();
-                KeyFilter::exact(exact_from_keys::<usize>(&ids))
+                let rows: Vec<usize> = vals.iter().filter_map(|v| v.as_key()).map(|k| k as usize).collect();
+                KeyFilter::exact(exact_from_keys::<usize>(&rows))
             } else {
                 KeyFilter::All
             };
@@ -408,19 +467,16 @@ impl<E: 'static, T: ParquetType> Load for ColumnRef<E, T> {
             (KeyFilter::All, KeyFilter::All)
         };
 
-        let n = keys.iter().max().map_or(0, |&m| m as usize + 1);
-        let rel = MultiRel::from_pairs(n, keys.into_iter().map(|k| k as usize).zip(vals));
-
-        // Also keep the rows in this column's sink, for `to_memory`. A column
-        // loaded again (another occurrence in the query) is merged, not replaced.
+        let n = keys.iter().max().map_or(0, |&m| m + 1);
+        let rel = MultiRel::from_pairs(n, keys.into_iter().zip(vals));
+        
         let mut slot = self.sink.borrow_mut();
         let merged = match slot.take() {
-            None => MultiRel::from_csr(rel.offsets, rel.v), // same slices as `rel`, no copy
+            None => MultiRel::from_csr(rel.offsets, rel.v), 
             Some(old) => union(&old, &rel),
         };
         *slot = Some(merged);
         drop(slot);
-
         (rel, blooms)
     }
 }
@@ -428,147 +484,8 @@ impl<E: 'static, T: ParquetType> Load for ColumnRef<E, T> {
 
 
 
-impl<E: 'static, T: ParquetType> Load for PrimaryColRef<E, T> {
-    type Out = HashMap<Id<E>, T>;
-    fn load(self, key_filter: KeyFilter, val_filter: KeyFilter, preds: Vec<Pred<T>>) -> (Self::Out, (KeyFilter, KeyFilter)) {
-        let mut filters = Vec::new();
-
-        // rather than pushing the key filter we turn it into a selection key_filter.push_filters(self.key_col, &mut filters);
-
-        val_filter.push_filters(self.val_col, &mut filters);
-        // trying to change the order
-        for p in preds {
-            filters.push(to_predicate(self.val_col, p));
-        }
-        // With no filters every row survives, and a Bloom over all keys rules out nothing.
-        let selective = !filters.is_empty();
-        let rows = key_filter.to_selection();
-
-        let mut cols = vec![self.val_col.to_string()]; // we're only ever readindg just this col
-        let (reader, row_count) = scan(self.path, filters, rows, &cols);
-
-        // Only rows passing all filters arrive here.
-        let mut keys: Vec<i64> = Vec::new(); 
-        let mut vals: Vec<T> = Vec::new();
-        for batch in reader {
-            let batch = batch.unwrap();
-            // no longer reading keys we need to extract the physical IDs
-            let rows = batch.column_by_name("row_number").unwrap();   // Int64Array of file positions
-            keys.extend(keys_i64(rows).values().iter().copied());
-            T::from_array(batch.column_by_name(self.val_col).unwrap(), &mut vals);
-        }
-        let file = self.path.rsplit('/').next().unwrap();
 
 
-        // the bloom filter here is a bit finnicky
-
-        let n = keys.iter().max().map_or(0, |&m| m as usize + 1);
-        // up to this ppint it's all the same except that rather than returning (row_id, table_ids)
-        // it should be the other way around: Hashmap(table_ids, row_id)
-        
-        let rel = HashMap::from_pairs(n, (vals, keys));
-
-
-        // Also keep the rows in this column's sink, for `to_memory`. A column
-        // loaded again (another occurrence in the query) is merged, not replaced.
-        let mut slot = self.sink.borrow_mut();
-        let merged = match slot.take() {
-            None => HashMap::from_csr(rel.offsets, rel.v), // same slices as `rel`, no copy
-            Some(old) => union(&old, &rel),
-        };
-        *slot = Some(merged);
-        drop(slot);
-
-        (rel, blooms)
-    }
-}
-
-
-
-
-impl<E: 'static, T: ParquetType> Load for ForeignColRef<E, T> {
-    type Out = HashMap<Id<E>, T>;
-    fn load(self, key_filter: KeyFilter, val_filter: KeyFilter, preds: Vec<Pred<T>>) -> (Self::Out, (KeyFilter, KeyFilter)) {
-        let mut filters = Vec::new();
-
-        // This needs a hop-load: first we load our table IDs
-        // then we go ahead and load the foreign key IDs from our foreign path 
-        // by filtering on them as predicates 
-        // so we want to have (row_ids from table 1,row_ids corresponding in table 2)
-
-        val_filter.push_filters(self.val_col, &mut filters);
-        for p in preds {
-            filters.push(to_predicate(self.val_col, p));
-        }
-        // With no filters every row survives, and a Bloom over all keys rules out nothing.
-        let selective = !filters.is_empty();
-        let rows = key_filter.to_selection();
-
-        let mut cols = vec![self.val_col.to_string()]; // we're only ever readindg just this col
-        let (reader, row_count) = scan(self.path, filters, rows, &cols);
-
-        // Only rows passing all filters arrive here.
-        let mut keys: Vec<i64> = Vec::new(); 
-        let mut vals: Vec<T> = Vec::new();
-        for batch in reader {
-            let batch = batch.unwrap();
-            // no longer reading keys we need to extract the physical IDs
-            let rows = batch.column_by_name("row_number").unwrap();   // Int64Array of file positions
-            keys.extend(keys_i64(rows).values().iter().copied());
-            T::from_array(batch.column_by_name(self.val_col).unwrap(), &mut vals);
-        }
-        
-        // we have obtained our physical keys, now we need to go ahead and load them 
-
-        let fk_filter = KeyFilter::exact(vals); // this is the bitset of vals --fks to keep 
-
-        f_keys = Vec::new();
-        cols = vec![self.foreign_col.to_string()];
-        let (foreign_reader, forein_row_count) = scan(self.foreign_path, fk_filter, None, &cols);
-        for f_batch in foreign_reader {
-            let f_batch = f_batch.unwrap();
-            // no longer reading keys we need to extract the physical IDs
-            let f_rows = f_batch.column_by_name("row_number").unwrap();   // Int64Array of file positions
-            f_keys.extend(keys_i64(rows).values().iter().copied());
-            //T::from_array(batch.column_by_name(self.val_col).unwrap(), &mut vals); we dont acc care about foreign physical IDs
-        }
-
-
-        let blooms = if selective {
-            //let kb = KeyFilter::from_keys(row_count, keys.iter().copied());
-            let kb = KeyFilter::exact(exact_from_keys::<usize>(&keys));
-            let vb = if T::IS_KEY {
-                //KeyFilter::from_keys(row_count, vals.iter().filter_map(|v| v.as_key()))
-                let ids: Vec<i64> = vals.iter().filter_map(|v| v.as_key()).collect();
-                KeyFilter::exact(exact_from_keys::<usize>(&ids))
-            } else {
-                KeyFilter::All
-            };
-            (kb, vb)
-        } else {
-            (KeyFilter::All, KeyFilter::All)
-        };
-
-        let n = keys.iter().max().map_or(0, |&m| m as usize + 1);
-        // up to this ppint it's all the same except that rather than returning (row_id, table_ids)
-        // it should be the other way around: Hashmap(table_ids, row_id)
-        
-        let rel = HashMap::from_pairs(n, (vals, keys));
-
-
-        // Also keep the rows in this column's sink, for `to_memory`. A column
-        // loaded again (another occurrence in the query) is merged, not replaced.
-        let mut slot = self.sink.borrow_mut();
-        let merged = match slot.take() {
-            None => HashMap::from_csr(rel.offsets, rel.v), // same slices as `rel`, no copy
-            Some(old) => union(&old, &rel),
-        };
-        *slot = Some(merged);
-        drop(slot);
-
-        (rel, blooms)
-    }
-}
 
 
 
@@ -901,15 +818,6 @@ fn exact_filter(column: &str, set: Arc<Bitset>) -> ColumnFilter {
     }
 }
 
-/// The exact set of `keys`, sized by the largest one (a Bitset is indexed by id).
-fn exact_from_keys<D: Dense>(keys: &[i64]) -> Bitset<D> {
-    let n = keys.iter().max().map_or(0, |&m| m as usize + 1);
-    let mut b = Bitset { bs: vec![0; n.div_ceil(64)], n, _d: PhantomData };
-    for &k in keys {
-        b.set(D::from_idx(k as usize));
-    }
-    b
-}
 
 // The ids in both sets.
 fn intersect(a: &Bitset, b: &Bitset) -> Bitset {
@@ -935,35 +843,22 @@ pub trait KeyLoad: Query<D: Dense> {
         -> Bitset<Self::D>;
 }
 
-// The leaf: scan with every filter, but read out only the key column (the
-// filters decode their own columns).
 impl<E: 'static, T: ParquetType> KeyLoad for ColumnRef<E, T> {
     fn keyload(self, key_filter: KeyFilter, val_filter: KeyFilter, preds: Vec<Pred<T>>) -> Bitset<Id<E>> {
-        let mut filters = Vec::new();
-        for p in preds {
-            filters.push(to_predicate(self.val_col, p));
+        let (filters, selection) = self.filters(key_filter, val_filter, preds);
+        // A Row key reads no column at all: just the selection, the predicates and row_number.
+        let cols = match self.key {
+            Side::Row => vec![],
+            _ => vec![self.key_col.to_string()],
+        };
+        let mut keys = Vec::new();
+        for batch in scan_rows(self.path, filters, selection, &cols) {
+            keys.extend(rows_of(&batch.unwrap(), self.key, self.key_col).into_iter().flatten());
         }
-        key_filter.push_filters(self.key_col, &mut filters);
-        val_filter.push_filters(self.val_col, &mut filters);
-
-        let (reader, row_count) = scan(self.path, filters, &[self.key_col.to_string()]);
-        let mut keys: Vec<i64> = Vec::new();
-        for batch in reader {
-            keys.extend(keys_i64(batch.unwrap().column_by_name(self.key_col).unwrap()));
-        }
-        let file = self.path.rsplit('/').next().unwrap();
-        /*println!(
-            "  keys {file:<17} {:>12} -> {:<13} kept {:>4} of {:>4} rows",
-            self.key_col,
-            self.val_col,
-            keys.len(),
-            row_count
-        );*/
-        // Always built, even unfiltered: `movie.with(company)` still keeps only
-        // the movies that have a movie_companies row.
         exact_from_keys(&keys)
     }
 }
+
 
 impl<E: 'static, T: ParquetType> KeyLoad for &ColumnRef<E, T> {
     fn keyload(self, key_filter: KeyFilter, val_filter: KeyFilter, preds: Vec<Pred<T>>) -> Bitset<Id<E>> {
@@ -1039,42 +934,56 @@ where
 
 
 
+//==== IO related stuff 
+fn rows_of(batch: &RecordBatch, side: Side, column: &str) -> Vec<Option<usize>> {
+    match side {
+        Side::Row => ints(batch.column_by_name("row_number").unwrap())
+            .into_iter().map(|r| r.map(|r| r as usize)).collect(),
+        Side::Via(index) => {
+            let index = index.rows();
+            ints(batch.column_by_name(column).unwrap()).into_iter().map(|id| row_in(index, id)).collect()
+        }
+        Side::Value => panic!("{column} is a plain value, not a key: give it .key_via(..) in the schema"),
+    }
+}
 
-//–––––––––––
+/// Integers as i64 (any width), None for NULL. Replaces keys_i64, which
+/// turned a NULL into 0 — harmless as an id, but row 0 is a real row.
+fn ints(col: &ArrayRef) -> Vec<Option<i64>> {
+    let wide = cast(col, &DataType::Int64).unwrap();
+    wide.as_any().downcast_ref::<Int64Array>().unwrap().iter().collect()
+}
 
-pub fn scan(
-    path: &str,
-    filters: Vec<ColumnFilter>,
-    rows: RowSelection,
-    cols: &[String],
-) -> (ParquetRecordBatchReader, usize) {
+fn exact_from_keys<D: Dense>(keys: &[usize]) -> Bitset<D> {
+    let n = keys.iter().max().map_or(0, |&m| m + 1);
+    let mut b = Bitset { bs: vec![0; n.div_ceil(64)], n, _d: PhantomData };
+    for &k in keys {
+        b.set(D::from_idx(k));
+    }
+    b
+}
+
+pub fn scan_rows(path: &str, filters: Vec<ColumnFilter>, rows: Option<RowSelection>, cols: &[String])
+    -> ParquetRecordBatchReader {
     let file = File::open(path).expect(path);
-    // The page index lets Parquet skip whole pages that a filter rules out.
-    let row_number = Arc::new(
-    Field::new("row_number", DataType::Int64, false).with_extension_type(RowNumber),
-    );
-
-    let mut options = ArrowReaderOptions::new().with_page_index(true);
-    options.ArrowReaderOptions.with_virtual_columns(vec![row_number]);
-
-    
-    let builder = ParquetRecordBatchReaderBuilder::try_new_with_options(file, options).unwrap();
-    
-    let row_count = footer_rows(&builder);
+    // `row_number`: each row's position in the file, added to every batch.
+    let row_number = Arc::new(Field::new("row_number", DataType::Int64, false).with_extension_type(RowNumber));
+    let options = ArrowReaderOptions::new().with_virtual_columns(vec![row_number]).unwrap();
+    let mut builder = ParquetRecordBatchReaderBuilder::try_new_with_options(file, options).unwrap();
 
     let mut predicates: Vec<Box<dyn ArrowPredicate>> = Vec::new();
     for ColumnFilter { columns, mut eval } in filters {
-        let f = move |batch: RecordBatch| eval(&batch);
-        predicates.push(Box::new(ArrowPredicateFn::new(mask(&builder, &columns), f)));
+        let m = mask(&builder, &columns);
+        predicates.push(Box::new(ArrowPredicateFn::new(m, move |batch: RecordBatch| eval(&batch))));
     }
-
-    let out_mask = mask(&builder, cols);
-    let reader = builder
-        .with_projection(out_mask)
-        .with_row_selection(rows)
-        .with_row_filter(RowFilter::new(predicates))
-        .build()
-        .unwrap();
-    (reader, row_count)
+    if let Some(rows) = rows {
+        builder = builder.with_row_selection(rows);
+    }
+    let out = mask(&builder, cols);
+    builder.with_projection(out).with_row_filter(RowFilter::new(predicates)).build().unwrap()
 }
 
+fn mask(builder: &ParquetRecordBatchReaderBuilder<File>, cols: &[String]) -> ProjectionMask {
+    let idx = cols.iter().map(|c| builder.schema().index_of(c).unwrap());
+    ProjectionMask::roots(builder.parquet_schema(), idx)
+}

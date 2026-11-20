@@ -35,7 +35,7 @@ impl Catalog {
         Catalog { dir: dir.to_string(), footers: HashMap::new() }
     }
 
-    fn path(&self, file: &str) -> String {
+    pub fn path(&self, file: &str) -> String {
         format!("{}/{file}.parquet", self.dir)
     }
 

@@ -291,7 +291,7 @@ pub fn scan(
 ) -> (ParquetRecordBatchReader, usize) {
     let file = File::open(path).expect(path);
     // The page index lets Parquet skip whole pages that a filter rules out.
-    let options = ArrowReaderOptions::new().with_page_index(true);
+    let options = ArrowReaderOptions::new();
     let builder = ParquetRecordBatchReaderBuilder::try_new_with_options(file, options).unwrap();
     let row_count = footer_rows(&builder);
 
