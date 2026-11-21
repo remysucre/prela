@@ -1082,6 +1082,16 @@ in theory
 \end_layout
 
 \begin_layout Standard
+TAR,
+ also known to logicians as 
+\emph on
+relation algebra
+\emph default
+,
+ 
+\end_layout
+
+\begin_layout Standard
 The connection between Tarski and Codd has been noted as early as the first 
 \noun on
 PODS
@@ -1143,7 +1153,11 @@ TAR
 pairing/tagging
 \emph default
  operations that introduce tuple values.
- Prela's product operation 
+ 
+\end_layout
+
+\begin_layout Standard
+Prela's product operation 
 \begin_inset listings
 inline true
 status open
@@ -5959,7 +5973,7 @@ status open
 
 \begin_layout Plain Layout
 \begin_inset Graphics
-	filename rust/bench/job_scatter.pdf
+	filename ../../rust/bench/job_scatter.pdf
 	lyxscale 35
 	width 50col%
 
@@ -5967,7 +5981,7 @@ status open
 
 
 \begin_inset Graphics
-	filename rust/bench/tpch_scatter.pdf
+	filename ../../rust/bench/tpch_scatter.pdf
 	lyxscale 35
 	width 50col%
 
@@ -6135,7 +6149,7 @@ balance
 \begin_inset CommandInset bibtex
 LatexCommand bibtex
 btprint "btPrintCited"
-bibfiles "references"
+bibfiles "../references"
 options "ACM-Reference-Format"
 encoding "default"
 
