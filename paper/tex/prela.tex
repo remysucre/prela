@@ -243,31 +243,25 @@ Prela can be considered a realization of that vision over \noun{TAR}: a relation
 Prela also goes beyond the syntax and semantics of the query language itself and explores the synergy between high-level abstraction and low-level execution.
 
 \subsubsection*{MonetDB and Column Stores}
-MonetDB~\cite{bonczMonetDBX100HyperPipelining2005} was one of the first systems to support columnar execution.
-It applies the \emph{Decomposition Storage Model}~\cite{copelandDecompositionStorageModel1985}, on which tables are stored in column-major order, to main memory.
-In its original implementation, MonetDB translated SQL queries into MIL, an intermediate language strikingly similar to \noun{TAR}~\cite{bonczMILPrimitivesQuerying1999}.
-MIL forms an algebra over binary relations and includes operators for selection, joins, grouping, aggregation, and the like.
-By storing tables as contiguous columns, MonetDB greatly reduced memory and I/O bandwidth on OLAP workloads~\cite{manegoldOptimizingDatabaseArchitecture2000}.
-And by lifting this columnar layout into the algebra, it achieved a simple and uniform data representation.
+MonetDB~\cite{bonczMonetDBX100HyperPipelining2005} was the first database system to support columnar execution.
+Its original implementation was based on MIL, an intermediate language strikingly similar to \noun{TAR}~\cite{bonczMILPrimitivesQuerying1999}.
+MIL forms an algebra over binary relations and includes operators for selection, joins, grouping, and the like.
+These binary relations are backed by in-memory vectors, and MIL operators are simple functions over one or two input vectors.
 
-% TODO: shorten volcano exposition
+By storing tables as contiguous columns, MonetDB greatly reduced memory bandwidth on OLAP workloads~\cite{manegoldOptimizingDatabaseArchitecture2000}.
+And by lifting this columnar layout into the algebra, it achieved a simple and uniform data representation, which in turn led to cache- and CPU-friendly operators.
+
 However, the original MonetDB engine executes queries in an \emph{operator-at-a-time} fashion.
 This prevents operator pipelining and results in large intermediate data structures.
 The MIL algebra was therefore superseded by the X100 algebra and vectorized engine~\cite{DBLP:conf/cidr/BonczZN05}.
 X100 follows the basic structure of the Volcano system~\cite{DBLP:journals/tkde/Graefe94}, on which relational operators implement a \code|.next_tuple| method.
-% When `.next_tuple` is called on a selection operator, for example, it will call `.next_tuple` on its child operator and check whether the returned tuple satisfies its selection predicate.
-% If it does, the selection operator will return that tuple.
-% Otherwise, it will continue to call `.next_tuple` on its child.
 The Volcano model avoids materializing intermediate data structures, since only one tuple is ``in flight'' at any moment.
 However, \code|.next_tuple| involves significant dynamic interpretation overhead.
-% TODO: conceptually implements
-X100 operators instead implement a \code|.next_batch| method that processes and returns a batch of $N = 1{,}000$ tuples at a time, thereby amortizing interpretation overhead.
-Thus, MonetDB/X100 strikes a balance between the low interpretation overheads of columnar execution and the low memory overheads of tuple-at-a-time execution.
+% TODO: conceptually implements?
+X100 operators instead implement a \code|.next_batch| method that processes and returns a batch of $N = 1{,}000$ tuples, thereby amortizing interpretation overhead while keeping materialized intermediates in cache.
 
-Prela demonstrates the viability of retaining the columnar abstraction at the storage, execution, and logical level without incurring memory or execution overheads.
-
-% TODO: materialization is not inherent to columnar/binary algebra
-% removing interpretation + memory? overheads: vec/compilation
+We can enjoy the aforementioned benefits of binary algebras without paying the costs of intermediate materialization.
+As we show in section~\ref{sec-implementation}, Prela retains the binary abstraction at the storage, execution, and logical levels without incurring any memory or execution overheads.
 
 \begin{table}
 \caption{Relational operators in Prela}
