@@ -27,4 +27,16 @@ rust/bench/__pycache__
 
 # SQLStorm port: build artefacts (data lives outside the repo)
 sqlstorm/rust/target/
-prela.tex
+
+tmp
+
+# paper/tex
+*.bbl
+paper/tex/*.aux
+paper/tex/*.blg
+paper/tex/*.fdb*
+paper/tex/*.fls
+paper/tex/*.log
+paper/tex/*.out
+paper/tex/*.fdb
+
