@@ -941,3 +941,23 @@
                 researches and further bridge the theory-practice gap on null
                 values.},
 }
+
+@inproceedings{zengNULLSRevisitingNull2024,
+  title = {{{NULLS}}!: {{Revisiting Null Representation}} in {{Modern Columnar Formats}}},
+  shorttitle = {{{NULLS}}!},
+  booktitle = {Proceedings of the 20th {{International Workshop}} on {{Data Management}} on {{New Hardware}}},
+  author = {Zeng, Xinyu and Meng, Ruijun and Pavlo, Andrew and McKinney, Wes and Zhang, Huanchen},
+  date = {2024-06-10},
+  pages = {1--10},
+  publisher = {ACM},
+  location = {Santiago AA Chile},
+  doi = {10.1145/3662010.3663452},
+  url = {https://dl.acm.org/doi/10.1145/3662010.3663452},
+  urldate = {2026-11-04},
+  abstract = {Nulls are common in real-world data sets, yet recent research on columnar formats and encodings rarely address Null representations. Popular file formats like Parquet and ORC follow the same design as C-Store from nearly 20 years ago that only stores nonNull values contiguously. But recent formats store both non-Null and Null values, with Nulls being set to a placeholder value. In this work, we analyze each approach’s pros and cons under different data distributions, encoding schemes (with different best SIMD ISA), and implementations. We optimize the bottlenecks in the traditional approach using AVX512. We also propose a Null-filling strategy called SmartNull, which can determine the Null values best for compression ratio at encoding time. From our micro-benchmarks, we argue that the optimal Null compression depends on several factors: decoding speed, data distribution, and Null ratio. Our analysis shows that the Compact layout performs better when Null ratio is high and the Placeholder layout is better when the Null ratio is low or the data is serial-correlated.},
+  eventtitle = {{{SIGMOD}}/{{PODS}} '24: {{International Conference}} on {{Management}} of {{Data}}},
+  isbn = {979-8-4007-0667-7},
+  langid = {english},
+  file = {/Users/paultalma/Zotero/storage/YTUFLKI6/Zeng et al. (2024) - NULLS! Revisiting Null Representation in Modern Columnar Formats.pdf}
+}
+
