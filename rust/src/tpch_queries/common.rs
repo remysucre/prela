@@ -255,8 +255,8 @@ fn q3(db: &'static Tpch) -> String {
         .lineitem
         .with(
             shipdate
-                .gt(19950315)
-                .and(l_order.select(o_date).lt(19950315))
+                .and(l_order.select(o_date))
+                .filt(|(s, d): (i64, i64)| (s > 19950315) & (d < 19950315))
                 .and(l_order.select(o_customer).select(mktsegment).eq("BUILDING")),
         )
         .group_by(
