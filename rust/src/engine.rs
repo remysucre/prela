@@ -1,4 +1,5 @@
 use ahash::{AHashMap as HashMap, AHashSet as HashSet};
+use num_traits::{AsPrimitive, Bounded, Zero};
 use regex::Regex;
 use smallvec::SmallVec;
 use std::borrow::Cow;
@@ -1481,12 +1482,11 @@ impl<D: Dense> Bitset<D> {
 }
 
 // ===== SparseUniverse — `Universe` with a validity mask =================
+// WARNING: this assumes referential integrity. Will fail if indexed into by a foreign key for a
+// deleted row.
+//
 // A dense id space `0..n` that carries holes (e.g. `orders` over sparse
 // orderkeys).
-//
-// It is a SEPARATE TYPE from `Universe` on purpose: drive dispatch is at
-// compile time, so the dense `Universe::drive` loop is untouched — no shared
-// branch to de-optimise its closure inlining.
 
 #[derive(Copy, Clone)]
 pub struct SparseUniverse<D: Dense> {
@@ -1762,8 +1762,7 @@ pub fn preceding<O: Copy, R: Copy, S: Copy>(
 // Drop-in replacement for `Fold` when `D = usize` and the key range is a
 // known, dense `0..n`. Backing store is `Vec<S>` (one slot per key) plus a
 // parallel `Vec<bool>` presence map. Avoids HashMap probe + entry alloc on
-// every reduce step; for Q1 (≤6 group keys via packed byte index), Q2 / Q20
-// (per-part), Q18 (per-order), the gain is ~5-10× over `Fold`.
+// every reduce step
 
 pub struct DenseFold<D: Dense, S: Copy> {
     pub vals: Vec<S>,
@@ -2565,6 +2564,8 @@ pub trait QueryExt: IntoQuery + Sized {
         self.group_by(key).gather()
     }
 
+    /// For each unique left-hand value, applies `foldl op init` to the corresponding right-hand
+    /// values.
     #[inline(always)]
     fn fold<OP: Fn(S, ROf<Self>) -> S, S: Copy>(self, init: S, op: OP) -> Fold<DOf<Self>, S>
     where
@@ -2582,6 +2583,7 @@ pub trait QueryExt: IntoQuery + Sized {
         Fold::build_buf(self.iq(), f)
     }
 
+    /// Use instead of `fold` when the grouping attribute is a dense 0..n universe
     #[inline(always)]
     fn dense_fold<OP: Fn(S, ROf<Self>) -> S, S: Copy>(
         self,
@@ -2610,6 +2612,86 @@ pub trait QueryExt: IntoQuery + Sized {
         DOf<Self>: Dense,
     {
         DenseFold::build_outer(self.iq(), n, init, op)
+    }
+
+    /// Maps each unique left-hand value to the maximal corresponding right-hand value.
+    #[inline(always)]
+    fn max(self) -> Fold<DOf<Self>, ROf<Self>>
+    where
+        Self::Q: Drive,
+        ROf<Self>: Bounded + PartialOrd,
+    {
+        Fold::build(self.iq(), ROf::<Self>::min_value(), |a, v| {
+            if a < v { v } else { a }
+        })
+    }
+
+    /// Maps each unique left-hand value to the minimal corresponding right-hand value.
+    #[inline(always)]
+    fn min(self) -> Fold<DOf<Self>, ROf<Self>>
+    where
+        Self::Q: Drive,
+        ROf<Self>: Bounded + PartialOrd,
+    {
+        Fold::build(self.iq(), ROf::<Self>::max_value(), |a, v| {
+            if v < a { v } else { a }
+        })
+    }
+
+    /// Maps each unique left-hand value to the sum of the corresponding right-hand values.
+    // WARNING: can overflow if the column being summed has a narrow type and large values.
+    #[inline(always)]
+    fn sum(self) -> Fold<DOf<Self>, ROf<Self>>
+    where
+        Self::Q: Drive,
+        ROf<Self>: Zero,
+    {
+        Fold::build(self.iq(), ROf::<Self>::zero(), |sum, v| sum + v)
+    }
+
+    /// Maps each unique left-hand value to the average of the corresponding right-hand values.
+    #[inline(always)]
+    fn avg(self) -> Fold<DOf<Self>, f64>
+    where
+        Self::Q: Drive,
+        ROf<Self>: AsPrimitive<f64>,
+    {
+        let f = Fold::build(self.iq(), (0f64, 0u64), |(sum, n), v| {
+            (sum + v.as_(), n + 1)
+        });
+        Fold {
+            cache: f
+                .cache
+                .into_iter()
+                .map(|(k, (sum, n))| (k, sum / n as f64))
+                .collect(),
+        }
+    }
+
+    /// Maps each unique left-hand value to the count of the corresponding right-hand values.
+    #[inline(always)]
+    fn count(self) -> Fold<DOf<Self>, u64>
+    where
+        Self::Q: Drive,
+    {
+        Fold::build(self.iq(), 0, |ct, _| ct + 1)
+    }
+
+    /// Maps each unique left-hand value to the count of the corresponding distinct right-hand values.
+    #[inline(always)]
+    fn count_distinct(self) -> Fold<DOf<Self>, u64>
+    where
+        Self::Q: Drive,
+        ROf<Self>: Ord,
+    {
+        // sort -> dedup -> len instead of collecting into a hashset; probably faster
+        // note receiver must be grouped, so count_distinct without GROUP BY
+        // needs a wrapper trivial group
+        Fold::build_buf(self.iq(), |mut vs| {
+            vs.sort();
+            vs.dedup();
+            vs.len() as u64
+        })
     }
 
     /// A window function over each group: row -> output.
@@ -2715,22 +2797,6 @@ pub trait QueryExt: IntoQuery + Sized {
                 .extend(sorted.iter().zip(&out).map(|(&(_, r), &v)| (r, v)));
         });
         HashIdx { idx }
-    }
-
-    // sort, dedup, then len instead of inserting into a hashset for each key; probably faster
-    // note receiver must be grouped, so count_distinct without GROUP BY needs a wrapper trivial
-    // group
-    #[inline(always)]
-    fn count_distinct(self) -> Fold<DOf<Self>, i64>
-    where
-        Self::Q: Drive,
-        ROf<Self>: Ord,
-    {
-        self.buf_fold(|mut vs| {
-            vs.sort_unstable();
-            vs.dedup();
-            vs.len() as i64
-        })
     }
 
     #[inline(always)]
