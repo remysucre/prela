@@ -275,7 +275,13 @@ fn q3(db: &'static Tpch) -> String {
     });
     rows.truncate(10);
     join_lines(rows.iter().map(|(((o, d), sp), r)| {
-        format!("{}|{}|{}|{}", db.order.key.v[o.idx()], f(*r), fmt_yyyymmdd(*d), sp)
+        format!(
+            "{}|{}|{}|{}",
+            db.order.key.v[o.idx()],
+            f(*r),
+            fmt_yyyymmdd(*d),
+            sp
+        )
     }))
 }
 
@@ -794,7 +800,7 @@ fn q16(db: &'static Tpch) -> String {
         .group_by(ps_part.select(brand.and(p_ty).and(size)))
         .select(ps_supplier)
         .count_distinct();
-    let mut rows: Vec<(((&str, &str), i64), i64)> = Vec::new();
+    let mut rows: Vec<(((&str, &str), i64), u64)> = Vec::new();
     counts.drive(|k, v| rows.push((k, v)));
     rows.sort_by(|(((b1, t1), s1), c1), (((b2, t2), s2), c2)| {
         c2.cmp(c1)
